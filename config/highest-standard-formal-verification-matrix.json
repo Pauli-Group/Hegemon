@@ -6,19 +6,19 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 84.79,
   "last_full_formal_core": {
-    "date": "2026-06-16T07:02:17Z",
-    "commit": "ea5db551",
-    "status": "passed locally after adding the combined restarted side-branch fail-closed regression for sidecar transfer/nullifier rows plus disabled inbound bridge replay before publication",
+    "date": "2026-06-16T07:33:05Z",
+    "commit": "c759aea8",
+    "status": "passed locally after adding the raw-wire-excluded privacy unlinkability reduction theorem and wallet re-encryption public-summary-shape regression",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1707,
+    "named_lean_theorems": 1709,
     "axiom_free_theorems": 771,
-    "axiom_dependent_theorems": 936,
+    "axiom_dependent_theorems": 938,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 486,
+    "falsification_cases": 487,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -69,30 +69,29 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Closed the schema-v2 bridge mint/replay policy conformance slice. The Lean replay model now uses set-style pending-key removal matching production, generated vectors carry exact next consumed/pending replay sets with pending-key clearing and unrelated-pending preservation cases, and formal-core checks those vectors against the production Rust helper instead of only JSON-parsing them.",
+    "summary": "Strengthened the privacy/unlinkability boundary with a no-new-assumptions Lean reduction theorem. The ciphertext privacy game now packages modeled unlinkability as equal public shape, equal public metadata, equal explicit batch/timing leakage, and the existing raw-wire indistinguishability premise, and the open-assumption package carries a raw-wire-excluded public-leakage fact object.",
     "lean_modules": [
-      "formal/lean/Hegemon/Bridge/Replay.lean",
-      "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean",
-      "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean"
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
-      "Hegemon.Bridge.MintReplayPolicy.accepted_imports_replay_key",
-      "Hegemon.Bridge.MintReplayPolicy.accepted_prevents_replay_again"
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Bridge/Replay.lean && lake env lean Hegemon/Bridge/MintReplayPolicy.lean && lake env lean Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean passed locally",
-      "targeted_rust": "HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T05:10:52Z with 118 claims, 1707 named Lean theorem declarations, 771 axiom-free declarations, 936 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 479 falsification cases, and 209 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Privacy/CiphertextPrivacy.lean passed locally",
+      "targeted_rust": "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture and cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:33:05Z with 118 claims, 1709 named Lean theorem declarations, 771 axiom-free declarations, 938 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 487 falsification cases, and 209 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1707,
+      "named_lean_theorems": 1709,
       "axiom_free_theorems": 771,
-      "axiom_dependent_theorems": 936,
+      "axiom_dependent_theorems": 938,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 479,
+      "falsification_cases": 487,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -102,37 +101,36 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves abstract bridge mint/replay policy conformance against a Rust helper, not a live bridge mint decoder or enabled mint path.",
-      "External receipt/PQ verifier soundness and the production PQ-clean bridge verifier remain explicit open work.",
-      "The theorem does not prove primitive cryptographic security, proof-system soundness, arbitrary parser internals, storage durability below accepted predicates, or complete native-node equivalence."
+      "This slice is a modeled observer/privacy-game reduction, not a simulator-based zero-knowledge proof.",
+      "ML-KEM, AEAD, KDF, RNG, proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy remain explicit assumptions.",
+      "The theorem does not prove primitive cryptographic security, ciphertext indistinguishability, proof-system soundness, hash implementation equivalence, or complete wallet/native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Closed the combined disabled-inbound restart/reorg adversarial gap. A restarted node with a persisted nonwinning side branch stages a sidecar transfer, then rejects a higher-work side-tip candidate carrying both sidecar transfer nullifier rows and a disabled inbound bridge replay key before best state, height indexes, block records, nullifier rows, ciphertext indexes/archive rows, or bridge replay rows are published.",
+    "summary": "Added a production wallet privacy conformance gate for same-plaintext same-recipient re-encryption. The wallet now checks that distinct RNG streams change KEM, chain wire, DA wire, and ciphertext-hash bytes while a separate regression proves the Lean-modeled public ciphertext summary shape remains stable after chain and DA parsing.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication",
-      "node/src/native/mod.rs stage_test_sidecar_ciphertext cfg(test) helper",
-      "scripts/check_formal_core.sh mixed restart/reorg fail-closed publication gate",
-      "config/formal-security-claims.json native.block-replay-refinement gate metadata",
-      "config/formal-security-blueprint.json native.block-replay-refinement falsification case"
+      "wallet/src/notes.rs encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness",
+      "wallet/src/notes.rs reencryption_preserves_public_ciphertext_summary_shape",
+      "scripts/check_formal_core.sh wallet re-encryption summary-shape gate",
+      "config/formal-security-claims.json formal.ciphertext-privacy-game-boundary gate metadata",
+      "config/formal-security-blueprint.json wallet-reencryption-public-summary-shape falsification case"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.RawIngressFullBytePublicationSurface.*",
-      "Hegemon.Native.CanonicalPublicationRefinement.*",
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*",
-      "Hegemon.Native.BlockReplayRefinement.*",
-      "Hegemon.Native.BridgeMintSafety.*"
+      "Hegemon.Privacy.CiphertextPrivacy.*",
+      "Hegemon.Privacy.Observer.*",
+      "Hegemon.Wallet.NoteCiphertextWire.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture"
+        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
+        "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:02:17Z with the combined sidecar/nullifier/disabled-inbound restart/reorg fail-closed gate enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:33:05Z with the wallet re-encryption public-summary-shape gate enabled",
       "claims": 118,
-      "named_lean_theorems": 1707,
+      "named_lean_theorems": 1709,
       "production_eligible_claims": 108,
-      "falsification_cases": 486,
+      "falsification_cases": 487,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -141,8 +139,8 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "This is a fail-closed disabled-inbound bridge regression, not positive inbound bridge mint publication; release inbound bridge verification remains disabled until a PQ-clean verifier replaces the experimental envelope.",
-      "This slice does not prove arbitrary SCALE/parser internals, hash security/equivalence, deployed proof-system soundness, external receipt soundness, peer honesty, sled durability below accepted predicates, or complete native-node equivalence.",
+      "This is a production conformance regression for the wallet encryption path, not a proof of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator zero knowledge.",
+      "The gate checks public summary-shape stability for same-plaintext same-recipient re-encryption; proof-wrapper metadata, batching policy, wallet metadata, and network metadata surfaces still need more coverage.",
       "The slice adds cfg(test) regression coverage, formal metadata, docs, and the formal-core gate; no hot production path changes or performance cost were introduced."
     ]
   },
