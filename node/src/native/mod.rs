@@ -113,6 +113,9 @@ const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
 const MAX_NATIVE_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NATIVE_BLOCK_ACTIONS: usize = MAX_NATIVE_MEMPOOL_ACTIONS;
+const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize = MAX_NATIVE_RPC_ACTION_BYTES + 16 * 1024;
+const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
@@ -8978,6 +8981,11 @@ fn bridge_messages_from_actions(
 }
 
 fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
+    validate_block_action_byte_budget(
+        meta.tx_count,
+        meta.action_bytes.len(),
+        meta.action_bytes.iter().map(Vec::len),
+    )?;
     evaluate_native_action_hash_admission(NativeActionHashAdmissionInput {
         action_count_matches: meta.action_bytes.len() == meta.tx_count as usize,
         action_hashes_match: true,
@@ -9001,6 +9009,48 @@ fn decode_block_actions(meta: &NativeBlockMeta) -> Result<Vec<PendingAction>> {
     })
     .map_err(native_action_hash_admission_error)?;
     Ok(actions)
+}
+
+fn validate_block_action_byte_budget<I>(
+    declared_tx_count: u32,
+    action_payload_count: usize,
+    action_payload_lengths: I,
+) -> Result<()>
+where
+    I: IntoIterator<Item = usize>,
+{
+    let declared_count = declared_tx_count as usize;
+    if declared_count > MAX_NATIVE_BLOCK_ACTIONS || action_payload_count > MAX_NATIVE_BLOCK_ACTIONS
+    {
+        return Err(anyhow!(
+            "native block action count exceeds limit: declared={}, payloads={}, max={}",
+            declared_count,
+            action_payload_count,
+            MAX_NATIVE_BLOCK_ACTIONS
+        ));
+    }
+
+    let mut total = 0usize;
+    for len in action_payload_lengths {
+        if len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "native block action payload exceeds per-action limit: {} > {}",
+                len,
+                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+            ));
+        }
+        total = total
+            .checked_add(len)
+            .ok_or_else(|| anyhow!("native block action byte total overflow"))?;
+        if total > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "native block action bytes exceed aggregate limit: {} > {}",
+                total,
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn evaluate_native_action_hash_admission(
@@ -21202,6 +21252,50 @@ mod tests {
         assert!(err
             .to_string()
             .contains("block action payload count mismatch"));
+    }
+
+    #[test]
+    fn block_action_byte_budget_rejects_count_item_and_aggregate_caps() {
+        let err = validate_block_action_byte_budget(
+            (MAX_NATIVE_BLOCK_ACTIONS + 1) as u32,
+            0,
+            std::iter::empty(),
+        )
+        .expect_err("declared block action count over cap must reject before decode");
+        assert!(err.to_string().contains("block action count exceeds limit"));
+
+        let err =
+            validate_block_action_byte_budget(1, 1, [MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES + 1])
+                .expect_err("single block action payload over cap must reject before decode");
+        assert!(err
+            .to_string()
+            .contains("block action payload exceeds per-action limit"));
+
+        let item_len = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
+        let item_count = (MAX_NATIVE_BLOCK_ACTION_BYTES / item_len) + 1;
+        let err = validate_block_action_byte_budget(
+            item_count as u32,
+            item_count,
+            std::iter::repeat(item_len).take(item_count),
+        )
+        .expect_err("aggregate block action bytes over cap must reject before decode");
+        assert!(err
+            .to_string()
+            .contains("block action bytes exceed aggregate limit"));
+    }
+
+    #[test]
+    fn block_action_byte_budget_rejects_oversized_payload_before_decode() {
+        let pow_bits = 0x207f_ffff;
+        let mut block = genesis_meta(pow_bits).expect("genesis");
+        block.tx_count = 1;
+        block.action_bytes = vec![vec![0u8; MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES + 1]];
+
+        let err = decode_block_actions(&block)
+            .expect_err("oversized block action payload must reject before SCALE decode");
+        let message = err.to_string();
+        assert!(message.contains("block action payload exceeds per-action limit"));
+        assert!(!message.contains("decode native block action failed"));
     }
 
     #[test]

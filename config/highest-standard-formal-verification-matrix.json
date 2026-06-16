@@ -4,27 +4,27 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.34,
+  "overall_completion_percent": 84.46,
   "last_full_formal_core": {
-    "date": "2026-06-16T03:13:50Z",
-    "commit": "cf69c7a6a6ec",
-    "status": "passed locally after adding materialized sidecar observer privacy implementation-equivalence",
+    "date": "2026-06-16T03:47:51Z",
+    "commit": "faa38e2ce2e8+worktree",
+    "status": "passed locally after adding native block-action byte-budget production gate and parser resource-bound refinement theorem",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1705,
+    "named_lean_theorems": 1706,
     "axiom_free_theorems": 771,
-    "axiom_dependent_theorems": 934,
+    "axiom_dependent_theorems": 935,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 474,
-    "implementation_bindings": 207,
-    "implementation_result_obligations": 161,
-    "implementation_order_constraints": 143,
-    "implementation_order_edges": 371,
-    "implementation_dominance_constraints": 129,
-    "implementation_dominance_edges": 339,
+    "falsification_cases": 475,
+    "implementation_bindings": 208,
+    "implementation_result_obligations": 162,
+    "implementation_order_constraints": 144,
+    "implementation_order_edges": 374,
+    "implementation_dominance_constraints": 130,
+    "implementation_dominance_edges": 342,
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
@@ -75,52 +75,39 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Closed three implementation-equivalence slices: network/PQ frame-resource admission; SmallWood Goldilocks auth-link vector conformance; and commitment-tree content refinement binding canonical commitment rows to decoded ordered commitments and planned indexes on the accepted raw-ingress publication surface.",
+    "summary": "Closed the native block-action parser resource-bound slice. Production decode now runs a cheap byte-budget gate over declared/payload action counts, per-action payload bytes, aggregate overflow, and aggregate action bytes before decoded-action allocation or SCALE action decode; Lean composes that bounded-request acceptance with exact pending/block-action decode, pending reload, and wire replay rows.",
     "lean_modules": [
-      "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
-      "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
-      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
-      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean"
+      "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+      "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff",
-      "Hegemon.Network.FrameResourceAdmission.accepted_frame_decode_exposes_facts",
-      "Hegemon.Network.FrameResourceAdmission.evaluate_frame_encode_accepts_iff",
-      "Hegemon.Network.FrameResourceAdmission.pq_session_plaintext_plus_tag_eq_ciphertext_bound",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_goldilocks_auth_link",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_mismatched_active_limbs_reject",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wraparound_accepts",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_auth_link_allows_mismatched_limbs",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_content",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_indexes",
-      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content"
+      "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Network.FrameResourceAdmission Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Native.CommitmentTreeContentRefinement Hegemon passed locally",
-      "targeted_rust": "Lean-generated SmallWood auth-link vectors and the wrong-secret regression passed; network and pq-noise frame-resource vector tests passed in full formal-core; native exact-row regressions pending_action_raw_bytes_project_to_validated_materialized_replay_rows, canonical_index_rebuild_projects_decoded_materialized_wire_rows, and block_range_projects_decoded_materialized_wire_rows passed in full formal-core.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T02:35:22Z with 118 claims, 1704 named Lean theorem declarations, 771 axiom-free declarations, 933 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 473 falsification cases, and 207 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteParserRefinement Hegemon passed locally",
+      "targeted_rust": "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture passed locally; the regression checks count, per-payload, aggregate-byte, and pre-decode oversized-payload rejection.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T03:47:51Z with 118 claims, 1706 named Lean theorem declarations, 771 axiom-free declarations, 935 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 475 falsification cases, and 208 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1704,
+      "named_lean_theorems": 1706,
       "axiom_free_theorems": 771,
-      "axiom_dependent_theorems": 933,
+      "axiom_dependent_theorems": 935,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
-      "blueprint_edges": 491,
-      "falsification_cases": 473,
-      "implementation_bindings": 207,
-      "implementation_result_obligations": 161,
-      "implementation_order_constraints": 143,
-      "implementation_order_edges": 371,
-      "implementation_dominance_constraints": 129,
-      "implementation_dominance_edges": 339,
+      "blueprint_edges": 492,
+      "falsification_cases": 475,
+      "implementation_bindings": 208,
+      "implementation_result_obligations": 162,
+      "implementation_order_constraints": 144,
+      "implementation_order_edges": 374,
+      "implementation_dominance_constraints": 130,
+      "implementation_dominance_edges": 342,
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "Frame-resource admission proves cheap cap/domain/parser-precondition equivalence, not postcard internals, transport liveness, or primitive crypto security.",
-      "SmallWood auth-link vectors cover the deployed active Goldilocks auth-link surface, not complete AIR/STARK/SmallWood proof-system soundness or witness extraction.",
-      "Commitment-tree content refinement binds accepted decoded rows to canonical commitment rows and planned indexes, but not arbitrary parser internals, Merkle hash security, storage durability below accepted predicates, or complete native-node equivalence."
+      "This slice proves resource-bound composition for accepted pending/block action parser rows, not arbitrary SCALE parser internals or a full Rust refinement proof.",
+      "The reusable bounded-request table is now bound to native block-action decode; other consensus-facing parser families still need equivalent concrete bindings.",
+      "The theorem does not prove primitive cryptographic security, proof-system soundness, storage durability below accepted predicates, or complete native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
@@ -569,7 +556,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 88,
+      "completion_percent": 89,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -589,6 +576,8 @@
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now packages decoded, validated, materialized, planned, wire-replay, and canonical field-row agreement under named production projection facts",
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean lifts ordered field projection into the raw-ingress full-byte publication surface",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode, full decoded field roundtrip, route payload projection, validation-step projection, materialized/planned payload equality, and wire projection",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean now proves `accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows`, carrying accepted bounded-request cap facts through exact pending/block-action decode, pending reload, and wire replay row-count binding",
+        "node/src/native/mod.rs now calls `validate_block_action_byte_budget` before block-action SCALE decode, rejecting over-cap declared/payload counts, per-action payload bytes, aggregate-byte overflow, and aggregate-byte over-cap; `cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture` is in formal-core",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean now separates permissive parser backend-byte defaults from strict release verifier admission, proving strict explicit-backend acceptance and strict missing-backend rejection",
         "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params now rejects noncanonical native tx-leaf artifacts whose decoded canonical encoding differs from the supplied bytes",
         "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression",
@@ -776,7 +765,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 78,
+      "completion_percent": 80,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -791,10 +780,12 @@
         "formal/lean/Hegemon/Native/ReceiptRoot.lean now proves `receipt_root_schedule_accepts_implies_facts`, and PreHeavyWorkResourceBoundSurface carries receipt-root nonzero expected-leaf, exact leaf/fold-count, and fold-shape schedule facts before receipt-root folding",
         "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean proves a reusable raw-bytes, decoded-bytes, item-count, item-bytes, aggregate-bytes, and work-unit cap table with exact-limit acceptance and fail-closed rejection precedence before aggregate/work-heavy paths",
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean emits parse-checked acceptance/rejection examples for the reusable bounded-request table",
-        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean and generated Rust conformance tests bind network/PQ frame-size caps and fail-closed oversize-before-parse rejection to production codecs."
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean and generated Rust conformance tests bind network/PQ frame-size caps and fail-closed oversize-before-parse rejection to production codecs.",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean composes accepted bounded-request cap facts with exact pending/block-action decode, pending reload, and wire replay, proving resource item count matches declared, decoded, and wire-row action counts.",
+        "node/src/native/mod.rs `validate_block_action_byte_budget` rejects over-cap block action counts, per-action payloads, aggregate-byte overflow, and aggregate bytes before SCALE action decode; formal-core runs the focused `block_action_byte_budget` regression."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families to the reusable bounded-request admission table.",
+        "Bind the remaining consensus-facing parser families beyond native block actions to the reusable bounded-request admission table.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

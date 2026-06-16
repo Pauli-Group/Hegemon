@@ -4091,6 +4091,25 @@
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "validate_block_action_byte_budget",
+          "required_callers": [
+            "decode_block_actions"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "decode_block_actions",
+              "callee_must_precede": [
+                "evaluate_native_action_hash_admission",
+                "decode_scale_exact",
+                "Vec::with_capacity"
+              ],
+              "must_dominate_successors": true
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "decode_block_actions",
           "required_callers": [
             "verify_canonical_sync_block_body"
@@ -5296,8 +5315,8 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "claim_id": "native.pre-heavy-resource-bound-surface",
       "kind": "target_claim",
-      "formal_statement": "For the Lean pre-heavy-work resource surface, if the resource-budget, RPC admission, sidecar upload, mineable-action, action-request projection, transfer-payload, candidate-artifact, tx-leaf artifact parser, and receipt-root schedule surfaces are all accepted, then the combined surface exposes the concrete resource facts needed before expensive work: pending-action and staged-proof byte totals are within caps, timestamp rows and RPC batches are within caps, hex/base64 decoded-byte inputs satisfy raw and decoded caps, submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload projection predicates hold, sidecar upload request/capacity/proof predicates satisfy their preconditions, mineable candidate/sidecar action predicates satisfy their preconditions, transfer proofs and inline ciphertexts are in cap, recursive candidate proofs and tx counts are in cap, tx-leaf artifact parser shape facts hold, receipt-root expected leaves, leaf/fold counts, and fold-shape schedule facts hold, and the reusable bounded-request table rejects the first raw-byte, decoded-byte, item-count, per-item-byte, aggregate-byte, or work-unit over-cap condition deterministically.",
-      "informal_argument": "The theorem `Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_resource_bound_surface_exposes_bounds` composes accepted facts from `Hegemon.Native.ResourceBudgetAdmission`, `Hegemon.Native.RpcAdmission`, `Hegemon.Native.SidecarUploadAdmission`, and `Hegemon.Native.MineableActionAdmission`. The theorem `Hegemon.Native.PreHeavyWorkResourceBoundSurface.action_request_projection_accepts_implies_preheavy_bounds` derives the strict submit-action projection preconditions from accepted action-request projection, including JSON decode acceptance, absent kernel-envelope fields, supported route, scoped/bounded/hex-valid nullifiers, bounded/base64-decoded public args, and exact route-payload decoding. The theorem `Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts` exposes nonzero expected leaves, exact leaf/fold-count agreement, and exact fold-shape schedule acceptance from the receipt-root structural gate. The strengthened theorem `accepted_preheavy_public_input_parser_admission_bounds_verification_paths` adds those action-request bounds, accepted transfer-payload bounds, candidate-artifact bounds, tx-leaf artifact byte-shape facts, and receipt-root schedule facts while carrying parser correctness and benchmark caps as explicit assumptions. `Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions`, `accepted_bounded_request_exposes_all_caps`, and the companion rejection theorems add the reusable raw/decoded/item/work cap table for remaining parser families. Together these theorems add a single review target for the pre-heavy-work DoS boundary without changing production runtime behavior. Production conformance remains inherited from the generated-vector gates for dependency surfaces until each remaining parser family is bound to the generic table.",
+      "formal_statement": "For the Lean pre-heavy-work resource surface, if the resource-budget, RPC admission, sidecar upload, mineable-action, action-request projection, transfer-payload, candidate-artifact, tx-leaf artifact parser, receipt-root schedule, and pending/block action parser-resource surfaces are all accepted, then the combined surface exposes the concrete resource facts needed before expensive work: pending-action and staged-proof byte totals are within caps, timestamp rows and RPC batches are within caps, hex/base64 decoded-byte inputs satisfy raw and decoded caps, submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload projection predicates hold, sidecar upload request/capacity/proof predicates satisfy their preconditions, mineable candidate/sidecar action predicates satisfy their preconditions, transfer proofs and inline ciphertexts are in cap, recursive candidate proofs and tx counts are in cap, tx-leaf artifact parser shape facts hold, receipt-root expected leaves, leaf/fold counts, and fold-shape schedule facts hold, accepted pending/block action parser rows carry generic bounded-request cap facts, and the reusable bounded-request table rejects the first raw-byte, decoded-byte, item-count, per-item-byte, aggregate-byte, or work-unit over-cap condition deterministically.",
+      "informal_argument": "The theorem `Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_resource_bound_surface_exposes_bounds` composes accepted facts from `Hegemon.Native.ResourceBudgetAdmission`, `Hegemon.Native.RpcAdmission`, `Hegemon.Native.SidecarUploadAdmission`, and `Hegemon.Native.MineableActionAdmission`. The theorem `Hegemon.Native.PreHeavyWorkResourceBoundSurface.action_request_projection_accepts_implies_preheavy_bounds` derives the strict submit-action projection preconditions from accepted action-request projection, including JSON decode acceptance, absent kernel-envelope fields, supported route, scoped/bounded/hex-valid nullifiers, bounded/base64-decoded public args, and exact route-payload decoding. The theorem `Hegemon.Native.ReceiptRoot.receipt_root_schedule_accepts_implies_facts` exposes nonzero expected leaves, exact leaf/fold-count agreement, and exact fold-shape schedule acceptance from the receipt-root structural gate. The strengthened theorem `accepted_preheavy_public_input_parser_admission_bounds_verification_paths` adds those action-request bounds, accepted transfer-payload bounds, candidate-artifact bounds, tx-leaf artifact byte-shape facts, and receipt-root schedule facts while carrying parser correctness and benchmark caps as explicit assumptions. `Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions`, `accepted_bounded_request_exposes_all_caps`, and the companion rejection theorems add the reusable raw/decoded/item/work cap table for remaining parser families. `Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows` now composes that generic table with accepted exact pending-action decode, block-action count binding, pending reload, and accepted wire replay, proving the resource item count matches declared block-action count, decoded payload count, and wire replay row count. Production `decode_block_actions` now rejects over-cap declared/payload action counts, over-cap per-action action bytes, aggregate-byte overflow, and aggregate-byte over-cap before SCALE action decode. Together these theorems and regressions add a concrete consensus-facing parser family to the pre-heavy-work DoS boundary.",
       "depends_on": [
         "native.resource-budget-admission",
         "native.rpc-admission",
@@ -5320,6 +5339,8 @@
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",
         "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "node/src/native/mod.rs",
         "formal/lean/Hegemon.lean",
         "scripts/check_lean_formal.sh"
       ],
@@ -5335,6 +5356,8 @@
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",
         "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
+        "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -5342,7 +5365,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a Lean composition over existing theorem-backed admission surfaces, now including strict action-request projection facts, transfer payload, candidate artifact, tx-leaf artifact parser bounds, and receipt-root schedule facts. Scope is pre-heavy-work resource fact exposure with explicit parser/cost assumptions, not a new Rust conformance path."
+        "notes": "Accepted as a Lean composition over existing theorem-backed admission surfaces, now including strict action-request projection facts, transfer payload, candidate artifact, tx-leaf artifact parser bounds, receipt-root schedule facts, and pending/block action parser resource caps. The block-action cap slice is backed by a production pre-decode helper and Rust regression."
       },
       "falsification_cases": [
         {
@@ -5359,6 +5382,11 @@
           "id": "bounded-request-vector-json-gate",
           "description": "The reusable bounded-request vector generator must remain executable and emit parseable JSON examples for exact-limit acceptance and over-limit rejection precedence.",
           "gate": "cd formal/lean && lake exe gen_bounded_request_admission_vectors | python3 -m json.tool >/dev/null"
+        },
+        {
+          "id": "block-action-byte-budget-regression",
+          "description": "Native block-action decode must reject over-cap action counts, per-action payloads, and aggregate bytes before SCALE action decode.",
+          "gate": "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-pre-heavy-resource-bound-gate",
@@ -6948,8 +6976,8 @@
       "id": "native.codec-admission",
       "claim_id": "native.codec-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native codec-admission transition, native sync decode, SCALE exact decode, bincode exact decode, and block-action payload decode accept only when the underlying parser accepts, every byte is consumed, exact-decode bytes re-encode canonically, and declared action count matches the action payload count. The accepted pending-action byte parser/publication theorem composes those exact decode facts with pending reload, action-hash, wire replay, and raw canonical publication predicates, deriving projected replay row equality from declared-count binding rather than assuming it directly.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, non-canonical exact-decode bytes, action count mismatch, and non-exact action payloads. `Hegemon.Native.CodecAdmission.sync_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.exact_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.block_action_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.block_action_decode_acceptance_binds_declared_count`, and `Hegemon.Native.CodecAdmission.canonical_decode_non_malleability_facts` package the inverse safety direction: accepted codec surfaces imply parser acceptance, full byte consumption, canonical exact re-encoding, and block-action count agreement, while all modeled malformed alternatives reject. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection, trailing-byte rejection, and parser-accepted non-canonical encoding rejection. Native bridge message extraction now propagates exact outbound bridge payload decode failures before message-root construction, block commitment admission, replay, witness export, or latest-message backscan selection. Outbound native sync publication is bound too: sync messages must encode successfully before announcement queueing or peer sends. `Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_refines_wire_replay_rows` composes accepted exact pending/block-action decode with accepted wire replay and the production declared-count binding; `Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication` extends that composition through tx-leaf canonical statement artifact facts while still leaving parser-internal SCALE/bincode correctness as an explicit residual.",
+      "formal_statement": "For the executable Lean native codec-admission transition, native sync decode, SCALE exact decode, bincode exact decode, and block-action payload decode accept only when the underlying parser accepts, every byte is consumed, exact-decode bytes re-encode canonically, declared action count matches the action payload count, and accepted pending/block action parser rows can carry the generic bounded-request cap facts before wire replay. The accepted pending-action byte parser/publication theorem composes those exact decode facts with bounded-resource admission, pending reload, action-hash, wire replay, and raw canonical publication predicates, deriving projected replay row equality from declared-count binding rather than assuming it directly.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CodecAdmission.sync_accepts_iff_preconditions`, `Hegemon.Native.CodecAdmission.exact_accepts_iff_preconditions`, and `Hegemon.Native.CodecAdmission.block_action_decode_accepts_iff_preconditions` prove the executable admission predicates, with companion rejection theorems for wire parser failure, trailing bytes, parser failure, non-canonical exact-decode bytes, action count mismatch, and non-exact action payloads. `Hegemon.Native.CodecAdmission.sync_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.exact_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.block_action_decode_acceptance_excludes_malleability`, `Hegemon.Native.CodecAdmission.block_action_decode_acceptance_binds_declared_count`, and `Hegemon.Native.CodecAdmission.canonical_decode_non_malleability_facts` package the inverse safety direction: accepted codec surfaces imply parser acceptance, full byte consumption, canonical exact re-encoding, and block-action count agreement, while all modeled malformed alternatives reject. `gen_codec_admission_vectors` emits Lean-derived sync, exact-decode, and block-action decode examples. The formal-core gate checks those vectors against production `decode_sync_message`, `decode_scale_exact`, `bincode_deserialize_exact`, and `decode_block_actions` fixtures, including legacy bincode sync rejection, trailing-byte rejection, and parser-accepted non-canonical encoding rejection. Native bridge message extraction now propagates exact outbound bridge payload decode failures before message-root construction, block commitment admission, replay, witness export, or latest-message backscan selection. Outbound native sync publication is bound too: sync messages must encode successfully before announcement queueing or peer sends. `Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_refines_wire_replay_rows` composes accepted exact pending/block-action decode with accepted wire replay and the production declared-count binding; `Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows` additionally carries accepted bounded-request caps and proves the resource item count matches declared count, decoded payload rows, and wire replay rows; `Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication` extends that composition through tx-leaf canonical statement artifact facts while still leaving parser-internal SCALE/bincode correctness as an explicit residual. Production `decode_block_actions` now calls `validate_block_action_byte_budget` before allocating decoded actions or SCALE-decoding action payloads.",
       "depends_on": [
         "release.dependency-waivers"
       ],

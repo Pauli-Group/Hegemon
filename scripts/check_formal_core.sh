@@ -369,6 +369,7 @@ HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS="$LEAN_CANONICAL_REORG_CHAI
   cargo test -p hegemon-node lean_generated_canonical_reorg_chain_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CODEC_ADMISSION_VECTORS="$LEAN_CODEC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS="$LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_coinbase_accounting_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS="$LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS" \
