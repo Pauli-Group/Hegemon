@@ -4,11 +4,11 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.52,
+  "overall_completion_percent": 84.53,
   "last_full_formal_core": {
-    "date": "2026-06-16T05:10:52Z",
-    "commit": "738689529500",
-    "status": "passed locally after adding schema-v2 bridge mint/replay policy conformance, set-style Lean replay import semantics, and exact replay next-state Rust checks",
+    "date": "2026-06-16T05:47:16Z",
+    "commit": "working-tree-before-mined-byte-publication-commit",
+    "status": "passed locally after adding mined action-byte equality at atomic commit, mined commit/startup publication conformance, and exact-decodable mined action-byte drift rejection",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
     "named_lean_theorems": 1707,
@@ -18,7 +18,7 @@
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 479,
+    "falsification_cases": 481,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -111,45 +111,41 @@
     ]
   },
   "last_production_binding_slice": {
-    "date": "2026-06-15",
-    "summary": "Bound native stablecoin policy authorization to production transfer admission. The release path no longer accepts enabled stablecoin payloads through a mutable authorization bit; it derives authorization from protocol_manifest().stablecoin_policies, including explicit enabled/retired lifecycle checks, and the Lean decision table. The manifest list helper accepts if any plausible candidate passes the exact table, so a stale duplicate cannot shadow a live entry; the old set-membership helper remains test-only for legacy fixtures.",
+    "date": "2026-06-16",
+    "summary": "Bound mined native commit publication to exact action bytes before sled mutation, and checked the live mined coinbase import path from raw action bytes through atomic commit rows, canonical rebuild rows, and reopened startup replay rows. The positive conformance gate proves the imported block body, canonical indexes, and startup-loaded state agree; the negative gate proves an exact-decodable substituted action byte stream is rejected before block, best, commitment, archive, pending, or staged-DA trees mutate.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized",
-      "node/src/native/mod.rs native_stablecoin_policy_binding_authorized_by_protocol_manifest",
-      "node/src/native/mod.rs native_stablecoin_policy_binding_authorized_by_entries",
-      "node/src/native/mod.rs evaluate_native_stablecoin_policy_authorization",
-      "protocol/kernel/src/manifest.rs StablecoinPolicyManifestEntry oracle_submitted_at/enabled_at/retired_at",
-      "scripts/check_formal_core.sh stablecoin policy authorization vector gate"
+      "node/src/native/mod.rs commit_mined_block_atomically exact action-byte equality check",
+      "node/src/native/mod.rs mined_commit_startup_replay_matches_canonical_publication_rows",
+      "node/src/native/mod.rs mined_commit_rejects_meta_action_bytes_not_matching_planned_actions",
+      "scripts/check_formal_core.sh mined commit/startup raw-byte publication gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.StablecoinPolicyAuthorization.*",
-      "Hegemon.Native.TransferStateAdmission.*stablecoin*",
-      "Hegemon.Native.BlockActionValidation.*stablecoin*",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.*AuthorizedStablecoin*"
+      "Hegemon.Native.MinedBlockCommitPublication.*",
+      "Hegemon.Native.RawIngressFullBytePublicationSurface.*",
+      "Hegemon.Native.CanonicalPublicationRefinement.*",
+      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*"
     ],
     "validation": {
       "targeted_rust": [
-        "HEGEMON_LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS=<generated-json> cargo test -p hegemon-node stablecoin_policy --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_accepts_exact_active_policy --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_uses_live_duplicate_candidate --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node stablecoin_policy_manifest_authorization_rejects_invalid_records --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-15T23:11:19Z with the native stablecoin policy authorization gate enabled",
-      "claims": 117,
-      "named_lean_theorems": 1669,
-      "production_eligible_claims": 107,
-      "falsification_cases": 466,
-      "implementation_bindings": 207,
-      "implementation_result_obligations": 161,
-      "implementation_dominance_constraints": 129,
-      "implementation_dominance_edges": 339,
-      "implementation_order_constraints": 143,
-      "implementation_order_edges": 371
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T05:47:16Z with the mined commit/startup publication and byte-drift rejection gates enabled",
+      "claims": 118,
+      "named_lean_theorems": 1707,
+      "production_eligible_claims": 108,
+      "falsification_cases": 481,
+      "implementation_bindings": 209,
+      "implementation_result_obligations": 163,
+      "implementation_dominance_constraints": 130,
+      "implementation_dominance_edges": 342,
+      "implementation_order_constraints": 144,
+      "implementation_order_edges": 374
     },
     "known_limitations": [
-      "The manifest-backed production predicate now has an explicit active-manifest lifecycle, but still needs a replayed native policy/oracle/attestation state source before this is full dynamic policy verification.",
-      "The proof does not verify oracle-source honesty, attestation-signature soundness, policy governance, hash security, or proof-system soundness.",
-      "Raw parser equivalence, storage durability, complete native-node equivalence, and the higher LiveStablecoinPolicyAuthorizes replay theorem remain separate open work."
+      "The mined/startup conformance gate exercises the coinbase production path plus a direct exact-decodable mismatch rejection at the atomic commit helper; mixed transfer, sidecar, nullifier, and bridge replay publication remain covered by separate projection gates and still need one combined live mined/import/reorg/startup scenario.",
+      "This slice does not prove arbitrary SCALE/parser internals, hash security/equivalence, deployed proof-system soundness, external receipt soundness, peer honesty, sled durability below accepted predicates, or complete native-node equivalence.",
+      "The added runtime equality check re-encodes mined actions once before commit; this is intentionally low cost and occurs after PoW/import admission but before sled mutation."
     ]
   },
   "properties": [
@@ -593,7 +589,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99,
+      "completion_percent": 99.2,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -629,12 +625,15 @@
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive rows exactly match the decoded/materialized/planned/wire projection path",
         "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks production sync block_range action bytes and exact canonical projection rows against the same decoded/materialized/planned/wire projection path",
         "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks committed sidecar ciphertext replay uses the canonical archive after staged DA cleanup while preserving hash/size binding",
-        "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks startup reopen rejects corrupted canonical sidecar archive bytes before accepting replayed state"
+        "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks startup reopen rejects corrupted canonical sidecar archive bytes before accepting replayed state",
+        "node/src/native/mod.rs commit_mined_block_atomically now rejects exact-decodable meta.action_bytes drift from the committed action slice before sled mutation",
+        "node/src/native/mod.rs mined_commit_startup_replay_matches_canonical_publication_rows checks live mined atomic commit rows, raw action bytes, canonical rebuild plan rows, and reopened startup replay rows agree for the production coinbase import path",
+        "node/src/native/mod.rs mined_commit_rejects_meta_action_bytes_not_matching_planned_actions checks a substituted exact-decodable mined action body cannot publish mismatched canonical rows"
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
         "Generalize the decoded/validated/materialized/planned/wire field projection proof across mining, announced import, sync import, reorg replay, canonical-index rebuild, and startup repair paths as one complete native-node refinement theorem.",
-        "Add remaining restart adversarial cases for supply, nullifiers, commitments, sidecars, and bridge replay together."
+        "Add remaining combined restart adversarial cases for nullifiers, sidecars, bridge replay, and multi-block reorg publication together."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
     },

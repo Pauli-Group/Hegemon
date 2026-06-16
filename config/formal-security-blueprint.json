@@ -10148,6 +10148,16 @@
           "id": "rust-raw-ingress-full-byte-exact-canonical-row-test",
           "description": "Changing canonical rebuild or sync block-range publication so exact canonical rows diverge from decoded/materialized/planned rows must fail the targeted Rust gate.",
           "gate": "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-mined-commit-startup-publication-rows-test",
+          "description": "Changing mined atomic commit, raw action bytes, canonical rebuild rows, or reopened startup replay rows so they stop agreeing for the live coinbase import path must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-mined-commit-action-byte-drift-rejection-test",
+          "description": "Allowing an exact-decodable substituted mined action body to publish rows from a different committed action slice must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
         }
       ],
       "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, named production row projection facts, and ordered field-row projection evidence. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."

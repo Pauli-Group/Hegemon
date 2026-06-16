@@ -4152,7 +4152,9 @@
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
         "bash scripts/check_formal_core.sh",
         "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {
@@ -5842,7 +5844,7 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "component": "native raw ingress full byte publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection field-row agreement across decoded, validated, materialized, planned, wire-replay, and canonical rows.",
+      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection field-row agreement across decoded, validated, materialized, planned, wire-replay, and canonical rows. Production conformance now also checks the mined coinbase path from exact action bytes through atomic commit rows, canonical rebuild rows, and startup replay, and rejects exact-decodable mined metadata/action-byte drift before sled mutation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_top_level_review_surface_over_existing_refinement_theorems",
       "production_eligible": true,
@@ -5854,7 +5856,7 @@
       "assumptions": [
         "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, canonical publication, and pending-action production projection predicates.",
         "The parser-to-canonical tx-leaf vector projection remains an explicit `NativeTxLeafArtifactCanonicalProjectionAssumptions` input, and arbitrary-byte parser internals remain separate from this composition theorem.",
-        "The production projection row theorem relies on named projection facts for validation, materialization, planning, wire replay, and canonical row construction; companion Rust regressions exercise the current production helper path and exact canonical row contents.",
+        "The production projection row theorem relies on named projection facts for validation, materialization, planning, wire replay, and canonical row construction; companion Rust regressions exercise the current production helper path, exact canonical row contents, mined commit/startup replay row agreement, and exact-decodable mined action-byte mismatch rejection.",
         "The theorem intentionally does not prove cryptographic hash security, proof-system soundness, DA availability, storage durability below accepted predicates, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -5877,7 +5879,9 @@
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh",
         "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {

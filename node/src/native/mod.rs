@@ -3617,6 +3617,12 @@ impl NativeNode {
                 rejection,
             )
         })?;
+        let expected_action_bytes: Vec<Vec<u8>> = actions.iter().map(Encode::encode).collect();
+        if meta.action_bytes != expected_action_bytes {
+            return Err(anyhow!(
+                "native mined block action bytes mismatch committed actions"
+            ));
+        }
 
         let block_record = bincode::serialize(meta)?;
         let best_record = block_record.clone();
@@ -24222,6 +24228,33 @@ mod tests {
         );
     }
 
+    fn assert_canonical_index_plans_eq(
+        label: &'static str,
+        actual: &NativeCanonicalIndexPlan,
+        expected: &NativeCanonicalIndexPlan,
+    ) {
+        assert_eq!(
+            actual.commitment_entries, expected.commitment_entries,
+            "{label}: commitment rows drifted"
+        );
+        assert_eq!(
+            actual.nullifier_entries, expected.nullifier_entries,
+            "{label}: nullifier rows drifted"
+        );
+        assert_eq!(
+            actual.bridge_replay_entries, expected.bridge_replay_entries,
+            "{label}: bridge replay rows drifted"
+        );
+        assert_eq!(
+            actual.ciphertext_index_entries, expected.ciphertext_index_entries,
+            "{label}: ciphertext index rows drifted"
+        );
+        assert_eq!(
+            actual.ciphertext_archive_entries, expected.ciphertext_archive_entries,
+            "{label}: ciphertext archive rows drifted"
+        );
+    }
+
     #[test]
     fn action_state_effect_preview_drops_consumed_bridge_replay_from_work() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -24377,6 +24410,105 @@ mod tests {
             &node.da_ciphertext_tree,
             &served,
         );
+    }
+
+    #[test]
+    fn mined_commit_startup_replay_matches_canonical_publication_rows() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "unsafe", false);
+        let reward = consensus::reward::block_subsidy(1);
+        let (imported, expected_plan) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            stage_test_coinbase(&node, reward, [90u8; 48]);
+            let staged = node
+                .state
+                .read()
+                .pending_actions
+                .values()
+                .next()
+                .cloned()
+                .expect("staged coinbase");
+            let work = node.prepare_work().expect("prepare native work");
+            assert_eq!(work.tx_count, 1);
+            let seal = mine_native_round(work.clone(), 0).expect("coinbase seal");
+            let imported = node
+                .import_mined_block(&work, seal)
+                .expect("coinbase import")
+                .expect("coinbase block");
+            let decoded = decode_block_actions(&imported).expect("decode imported action bytes");
+            assert_eq!(decoded.len(), 1);
+            assert_pending_action_fields_eq(&decoded[0], &staged);
+            assert_eq!(imported.action_bytes, vec![staged.encode()]);
+            assert_eq!(imported.supply_digest, u128::from(reward));
+
+            let chain = node
+                .chain_to_hash(imported.hash)
+                .expect("load imported canonical chain");
+            let expected_plan = plan_canonical_index_rebuild(
+                &chain,
+                &node.da_ciphertext_tree,
+                Some(&node.ciphertext_archive_tree),
+            )
+            .expect("canonical plan from imported raw bytes");
+            assert!(
+                node.canonical_index_matches_plan(&expected_plan)
+                    .expect("compare mined canonical indexes"),
+                "mined atomic commit rows must match canonical rebuild plan"
+            );
+            assert_eq!(expected_plan.commitment_entries.len(), 1);
+            assert_eq!(expected_plan.ciphertext_archive_entries.len(), 1);
+            assert_eq!(expected_plan.ciphertext_index_entries.len(), 1);
+            assert!(expected_plan.nullifier_entries.is_empty());
+            assert!(expected_plan.bridge_replay_entries.is_empty());
+            {
+                let state = node.state.read();
+                assert_eq!(state.best, imported);
+                assert_eq!(
+                    state.commitment_tree.leaf_count(),
+                    expected_plan.commitment_entries.len() as u64
+                );
+                assert!(state.pending_actions.is_empty());
+                assert!(state.nullifiers.is_empty());
+                assert!(state.consumed_bridge_messages.is_empty());
+            }
+            node.db.flush().expect("flush imported native block");
+            (imported, expected_plan)
+        };
+
+        let reopened = NativeNode::open(config).expect("reopen node");
+        assert_eq!(reopened.best_meta(), imported);
+        let reopened_chain = reopened
+            .chain_to_hash(imported.hash)
+            .expect("load reopened canonical chain");
+        let reopened_plan = plan_canonical_index_rebuild(
+            &reopened_chain,
+            &reopened.da_ciphertext_tree,
+            Some(&reopened.ciphertext_archive_tree),
+        )
+        .expect("canonical plan after startup replay");
+        assert_canonical_index_plans_eq(
+            "startup replay publication",
+            &reopened_plan,
+            &expected_plan,
+        );
+        assert!(
+            reopened
+                .canonical_index_matches_plan(&expected_plan)
+                .expect("compare reopened canonical indexes"),
+            "startup-loaded canonical rows must match mined publication plan"
+        );
+        {
+            let state = reopened.state.read();
+            assert_eq!(state.best, imported);
+            assert_eq!(
+                state.commitment_tree.leaf_count(),
+                expected_plan.commitment_entries.len() as u64
+            );
+            assert!(state.pending_actions.is_empty());
+            assert!(state.nullifiers.is_empty());
+            assert!(state.consumed_bridge_messages.is_empty());
+        }
     }
 
     #[test]
@@ -24799,6 +24931,49 @@ mod tests {
             .get(action.ciphertext_hashes[0])
             .expect("read staged sidecar after commit")
             .is_none());
+    }
+
+    #[test]
+    fn mined_commit_rejects_meta_action_bytes_not_matching_planned_actions() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let parent = node.best_meta();
+        let action = test_sidecar_transfer_action(parent.state_root, [60u8; 48], [61u8; 48], 0);
+        let substitute = test_sidecar_transfer_action(parent.state_root, [62u8; 48], [63u8; 48], 0);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+        let mut meta = mined_empty_child(&parent, 1, pow_bits, 0);
+        meta.action_bytes = vec![substitute.encode()];
+        meta.tx_count = 1;
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: 0,
+            ciphertexts: vec![test_transfer_ciphertext_bytes()],
+            replay_key: None,
+        }];
+
+        let err = node
+            .commit_mined_block_atomically(std::slice::from_ref(&action), &planned, &meta)
+            .expect_err("mismatched mined action bytes must reject before sled mutation");
+
+        assert!(
+            err.to_string()
+                .contains("native mined block action bytes mismatch committed actions"),
+            "unexpected commit error: {err}"
+        );
+        assert!(node
+            .block_tree
+            .get(meta.hash)
+            .expect("read rejected block record")
+            .is_none());
+        assert_eq!(node.best_meta(), parent);
+        assert_eq!(node.commitment_tree.len(), 0);
+        assert_eq!(node.ciphertext_archive_tree.len(), 0);
+        assert!(node
+            .da_ciphertext_tree
+            .get(action.ciphertext_hashes[0])
+            .expect("read staged sidecar after rejected commit")
+            .is_some());
     }
 
     #[test]
