@@ -5651,7 +5651,7 @@
       "id": "formal.native-commitment-tree-refinement",
       "component": "native commitment-tree refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, and that accepted raw-ingress full-byte publication additionally binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows.",
+      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, that accepted raw-ingress full-byte publication binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows, and that the same raw-ingress field-projection surface binds canonical nullifier and bridge replay rows to exact ordered decoded/planned replay-set content.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_nonproduction_refinement",
       "production_eligible": false,
@@ -5677,12 +5677,22 @@
         "Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay",
         "Hegemon.Native.CanonicalPublicationRefinement.accepted_raw_canonical_publication_refines_ledger_tree_replay",
         "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content",
+        "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_replay_set_content",
+        "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_count",
+        "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_keys",
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_content",
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_indexes",
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_length",
+        "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_content",
+        "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_length",
+        "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_eq_planned_replay_keys",
+        "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_length",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedCommitmentRows_indexes",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedCommitmentRows_values",
+        "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_length",
+        "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_values",
         "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_commitment_tree_content",
+        "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_replay_set_content",
         "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_canonical_plan_accepts",
         "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from",
         "Hegemon.Native.CommitmentTreeRefinement.accepted_stream_from_commitment_starts_from",
@@ -5692,9 +5702,9 @@
       ],
       "assumptions": [
         "The accepted ledger/tree replay theorem proves root-cursor agreement across the modeled accepted chain, packages that with accepted ledger replay, supply replay, leaf-cursor replay, canonical commitment-plan preconditions, nullifier uniqueness, and bridge replay uniqueness, and the raw projection theorem now proves raw-decoded replay/tree inputs inherit those same facts. The canonical publication theorem composes those replay facts with accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, and storage durability admission.",
-        "The commitment-tree content refinement consumes the accepted raw-ingress field-projection evidence already checked by production regressions; it does not prove arbitrary parser internals or Merkle hash implementation equivalence.",
+        "The commitment-tree content refinement consumes the accepted raw-ingress field-projection evidence already checked by production regressions; its replay-set package now carries exact ordered nullifier rows and exact ordered planned bridge replay rows through the same raw witness. It does not prove arbitrary parser internals, replay-key hash security, nullifier cryptographic security, or Merkle hash implementation equivalence.",
         "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
-        "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; this new slice does not add a separate Rust conformance vector or implementation binding.",
+        "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; the replay-set content slice is production-bound by a focused canonical-index rebuild regression that compares decoded nullifier rows, materialized/planned replay keys, rebuild-plan rows, and persisted sled markers.",
         "This slice does not prove commitment-tree hash security, Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
@@ -5707,17 +5717,19 @@
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {
           "id": "chain-level-commitment-tree-refinement-missing",
-          "description": "The new theorem connects native action-stream planned starts, action-plan replay, and accepted tree-transition publication, but full chain-level Merkle membership, cryptographic hash, reorg/startup replay, and Rust/native-node refinement remain open.",
+          "description": "The theorem connects native action-stream planned starts, action-plan replay, accepted tree-transition publication, raw-ingress commitment rows, and raw-ingress replay-set rows, but full chain-level Merkle membership, cryptographic hash/security, arbitrary parser internals, storage durability below sled, and complete Rust/native-node refinement remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

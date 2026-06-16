@@ -41,6 +41,14 @@ def orderedDecodedCommitmentIndexes
       (fun row =>
         commitmentIndexesFrom row.commitmentStart row.commitments))
 
+def orderedDecodedNullifiers
+    (rows : List PendingActionFieldProjectionRow) : List Nat :=
+  flattenRows (rows.map (fun row => row.nullifiers))
+
+def orderedPlannedBridgeReplayKeys
+    (rows : List PendingActionFieldProjectionRow) : List Nat :=
+  rows.filterMap (fun row => row.bridgeReplayKey)
+
 theorem rowsWithOffsets_values
     (start : Nat)
     (values : List Nat) :
@@ -100,6 +108,30 @@ theorem projectedCommitmentRows_length
   rw [← projectedCommitmentRows_values rows]
   simp
 
+theorem projectedNullifierRows_values
+    (rows : List PendingActionFieldProjectionRow) :
+    projectedNullifierRows rows =
+      orderedDecodedNullifiers rows := by
+  rfl
+
+theorem projectedNullifierRows_length
+    (rows : List PendingActionFieldProjectionRow) :
+    (projectedNullifierRows rows).length =
+      (orderedDecodedNullifiers rows).length := by
+  rw [projectedNullifierRows_values rows]
+
+theorem projectedBridgeReplayRows_eq_planned_replay_keys
+    (rows : List PendingActionFieldProjectionRow) :
+    projectedBridgeReplayRows rows =
+      orderedPlannedBridgeReplayKeys rows := by
+  rfl
+
+theorem projectedBridgeReplayRows_length
+    (rows : List PendingActionFieldProjectionRow) :
+    (projectedBridgeReplayRows rows).length =
+      (orderedPlannedBridgeReplayKeys rows).length := by
+  rw [projectedBridgeReplayRows_eq_planned_replay_keys rows]
+
 theorem canonical_commitment_rows_bind_ordered_decoded_content
     {decodedRows : List PendingActionFieldProjectionRow}
     {canonicalRows : PendingActionCanonicalFieldRows}
@@ -132,6 +164,50 @@ theorem canonical_commitment_rows_bind_ordered_decoded_length
       (orderedDecodedCommitments decodedRows).length := by
   rw [canonicalCommitmentRowsMatchDecoded]
   exact projectedCommitmentRows_length decodedRows
+
+theorem canonical_nullifier_rows_bind_ordered_decoded_content
+    {decodedRows : List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (canonicalNullifierRowsMatchDecoded :
+      canonicalRows.nullifierRows =
+        projectedNullifierRows decodedRows) :
+    canonicalRows.nullifierRows =
+      orderedDecodedNullifiers decodedRows := by
+  rw [canonicalNullifierRowsMatchDecoded]
+  exact projectedNullifierRows_values decodedRows
+
+theorem canonical_nullifier_rows_bind_ordered_decoded_length
+    {decodedRows : List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (canonicalNullifierRowsMatchDecoded :
+      canonicalRows.nullifierRows =
+        projectedNullifierRows decodedRows) :
+    canonicalRows.nullifierRows.length =
+      (orderedDecodedNullifiers decodedRows).length := by
+  rw [canonicalNullifierRowsMatchDecoded]
+  exact projectedNullifierRows_length decodedRows
+
+theorem canonical_bridge_replay_rows_bind_planned_replay_keys
+    {plannedRows : List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (canonicalBridgeReplayRowsMatchPlanned :
+      canonicalRows.bridgeReplayRows =
+        projectedBridgeReplayRows plannedRows) :
+    canonicalRows.bridgeReplayRows =
+      orderedPlannedBridgeReplayKeys plannedRows := by
+  rw [canonicalBridgeReplayRowsMatchPlanned]
+  exact projectedBridgeReplayRows_eq_planned_replay_keys plannedRows
+
+theorem canonical_bridge_replay_rows_bind_planned_replay_count
+    {plannedRows : List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (canonicalBridgeReplayRowsMatchPlanned :
+      canonicalRows.bridgeReplayRows =
+        projectedBridgeReplayRows plannedRows) :
+    canonicalRows.bridgeReplayRows.length =
+      (orderedPlannedBridgeReplayKeys plannedRows).length := by
+  rw [canonicalBridgeReplayRowsMatchPlanned]
+  exact projectedBridgeReplayRows_length plannedRows
 
 structure RawIngressCommitmentTreeContentFacts
     (surface : RawIngressSidecarReplaySurface)
@@ -242,6 +318,121 @@ structure RawIngressCommitmentTreeContentFacts
   canonicalCommitmentRowCount :
     canonicalRows.commitmentRows.length =
       (orderedDecodedCommitments decodedRows).length
+
+structure RawIngressReplaySetContentFacts
+    (surface : RawIngressSidecarReplaySurface)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (actionHash : AdmissionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (validation : BlockActionValidationInput)
+    (validationSummary : BlockActionValidationSummary)
+    (materializedActionCount materializedPayloadCount : Nat)
+    (decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow)
+    (canonicalRows : PendingActionCanonicalFieldRows) : Prop where
+  fieldProjectionFacts :
+    RawIngressFullByteFieldProjectionFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount
+      decodedRows
+      validationRows
+      materializedRows
+      plannedRows
+      wireRows
+      canonicalRows
+  acceptedLedgerTreeReplay :
+    validateNativeLedgerTreeReplayChain
+      initial
+      (rawTreeReplayInputs blocks) =
+      some final
+  replayedLeafCursor :
+    expectedNativeLeafCountAfter
+      initial.ledger.leafCount
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.leafCount
+  finalSpentNullifiersUnique :
+    final.ledger.spentNullifiers.Nodup
+  finalBridgeReplaysUnique :
+    final.ledger.consumedBridgeReplays.Nodup
+  decodedRowsAcceptedByValidation :
+    validationRows = decodedRows
+  plannedRowsProjectAcceptedActions :
+    plannedRows = materializedRows
+  wireRowsProjectPlannedActions :
+    wireRows = plannedRows
+  exactCanonicalNullifierRows :
+    canonicalRows.nullifierRows =
+      projectedNullifierRows decodedRows
+  exactCanonicalBridgeReplayRows :
+    canonicalRows.bridgeReplayRows =
+      projectedBridgeReplayRows plannedRows
+  orderedCanonicalNullifierContent :
+    canonicalRows.nullifierRows =
+      orderedDecodedNullifiers decodedRows
+  canonicalNullifierRowCount :
+    canonicalRows.nullifierRows.length =
+      (orderedDecodedNullifiers decodedRows).length
+  orderedCanonicalBridgeReplayKeys :
+    canonicalRows.bridgeReplayRows =
+      orderedPlannedBridgeReplayKeys plannedRows
+  canonicalBridgeReplayRowCount :
+    canonicalRows.bridgeReplayRows.length =
+      (orderedPlannedBridgeReplayKeys plannedRows).length
 
 theorem raw_ingress_full_byte_field_projection_binds_commitment_tree_content
     {surface : RawIngressSidecarReplaySurface}
@@ -389,6 +580,159 @@ theorem raw_ingress_full_byte_field_projection_binds_commitment_tree_content
           facts.canonicalCommitmentRowsMatchDecoded
     }
 
+theorem raw_ingress_full_byte_field_projection_binds_replay_set_content
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (facts :
+      RawIngressFullByteFieldProjectionFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows) :
+    RawIngressReplaySetContentFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount
+      decodedRows
+      validationRows
+      materializedRows
+      plannedRows
+      wireRows
+      canonicalRows := by
+  let publicationFacts :=
+    facts.productionProjectionSurface.fullBytePublicationFacts
+  let fieldEvidence :=
+    facts.fieldProjectionFacts.fieldProjectionEvidence
+  exact
+    {
+      fieldProjectionFacts := facts,
+      acceptedLedgerTreeReplay :=
+        publicationFacts.acceptedLedgerTreeReplay,
+      replayedLeafCursor :=
+        publicationFacts.replayedLeafCursor,
+      finalSpentNullifiersUnique :=
+        publicationFacts.finalSpentNullifiersUnique,
+      finalBridgeReplaysUnique :=
+        publicationFacts.finalBridgeReplaysUnique,
+      decodedRowsAcceptedByValidation :=
+        fieldEvidence.validationRowsProjectDecoded,
+      plannedRowsProjectAcceptedActions :=
+        fieldEvidence.plannedRowsProjectMaterialized,
+      wireRowsProjectPlannedActions :=
+        fieldEvidence.wireRowsProjectPlanned,
+      exactCanonicalNullifierRows :=
+        facts.canonicalNullifierRowsMatchDecoded,
+      exactCanonicalBridgeReplayRows :=
+        facts.canonicalBridgeReplayRowsMatchPlanned,
+      orderedCanonicalNullifierContent :=
+        canonical_nullifier_rows_bind_ordered_decoded_content
+          facts.canonicalNullifierRowsMatchDecoded,
+      canonicalNullifierRowCount :=
+        canonical_nullifier_rows_bind_ordered_decoded_length
+          facts.canonicalNullifierRowsMatchDecoded,
+      orderedCanonicalBridgeReplayKeys :=
+        canonical_bridge_replay_rows_bind_planned_replay_keys
+          facts.canonicalBridgeReplayRowsMatchPlanned,
+      canonicalBridgeReplayRowCount :=
+        canonical_bridge_replay_rows_bind_planned_replay_count
+          facts.canonicalBridgeReplayRowsMatchPlanned
+    }
+
 theorem accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : ExactDecodeInput}
@@ -523,6 +867,142 @@ theorem accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content
       decodedRowsMatchPayloadCount
   exact
     raw_ingress_full_byte_field_projection_binds_commitment_tree_content
+      fieldFacts
+
+theorem accepted_raw_ingress_full_byte_publication_binds_replay_set_content
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (facts :
+      RawIngressFullBytePublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (blockActionValidationAccepted :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (productionProjectionFacts :
+      PendingActionProductionProjectionFacts
+        blockActionDecode
+        surface.daSidecarReplay.wireReplayProjection
+        validation
+        materializedActionCount
+        materializedPayloadCount)
+    (fieldProjectionEvidence :
+      PendingActionOrderedFieldProjectionEvidence
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows)
+    (decodedRowsMatchPayloadCount :
+      decodedRows.length =
+        blockActionDecode.actualActionPayloadCount) :
+    RawIngressReplaySetContentFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount
+      decodedRows
+      validationRows
+      materializedRows
+      plannedRows
+      wireRows
+      canonicalRows := by
+  have fieldFacts :=
+    accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows
+      facts
+      blockActionValidationAccepted
+      productionProjectionFacts
+      fieldProjectionEvidence
+      decodedRowsMatchPayloadCount
+  exact
+    raw_ingress_full_byte_field_projection_binds_replay_set_content
       fieldFacts
 
 end CommitmentTreeContentRefinement

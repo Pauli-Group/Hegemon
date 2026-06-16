@@ -24790,6 +24790,142 @@ mod tests {
     }
 
     #[test]
+    fn canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let genesis = node.best_meta();
+        let (block, actions) = projection_equivalence_action_mix_block(&genesis, pow_bits);
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, action);
+        }
+        let chain = vec![genesis, block];
+
+        assert_canonical_projection_rows_match(
+            "canonical rebuild replay-set projection equivalence",
+            &node.da_ciphertext_tree,
+            &chain,
+        );
+
+        let state = test_state(chain.first().expect("genesis").clone());
+        let decoded_actions = chain
+            .iter()
+            .skip(1)
+            .flat_map(|meta| decode_block_actions(meta).expect("decode canonical action bytes"))
+            .collect::<Vec<_>>();
+        let materialized =
+            materialize_native_action_payloads(&node.da_ciphertext_tree, &decoded_actions)
+                .expect("materialize decoded actions");
+        let planned =
+            plan_materialized_action_effects(&node.da_ciphertext_tree, &state, &decoded_actions)
+                .expect("plan decoded actions");
+        let projection = admit_native_action_wire_replay_projection(
+            "canonical rebuild replay-set wire projection",
+            &decoded_actions,
+            &planned,
+        )
+        .expect("project planned replay rows");
+        let rebuild_output = plan_canonical_index_rebuild(&chain, &node.da_ciphertext_tree, None)
+            .expect("canonical index rebuild output");
+
+        let decoded_nullifier_rows = decoded_actions
+            .iter()
+            .flat_map(|action| action.nullifiers.iter().copied())
+            .collect::<Vec<_>>();
+        let materialized_action_nullifier_rows = decoded_actions
+            .iter()
+            .zip(materialized.iter())
+            .flat_map(|(action, payload)| {
+                assert_eq!(
+                    payload.replay_key,
+                    bridge_inbound_replay_key_from_action(action)
+                        .expect("project materialized replay key")
+                );
+                action.nullifiers.iter().copied().collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let materialized_replay_keys = materialized
+            .iter()
+            .filter_map(|payload| payload.replay_key)
+            .collect::<Vec<_>>();
+        let planned_replay_keys = planned
+            .iter()
+            .filter_map(|effect| effect.replay_key)
+            .collect::<Vec<_>>();
+
+        assert!(
+            !decoded_nullifier_rows.is_empty(),
+            "fixture must exercise canonical nullifier rows"
+        );
+        assert!(
+            !planned_replay_keys.is_empty(),
+            "fixture must exercise canonical bridge replay rows"
+        );
+        assert_eq!(
+            materialized_action_nullifier_rows, decoded_nullifier_rows,
+            "materialized action order must preserve decoded nullifier rows"
+        );
+        assert_eq!(
+            materialized_replay_keys, planned_replay_keys,
+            "planned replay keys must preserve materialized replay-key order"
+        );
+        assert_eq!(
+            projection.projected_bridge_replay_row_count,
+            planned_replay_keys.len(),
+            "wire replay row count must match planned replay-key rows"
+        );
+        assert_eq!(
+            rebuild_output.nullifier_entries, decoded_nullifier_rows,
+            "canonical rebuild nullifier rows must match decoded row order"
+        );
+        assert_eq!(
+            rebuild_output.bridge_replay_entries, planned_replay_keys,
+            "canonical rebuild bridge replay rows must match planned row order"
+        );
+
+        node.commit_canonical_index_repair_atomically(rebuild_output.clone())
+            .expect("commit canonical index rebuild output");
+        assert!(
+            node.canonical_index_matches_plan(&rebuild_output)
+                .expect("canonical index repair output matches plan"),
+            "persisted canonical indexes must match rebuild output"
+        );
+        let persisted_nullifier_rows = rebuild_output
+            .nullifier_entries
+            .iter()
+            .map(|nullifier| {
+                let marker = node
+                    .nullifier_tree
+                    .get(nullifier.as_slice())
+                    .expect("read persisted nullifier marker");
+                assert_eq!(marker.as_deref(), Some(b"1".as_slice()));
+                *nullifier
+            })
+            .collect::<Vec<_>>();
+        let persisted_bridge_replay_rows = rebuild_output
+            .bridge_replay_entries
+            .iter()
+            .map(|replay_key| {
+                let marker = node
+                    .bridge_inbound_tree
+                    .get(replay_key.as_slice())
+                    .expect("read persisted bridge replay marker");
+                assert_eq!(marker.as_deref(), Some(b"1".as_slice()));
+                *replay_key
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            persisted_nullifier_rows, decoded_nullifier_rows,
+            "persisted canonical nullifier rows must match decoded row order"
+        );
+        assert_eq!(
+            persisted_bridge_replay_rows, planned_replay_keys,
+            "persisted canonical bridge replay rows must match planned row order"
+        );
+    }
+
+    #[test]
     fn block_range_projects_decoded_materialized_wire_rows() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;

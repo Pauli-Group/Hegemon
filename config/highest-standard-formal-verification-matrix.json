@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.96,
+  "overall_completion_percent": 85.07,
   "last_full_formal_core": {
-    "date": "2026-06-16T08:44:33Z",
-    "commit": "bdacf43e",
-    "status": "passed locally after adding the SmallWood balance-boundary theorem and inline-Merkle public balance/stablecoin mutation gates",
+    "date": "2026-06-16T09:12:20Z",
+    "commit": "7388f711",
+    "status": "passed locally after adding the raw-ingress replay-set row-content theorem and canonical replay-set row persistence gate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1716,
-    "axiom_free_theorems": 776,
-    "axiom_dependent_theorems": 940,
+    "named_lean_theorems": 1726,
+    "axiom_free_theorems": 784,
+    "axiom_dependent_theorems": 942,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 491,
+    "falsification_cases": 492,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -71,34 +71,35 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved a concrete SmallWood balance/public-field verifier-boundary target. The new Lean module packages signed-magnitude canonicality, native authorized-delta exposure, selected stablecoin authorized-delta exposure, disabled stablecoin zero, and non-selected non-native zero facts for the inline-Merkle verifier surface without claiming deployed PCS/AIR soundness.",
+    "summary": "Proved raw-ingress replay-set row-content binding for the canonical publication surface. The native commitment-tree content refinement now also packages canonical nullifier rows as exact ordered decoded nullifiers and canonical bridge replay rows as exact ordered planned replay keys over the same accepted raw-ingress full-byte witness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean"
+      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_expose_boundary_facts",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_authorize_native_delta",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_authorize_selected_stablecoin_delta",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_disabled_stablecoin_delta_zero",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_nonselected_non_native_zero",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.sample_native_balance_constraints_accept",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.sample_stablecoin_balance_constraints_accept",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_value_balance_sign_rejected",
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_stablecoin_issuance_sign_rejected"
+      "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_values",
+      "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_length",
+      "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_eq_planned_replay_keys",
+      "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_length",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_content",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_length",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_keys",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_count",
+      "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_replay_set_content",
+      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_replay_set_content"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean passed locally",
-      "targeted_rust": "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture and cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T08:44:33Z with 118 claims, 1716 named Lean theorem declarations, 776 axiom-free declarations, 940 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 491 falsification cases, and 209 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/CommitmentTreeContentRefinement.lean passed locally",
+      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally, including canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T09:12:20Z with 118 claims, 1726 named Lean theorem declarations, 784 axiom-free declarations, 942 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 492 falsification cases, and 209 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1716,
-      "axiom_free_theorems": 776,
-      "axiom_dependent_theorems": 940,
+      "named_lean_theorems": 1726,
+      "axiom_free_theorems": 784,
+      "axiom_dependent_theorems": 942,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 491,
+      "falsification_cases": 492,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -108,37 +109,35 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves the balance/public-field verifier-boundary target, not deployed PCS/AIR soundness.",
-      "It does not prove witness extraction, full SmallWood verifier soundness, hash security, or complete Rust verifier refinement.",
-      "The split spend-only and balance/public-field deployed verifier soundness assumptions remain explicit until the full deployed verifier/AIR refinement theorem is discharged."
+      "This slice proves accepted raw-ingress replay-set row-content binding, not arbitrary raw-byte parser internals.",
+      "It does not prove nullifier or replay-key cryptographic security, sled durability below accepted predicates, or complete native-node refinement.",
+      "Positive inbound bridge mint publication remains disabled until a PQ-clean verifier replaces the experimental envelope; this slice binds replay rows for accepted/planned surfaces."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Added production SmallWood inline-Merkle mutation gates for public balance and stablecoin-delta fields. The tests mutate public fee, value-balance, balance-slot asset, stablecoin enablement, stablecoin asset, and stablecoin issuance fields, recompute auxiliary Merkle rows from the tampered public values, and still require the verifier constraints to reject.",
+    "summary": "Added a production canonical replay-set row persistence gate. The new regression checks decoded nullifier rows, materialized and planned bridge replay keys, canonical rebuild plan rows, and persisted sled markers all agree in exact order.",
     "changed_runtime_paths": [
-      "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_balance_mutation",
-      "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation",
-      "scripts/check_formal_core.sh SmallWood public balance/stablecoin mutation gates",
-      "config/formal-security-claims.json formal.transaction-balance and canonical-verifier-boundary gate metadata",
-      "config/formal-security-blueprint.json SmallWood public balance/stablecoin falsification cases"
+      "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets",
+      "scripts/check_formal_core.sh canonical_index_rebuild_projects_decoded_materialized_wire_rows gate now runs both projection and replay-set tests",
+      "config/formal-security-claims.json formal.native-commitment-tree-refinement replay-set theorem metadata",
+      "config/formal-security-blueprint.json canonical replay-set row-content falsification case"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Transaction.SmallWoodBalanceBoundary.*",
-      "Hegemon.Transaction.Balance.*",
-      "Hegemon.Transaction.CanonicalVerifierBoundary.*",
-      "Hegemon.Transaction.ProofSystemBoundary.*"
+      "Hegemon.Native.CommitmentTreeContentRefinement.*",
+      "Hegemon.Native.RawIngressFullBytePublicationSurface.*",
+      "Hegemon.Native.CanonicalPublicationRefinement.*",
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
-        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
+        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T08:44:33Z with the SmallWood balance/stablecoin mutation gates enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T09:12:20Z with the replay-set row-content persistence gate enabled",
       "claims": 118,
-      "named_lean_theorems": 1716,
+      "named_lean_theorems": 1726,
       "production_eligible_claims": 108,
-      "falsification_cases": 491,
+      "falsification_cases": 492,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -148,8 +147,8 @@
     },
     "known_limitations": [
       "This is a cfg(test) and formal-core conformance slice; it introduces no hot runtime path cost.",
-      "The gate hardens public balance/stablecoin tampering coverage, but does not prove PCS/AIR soundness or hash collision resistance.",
-      "The deployed verifier/AIR/refinement theorem must still connect the full SmallWood constraint system to the abstract balance relation."
+      "The gate hardens canonical replay-set row publication, but does not prove arbitrary parser internals or sled crash consistency below accepted transaction predicates.",
+      "The full native-node equivalence theorem still needs to compose all import, sync, reorg, startup, and repair paths end to end."
     ]
   },
   "properties": [
@@ -187,7 +186,7 @@
     {
       "id": "ledger.no-double-spend-nullifier-uniqueness",
       "weight": 7,
-      "completion_percent": 91,
+      "completion_percent": 92,
       "top_level_theorem_target": "Every accepted chain has globally unique spent nullifiers and rejects within-block, cross-block, pending, replay, and reorg duplicate nullifiers.",
       "current_evidence": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
@@ -205,7 +204,9 @@
         "formal/lean/Hegemon/Transaction/NullifierInputs.lean proves the concrete deployed nullifier preimage order used before the anti-double-spend state consumes public nullifiers",
         "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper",
         "node/src/native/mod.rs revalidates canonical reorg pending resurrection by semantically admitting existing pending actions before orphaned old-chain actions",
-        "formal-core includes a hostile reorg pending duplicate-nullifier regression before reorg persistence/publication"
+        "formal-core includes a hostile reorg pending duplicate-nullifier regression before reorg persistence/publication",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves canonical nullifier rows equal exact ordered decoded nullifier rows at the accepted raw-ingress full-byte publication boundary",
+        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets checks decoded nullifier rows, canonical rebuild rows, and persisted nullifier markers agree in order"
       ],
       "missing_work": [
         "Bind remaining canonical replay, startup reload, and side-branch canonicalization paths to the stronger carried ledger-state transition relation.",
@@ -719,7 +720,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 73,
+      "completion_percent": 74,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -741,7 +742,9 @@
         "formal/lean/Hegemon/Bridge/Replay.lean now models import with set-style pending-key removal, matching production replay-state semantics instead of list erase semantics",
         "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits schema-v2 acceptance/rejection and exact next replay-state vectors for the abstract bridge mint/replay decision table, including pending replay-key import clearing and unrelated pending-key preservation",
         "node/src/native/mod.rs checks the schema-v2 abstract bridge mint/replay vectors against production `evaluate_native_bridge_mint_replay_policy`, including rejection precedence, duplicate-free replay-set inputs, exact next consumed/pending sets, and accepted replay-key consumption",
-        "scripts/check_formal_core.sh now runs `lean_generated_bridge_mint_replay_policy_vectors_match_production` instead of only JSON-parsing the abstract policy generator output"
+        "scripts/check_formal_core.sh now runs `lean_generated_bridge_mint_replay_policy_vectors_match_production` instead of only JSON-parsing the abstract policy generator output",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves canonical bridge replay rows equal exact ordered planned bridge replay keys at the accepted raw-ingress full-byte publication boundary",
+        "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets checks materialized replay keys, planned replay keys, canonical rebuild rows, and persisted bridge replay markers agree in order"
       ],
       "missing_work": [
         "Bind the now Rust-conformant abstract bridge mint/replay decision table to a live production PQ-clean bridge mint payload grammar, decoder, and verifier when bridge minting is enabled.",
