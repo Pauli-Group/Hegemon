@@ -236,6 +236,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/ProofSystemBoundary.lean
   lake env lean Hegemon/Transaction/ProofWrapperAdmission.lean
   lake env lean Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean
+  lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean
   lake env lean Hegemon/Transaction/SmallWoodSpendAuthorization.lean
   lake env lean Hegemon/Transaction/StatementHash.lean
   lake env lean Hegemon/Transaction/GenerateStatementHashVectors.lean

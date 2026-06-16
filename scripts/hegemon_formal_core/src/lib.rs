@@ -545,6 +545,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/GenerateStatementHashVectors.lean",

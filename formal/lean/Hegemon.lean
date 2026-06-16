@@ -131,6 +131,7 @@ import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.ProofStatementBinding
 import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
+import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash

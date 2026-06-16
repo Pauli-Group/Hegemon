@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.79,
+  "overall_completion_percent": 84.96,
   "last_full_formal_core": {
-    "date": "2026-06-16T07:33:05Z",
-    "commit": "c759aea8",
-    "status": "passed locally after adding the raw-wire-excluded privacy unlinkability reduction theorem and wallet re-encryption public-summary-shape regression",
+    "date": "2026-06-16T08:44:33Z",
+    "commit": "bdacf43e",
+    "status": "passed locally after adding the SmallWood balance-boundary theorem and inline-Merkle public balance/stablecoin mutation gates",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1709,
-    "axiom_free_theorems": 771,
-    "axiom_dependent_theorems": 938,
+    "named_lean_theorems": 1716,
+    "axiom_free_theorems": 776,
+    "axiom_dependent_theorems": 940,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 487,
+    "falsification_cases": 491,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -71,29 +71,34 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Strengthened the privacy/unlinkability boundary with a no-new-assumptions Lean reduction theorem. The ciphertext privacy game now packages modeled unlinkability as equal public shape, equal public metadata, equal explicit batch/timing leakage, and the existing raw-wire indistinguishability premise, and the open-assumption package carries a raw-wire-excluded public-leakage fact object.",
+    "summary": "Proved a concrete SmallWood balance/public-field verifier-boundary target. The new Lean module packages signed-magnitude canonicality, native authorized-delta exposure, selected stablecoin authorized-delta exposure, disabled stablecoin zero, and non-selected non-native zero facts for the inline-Merkle verifier surface without claiming deployed PCS/AIR soundness.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Privacy/Observer.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts"
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_expose_boundary_facts",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_authorize_native_delta",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_authorize_selected_stablecoin_delta",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_disabled_stablecoin_delta_zero",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_nonselected_non_native_zero",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.sample_native_balance_constraints_accept",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.sample_stablecoin_balance_constraints_accept",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_value_balance_sign_rejected",
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_stablecoin_issuance_sign_rejected"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Privacy/CiphertextPrivacy.lean passed locally",
-      "targeted_rust": "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture and cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:33:05Z with 118 claims, 1709 named Lean theorem declarations, 771 axiom-free declarations, 938 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 487 falsification cases, and 209 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean passed locally",
+      "targeted_rust": "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture and cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T08:44:33Z with 118 claims, 1716 named Lean theorem declarations, 776 axiom-free declarations, 940 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 491 falsification cases, and 209 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1709,
-      "axiom_free_theorems": 771,
-      "axiom_dependent_theorems": 938,
+      "named_lean_theorems": 1716,
+      "axiom_free_theorems": 776,
+      "axiom_dependent_theorems": 940,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 487,
+      "falsification_cases": 491,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -103,36 +108,37 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice is a modeled observer/privacy-game reduction, not a simulator-based zero-knowledge proof.",
-      "ML-KEM, AEAD, KDF, RNG, proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy remain explicit assumptions.",
-      "The theorem does not prove primitive cryptographic security, ciphertext indistinguishability, proof-system soundness, hash implementation equivalence, or complete wallet/native-node equivalence."
+      "This slice proves the balance/public-field verifier-boundary target, not deployed PCS/AIR soundness.",
+      "It does not prove witness extraction, full SmallWood verifier soundness, hash security, or complete Rust verifier refinement.",
+      "The split spend-only and balance/public-field deployed verifier soundness assumptions remain explicit until the full deployed verifier/AIR refinement theorem is discharged."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Added a production wallet privacy conformance gate for same-plaintext same-recipient re-encryption. The wallet now checks that distinct RNG streams change KEM, chain wire, DA wire, and ciphertext-hash bytes while a separate regression proves the Lean-modeled public ciphertext summary shape remains stable after chain and DA parsing.",
+    "summary": "Added production SmallWood inline-Merkle mutation gates for public balance and stablecoin-delta fields. The tests mutate public fee, value-balance, balance-slot asset, stablecoin enablement, stablecoin asset, and stablecoin issuance fields, recompute auxiliary Merkle rows from the tampered public values, and still require the verifier constraints to reject.",
     "changed_runtime_paths": [
-      "wallet/src/notes.rs encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness",
-      "wallet/src/notes.rs reencryption_preserves_public_ciphertext_summary_shape",
-      "scripts/check_formal_core.sh wallet re-encryption summary-shape gate",
-      "config/formal-security-claims.json formal.ciphertext-privacy-game-boundary gate metadata",
-      "config/formal-security-blueprint.json wallet-reencryption-public-summary-shape falsification case"
+      "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_balance_mutation",
+      "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation",
+      "scripts/check_formal_core.sh SmallWood public balance/stablecoin mutation gates",
+      "config/formal-security-claims.json formal.transaction-balance and canonical-verifier-boundary gate metadata",
+      "config/formal-security-blueprint.json SmallWood public balance/stablecoin falsification cases"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Privacy.CiphertextPrivacy.*",
-      "Hegemon.Privacy.Observer.*",
-      "Hegemon.Wallet.NoteCiphertextWire.*"
+      "Hegemon.Transaction.SmallWoodBalanceBoundary.*",
+      "Hegemon.Transaction.Balance.*",
+      "Hegemon.Transaction.CanonicalVerifierBoundary.*",
+      "Hegemon.Transaction.ProofSystemBoundary.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
-        "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture"
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:33:05Z with the wallet re-encryption public-summary-shape gate enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T08:44:33Z with the SmallWood balance/stablecoin mutation gates enabled",
       "claims": 118,
-      "named_lean_theorems": 1709,
+      "named_lean_theorems": 1716,
       "production_eligible_claims": 108,
-      "falsification_cases": 487,
+      "falsification_cases": 491,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -141,9 +147,9 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "This is a production conformance regression for the wallet encryption path, not a proof of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator zero knowledge.",
-      "The gate checks public summary-shape stability for same-plaintext same-recipient re-encryption; proof-wrapper metadata, batching policy, wallet metadata, and network metadata surfaces still need more coverage.",
-      "The slice adds cfg(test) regression coverage, formal metadata, docs, and the formal-core gate; no hot production path changes or performance cost were introduced."
+      "This is a cfg(test) and formal-core conformance slice; it introduces no hot runtime path cost.",
+      "The gate hardens public balance/stablecoin tampering coverage, but does not prove PCS/AIR soundness or hash collision resistance.",
+      "The deployed verifier/AIR/refinement theorem must still connect the full SmallWood constraint system to the abstract balance relation."
     ]
   },
   "properties": [
@@ -294,7 +300,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -308,6 +314,8 @@
         "formal/lean/Hegemon/Transaction/AssetIsolation.lean proves accepted-relation authorized asset-delta policy",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean re-lifts native delta from the accepted relation under one canonical deployed verifier soundness assumption",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes native and per-asset authorized-delta facts directly from packaged canonical deployed-verifier boundary facts",
+        "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean proves concrete public native-delta, selected-stablecoin-delta, disabled-stablecoin-zero, non-selected non-native zero, and signed-magnitude canonicality facts for the SmallWood balance/public-field verifier-surface target",
+        "packed SmallWood inline-Merkle public balance/stablecoin mutation gates reject tampered public fields even when auxiliary Merkle rows are recomputed from the tampered public values",
         "public input shape and binding gates",
         "transaction public-input and serialized-input admission rejects noncanonical asset ids, including balance-slot padding field aliases",
         "native block artifact binding admission"
@@ -402,7 +410,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 83,
+      "completion_percent": 84,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -444,7 +452,9 @@
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean now proves successful public/serialized binding exposes P3 public-input field facts for merkle root, fee, signed value balance, input/output flags, balance-slot assets, and stablecoin payload fields",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean and ProofSystemBoundary.lean now lift those P3 public-input field facts through the canonical deployed verifier surface",
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean proves recursive_block_v2 pre-proof verifier-surface acceptance is exactly public tuple equality, fixed proof field width, supported tx count, derived header equality, canonical proof-prefix decoding, zero padding, projection success, projected-width admission, and explicit crypto-boundary acceptance",
-        "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2 now calls verify_block_recursive_v2_surface before verify_tree_child_v2, with Lean-generated vectors checked against the production helper"
+        "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2 now calls verify_block_recursive_v2_surface before verify_tree_child_v2, with Lean-generated vectors checked against the production helper",
+        "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean narrows the split balance/public-field deployed-verifier soundness target to concrete SmallWood public balance/stablecoin boundary facts",
+        "circuits/transaction/src/smallwood_frontend.rs inline-Merkle mutation gates require public balance/stablecoin tampering to reject even after recomputing auxiliary Merkle rows"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",

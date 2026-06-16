@@ -76,8 +76,24 @@ const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_NULLIFIERS: usize = 4;
 const PUB_COMMITMENTS: usize = 16;
 const PUB_CIPHERTEXT_HASHES: usize = 28;
+#[cfg(test)]
+const PUB_FEE: usize = 40;
+#[cfg(test)]
+const PUB_VALUE_BALANCE_SIGN: usize = 41;
+#[cfg(test)]
+const PUB_VALUE_BALANCE_MAG: usize = 42;
 const PUB_MERKLE_ROOT: usize = 43;
+#[cfg(test)]
+const PUB_BALANCE_SLOT_ASSETS: usize = 49;
+#[cfg(test)]
+const PUB_STABLE_ENABLED: usize = 53;
+#[cfg(test)]
+const PUB_STABLE_ASSET: usize = 54;
 const PUB_STABLE_POLICY_VERSION: usize = 55;
+#[cfg(test)]
+const PUB_STABLE_ISSUANCE_SIGN: usize = 56;
+#[cfg(test)]
+const PUB_STABLE_ISSUANCE_MAG: usize = 57;
 const PUB_STABLE_POLICY_HASH: usize = 58;
 const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
@@ -3791,6 +3807,31 @@ mod tests {
         }
     }
 
+    fn nonzero_value_balance_witness() -> TransactionWitness {
+        let mut witness = sample_witness();
+        witness.outputs[0].note.value = 2;
+        witness.value_balance = -1;
+        let leaf0 = witness.inputs[0].note.commitment();
+        let leaf1 = witness.inputs[1].note.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        witness.inputs[0].merkle_path = MerklePath {
+            siblings: siblings0,
+        };
+        witness.inputs[1].merkle_path = MerklePath {
+            siblings: siblings1,
+        };
+        witness.merkle_root = felts_to_bytes48(&current);
+        witness
+    }
+
     #[test]
     fn smallwood_frontend_matches_expected_shape() {
         let mut witness = sample_witness();
@@ -4449,6 +4490,94 @@ mod tests {
             )
             .expect_err("mutated stablecoin-enabled public binding must fail");
             assert!(err.to_string().contains("smallwood"));
+        }
+    }
+
+    fn assert_inline_merkle_public_balance_mutation_rejects(
+        mut witness: TransactionWitness,
+        public_index: usize,
+        label: &str,
+    ) {
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let shape =
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1();
+        let mut statement = material.public_statement.clone();
+        statement.public_values[public_index] ^= 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        let result = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &statement.public_values,
+            &material.packed_expanded_witness,
+            statement.lppc_row_count as usize,
+            statement.lppc_packing_factor as usize,
+            statement.effective_constraint_degree,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+            &auxiliary_witness_words,
+        );
+        let err = match result {
+            Ok(()) => {
+                panic!(
+                    "inline-merkle SmallWood accepted public balance mutation for {label}; \
+                 recomputed auxiliary Merkle rows must not be enough to satisfy constraints"
+                )
+            }
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("smallwood"), "{label}: {err}");
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_public_balance_mutation() {
+        let witness = sample_witness();
+        for (public_index, label) in [
+            (PUB_FEE, "fee"),
+            (PUB_VALUE_BALANCE_MAG, "value_balance_magnitude"),
+            (PUB_BALANCE_SLOT_ASSETS, "balance_slot_asset_0"),
+        ] {
+            assert_inline_merkle_public_balance_mutation_rejects(
+                witness.clone(),
+                public_index,
+                label,
+            );
+        }
+        assert_inline_merkle_public_balance_mutation_rejects(
+            nonzero_value_balance_witness(),
+            PUB_VALUE_BALANCE_SIGN,
+            "nonzero_value_balance_sign",
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation() {
+        let witness = stablecoin_witness();
+        for (public_index, label) in [
+            (PUB_STABLE_ENABLED, "stablecoin_enabled"),
+            (PUB_STABLE_ASSET, "stablecoin_asset"),
+            (PUB_STABLE_ISSUANCE_SIGN, "stablecoin_issuance_sign"),
+            (PUB_STABLE_ISSUANCE_MAG, "stablecoin_issuance_magnitude"),
+        ] {
+            assert_inline_merkle_public_balance_mutation_rejects(
+                witness.clone(),
+                public_index,
+                label,
+            );
         }
     }
 
