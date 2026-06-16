@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.26,
+  "overall_completion_percent": 86.27,
   "last_full_formal_core": {
     "date": "2026-06-16T21:31:25Z",
     "commit": "9cdd36d3",
@@ -632,7 +632,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99.7,
+      "completion_percent": 99.75,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -662,6 +662,7 @@
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean now derives validation/replay row-count agreement and bridge replay-count agreement from accepted wire replay projection plus shared decoded-row construction premises",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now derives decoded action-row/raw replay-row agreement from accepted block-action decode plus accepted wire replay projection before sync raw canonical publication",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now binds accepted decoded payload rows to validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows through named production projection facts",
+        "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now exposes pending_action_field_projection_binds_decoded_production_fields and accepted_pending_action_raw_bytes_bind_production_field_projection_rows, packaging accepted exact-decode/projection evidence into the decoded/validation/materialized/planned/wire/canonical production field-row review surface while raw pending-action bytes remain covered by Rust conformance gates",
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/planned/wire field-row agreement and canonical row projection at the raw-ingress full-byte publication surface",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean names the raw-ingress full-byte native publication row-equivalence package and composes it with accepted mined-block commit publication facts",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean now packages raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence facts into one native publication path-family theorem",

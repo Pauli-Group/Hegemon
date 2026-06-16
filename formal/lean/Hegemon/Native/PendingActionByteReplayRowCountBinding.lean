@@ -521,6 +521,71 @@ structure PendingActionByteDecodeValidatedFieldProjectionFacts
     canonicalRows.ciphertextArchiveRows =
       projectedCiphertextArchiveRows plannedRows
 
+structure PendingActionRawByteProductionFieldProjectionFacts
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (wireProjection : ActionWireReplayProjectionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (validation : BlockActionValidationInput)
+    (validationSummary : BlockActionValidationSummary)
+    (materializedActionCount materializedPayloadCount : Nat)
+    (decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow)
+    (canonicalRows : PendingActionCanonicalFieldRows) : Prop where
+  fieldProjectionFacts :
+    PendingActionByteDecodeValidatedFieldProjectionFacts
+      pendingDecode
+      blockActionDecode
+      wireProjection
+      wireOutput
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount
+      decodedRows
+      validationRows
+      materializedRows
+      plannedRows
+      wireRows
+      canonicalRows
+  pendingDecodeExact :
+    pendingDecode.parserAccepts = true
+      ∧ pendingDecode.consumedAllBytes = true
+      ∧ pendingDecode.canonicalReencodeMatches = true
+  blockActionDecodeExact :
+    actionCountMatches blockActionDecode = true
+      ∧ blockActionDecode.everyActionDecodesExactly = true
+  validationCountMatchesActions :
+    validationSummary.validatedActionCount = validation.actions.length
+  validationActionsMatchDecodedPayloads :
+    validation.actions.length = blockActionDecode.actualActionPayloadCount
+  materializedActionRowsMatchValidatedActions :
+    materializedActionCount = validationSummary.validatedActionCount
+  materializedPayloadRowsMatchValidatedActions :
+    materializedPayloadCount = validationSummary.validatedActionCount
+  validationRowsProjectDecoded :
+    validationRows = decodedRows
+  materializedRowsProjectDecoded :
+    materializedRows = decodedRows
+  plannedRowsProjectMaterialized :
+    plannedRows = materializedRows
+  wireRowsProjectPlanned :
+    wireRows = plannedRows
+  decodedRowsMatchPayloadCount :
+    decodedRows.length = blockActionDecode.actualActionPayloadCount
+  canonicalCommitmentRowsMatchDecoded :
+    canonicalRows.commitmentRows = projectedCommitmentRows decodedRows
+  canonicalNullifierRowsMatchDecoded :
+    canonicalRows.nullifierRows = projectedNullifierRows decodedRows
+  canonicalBridgeReplayRowsMatchPlanned :
+    canonicalRows.bridgeReplayRows = projectedBridgeReplayRows plannedRows
+  canonicalCiphertextIndexRowsMatchDecoded :
+    canonicalRows.ciphertextIndexRows =
+      projectedCiphertextIndexRows decodedRows
+  canonicalCiphertextArchiveRowsMatchPlanned :
+    canonicalRows.ciphertextArchiveRows =
+      projectedCiphertextArchiveRows plannedRows
+
 theorem pending_action_production_projection_binds_decoded_validation_materialized_rows
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
@@ -725,6 +790,86 @@ theorem pending_action_field_projection_binds_decoded_validation_materialized_wi
         fieldProjectionEvidence.canonicalCiphertextArchiveRowsMatchPlanned
     }
 
+theorem pending_action_field_projection_binds_decoded_production_fields
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (facts :
+      PendingActionByteDecodeValidatedFieldProjectionFacts
+        pendingDecode
+        blockActionDecode
+        wireProjection
+        wireOutput
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows) :
+    validationRows = decodedRows
+      ∧ materializedRows = decodedRows
+      ∧ plannedRows = decodedRows
+      ∧ wireRows = decodedRows
+      ∧ canonicalRows.commitmentRows = projectedCommitmentRows decodedRows
+      ∧ canonicalRows.nullifierRows = projectedNullifierRows decodedRows
+      ∧ canonicalRows.bridgeReplayRows = projectedBridgeReplayRows decodedRows
+      ∧ canonicalRows.ciphertextIndexRows =
+          projectedCiphertextIndexRows decodedRows
+      ∧ canonicalRows.ciphertextArchiveRows =
+          projectedCiphertextArchiveRows decodedRows := by
+  have plannedRowsProjectDecoded :
+      plannedRows = decodedRows := by
+    calc
+      plannedRows = materializedRows :=
+        facts.fieldProjectionEvidence.plannedRowsProjectMaterialized
+      _ = decodedRows :=
+        facts.fieldProjectionEvidence.materializedRowsProjectDecoded
+  have wireRowsProjectDecoded :
+      wireRows = decodedRows := by
+    calc
+      wireRows = plannedRows :=
+        facts.fieldProjectionEvidence.wireRowsProjectPlanned
+      _ = decodedRows := plannedRowsProjectDecoded
+  have bridgeRowsMatchDecoded :
+      canonicalRows.bridgeReplayRows =
+        projectedBridgeReplayRows decodedRows := by
+    calc
+      canonicalRows.bridgeReplayRows =
+          projectedBridgeReplayRows plannedRows :=
+        facts.canonicalBridgeReplayRowsMatchPlanned
+      _ = projectedBridgeReplayRows decodedRows := by
+        rw [plannedRowsProjectDecoded]
+  have archiveRowsMatchDecoded :
+      canonicalRows.ciphertextArchiveRows =
+        projectedCiphertextArchiveRows decodedRows := by
+    calc
+      canonicalRows.ciphertextArchiveRows =
+          projectedCiphertextArchiveRows plannedRows :=
+        facts.canonicalCiphertextArchiveRowsMatchPlanned
+      _ = projectedCiphertextArchiveRows decodedRows := by
+        rw [plannedRowsProjectDecoded]
+  exact
+    ⟨ facts.fieldProjectionEvidence.validationRowsProjectDecoded,
+      facts.fieldProjectionEvidence.materializedRowsProjectDecoded,
+      plannedRowsProjectDecoded,
+      wireRowsProjectDecoded,
+      facts.canonicalCommitmentRowsMatchDecoded,
+      facts.canonicalNullifierRowsMatchDecoded,
+      bridgeRowsMatchDecoded,
+      facts.canonicalCiphertextIndexRowsMatchDecoded,
+      archiveRowsMatchDecoded ⟩
+
 theorem accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
@@ -851,6 +996,106 @@ theorem accepted_pending_action_field_projection_binds_decoded_validation_materi
       rowCountFacts
       fieldProjectionEvidence
       decodedRowsMatchPayloadCount
+
+theorem accepted_pending_action_raw_bytes_bind_production_field_projection_rows
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (wireProjectionAccepted :
+      evaluateActionWireReplayProjection wireProjection =
+        Except.ok wireOutput)
+    (blockActionValidationAccepted :
+      evaluateBlockActionValidation validation =
+        Except.ok validationSummary)
+    (projectionFacts :
+      PendingActionProductionProjectionFacts
+        blockActionDecode
+        wireProjection
+        validation
+        materializedActionCount
+        materializedPayloadCount)
+    (fieldProjectionEvidence :
+      PendingActionOrderedFieldProjectionEvidence
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows)
+    (decodedRowsMatchPayloadCount :
+      decodedRows.length =
+        blockActionDecode.actualActionPayloadCount) :
+    PendingActionRawByteProductionFieldProjectionFacts
+      pendingDecode
+      blockActionDecode
+      wireProjection
+      wireOutput
+      validation
+      validationSummary
+      materializedActionCount
+      materializedPayloadCount
+      decodedRows
+      validationRows
+      materializedRows
+      plannedRows
+      wireRows
+      canonicalRows := by
+  have fieldFacts :=
+    accepted_pending_action_field_projection_binds_decoded_validation_materialized_wire_rows
+      pendingDecodeAccepted
+      blockActionDecodeAccepted
+      wireProjectionAccepted
+      blockActionValidationAccepted
+      projectionFacts
+      fieldProjectionEvidence
+      decodedRowsMatchPayloadCount
+  exact
+    {
+      fieldProjectionFacts := fieldFacts,
+      pendingDecodeExact :=
+        fieldFacts.rowCountFacts.validatedReplayRowCountFacts.decodeReplayRowCountFacts.pendingDecodeExact,
+      blockActionDecodeExact :=
+        fieldFacts.rowCountFacts.validatedReplayRowCountFacts.decodeReplayRowCountFacts.blockActionDecodeExact,
+      validationCountMatchesActions :=
+        fieldFacts.rowCountFacts.validatedReplayRowCountFacts.validationCountMatchesActions,
+      validationActionsMatchDecodedPayloads :=
+        fieldFacts.rowCountFacts.validatedReplayRowCountFacts.validationActionsMatchDecodedPayloads,
+      materializedActionRowsMatchValidatedActions :=
+        fieldFacts.rowCountFacts.materializedActionRowsMatchValidatedActions,
+      materializedPayloadRowsMatchValidatedActions :=
+        fieldFacts.rowCountFacts.materializedPayloadRowsMatchValidatedActions,
+      validationRowsProjectDecoded :=
+        fieldProjectionEvidence.validationRowsProjectDecoded,
+      materializedRowsProjectDecoded :=
+        fieldProjectionEvidence.materializedRowsProjectDecoded,
+      plannedRowsProjectMaterialized :=
+        fieldProjectionEvidence.plannedRowsProjectMaterialized,
+      wireRowsProjectPlanned :=
+        fieldProjectionEvidence.wireRowsProjectPlanned,
+      decodedRowsMatchPayloadCount :=
+        fieldFacts.decodedRowsMatchPayloadCount,
+      canonicalCommitmentRowsMatchDecoded :=
+        fieldFacts.canonicalCommitmentRowsMatchDecoded,
+      canonicalNullifierRowsMatchDecoded :=
+        fieldFacts.canonicalNullifierRowsMatchDecoded,
+      canonicalBridgeReplayRowsMatchPlanned :=
+        fieldFacts.canonicalBridgeReplayRowsMatchPlanned,
+      canonicalCiphertextIndexRowsMatchDecoded :=
+        fieldFacts.canonicalCiphertextIndexRowsMatchDecoded,
+      canonicalCiphertextArchiveRowsMatchPlanned :=
+        fieldFacts.canonicalCiphertextArchiveRowsMatchPlanned
+    }
 
 theorem accepted_pending_action_byte_decode_binds_validated_replay_row_counts
     {pendingDecode : ExactDecodeInput}
