@@ -39,8 +39,17 @@ def hexArrayJson (values : List (List Byte)) : String :=
 def sampleReplayKey : ReplayKey :=
   patternedBytes 48 0x6d
 
+def unrelatedReplayKey : ReplayKey :=
+  patternedBytes 48 0xa1
+
 def consumedReplayState : ReplayState :=
   { consumed := [sampleReplayKey], pending := [] }
+
+def pendingReplayState : ReplayState :=
+  { consumed := [], pending := [sampleReplayKey] }
+
+def unrelatedPendingReplayState : ReplayState :=
+  { consumed := [], pending := [unrelatedReplayKey] }
 
 def baseMintReplayInput : ReceiptMintReplayInput :=
   {
@@ -56,8 +65,16 @@ def baseMintReplayInput : ReceiptMintReplayInput :=
     amountWithinBound := true
   }
 
+def expectedReplayStateJson (input : ReceiptMintReplayInput) : String × String :=
+  match evaluateReceiptMintReplay input with
+  | Except.ok accepted =>
+      (hexArrayJson accepted.nextReplayState.consumed,
+        hexArrayJson accepted.nextReplayState.pending)
+  | Except.error _ => ("null", "null")
+
 def caseJson (name : String) (input : ReceiptMintReplayInput) : String :=
   let rejection := receiptMintReplayRejection input
+  let expectedNext := expectedReplayStateJson input
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"inbound_bridge_mint\": " ++ boolJson input.inboundBridgeMint ++ ",\n"
@@ -72,14 +89,20 @@ def caseJson (name : String) (input : ReceiptMintReplayInput) : String :=
     ++ "      \"amount_matches_receipt\": " ++ boolJson input.amountMatchesReceipt ++ ",\n"
     ++ "      \"amount_within_bound\": " ++ boolJson input.amountWithinBound ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
-    ++ "      \"expected_rejection\": " ++ rejectionJson rejection ++ "\n"
+    ++ "      \"expected_rejection\": " ++ rejectionJson rejection ++ ",\n"
+    ++ "      \"expected_next_consumed\": " ++ expectedNext.fst ++ ",\n"
+    ++ "      \"expected_next_pending\": " ++ expectedNext.snd ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"bridge_mint_replay_cases\": [\n"
     ++ caseJson "valid-inbound-mint-accepted" baseMintReplayInput ++ ",\n"
+    ++ caseJson "pending-replay-key-imported-and-cleared"
+      { baseMintReplayInput with replayState := pendingReplayState } ++ ",\n"
+    ++ caseJson "unrelated-pending-replay-key-preserved"
+      { baseMintReplayInput with replayState := unrelatedPendingReplayState } ++ ",\n"
     ++ caseJson "not-inbound-bridge-mint-rejected"
       { baseMintReplayInput with inboundBridgeMint := false } ++ ",\n"
     ++ caseJson "state-delta-mint-present-rejected"

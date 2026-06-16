@@ -4,11 +4,11 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.48,
+  "overall_completion_percent": 84.52,
   "last_full_formal_core": {
-    "date": "2026-06-16T04:28:14Z",
-    "commit": "e3352e27fc75",
-    "status": "passed locally after adding generic bounded-request production conformance, native sync response-count resource binding, and sync raw-batch publication resource theorem",
+    "date": "2026-06-16T05:10:52Z",
+    "commit": "working-tree-after-07519d8463a9",
+    "status": "passed locally after adding schema-v2 bridge mint/replay policy conformance, set-style Lean replay import semantics, and exact replay next-state Rust checks",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
     "named_lean_theorems": 1707,
@@ -71,21 +71,21 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Closed the generic bounded-request production-conformance and native sync response resource-bound slice. Formal-core now checks Lean-generated bounded-request vectors against the production helper, inbound native sync response-count admission routes through that generic item-count gate before sorting/import, and Lean carries accepted bounded-request facts through synced raw-batch publication.",
+    "summary": "Closed the schema-v2 bridge mint/replay policy conformance slice. The Lean replay model now uses set-style pending-key removal matching production, generated vectors carry exact next consumed/pending replay sets with pending-key clearing and unrelated-pending preservation cases, and formal-core checks those vectors against the production Rust helper instead of only JSON-parsing them.",
     "lean_modules": [
-      "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean",
-      "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
-      "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean"
+      "formal/lean/Hegemon/Bridge/Replay.lean",
+      "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean",
+      "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.SyncBlockReplayPublication.accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows",
-      "Hegemon.Resource.BoundedRequestAdmission.accepts_iff_resource_preconditions",
-      "Hegemon.Resource.BoundedRequestAdmission.accepted_bounded_request_exposes_all_caps"
+      "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
+      "Hegemon.Bridge.MintReplayPolicy.accepted_imports_replay_key",
+      "Hegemon.Bridge.MintReplayPolicy.accepted_prevents_replay_again"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.SyncBlockReplayPublication Hegemon passed locally",
-      "targeted_rust": "HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bounded_request_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally; cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T04:28:14Z with 118 claims, 1707 named Lean theorem declarations, 771 axiom-free declarations, 936 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 479 falsification cases, and 209 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Bridge/Replay.lean && lake env lean Hegemon/Bridge/MintReplayPolicy.lean && lake env lean Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean passed locally",
+      "targeted_rust": "HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T05:10:52Z with 118 claims, 1707 named Lean theorem declarations, 771 axiom-free declarations, 936 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 479 falsification cases, and 209 implementation bindings.",
       "claims": 118,
       "named_lean_theorems": 1707,
       "axiom_free_theorems": 771,
@@ -104,9 +104,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves generic bounded-request production conformance and sync response-count binding, not arbitrary SCALE/parser internals or a full Rust refinement proof.",
-      "The reusable bounded-request table is now bound to native block-action decode and native sync response counts; other consensus-facing parser families still need equivalent concrete bindings.",
-      "The theorem does not prove primitive cryptographic security, proof-system soundness, peer honesty, storage durability below accepted predicates, or complete native-node equivalence."
+      "This slice proves abstract bridge mint/replay policy conformance against a Rust helper, not a live bridge mint decoder or enabled mint path.",
+      "External receipt/PQ verifier soundness and the production PQ-clean bridge verifier remain explicit open work.",
+      "The theorem does not prove primitive cryptographic security, proof-system soundness, arbitrary parser internals, storage durability below accepted predicates, or complete native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
@@ -704,7 +704,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 72,
+      "completion_percent": 73,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -723,10 +723,13 @@
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves `accepted_inbound_bridge_raw_ingress_canonical_publication_safe`, packaging Hegemon-side bridge payload, decoded amount, raw pending-action publication, canonical publication, commitment-root, raw/canonical supply replay, and replay uniqueness facts without external receipt-soundness assumptions",
         "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean proves an abstract accepted receipt-mint replay decision table: receipt verification and payload equality precede replay-key import, consumed replay keys reject before mint authorization, mint authorization and exact amount/range checks are required, accepted imports the replay key, and immediate replay rejects",
-        "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits parse-checked acceptance/rejection vectors for the abstract bridge mint/replay decision table"
+        "formal/lean/Hegemon/Bridge/Replay.lean now models import with set-style pending-key removal, matching production replay-state semantics instead of list erase semantics",
+        "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits schema-v2 acceptance/rejection and exact next replay-state vectors for the abstract bridge mint/replay decision table, including pending replay-key import clearing and unrelated pending-key preservation",
+        "node/src/native/mod.rs checks the schema-v2 abstract bridge mint/replay vectors against production `evaluate_native_bridge_mint_replay_policy`, including rejection precedence, duplicate-free replay-set inputs, exact next consumed/pending sets, and accepted replay-key consumption",
+        "scripts/check_formal_core.sh now runs `lean_generated_bridge_mint_replay_policy_vectors_match_production` instead of only JSON-parsing the abstract policy generator output"
       ],
       "missing_work": [
-        "Bind the abstract bridge mint/replay decision table to the production PQ-clean bridge mint payload grammar and decoder when bridge minting is enabled.",
+        "Bind the now Rust-conformant abstract bridge mint/replay decision table to a live production PQ-clean bridge mint payload grammar, decoder, and verifier when bridge minting is enabled.",
         "Mechanize or parameterize external-chain proof soundness.",
         "Lift bridge replay/supply coupling from modeled decoded replay summaries to complete raw-byte native-node import, reorg, startup, and sync paths.",
         "Replace the disabled experimental RISC Zero envelope with a production PQ-clean receipt verifier and bind its soundness to the decoded output-admission table."

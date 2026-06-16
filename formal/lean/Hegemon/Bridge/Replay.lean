@@ -31,7 +31,10 @@ def ReplayState.importOne (state : ReplayState) (key : ReplayKey) : Option Repla
   if key ∈ state.consumed then
     none
   else
-    some { consumed := key :: state.consumed, pending := state.pending.erase key }
+    some {
+      consumed := key :: state.consumed,
+      pending := state.pending.filter (fun pendingKey => pendingKey != key)
+    }
 
 theorem accept_inserts_key
     {state next : ReplayState} {key : ReplayKey} :

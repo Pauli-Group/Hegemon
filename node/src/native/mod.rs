@@ -998,6 +998,20 @@ struct NativeBridgeActionPayloadAdmissionInput {
     inbound_payload_hash_matches: bool,
 }
 
+#[derive(Clone, Debug)]
+struct NativeBridgeMintReplayPolicyInput {
+    inbound_bridge_mint: bool,
+    state_deltas_absent: bool,
+    receipt_envelope_present: bool,
+    receipt_verified: bool,
+    receipt_payload_matches: bool,
+    replay_state: InboundReplayState,
+    replay_key: [u8; 48],
+    mint_authorized: bool,
+    amount_matches_receipt: bool,
+    amount_within_bound: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeWitnessExportAdmissionInput {
     block_hash_parameter_valid: bool,
@@ -1064,6 +1078,36 @@ impl NativeBridgeActionPayloadAdmissionRejection {
             Self::InboundReplayKeyMismatch => "inbound_replay_key_mismatch",
             Self::InboundDestinationMismatch => "inbound_destination_mismatch",
             Self::InboundPayloadHashMismatch => "inbound_payload_hash_mismatch",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeMintReplayPolicyRejection {
+    NotInboundBridgeMint,
+    StateDeltaMintPresent,
+    ReceiptEnvelopeMissing,
+    ReceiptNotVerified,
+    ReceiptPayloadMismatch,
+    ReplayAlreadyConsumed,
+    MintNotAuthorized,
+    AmountDoesNotMatchReceipt,
+    AmountOutOfBounds,
+}
+
+impl NativeBridgeMintReplayPolicyRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotInboundBridgeMint => "not_inbound_bridge_mint",
+            Self::StateDeltaMintPresent => "state_delta_mint_present",
+            Self::ReceiptEnvelopeMissing => "receipt_envelope_missing",
+            Self::ReceiptNotVerified => "receipt_not_verified",
+            Self::ReceiptPayloadMismatch => "receipt_payload_mismatch",
+            Self::ReplayAlreadyConsumed => "replay_already_consumed",
+            Self::MintNotAuthorized => "mint_not_authorized",
+            Self::AmountDoesNotMatchReceipt => "amount_does_not_match_receipt",
+            Self::AmountOutOfBounds => "amount_out_of_bounds",
         }
     }
 }
@@ -8724,6 +8768,36 @@ fn evaluate_native_bridge_action_payload_admission(
     }
 }
 
+fn evaluate_native_bridge_mint_replay_policy(
+    input: NativeBridgeMintReplayPolicyInput,
+) -> Result<InboundReplayState, NativeBridgeMintReplayPolicyRejection> {
+    if !input.inbound_bridge_mint {
+        Err(NativeBridgeMintReplayPolicyRejection::NotInboundBridgeMint)
+    } else if !input.state_deltas_absent {
+        Err(NativeBridgeMintReplayPolicyRejection::StateDeltaMintPresent)
+    } else if !input.receipt_envelope_present {
+        Err(NativeBridgeMintReplayPolicyRejection::ReceiptEnvelopeMissing)
+    } else if !input.receipt_verified {
+        Err(NativeBridgeMintReplayPolicyRejection::ReceiptNotVerified)
+    } else if !input.receipt_payload_matches {
+        Err(NativeBridgeMintReplayPolicyRejection::ReceiptPayloadMismatch)
+    } else {
+        let mut next_replay_state = input.replay_state;
+        next_replay_state
+            .import_one(input.replay_key)
+            .map_err(|_| NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed)?;
+        if !input.mint_authorized {
+            Err(NativeBridgeMintReplayPolicyRejection::MintNotAuthorized)
+        } else if !input.amount_matches_receipt {
+            Err(NativeBridgeMintReplayPolicyRejection::AmountDoesNotMatchReceipt)
+        } else if !input.amount_within_bound {
+            Err(NativeBridgeMintReplayPolicyRejection::AmountOutOfBounds)
+        } else {
+            Ok(next_replay_state)
+        }
+    }
+}
+
 fn native_bridge_action_payload_admission_error(
     action_id: u16,
     rejection: NativeBridgeActionPayloadAdmissionRejection,
@@ -13533,6 +13607,34 @@ mod tests {
         inbound_payload_hash_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintReplayPolicyVectorFile {
+        schema_version: u32,
+        bridge_mint_replay_cases: Vec<LeanBridgeMintReplayPolicyCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintReplayPolicyCase {
+        name: String,
+        inbound_bridge_mint: bool,
+        state_deltas_absent: bool,
+        receipt_envelope_present: bool,
+        receipt_verified: bool,
+        receipt_payload_matches: bool,
+        initial_consumed: Vec<String>,
+        initial_pending: Vec<String>,
+        replay_key: String,
+        mint_authorized: bool,
+        amount_matches_receipt: bool,
+        amount_within_bound: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_next_consumed: Option<Vec<String>>,
+        expected_next_pending: Option<Vec<String>>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -18784,6 +18886,135 @@ mod tests {
             "unsupported" => NativeBridgeActionPayloadKind::Unsupported,
             other => panic!("{case_name} has unknown bridge action kind {other}"),
         }
+    }
+
+    #[test]
+    fn lean_generated_bridge_mint_replay_policy_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge mint/replay policy vectors");
+        let vectors: LeanBridgeMintReplayPolicyVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge mint/replay policy vectors");
+        assert_eq!(vectors.schema_version, 2);
+        assert!(
+            !vectors.bridge_mint_replay_cases.is_empty(),
+            "Lean bridge mint/replay policy cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_mint_replay_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_mint_replay_policy_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_mint_replay_policy_case(case: &LeanBridgeMintReplayPolicyCase) {
+        let replay_key = parse_hex48(&case.replay_key)
+            .unwrap_or_else(|| panic!("{} has invalid replay_key", case.name));
+        let initial_consumed =
+            parse_lean_bridge_replay_key_set(&case.initial_consumed, &case.name, "consumed");
+        let initial_pending =
+            parse_lean_bridge_replay_key_set(&case.initial_pending, &case.name, "pending");
+        assert!(
+            initial_consumed.is_disjoint(&initial_pending),
+            "{} initial replay consumed and pending sets must be disjoint",
+            case.name
+        );
+        let input = NativeBridgeMintReplayPolicyInput {
+            inbound_bridge_mint: case.inbound_bridge_mint,
+            state_deltas_absent: case.state_deltas_absent,
+            receipt_envelope_present: case.receipt_envelope_present,
+            receipt_verified: case.receipt_verified,
+            receipt_payload_matches: case.receipt_payload_matches,
+            replay_state: InboundReplayState::new(initial_consumed, initial_pending),
+            replay_key,
+            mint_authorized: case.mint_authorized,
+            amount_matches_receipt: case.amount_matches_receipt,
+            amount_within_bound: case.amount_within_bound,
+        };
+        let actual = evaluate_native_bridge_mint_replay_policy(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native bridge mint/replay policy validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge mint/replay policy rejection drifted from Lean spec",
+            case.name
+        );
+        if case.expected_valid {
+            let expected_consumed = case
+                .expected_next_consumed
+                .as_ref()
+                .map(|values| {
+                    parse_lean_bridge_replay_key_set(values, &case.name, "expected consumed")
+                })
+                .expect("accepted bridge mint/replay case must include expected consumed set");
+            let expected_pending = case
+                .expected_next_pending
+                .as_ref()
+                .map(|values| {
+                    parse_lean_bridge_replay_key_set(values, &case.name, "expected pending")
+                })
+                .expect("accepted bridge mint/replay case must include expected pending set");
+            let next = actual.expect("accepted bridge mint/replay policy");
+            assert_eq!(
+                next.consumed(),
+                &expected_consumed,
+                "{} accepted bridge mint/replay policy consumed set drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                next.pending(),
+                &expected_pending,
+                "{} accepted bridge mint/replay policy pending set drifted from Lean spec",
+                case.name
+            );
+            assert!(
+                next.consumed().contains(&replay_key),
+                "{} accepted bridge mint/replay policy did not consume replay key",
+                case.name
+            );
+            assert!(
+                !next.pending().contains(&replay_key),
+                "{} accepted bridge mint/replay policy left replay key pending",
+                case.name
+            );
+        } else {
+            assert!(
+                case.expected_next_consumed.is_none() && case.expected_next_pending.is_none(),
+                "{} rejected bridge mint/replay case must not include expected next replay state",
+                case.name
+            );
+        }
+    }
+
+    fn parse_lean_bridge_replay_key_set(
+        values: &[String],
+        case_name: &str,
+        field: &str,
+    ) -> BTreeSet<[u8; 48]> {
+        let mut parsed = BTreeSet::new();
+        for raw in values {
+            let key = parse_hex48(raw)
+                .unwrap_or_else(|| panic!("{case_name} has invalid {field} replay key {raw}"));
+            assert!(
+                parsed.insert(key),
+                "{case_name} has duplicate {field} replay key {raw}"
+            );
+        }
+        parsed
     }
 
     #[test]
