@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 85.92,
+  "overall_completion_percent": 86.04,
   "last_full_formal_core": {
-    "date": "2026-06-16T16:54:33Z",
-    "commit": "b126c643",
-    "status": "passed locally after adding the SmallWood output ciphertext-hash row binding fix, local metadata privacy boundary, and explicit active/inactive output-binding regressions to the formal-core gate",
+    "date": "2026-06-16T17:52:14Z",
+    "commit": "working-tree-on-c5561864",
+    "status": "passed locally after adding raw-ingress transfer authorized per-asset delta and public stablecoin-exception publication theorem slice",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1761,
+    "named_lean_theorems": 1763,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 966,
+    "axiom_dependent_theorems": 968,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
@@ -73,35 +73,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved and production-bound the SmallWood output row-boundary while strengthening the privacy observer boundary for local action metadata. The SmallWood Lean surface models active output note-opening to commitment-row binding, public commitment binding, ciphertext-row to public ciphertext-hash binding, inactive output zeroing, and mismatch rejection. The privacy surface models local action metadata such as arrival time and proves observer/public/batch projections ignore it.",
+    "summary": "Proved accepted raw-ingress transfer publication carries canonical authorized per-asset delta values and public non-native nonzero stablecoin-exception consequences under explicit full or split deployed-verifier soundness assumptions.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean"
+      "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
+      "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+      "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_commitment_rows_bind_note_opening",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_commitment_rows_bind_public_commitment",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_ciphertext_rows_bind_public_hash",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_public_commitment_binds_note_opening",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_output_public_fields_zero",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.accepted_smallwood_output_constraints_imply_active_output_binding_boundary",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_binding_mismatched_commitment_rejects",
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_output_binding_mismatched_ciphertext_rejects",
-      "Hegemon.Privacy.Observer.observer_view_ignores_local_action_metadata",
-      "Hegemon.Privacy.Observer.public_metadata_view_ignores_local_action_metadata",
-      "Hegemon.Privacy.Observer.batch_timing_view_ignores_local_action_metadata",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_secret_resampling_boundary_facts"
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication",
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness",
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_authorized_asset_delta_value",
+      "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_public_non_native_nonzero_requires_stablecoin_exception"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Privacy.Observer Hegemon.Privacy.CiphertextPrivacy Hegemon.Privacy.NativeObserverSurface Hegemon.Privacy.NativeSidecarObserverSurface Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Transaction.GenerateSmallWoodSpendAuthorizationVectors Hegemon passed locally before full formal-core.",
-      "targeted_rust": "Lean-generated SmallWood vectors, active output binding mutation, inactive output ciphertext-hash mutation, and materialized sidecar observer projection regressions passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T16:54:33Z with the explicit active/inactive output-binding regressions included in the formal-core gate.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/RawIngressTransferNoTheftPublication.lean passed; cd formal/lean && lake build Hegemon.Native.RawIngressTransferNoTheftPublication Hegemon passed locally.",
+      "targeted_rust": "No runtime Rust changes in this slice; existing Lean-generated Rust conformance and native backend vector suites passed as part of the full formal-core gate.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T17:52:14Z after adding the raw-ingress transfer authorized-delta and stablecoin-exception theorem slice.",
       "claims": 118,
-      "named_lean_theorems": 1761,
+      "named_lean_theorems": 1763,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 966,
+      "axiom_dependent_theorems": 968,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
@@ -116,9 +107,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice closes the active output ciphertext-hash public-field binding gap in the shipped inline-Merkle SmallWood statement, but it does not prove full SmallWood/AIR/PCS soundness or witness extraction.",
-      "The output-hash binding adds twelve scalar witness rows to the shipped inline-Merkle geometry; the structural proof-size bound is now 91262 bytes and exact sampled proof-size artifacts need refresh.",
-      "The privacy local-metadata theorem is a deterministic leakage-model refinement; ML-KEM/AEAD/KDF/RNG security, simulator zero knowledge, wallet/network metadata privacy, and complete native-node equivalence remain explicit."
+      "This slice has no runtime changes; it composes existing accepted raw-ingress, transfer publication, canonical tx-leaf, and verifier-boundary surfaces.",
+      "It still keeps deployed verifier soundness, AIR/SmallWood/tx-leaf proof soundness, witness extraction, parser internals, and hash/security equivalence explicit.",
+      "Dynamic stablecoin governance, bridge asset conservation, storage durability below accepted predicates, and complete native-node equivalence remain explicit residuals."
     ]
   },
   "last_production_binding_slice": {
@@ -322,7 +313,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 83,
+      "completion_percent": 84,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -342,18 +333,19 @@
         "packed SmallWood inline-Merkle public balance/stablecoin mutation gates reject tampered public fields even when auxiliary Merkle rows are recomputed from the tampered public values",
         "public input shape and binding gates",
         "transaction public-input and serialized-input admission rejects noncanonical asset ids, including balance-slot padding field aliases",
-        "native block artifact binding admission"
+        "native block artifact binding admission",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves accepted raw-ingress transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface"
       ],
       "missing_work": [
         "Complete and discharge full deployed AIR/proof-system soundness for all balance slots and spend authorization, beyond the now-modeled P3 final-row public balance equations.",
-        "Separate native asset, stablecoin, and bridge asset conservation rules."
+        "Bind bridge asset conservation and dynamic stablecoin governance history into the complete native-node replay theorem."
       ],
       "performance_constraint": "Formal proof only or cheap public-input checks; do not add per-proof duplicate arithmetic beyond existing verifier inputs."
     },
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 90,
+      "completion_percent": 91,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -372,6 +364,7 @@
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves that any non-native nonzero public authorized delta requires public stablecoin enablement and the selected public stablecoin asset",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean packages the selected stablecoin exception as a StablecoinMintExceptionSurface binding the asset, delta, policy hash, oracle commitment, attestation commitment, policy version, statement rows, and proof-binding rows",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts the public non-native nonzero stablecoin-exception consequence and full stablecoin mint exception surface to the accepted materialized transfer publication path under split spend and balance/public-field soundness assumptions",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now lifts authorized per-asset delta values and public non-native nonzero stablecoin-exception consequences to the accepted raw-ingress transfer publication path under explicit full or split deployed-verifier soundness assumptions",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now carries StablecoinMintExceptionPayload, LiveStablecoinPolicyAuthorizes, and AuthorizedStablecoinMintExceptionSurface so any explicit live-policy authorization is bound to the exact public, statement, and proof-binding stablecoin payload",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now lifts authorized stablecoin mint exception payload facts to the accepted materialized transfer publication path",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
@@ -384,7 +377,7 @@
         "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
       ],
       "missing_work": [
-        "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
+        "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution across reorg and startup replay; the accepted raw-ingress transfer path now carries per-asset/stablecoin-exception consequences.",
         "Extend the native-policy LiveStablecoinPolicyAuthorizes bridge from manifest-time authorization predicates to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence."
       ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."

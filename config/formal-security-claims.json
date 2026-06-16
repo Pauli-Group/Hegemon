@@ -4314,18 +4314,20 @@
       "id": "native.raw-ingress-transfer-no-theft-publication",
       "component": "native raw ingress transfer no-theft publication refinement",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress transfer no-theft publication refinement composes accepted raw-ingress pending-action tx-leaf publication with accepted decoded transfer payload admission, singleton block-action validation, transfer no-theft boundary facts, and total input-slot authorization facts. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds replayed supply, final nullifier uniqueness, tx-leaf statement/proof artifact facts, active-input no-theft facts, and input-slot authorization-or-inactive-zero facts to the same raw ingress, pending-action bytes, sidecar, canonical publication, and tx-leaf artifact surface.",
+      "summary": "The Lean raw-ingress transfer no-theft publication refinement composes accepted raw-ingress pending-action tx-leaf publication with accepted decoded transfer payload admission, singleton block-action validation, transfer no-theft boundary facts, total input-slot authorization facts, and canonical asset-delta consequences. Under either the existing explicit deployed-verifier soundness assumption or the spend-only deployed-verifier soundness assumption for no-theft/input-slot use cases, the package binds replayed supply, final nullifier uniqueness, tx-leaf statement/proof artifact facts, active-input no-theft facts, input-slot authorization-or-inactive-zero facts, authorized per-asset delta values, and the public stablecoin-exception consequence for non-native nonzero public deltas to the same raw ingress, pending-action bytes, sidecar, canonical publication, and tx-leaf artifact surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication",
-        "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness"
+        "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_no_theft_authorization_publication_from_spend_soundness",
+        "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_authorized_asset_delta_value",
+        "Hegemon.Native.RawIngressTransferNoTheftPublication.accepted_raw_ingress_transfer_payload_public_non_native_nonzero_requires_stablecoin_exception"
       ],
       "assumptions": [
         "This is a Lean composition theorem over accepted production-bound predicates. It relies on the separate raw-ingress pending-action publication, transfer no-theft boundary, native tx-leaf canonical surface, deployed verifier boundary, pending-action parser/publication, DA/sidecar binding, canonical publication, and replay-refinement claims for executable predicate conformance.",
         "The theorem uses the same `rawProjectedLedgerTreeStateAfter initial blocks = some final` witness as the raw-ingress pending-action publication theorem, so replayed supply and final nullifier uniqueness are coupled to the transfer authorization/no-theft package.",
-        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit; the spend-only variant keeps `DeployedTxVerifierSpendSoundnessAssumption` explicit and does not require balance/public-field soundness for no-theft/input-slot publication. Neither theorem claims STARK/AIR, SmallWood, native tx-leaf, recursive proof, hash, witness extraction, wallet custody, or complete native-node soundness.",
+        "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit; the spend-only variant keeps `DeployedTxVerifierSpendSoundnessAssumption` explicit and does not require balance/public-field soundness for no-theft/input-slot publication. The authorized-delta theorem uses the full deployed verifier assumption, and the public non-native nonzero stablecoin-exception theorem uses the split spend and balance/public-field assumptions to keep no-theft and accounting obligations separately reviewable. No theorem in this family claims STARK/AIR, SmallWood, native tx-leaf, recursive proof, hash, witness extraction, wallet custody, or complete native-node soundness.",
         "No runtime hot path is changed; this is a zero-runtime-cost composition layer and metadata gate."
       ],
       "evidence_paths": [
