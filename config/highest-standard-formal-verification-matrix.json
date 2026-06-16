@@ -6,19 +6,19 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 86.27,
   "last_full_formal_core": {
-    "date": "2026-06-16T22:16:31Z",
-    "commit": "f6d61f00",
-    "status": "passed locally after packaging accepted exact-decode/projection-evidence pending-action production field rows and qualifying raw byte coverage through Rust conformance gates",
+    "date": "2026-06-16T23:01:28Z",
+    "commit": "e8c55c6b",
+    "status": "passed locally after lifting exact ordered commitment/nullifier/bridge replay content through the native publication path-family theorem",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1779,
+    "named_lean_theorems": 1781,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 984,
+    "axiom_dependent_theorems": 986,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 500,
+    "falsification_cases": 502,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -76,9 +76,9 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Packaged accepted pending-action exact-decode/projection evidence into production field-row facts: one Lean theorem now carries decoded, validation, materialized, planned, wire, and canonical commitment/nullifier/bridge/ciphertext row projection facts at the pending-action byte boundary, while raw action bytes remain covered by Rust conformance gates.",
+    "summary": "Lifted exact ordered commitment/nullifier/bridge replay content through the native publication path family: the new Lean theorem composes the existing path-family row-equivalence package with ordered content binders so raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair all expose canonical commitment values/indexes, nullifier rows, and bridge replay keys derived from decoded/planned rows.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
       "config/formal-security-claims.json",
       "config/formal-security-blueprint.json",
       "config/highest-standard-formal-verification-matrix.json",
@@ -87,22 +87,22 @@
       "formal/lean/README.md"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_field_projection_binds_decoded_production_fields",
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_raw_bytes_bind_production_field_projection_rows"
+      "Hegemon.Native.CommitmentTreeContentRefinement.native_publication_rows_equivalence_binds_commitment_replay_content",
+      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_native_publication_path_family_binds_commitment_replay_content"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon passed locally with 146 jobs.",
-      "targeted_rust": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features; cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features; cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features all passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T22:16:31Z after adding the accepted pending-action production field-row theorem, citing it in claims/blueprint, and qualifying raw byte coverage as Rust conformance evidence.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 146 jobs.",
+      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets --lib --no-default-features -- --nocapture and cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T23:01:28Z after adding the native publication path-family content theorem, citing it in claims/blueprint, and adding an explicit mixed replay-set falsification gate.",
       "claims": 118,
-      "named_lean_theorems": 1779,
+      "named_lean_theorems": 1781,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 984,
+      "axiom_dependent_theorems": 986,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 500,
+      "falsification_cases": 502,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -112,9 +112,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice packages accepted exact-decode/projection-evidence facts that existing Rust gates construct; it does not yet prove parser-internal implementation equivalence for arbitrary malformed raw PendingAction bytes.",
+      "This slice composes existing path-family row-equivalence facts with ordered content binders; path-specific raw byte construction remains enforced by Rust conformance gates and blueprint bindings.",
       "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, and complete native-node refinement remain explicit residuals.",
-      "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental/offline envelope."
+      "Positive mined/startup publication of accepted inbound bridge replay rows remains blocked until a PQ-clean verifier replaces the experimental/offline envelope."
     ]
   },
   "last_production_binding_slice": {
