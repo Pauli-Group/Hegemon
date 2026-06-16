@@ -7,7 +7,7 @@
   "overall_completion_percent": 86.26,
   "last_full_formal_core": {
     "date": "2026-06-16T20:45:59Z",
-    "commit": "a627627a",
+    "commit": "efa8e7c4",
     "status": "passed locally after adding SmallWood transcript/profile byte-binding theorem slice and deterministic mixed restart/reorg proof-gate fix",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
