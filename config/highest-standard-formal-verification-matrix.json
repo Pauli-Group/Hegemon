@@ -6,14 +6,14 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 86.27,
   "last_full_formal_core": {
-    "date": "2026-06-16T21:31:25Z",
-    "commit": "9cdd36d3",
-    "status": "passed locally after packaging native publication path-family row-equivalence theorem and adding the cited Lean module to the formal inventory",
+    "date": "2026-06-16T22:16:31Z",
+    "commit": "f6d61f00",
+    "status": "passed locally after packaging accepted exact-decode/projection-evidence pending-action production field rows and qualifying raw byte coverage through Rust conformance gates",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1777,
+    "named_lean_theorems": 1779,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 982,
+    "axiom_dependent_theorems": 984,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
@@ -75,27 +75,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Packaged native publication path-family row equivalence: one Lean theorem now carries raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence facts over decoded, validated, materialized, planned, wire, and canonical rows, with mined/startup decoded-row and rebuild/block_range canonical-row agreement surfaced explicitly.",
+    "summary": "Packaged accepted pending-action exact-decode/projection evidence into production field-row facts: one Lean theorem now carries decoded, validation, materialized, planned, wire, and canonical commitment/nullifier/bridge/ciphertext row projection facts at the pending-action byte boundary, while raw action bytes remain covered by Rust conformance gates.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
       "config/formal-security-claims.json",
       "config/formal-security-blueprint.json",
       "config/highest-standard-formal-verification-matrix.json",
-      "scripts/hegemon_formal_core/src/lib.rs"
+      "DESIGN.md",
+      "METHODS.md",
+      "formal/lean/README.md"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.NativePublicationRowEquivalence.accepted_native_publication_path_family_binds_native_publication_rows",
-      "Hegemon.Native.NativePublicationRowEquivalence.accepted_mined_block_commit_binds_native_publication_rows",
-      "Hegemon.Native.NativePublicationRowEquivalence.raw_ingress_full_byte_field_projection_binds_native_publication_rows"
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_field_projection_binds_decoded_production_fields",
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_raw_bytes_bind_production_field_projection_rows"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 146 jobs.",
-      "targeted_rust": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features; cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features; cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features; cargo test -p hegemon-node action_byte_drift --lib --no-default-features all passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T21:31:25Z after adding the native publication path-family theorem, citing it in claims/blueprint, and adding NativePublicationRowEquivalence.lean to the formal inventory.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon passed locally with 146 jobs.",
+      "targeted_rust": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features; cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features; cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features all passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T22:16:31Z after adding the accepted pending-action production field-row theorem, citing it in claims/blueprint, and qualifying raw byte coverage as Rust conformance evidence.",
       "claims": 118,
-      "named_lean_theorems": 1777,
+      "named_lean_theorems": 1779,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 982,
+      "axiom_dependent_theorems": 984,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
@@ -110,7 +111,7 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice packages row-equivalence facts that existing path-specific Rust gates construct; it does not yet prove parser-internal implementation equivalence for arbitrary malformed raw PendingAction bytes.",
+      "This slice packages accepted exact-decode/projection-evidence facts that existing Rust gates construct; it does not yet prove parser-internal implementation equivalence for arbitrary malformed raw PendingAction bytes.",
       "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, and complete native-node refinement remain explicit residuals.",
       "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental/offline envelope."
     ]
