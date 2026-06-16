@@ -23103,10 +23103,20 @@ mod tests {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
         let anchor = state.commitment_tree.root();
-        let transfer = test_sidecar_transfer_action(anchor, [74u8; 48], [75u8; 48], 0);
+        let inline_transfer = test_inline_transfer_action(anchor, [72u8; 48], [73u8; 48], 0);
+        let sidecar_transfer = test_sidecar_transfer_action(anchor, [74u8; 48], [75u8; 48], 0);
         let outbound = test_outbound_bridge_action(b"projection outbound");
-        let candidate = test_candidate_artifact_action(1, 76);
-        let actions = vec![transfer, outbound, candidate];
+        let coinbase = test_coinbase_action(consensus::reward::block_subsidy(1));
+        let candidate = test_candidate_artifact_action(2, 76);
+        let mut transfers = vec![inline_transfer, sidecar_transfer];
+        transfers.sort_by_key(action_order_key);
+        let actions = vec![
+            transfers.remove(0),
+            transfers.remove(0),
+            outbound,
+            coinbase,
+            candidate,
+        ];
         let meta = mined_child_with_actions(&state.best, 1, pow_bits, 0, actions.clone());
         let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
         for action in &actions {
@@ -23122,10 +23132,22 @@ mod tests {
             .zip(actions.iter())
             .zip(meta.action_bytes.iter())
         {
-            assert_eq!(decoded_action.tx_hash, expected_action.tx_hash);
+            assert_pending_action_fields_eq(decoded_action, expected_action);
             assert_eq!(decoded_action.encode(), *raw_bytes);
+            assert_eq!(decoded_action.tx_hash, pending_action_hash(decoded_action));
+            assert_eq!(
+                pending_action_semantic_hash(decoded_action),
+                pending_action_semantic_hash(expected_action)
+            );
+            assert_route_payload_fields_eq(decoded_action, expected_action, meta.height);
         }
 
+        let validation_steps = validation_steps_from_decoded_actions(&state, &decoded)
+            .expect("projection validation steps from decoded actions");
+        assert_eq!(validation_steps.len(), decoded.len());
+        for (action, step) in decoded.iter().zip(validation_steps.iter()) {
+            assert_validation_step_projects_action_fields(action, step);
+        }
         validate_block_actions_locked(&state, &decoded).expect("decoded actions validate");
         let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &decoded)
             .expect("materialize from same decoded actions");
@@ -23150,6 +23172,17 @@ mod tests {
         let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &decoded)
             .expect("plan effects from same decoded actions");
         assert_eq!(planned.len(), decoded.len());
+        let mut expected_commitment_start = state.commitment_tree.leaf_count();
+        for ((action, payload), effect) in
+            decoded.iter().zip(materialized.iter()).zip(planned.iter())
+        {
+            assert_eq!(effect.commitment_start, expected_commitment_start);
+            assert_eq!(effect.ciphertexts, payload.ciphertexts);
+            assert_eq!(effect.replay_key, payload.replay_key);
+            expected_commitment_start = expected_commitment_start
+                .checked_add(u64::try_from(action.commitments.len()).expect("commitment count"))
+                .expect("expected commitment cursor");
+        }
         let projection = admit_native_action_wire_replay_projection(
             "projection equivalence",
             &decoded,
@@ -23182,6 +23215,240 @@ mod tests {
             projection.projected_bridge_replay_row_count,
             planned_replay_rows
         );
+    }
+
+    fn assert_pending_action_fields_eq(actual: &PendingAction, expected: &PendingAction) {
+        assert_eq!(actual.tx_hash, expected.tx_hash);
+        assert_eq!(actual.binding.circuit, expected.binding.circuit);
+        assert_eq!(actual.binding.crypto, expected.binding.crypto);
+        assert_eq!(actual.family_id, expected.family_id);
+        assert_eq!(actual.action_id, expected.action_id);
+        assert_eq!(actual.anchor, expected.anchor);
+        assert_eq!(actual.nullifiers, expected.nullifiers);
+        assert_eq!(actual.commitments, expected.commitments);
+        assert_eq!(actual.ciphertext_hashes, expected.ciphertext_hashes);
+        assert_eq!(actual.ciphertext_sizes, expected.ciphertext_sizes);
+        assert_eq!(actual.public_args, expected.public_args);
+        assert_eq!(actual.fee, expected.fee);
+        assert_eq!(actual.received_ms, expected.received_ms);
+        assert_eq!(actual.candidate_artifact, expected.candidate_artifact);
+    }
+
+    fn assert_route_payload_fields_eq(
+        actual: &PendingAction,
+        expected: &PendingAction,
+        source_height: u64,
+    ) {
+        match (actual.family_id, actual.action_id) {
+            (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
+                let actual_args: ShieldedTransferInlineArgs =
+                    decode_scale_exact(&actual.public_args, "actual inline transfer args")
+                        .expect("decode actual inline transfer args");
+                let expected_args: ShieldedTransferInlineArgs =
+                    decode_scale_exact(&expected.public_args, "expected inline transfer args")
+                        .expect("decode expected inline transfer args");
+                assert_eq!(actual_args.anchor, actual.anchor);
+                assert_eq!(actual_args.anchor, expected_args.anchor);
+                assert_eq!(actual_args.commitments, actual.commitments);
+                assert_eq!(actual_args.commitments, expected_args.commitments);
+                assert_eq!(actual_args.fee, actual.fee);
+                assert_eq!(actual_args.fee, expected_args.fee);
+                assert_eq!(actual_args.binding_hash, expected_args.binding_hash);
+                assert_eq!(actual_args.stablecoin, expected_args.stablecoin);
+                let (hashes, sizes) = inline_ciphertext_metadata(&actual_args.ciphertexts)
+                    .1
+                    .expect("inline ciphertext metadata");
+                assert_eq!(hashes, actual.ciphertext_hashes);
+                assert_eq!(sizes, actual.ciphertext_sizes);
+            }
+            (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_SIDECAR) => {
+                let actual_args: ShieldedTransferSidecarArgs =
+                    decode_scale_exact(&actual.public_args, "actual sidecar transfer args")
+                        .expect("decode actual sidecar transfer args");
+                let expected_args: ShieldedTransferSidecarArgs =
+                    decode_scale_exact(&expected.public_args, "expected sidecar transfer args")
+                        .expect("decode expected sidecar transfer args");
+                assert_eq!(actual_args.anchor, actual.anchor);
+                assert_eq!(actual_args.anchor, expected_args.anchor);
+                assert_eq!(actual_args.commitments, actual.commitments);
+                assert_eq!(actual_args.commitments, expected_args.commitments);
+                assert_eq!(actual_args.ciphertext_hashes, actual.ciphertext_hashes);
+                assert_eq!(actual_args.ciphertext_sizes, actual.ciphertext_sizes);
+                assert_eq!(actual_args.fee, actual.fee);
+                assert_eq!(actual_args.fee, expected_args.fee);
+                assert_eq!(actual_args.binding_hash, expected_args.binding_hash);
+                assert_eq!(actual_args.stablecoin, expected_args.stablecoin);
+            }
+            (FAMILY_BRIDGE, ACTION_BRIDGE_OUTBOUND) => {
+                let actual_args: OutboundBridgeArgsV1 =
+                    decode_scale_exact(&actual.public_args, "actual outbound bridge args")
+                        .expect("decode actual outbound bridge args");
+                let expected_args: OutboundBridgeArgsV1 =
+                    decode_scale_exact(&expected.public_args, "expected outbound bridge args")
+                        .expect("decode expected outbound bridge args");
+                assert_eq!(
+                    actual_args.destination_chain_id,
+                    expected_args.destination_chain_id
+                );
+                assert_eq!(actual_args.app_family_id, expected_args.app_family_id);
+                assert_eq!(actual_args.payload, expected_args.payload);
+                let messages =
+                    bridge_messages_from_actions(std::slice::from_ref(actual), source_height)
+                        .expect("project outbound bridge message");
+                let message = messages.first().expect("one outbound bridge message");
+                assert_eq!(message.source_chain_id, HEGEMON_CHAIN_ID_V1);
+                assert_eq!(
+                    message.destination_chain_id,
+                    actual_args.destination_chain_id
+                );
+                assert_eq!(message.app_family_id, actual_args.app_family_id);
+                assert_eq!(message.source_height, source_height);
+                assert_eq!(message.message_nonce, (u128::from(source_height)) << 64);
+                assert_eq!(
+                    message.payload_hash,
+                    bridge_payload_hash(&actual_args.payload)
+                );
+                assert_eq!(message.payload, actual_args.payload);
+            }
+            (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
+                let actual_args: MintCoinbaseArgs =
+                    decode_scale_exact(&actual.public_args, "actual coinbase args")
+                        .expect("decode actual coinbase args");
+                let expected_args: MintCoinbaseArgs =
+                    decode_scale_exact(&expected.public_args, "expected coinbase args")
+                        .expect("decode expected coinbase args");
+                let actual_note = &actual_args.reward_bundle.miner_note;
+                let expected_note = &expected_args.reward_bundle.miner_note;
+                assert_eq!(actual_note.amount, expected_note.amount);
+                assert_eq!(
+                    actual_note.recipient_address,
+                    expected_note.recipient_address
+                );
+                assert_eq!(actual_note.public_seed, expected_note.public_seed);
+                assert_eq!(actual_note.commitment, actual.commitments[0]);
+                assert_eq!(actual_note.commitment, expected_note.commitment);
+                assert_eq!(
+                    actual_note.commitment,
+                    coinbase_note_data_commitment(actual_note)
+                );
+                let (_, metadata) = coinbase_ciphertext_metadata(&actual_note.encrypted_note);
+                let (ciphertext_hash, ciphertext_size) =
+                    metadata.expect("coinbase ciphertext metadata");
+                assert_eq!(actual.ciphertext_hashes, vec![ciphertext_hash]);
+                assert_eq!(actual.ciphertext_sizes, vec![ciphertext_size]);
+            }
+            (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
+                let actual_artifact = actual
+                    .candidate_artifact
+                    .as_ref()
+                    .expect("actual candidate artifact");
+                let expected_artifact = expected
+                    .candidate_artifact
+                    .as_ref()
+                    .expect("expected candidate artifact");
+                assert_eq!(actual_artifact, expected_artifact);
+                assert_eq!(actual_artifact.version, BLOCK_PROOF_BUNDLE_SCHEMA);
+                assert_ne!(actual_artifact.tx_count, 0);
+                assert_ne!(actual_artifact.da_chunk_count, 0);
+            }
+            _ => {}
+        }
+    }
+
+    fn validation_steps_from_decoded_actions(
+        state: &NativeState,
+        actions: &[PendingAction],
+    ) -> Result<Vec<NativeBlockActionValidationStep>> {
+        let mut nullifier_state = NullifierState::new(state.nullifiers.clone(), BTreeSet::new());
+        actions
+            .iter()
+            .map(|action| {
+                let scope_input = native_action_scope_admission_input(action);
+                let route = evaluate_native_action_scope_admission(scope_input)
+                    .map_err(native_action_scope_admission_error)?;
+                let mut transfer_key = [0u8; 32];
+                let mut transfer_state_input = NativeTransferStateAdmissionInput {
+                    anchor_known: true,
+                    nullifier_state: NativeTransferNullifierAdmissionState::Valid,
+                    commitments_nonzero: true,
+                    stablecoin_policy_authorized: true,
+                    sidecar_route: false,
+                    sidecar_ciphertexts_available: true,
+                    sidecar_ciphertext_sizes_present: true,
+                    sidecar_ciphertext_sizes_match: true,
+                };
+                let bridge_replay_key = match route {
+                    NativeActionScopeAdmissionRoute::Bridge => {
+                        validate_bridge_action_payload(action)?;
+                        bridge_inbound_replay_key_from_action(action)?
+                    }
+                    NativeActionScopeAdmissionRoute::CandidateArtifact => {
+                        validate_candidate_action_payload(action)?;
+                        None
+                    }
+                    NativeActionScopeAdmissionRoute::Coinbase => {
+                        validate_coinbase_action_payload(action)?;
+                        None
+                    }
+                    NativeActionScopeAdmissionRoute::Transfer => {
+                        validate_transfer_action_payload(action)?;
+                        transfer_key = action_order_key(action);
+                        transfer_state_input = native_transfer_state_admission_input_for_block(
+                            state,
+                            &mut nullifier_state,
+                            action,
+                        );
+                        None
+                    }
+                };
+                Ok(NativeBlockActionValidationStep {
+                    scope_input,
+                    payload_valid: true,
+                    transfer_key,
+                    transfer_state_input,
+                    bridge_replay_key,
+                })
+            })
+            .collect()
+    }
+
+    fn assert_validation_step_projects_action_fields(
+        action: &PendingAction,
+        step: &NativeBlockActionValidationStep,
+    ) {
+        assert_eq!(
+            step.scope_input,
+            native_action_scope_admission_input(action)
+        );
+        assert!(step.payload_valid);
+        assert_eq!(
+            step.bridge_replay_key,
+            bridge_inbound_replay_key_from_action(action).expect("project bridge replay key")
+        );
+        if is_shielded_transfer_action(action) {
+            assert_eq!(step.transfer_key, action_order_key(action));
+            assert_eq!(
+                step.transfer_state_input.anchor_known,
+                action.anchor != [0u8; 48]
+            );
+            assert_eq!(
+                step.transfer_state_input.commitments_nonzero,
+                action
+                    .commitments
+                    .iter()
+                    .all(|commitment| *commitment != [0u8; 48])
+            );
+            assert_eq!(
+                step.transfer_state_input.sidecar_route, false,
+                "block validation intentionally checks sidecar availability before replay"
+            );
+        } else {
+            assert_eq!(step.transfer_key, [0u8; 32]);
+            assert_eq!(
+                step.transfer_state_input.nullifier_state,
+                NativeTransferNullifierAdmissionState::Valid
+            );
+        }
     }
 
     fn projection_equivalence_action_mix_block(
@@ -23250,6 +23517,79 @@ mod tests {
             .iter()
             .filter(|effect| effect.replay_key.is_some())
             .count();
+        let expected_commitment_entries = decoded_actions
+            .iter()
+            .zip(planned.iter())
+            .flat_map(|(action, effect)| {
+                action
+                    .commitments
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, commitment)| {
+                        let offset = u64::try_from(offset).expect("commitment offset");
+                        (
+                            effect
+                                .commitment_start
+                                .checked_add(offset)
+                                .expect("commitment index"),
+                            *commitment,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let expected_nullifier_entries = decoded_actions
+            .iter()
+            .flat_map(|action| action.nullifiers.iter().copied())
+            .collect::<Vec<_>>();
+        let expected_bridge_replay_entries = planned
+            .iter()
+            .filter_map(|effect| effect.replay_key)
+            .collect::<Vec<_>>();
+        let expected_ciphertext_archive_entries = materialized
+            .iter()
+            .zip(planned.iter())
+            .flat_map(|(payload, effect)| {
+                payload
+                    .ciphertexts
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, bytes)| {
+                        let offset = u64::try_from(offset).expect("ciphertext offset");
+                        (
+                            effect
+                                .commitment_start
+                                .checked_add(offset)
+                                .expect("ciphertext archive index"),
+                            bytes.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let expected_ciphertext_index_entries = decoded_actions
+            .iter()
+            .flat_map(|action| {
+                action
+                    .ciphertext_hashes
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, hash)| {
+                        let idx_u64 = u64::try_from(idx).expect("ciphertext index offset");
+                        let size = action
+                            .ciphertext_sizes
+                            .get(idx)
+                            .copied()
+                            .expect("ciphertext index size");
+                        let mut value = Vec::with_capacity(32 + 4 + 8);
+                        value.extend_from_slice(&action.tx_hash);
+                        value.extend_from_slice(&size.to_le_bytes());
+                        value.extend_from_slice(&idx_u64.to_le_bytes());
+                        (*hash, value)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
 
         assert_eq!(
             projection.projected_action_count,
@@ -23274,13 +23614,25 @@ mod tests {
             "{label}"
         );
         assert_eq!(
+            plan.commitment_entries, expected_commitment_entries,
+            "{label}"
+        );
+        assert_eq!(
             plan.nullifier_entries.len(),
             decoded_nullifier_rows,
             "{label}"
         );
         assert_eq!(
+            plan.nullifier_entries, expected_nullifier_entries,
+            "{label}"
+        );
+        assert_eq!(
             plan.ciphertext_index_entries.len(),
             decoded_ciphertext_index_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.ciphertext_index_entries, expected_ciphertext_index_entries,
             "{label}"
         );
         assert_eq!(
@@ -23296,6 +23648,14 @@ mod tests {
         assert_eq!(
             plan.bridge_replay_entries.len(),
             planned_replay_rows,
+            "{label}"
+        );
+        assert_eq!(
+            plan.bridge_replay_entries, expected_bridge_replay_entries,
+            "{label}"
+        );
+        assert_eq!(
+            plan.ciphertext_archive_entries, expected_ciphertext_archive_entries,
             "{label}"
         );
     }

@@ -4090,7 +4090,7 @@
       "id": "native.pending-action-byte-replay-row-count-binding",
       "component": "native pending-action byte replay row-count binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, decoded block-action validation, and production projection rows. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, and decoded payload rows, validated action rows, materialized action/payload rows, and wire replay rows agree under the named production projection facts now exercised by a Rust conformance regression.",
+      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, decoded block-action validation, production projection rows, and ordered field-projection rows. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, decoded payload rows, validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows agree under named production projection facts now exercised by Rust conformance regressions.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_parser_publication_and_validation_predicates",
       "production_eligible": true,
@@ -4103,11 +4103,13 @@
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_replay_row_counts",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.raw_ingress_pending_action_publication_binds_validated_replay_row_counts",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_production_projection_binds_decoded_validation_materialized_rows",
-        "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows"
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows",
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_field_projection_binds_decoded_validation_materialized_wire_rows",
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_field_projection_binds_decoded_validation_materialized_wire_rows"
       ],
       "assumptions": [
         "The theorem composes accepted parser, wire-replay, publication, block-action validation, and production projection predicates; it does not prove arbitrary-byte parser internals.",
-        "The production projection variants make decoded-action-to-validation-row, materialized-action, materialized-payload, and wire-replay row equality named review facts instead of anonymous equality premises; the companion Rust regression checks the current production construction path.",
+        "The production projection variants make decoded-action-to-validation-row, materialized-action, materialized-payload, planned-row, wire-replay, and canonical-row equality named review facts instead of anonymous equality premises; companion Rust regressions check full decoded fields, route payloads, validation-step fields, materialized/planned rows, and exact canonical index rows on the current production construction path.",
         "Raw-ingress wrappers consume existing `RawIngressPendingActionPublicationFacts`; they do not prove DA availability, hash security, proof soundness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -4126,7 +4128,8 @@
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
         "bash scripts/check_formal_core.sh",
-        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {
@@ -4137,7 +4140,7 @@
         },
         {
           "id": "native-pending-action-byte-row-count-validation-projection-open",
-          "description": "The production decoded-action, validation, materialized-payload, and wire-replay projection is now a named Lean fact package with a Rust conformance regression for the current production path, but arbitrary parser-internal proof and complete native-node equivalence remain open.",
+          "description": "The production decoded-action, validation, materialized-payload, planned-row, wire-replay, and canonical-row projection is now a named Lean field package with Rust conformance regressions for the current production path, but arbitrary parser-internal proof and complete native-node equivalence remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -5801,18 +5804,19 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "component": "native raw ingress full byte publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection row agreement across decoded, validated, materialized, and wire-replay rows.",
+      "summary": "The Lean raw-ingress full-byte publication surface flattens the nested parsed tx-leaf/raw-ingress publication theorem into a single review record carrying exact parser facts, action-hash preconditions, wire replay projection, DA sidecar publication facts, canonical replay/publication facts, replayed supply, commitment-root publication, final replay-set uniqueness, bounded tx-leaf artifact shape facts, explicit parser-to-canonical projection assumptions, native tx-leaf full statement artifact facts, and production projection field-row agreement across decoded, validated, materialized, planned, wire-replay, and canonical rows.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_top_level_review_surface_over_existing_refinement_theorems",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface",
-        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"
+        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows",
+        "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows"
       ],
       "assumptions": [
         "This theorem is a top-level packaging surface over existing accepted raw-ingress pending-action byte publication, parsed tx-leaf artifact projection, DA sidecar, canonical publication, and pending-action production projection predicates.",
         "The parser-to-canonical tx-leaf vector projection remains an explicit `NativeTxLeafArtifactCanonicalProjectionAssumptions` input, and arbitrary-byte parser internals remain separate from this composition theorem.",
-        "The production projection row theorem relies on named projection facts for validation and materialization row construction; the companion Rust regression exercises the current production helper path.",
+        "The production projection row theorem relies on named projection facts for validation, materialization, planning, wire replay, and canonical row construction; companion Rust regressions exercise the current production helper path and exact canonical row contents.",
         "The theorem intentionally does not prove cryptographic hash security, proof-system soundness, DA availability, storage durability below accepted predicates, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -5834,12 +5838,13 @@
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh",
-        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {
           "id": "native-raw-ingress-full-byte-parser-and-crypto-assumptions-explicit",
-          "description": "The theorem makes the full accepted surface and production row projection reviewable, but still leaves arbitrary-byte parser internals, parser-to-canonical vector projection, hash security/equivalence, proof soundness, DA availability, and complete native-node refinement as explicit work.",
+          "description": "The theorem makes the full accepted surface and production field-row projection reviewable, but still leaves arbitrary-byte parser internals, parser-to-canonical vector projection, hash security/equivalence, proof soundness, DA availability, and complete native-node refinement as explicit work.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
