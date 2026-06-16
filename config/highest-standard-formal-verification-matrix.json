@@ -28,30 +28,32 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T07:06:07Z",
-    "commit": "da1e691f",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, mixed restart/reorg fail-closed Rust conformance, RPC smoke, wallet-send, live mining status, isolated single-node mining, sync health, service health, and NTP synchronization",
+    "date": "2026-06-16T07:41:20Z",
+    "commit": "7be9da98",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, targeted privacy Lean, wallet re-encryption regressions, RPC smoke, wallet-send, live mining status, isolated single-node mining, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at da1e691f",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 7be9da98",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1707 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 486 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1709 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 487 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed",
-      "cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture passed on hegemon-dev",
-      "bash scripts/smoke-test.sh passed at live height 13865",
+      "cd formal/lean && lake env lean Hegemon/Privacy/CiphertextPrivacy.lean passed after adding /home/ubuntu/.elan/bin to PATH",
+      "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture passed on hegemon-dev",
+      "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture passed on hegemon-dev",
+      "bash scripts/smoke-test.sh passed at live height 13888",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height stayed at 13865, blocks_found stayed at 238, and hash_rate stayed around 21.2 kH/s during the 20-second sample",
-      "bash scripts/test-node.sh single-node mined height 25940",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height stayed at 13888, blocks_found stayed at 261, and hash_rate stayed around 21.37 kH/s during the 20-second sample",
+      "bash scripts/test-node.sh single-node mined height 26114",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
-      "timedatectl reported NTP=yes and NTPSynchronized=yes at 2026-06-16T07:06:07Z"
+      "timedatectl reported NTP=yes and NTPSynchronized=yes at 2026-06-16T07:41:20Z"
     ],
-    "runtime_note": "No release rebuild or service restart was required for this slice; the new changes are docs, formal metadata, formal-core script gating, and cfg(test) native regressions. The live release service stayed running.",
+    "runtime_note": "No release rebuild or service restart was required for this slice; the new changes are Lean/formal metadata/docs/formal-core gating and cfg(test) wallet regressions. The live release service stayed running.",
     "known_limitations": [
-      "The remote validation proves targeted mixed restart/reorg fail-closed conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the implementation commit.",
+      "The remote validation proves targeted privacy Lean/wallet conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on c759aea8 before recording.",
       "The live miner stayed active but did not find a block during the 20-second sample; isolated single-node block production was run as the mining liveness backstop.",
-      "The new regression covers the combined disabled-inbound sidecar/nullifier/bridge-replay restart/reorg fail-closed scenario; positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental envelope.",
-      "The formal slice still leaves SCALE/parser internals, primitive cryptographic security/equivalence, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
+      "The new regressions cover same-plaintext same-recipient re-encryption freshness and public-summary shape stability; proof-wrapper metadata, batching policy, wallet metadata, and network metadata surfaces still need more coverage.",
+      "The formal slice still leaves primitive cryptographic security/equivalence, simulator zero knowledge, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
     ]
   },
   "last_coordinator_audit": {
