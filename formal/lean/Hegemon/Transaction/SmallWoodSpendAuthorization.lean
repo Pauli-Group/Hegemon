@@ -142,6 +142,215 @@ theorem inactive_auth_link_allows_mismatched_limbs :
         commitmentAuth3 := 96 } = true := by
   simp [activeAuthLinkAccepted]
 
+structure ActiveInputSpendBoundarySurface where
+  activeFlag : Nat
+  noteOpeningCommitment : Nat
+  commitmentRowCommitment : Nat
+  publicNullifier : Nat
+  nullifierRow : Nat
+  publicMerkleRoot : Nat
+  merkleRootRow : Nat
+  nullifierPosition : Nat
+  merklePosition : Nat
+  merklePathAccepted : Bool
+deriving DecidableEq, Repr
+
+def activeInputSpendBoundaryAccepted
+    (surface : ActiveInputSpendBoundarySurface) : Bool :=
+  if surface.activeFlag = 1 then
+    natEq surface.commitmentRowCommitment surface.noteOpeningCommitment
+      && natEq surface.nullifierRow surface.publicNullifier
+      && natEq surface.merkleRootRow surface.publicMerkleRoot
+      && natEq surface.merklePosition surface.nullifierPosition
+      && surface.merklePathAccepted
+  else if surface.activeFlag = 0 then
+    natEq surface.publicNullifier 0
+      && natEq surface.nullifierRow 0
+  else
+    false
+
+structure ActiveInputSpendBoundaryFacts
+    (surface : ActiveInputSpendBoundarySurface) : Prop where
+  activeFlagBoolean : surface.activeFlag = 0 ∨ surface.activeFlag = 1
+  commitmentRowsBindNoteOpening :
+    surface.activeFlag = 1 ->
+      surface.commitmentRowCommitment = surface.noteOpeningCommitment
+  nullifierRowsBindPublicNullifier :
+    surface.activeFlag = 1 ->
+      surface.nullifierRow = surface.publicNullifier
+  merkleRowsBindPublicRoot :
+    surface.activeFlag = 1 ->
+      surface.merkleRootRow = surface.publicMerkleRoot
+  merkleRowsBindNullifierPosition :
+    surface.activeFlag = 1 ->
+      surface.merklePosition = surface.nullifierPosition
+  merklePathAccepted :
+    surface.activeFlag = 1 ->
+      surface.merklePathAccepted = true
+  inactivePublicNullifierZero :
+    surface.activeFlag = 0 ->
+      surface.publicNullifier = 0
+  inactiveNullifierRowZero :
+    surface.activeFlag = 0 ->
+      surface.nullifierRow = 0
+
+theorem active_input_commitment_rows_bind_note_opening
+    {surface : ActiveInputSpendBoundarySurface}
+    (accepted : activeInputSpendBoundaryAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.commitmentRowCommitment = surface.noteOpeningCommitment := by
+  unfold activeInputSpendBoundaryAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact natEq_true_eq accepted.left.left.left.left
+
+theorem active_input_nullifier_rows_bind_public_nullifier
+    {surface : ActiveInputSpendBoundarySurface}
+    (accepted : activeInputSpendBoundaryAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.nullifierRow = surface.publicNullifier := by
+  unfold activeInputSpendBoundaryAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact natEq_true_eq accepted.left.left.left.right
+
+theorem active_input_merkle_rows_bind_public_root
+    {surface : ActiveInputSpendBoundarySurface}
+    (accepted : activeInputSpendBoundaryAccepted surface = true)
+    (active : surface.activeFlag = 1) :
+    surface.merkleRootRow = surface.publicMerkleRoot
+      ∧ surface.merklePosition = surface.nullifierPosition
+      ∧ surface.merklePathAccepted = true := by
+  unfold activeInputSpendBoundaryAccepted at accepted
+  rw [active] at accepted
+  simp at accepted
+  exact
+    ⟨natEq_true_eq accepted.left.left.right,
+      natEq_true_eq accepted.left.right,
+      accepted.right⟩
+
+theorem inactive_input_nullifier_rows_zero
+    {surface : ActiveInputSpendBoundarySurface}
+    (accepted : activeInputSpendBoundaryAccepted surface = true)
+    (inactive : surface.activeFlag = 0) :
+    surface.publicNullifier = 0 ∧ surface.nullifierRow = 0 := by
+  unfold activeInputSpendBoundaryAccepted at accepted
+  rw [inactive] at accepted
+  simp at accepted
+  exact
+    ⟨natEq_true_eq accepted.left,
+      natEq_true_eq accepted.right⟩
+
+theorem accepted_smallwood_spend_constraints_imply_active_input_spend_boundary
+    {surface : ActiveInputSpendBoundarySurface}
+    (accepted : activeInputSpendBoundaryAccepted surface = true) :
+    ActiveInputSpendBoundaryFacts surface := by
+  by_cases inactive : surface.activeFlag = 0
+  · have zeroFacts :=
+      inactive_input_nullifier_rows_zero accepted inactive
+    refine {
+      activeFlagBoolean := Or.inl inactive,
+      commitmentRowsBindNoteOpening := ?_,
+      nullifierRowsBindPublicNullifier := ?_,
+      merkleRowsBindPublicRoot := ?_,
+      merkleRowsBindNullifierPosition := ?_,
+      merklePathAccepted := ?_,
+      inactivePublicNullifierZero := ?_,
+      inactiveNullifierRowZero := ?_
+    }
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro active
+      rw [inactive] at active
+      cases active
+    · intro _
+      exact zeroFacts.left
+    · intro _
+      exact zeroFacts.right
+  · by_cases active : surface.activeFlag = 1
+    · have merkleFacts :=
+        active_input_merkle_rows_bind_public_root accepted active
+      refine {
+        activeFlagBoolean := Or.inr active,
+        commitmentRowsBindNoteOpening := ?_,
+        nullifierRowsBindPublicNullifier := ?_,
+        merkleRowsBindPublicRoot := ?_,
+        merkleRowsBindNullifierPosition := ?_,
+        merklePathAccepted := ?_,
+        inactivePublicNullifierZero := ?_,
+        inactiveNullifierRowZero := ?_
+      }
+      · intro _
+        exact
+          active_input_commitment_rows_bind_note_opening
+            accepted
+            active
+      · intro _
+        exact
+          active_input_nullifier_rows_bind_public_nullifier
+            accepted
+            active
+      · intro _
+        exact merkleFacts.left
+      · intro _
+        exact merkleFacts.right.left
+      · intro _
+        exact merkleFacts.right.right
+      · intro inactiveNow
+        rw [active] at inactiveNow
+        cases inactiveNow
+      · intro inactiveNow
+        rw [active] at inactiveNow
+        cases inactiveNow
+    · unfold activeInputSpendBoundaryAccepted at accepted
+      simp [inactive, active] at accepted
+
+def sampleActiveSpendBoundarySurface : ActiveInputSpendBoundarySurface :=
+  {
+    activeFlag := 1,
+    noteOpeningCommitment := 55,
+    commitmentRowCommitment := 55,
+    publicNullifier := 77,
+    nullifierRow := 77,
+    publicMerkleRoot := 99,
+    merkleRootRow := 99,
+    nullifierPosition := 3,
+    merklePosition := 3,
+    merklePathAccepted := true
+  }
+
+theorem sample_active_spend_boundary_accepts :
+    activeInputSpendBoundaryAccepted sampleActiveSpendBoundarySurface = true := by
+  decide
+
+def sampleInactiveSpendBoundarySurface : ActiveInputSpendBoundarySurface :=
+  {
+    activeFlag := 0,
+    noteOpeningCommitment := 55,
+    commitmentRowCommitment := 56,
+    publicNullifier := 0,
+    nullifierRow := 0,
+    publicMerkleRoot := 99,
+    merkleRootRow := 100,
+    nullifierPosition := 3,
+    merklePosition := 4,
+    merklePathAccepted := false
+  }
+
+theorem sample_inactive_spend_boundary_accepts :
+    activeInputSpendBoundaryAccepted sampleInactiveSpendBoundarySurface = true := by
+  decide
+
 end SmallWoodSpendAuthorization
 end Transaction
 end Hegemon

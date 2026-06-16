@@ -5830,6 +5830,146 @@ mod tests {
     }
 
     #[test]
+    fn native_tx_leaf_artifact_projection_matches_canonical_statement_vectors() {
+        let witness = sample_witness(82);
+        let public_inputs = witness.public_inputs().unwrap();
+        let expected_serialized =
+            serialized_stark_inputs_from_witness(&witness, &public_inputs).unwrap();
+        let expected_tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let built = sample_native_tx_leaf_artifact(82);
+        let artifact =
+            decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
+
+        assert_eq!(artifact.stark_public_inputs, expected_serialized);
+        assert_eq!(artifact.tx, expected_tx);
+        assert_eq!(
+            active_flag_count(&artifact.stark_public_inputs.input_flags).unwrap(),
+            artifact.tx.nullifiers.len()
+        );
+        assert_eq!(
+            active_flag_count(&artifact.stark_public_inputs.output_flags).unwrap(),
+            artifact.tx.commitments.len()
+        );
+        assert_eq!(
+            artifact.tx.commitments.len(),
+            artifact.tx.ciphertext_hashes.len()
+        );
+        assert_eq!(
+            artifact.stark_public_inputs.balance_slot_asset_ids.len(),
+            BALANCE_SLOTS
+        );
+
+        let p3_public_inputs = transaction_public_inputs_p3_from_tx_leaf_public(
+            &artifact.tx,
+            &artifact.stark_public_inputs,
+        )
+        .unwrap();
+        assert_eq!(
+            p3_public_inputs.input_flags.len(),
+            artifact.stark_public_inputs.input_flags.len()
+        );
+        assert_eq!(
+            p3_public_inputs.output_flags.len(),
+            artifact.stark_public_inputs.output_flags.len()
+        );
+
+        assert_eq!(
+            artifact.receipt.statement_hash,
+            tx_statement_hash_from_tx_leaf_public(&artifact.tx, &artifact.stark_public_inputs)
+                .unwrap()
+        );
+        assert_eq!(
+            artifact.receipt.public_inputs_digest,
+            transaction_public_inputs_digest_from_serialized(&artifact.stark_public_inputs)
+                .unwrap()
+        );
+        assert_eq!(
+            artifact.receipt.proof_digest,
+            transaction_proof_digest_from_parts(artifact.proof_backend, &artifact.stark_proof)
+        );
+        assert_eq!(
+            artifact.receipt,
+            native_tx_leaf_receipt_from_parts(
+                &artifact.tx,
+                &artifact.stark_public_inputs,
+                &artifact.stark_proof,
+                artifact.proof_backend,
+                &native_backend_params(),
+            )
+            .unwrap()
+        );
+
+        let metadata = verify_native_tx_leaf_artifact_bytes(
+            &artifact.tx,
+            &artifact.receipt,
+            &built.artifact_bytes,
+        )
+        .unwrap();
+        assert_eq!(metadata.stark_public_inputs, artifact.stark_public_inputs);
+        assert_eq!(metadata.proof_backend, artifact.proof_backend);
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_rejects_vector_count_alias() {
+        let built = sample_native_tx_leaf_artifact(82);
+        let mut artifact =
+            decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
+
+        if artifact.tx.nullifiers.is_empty() {
+            if artifact.stark_public_inputs.input_flags.is_empty() {
+                artifact.stark_public_inputs.input_flags.push(1);
+            } else {
+                artifact.stark_public_inputs.input_flags[0] = 1;
+            }
+        } else {
+            for flag in &mut artifact.stark_public_inputs.input_flags {
+                *flag = 0;
+            }
+        }
+
+        let tampered_receipt = native_tx_leaf_receipt_from_parts(
+            &artifact.tx,
+            &artifact.stark_public_inputs,
+            &artifact.stark_proof,
+            artifact.proof_backend,
+            &native_backend_params(),
+        )
+        .unwrap();
+        artifact.receipt = tampered_receipt.clone();
+        let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
+        let err = verify_native_tx_leaf_artifact_bytes(&artifact.tx, &tampered_receipt, &tampered)
+            .expect_err("active flag/vector count alias must reject");
+        assert!(
+            err.to_string().contains("nullifier list length"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_rejects_stablecoin_payload_projection_drift() {
+        let built = sample_native_tx_leaf_artifact(82);
+        let mut artifact =
+            decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
+        artifact.stark_public_inputs.stablecoin_policy_hash[0] ^= 0x5a;
+        let tampered_receipt = native_tx_leaf_receipt_from_parts(
+            &artifact.tx,
+            &artifact.stark_public_inputs,
+            &artifact.stark_proof,
+            artifact.proof_backend,
+            &native_backend_params(),
+        )
+        .unwrap();
+        artifact.receipt = tampered_receipt.clone();
+        let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
+
+        assert!(
+            verify_native_tx_leaf_artifact_bytes(&artifact.tx, &tampered_receipt, &tampered)
+                .is_err(),
+            "stablecoin payload drift must not verify against the original proof"
+        );
+    }
+
+    #[test]
     fn lean_generated_native_tx_leaf_artifact_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS") else {
             eprintln!(

@@ -475,7 +475,7 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "component": "transaction spend authorization boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link slice additionally proves the verifier-surface Goldilocks-field constraint that active input commitment auth limbs must equal previous commitment-state auth limbs plus PRF-derived spend-auth limbs modulo the deployed field, gates Lean-generated wrap/mismatch/inactive vectors against Rust, and gates the production packed SmallWood constraint builder with a wrong-spend-secret regression.",
+      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link and spend row-boundary slices additionally prove verifier-surface Goldilocks-field auth-link, active commitment/nullifier/Merkle row binding, and inactive zero-nullifier facts, gate Lean-generated wrap/mismatch/inactive/boundary vectors against Rust, and gate the production packed SmallWood constraint builder with wrong-secret plus note, nullifier, Merkle, and inactive-nullifier mutation regressions.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumption",
       "production_eligible": false,
@@ -485,8 +485,13 @@
         "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_mismatched_active_limbs_reject",
         "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wraparound_accepts",
         "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wrong_secret_rejects",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_commitment_rows_bind_note_opening",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_merkle_rows_bind_public_root",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_nullifier_rows_bind_public_nullifier",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.accepted_smallwood_spend_constraints_imply_active_input_spend_boundary",
         "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_auth_link_accepts_without_constraint",
         "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_auth_link_allows_mismatched_limbs",
+        "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_input_nullifier_rows_zero",
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_head_active_input_facts",
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_input_slot_facts_at",
         "Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization",
@@ -517,6 +522,7 @@
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
         "`authorizeInputSlots_input_slot_facts_at` covers every indexed input slot: inactive slots must have zero public nullifiers and active slots must expose the full spend facts.",
         "The SmallWood active-auth-link theorem models the exact four-limb Goldilocks-field equality enforced by the packed constraint builder for active inputs: each committed auth limb equals the previous commitment-state auth limb plus the spend-derived auth limb modulo the deployed field. Lean-generated no-wrap, wraparound, mismatch, and inactive cases are checked against Rust, and the production regression mutates only `sk_spend` while leaving note `pk_auth` unchanged and requires the SmallWood verifier path to reject.",
+        "The SmallWood spend row-boundary theorem models active commitment-row-to-note-opening equality, active public-nullifier-to-nullifier-row equality, active Merkle root/position/path acceptance, and inactive zero public/nullifier rows. The production constraint builder now explicitly zeroes inactive public nullifier limbs and ties active nullifier rho limbs to the note-opening rho limbs used by the commitment sponge. Formal-core gates the generated Lean boundary vectors and mutation regressions for note value/commitment drift, nullifier position/rho drift, Merkle sibling/root drift, and inactive nonzero public nullifiers.",
         "This claim does not prove the deployed STARK/AIR or complete SmallWood verifier soundness theorem, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
       ],
       "evidence_paths": [
@@ -534,7 +540,9 @@
         "HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS=<generated-json> cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present -- --nocapture",
         "bash scripts/check_formal_core.sh",
         "bash scripts/check_lean_formal.sh",
-        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture"
+        "cargo test -p transaction-circuit packed_smallwood_frontend_compact_bindings_inline_merkle_skip_initial_mds_witness_satisfies_constraints --lib -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects --lib -- --nocapture"
       ],
       "residual_risks": [
         {
@@ -4199,31 +4207,36 @@
       "id": "native.tx-leaf-artifact-projection-refinement",
       "component": "native tx-leaf artifact parser-to-canonical statement projection",
       "claim_class": "lean_theorem",
-      "summary": "The Lean tx-leaf artifact projection refinement theorem set composes accepted bounded native tx-leaf artifact byte parsing with explicit canonical projection assumptions, accepted native tx-leaf/action equality gates, the canonical transaction statement surface, pending-action byte publication facts, and raw-ingress pending-action tx-leaf publication facts. It proves parsed artifacts expose count, proof-length, commitment-row, backend-default, and backend-validity shape facts; projection assumptions imply accepted tx-leaf/action binding; pending/raw-ingress publication surfaces can carry parsed artifact shape facts plus full statement/artifact facts over the same tx-leaf witness; parsed artifacts can be paired with the canonical native tx-leaf artifact boundary including authorized asset-delta facts; and the raw-ingress parsed tx-leaf publication surface can be paired with either the full deployed verifier boundary facts or the spend-only deployed verifier boundary facts while keeping those soundness assumptions explicit.",
+      "summary": "The Lean tx-leaf artifact projection refinement theorem set composes accepted bounded native tx-leaf artifact byte parsing with derived canonical projection assumptions, accepted native tx-leaf/action equality gates, the canonical transaction statement surface, pending-action byte publication facts, and raw-ingress pending-action tx-leaf publication facts. It proves parsed artifacts expose count, proof-length, commitment-row, backend-default, and backend-validity shape facts; parser count evidence plus canonical statement/vector facts and accepted tx-leaf gates derive the prior projection assumption package; pending/raw-ingress publication surfaces can carry parsed artifact shape facts plus full statement/artifact facts over the same tx-leaf witness; parsed artifacts can be paired with the canonical native tx-leaf artifact boundary including authorized asset-delta facts; and the raw-ingress parsed tx-leaf publication surface can be paired with either the full deployed verifier boundary facts or the spend-only deployed verifier boundary facts while keeping those soundness assumptions explicit.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_parser_shape_and_projection_composition_over_existing_publication_and_canonical_surface_predicates",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_bytes_expose_shape_facts",
+        "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_binds_full_statement_artifact_from_derived_projection",
+        "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_derives_canonical_projection_assumptions",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.tx_leaf_projection_assumptions_accept_binding",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifact",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_projection_binds_canonical_artifact_boundary_facts",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_pending_action_bytes_bind_parsed_tx_leaf_publication",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_deployed_boundary_facts",
-        "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_spend_boundary_facts"
+        "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_spend_boundary_facts",
+        "Hegemon.Native.TxLeafArtifactProjectionRefinement.parsed_tx_leaf_artifact_projects_native_binding_gates",
+        "Hegemon.Native.TxLeafArtifactProjectionRefinement.parsed_tx_leaf_artifact_projects_serialized_public_vectors"
       ],
       "assumptions": [
-        "`NativeTxLeafArtifactCanonicalProjectionAssumptions` explicitly carries the projection from parsed artifact summary counts into serialized public inputs, bound public inputs, public-input shape vectors, statement vectors, proof-binding vectors, and native tx-leaf equality gates.",
+        "`NativeTxLeafArtifactCanonicalProjectionAssumptions` can now be derived from accepted parser bytes, explicit vector-count evidence, canonical transaction statement surface facts, and accepted native tx-leaf/action binding gates. The vector-count evidence still explicitly carries the remaining projection from parsed artifact summary counts into serialized public inputs, bound public inputs, public-input shape vectors, statement vectors, and proof-binding vectors.",
         "The package reuses the existing `CanonicalTxStatementSurface`, pending-action byte publication, and raw-ingress pending-action publication predicates. It does not prove deployed STARK/AIR or SmallWood soundness, hash collision resistance, proof privacy, tx-leaf proof soundness, or complete native-node equivalence.",
         "The canonical artifact boundary theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while pairing parser/projection facts with `NativeTxLeafCanonicalArtifactBoundaryFacts`, including canonical deployed verifier boundary facts, native tx-leaf equality gates, spend/balance exposure, and authorized asset-delta facts.",
         "The deployed-boundary and spend-boundary theorems keep `DeployedTxVerifierSoundnessAssumption` and `DeployedTxVerifierSpendSoundnessAssumption` explicit; they prove the raw-ingress parsed tx-leaf publication path carries the exact future verifier/AIR/refinement target rather than discharging that target.",
-        "No runtime hot path is changed; this is a zero-runtime-cost Lean composition and formal-core gate over already modeled parser/publication surfaces."
+        "The production regression suite checks canonical statement vector projection, active-flag/vector-count alias rejection, and stablecoin payload projection drift rejection. No runtime hot path is changed by the Lean proof; the Rust tests gate existing verifier/parser behavior."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
+        "circuits/superneo-hegemon/src/lib.rs",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
         "formal/lean/Hegemon.lean",
@@ -4238,12 +4251,13 @@
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.TxLeafArtifactProjectionRefinement Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {
           "id": "native-tx-leaf-artifact-projection-assumption-open",
-          "description": "The theorem keeps the projection from parsed artifact summaries into serialized/bound/shape/statement/proof-binding vectors as explicit assumptions rather than proving that full production serialization path end to end.",
+          "description": "The theorem now derives the projection assumption package from parser bytes, explicit vector-count evidence, canonical statement facts, and accepted native binding gates, but still keeps the remaining parsed-count-to-serialized/vector projection evidence explicit rather than proving the full arbitrary-byte production serialization path end to end.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },

@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 85.07,
+  "overall_completion_percent": 85.42,
   "last_full_formal_core": {
-    "date": "2026-06-16T09:12:20Z",
-    "commit": "ce74fbc8",
-    "status": "passed locally after adding the raw-ingress replay-set row-content theorem and canonical replay-set row persistence gate",
+    "date": "2026-06-16T13:49:46Z",
+    "commit": "working-tree",
+    "status": "passed locally after adding SmallWood spend row-boundary constraints/theorems and tx-leaf parser-to-canonical projection derivation/regressions",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1726,
+    "named_lean_theorems": 1735,
     "axiom_free_theorems": 784,
-    "axiom_dependent_theorems": 942,
+    "axiom_dependent_theorems": 951,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 492,
+    "falsification_cases": 495,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -71,35 +71,36 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved raw-ingress replay-set row-content binding for the canonical publication surface. The native commitment-tree content refinement now also packages canonical nullifier rows as exact ordered decoded nullifiers and canonical bridge replay rows as exact ordered planned replay keys over the same accepted raw-ingress full-byte witness.",
+    "summary": "Proved and production-bound a combined SmallWood spend row-boundary and tx-leaf parser-to-canonical projection slice. SmallWood now exposes active commitment/nullifier/Merkle row facts and inactive zero-nullifier facts, while tx-leaf artifact projection derives the prior projection assumption package from parser bytes, explicit count evidence, canonical statement facts, and accepted native binding gates.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
+      "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_values",
-      "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_length",
-      "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_eq_planned_replay_keys",
-      "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_length",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_content",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_length",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_keys",
-      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_bridge_replay_rows_bind_planned_replay_count",
-      "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_replay_set_content",
-      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_replay_set_content"
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_commitment_rows_bind_note_opening",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_nullifier_rows_bind_public_nullifier",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_input_merkle_rows_bind_public_root",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_input_nullifier_rows_zero",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.accepted_smallwood_spend_constraints_imply_active_input_spend_boundary",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.parsed_tx_leaf_artifact_projects_serialized_public_vectors",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.parsed_tx_leaf_artifact_projects_native_binding_gates",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_derives_canonical_projection_assumptions",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_binds_full_statement_artifact_from_derived_projection"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/CommitmentTreeContentRefinement.lean passed locally",
-      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally, including canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T09:12:20Z with 118 claims, 1726 named Lean theorem declarations, 784 axiom-free declarations, 942 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 492 falsification cases, and 209 implementation bindings.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Transaction/SmallWoodSpendAuthorization.lean and lake env lean Hegemon/Native/TxLeafArtifactProjectionRefinement.lean passed locally",
+      "targeted_rust": "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects --lib -- --nocapture, cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present --lib -- --nocapture, and cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T13:49:46Z with 118 claims, 1735 named Lean theorem declarations, 784 axiom-free declarations, 951 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 495 falsification cases, and 209 implementation bindings.",
       "claims": 118,
-      "named_lean_theorems": 1726,
+      "named_lean_theorems": 1735,
       "axiom_free_theorems": 784,
-      "axiom_dependent_theorems": 942,
+      "axiom_dependent_theorems": 951,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 492,
+      "falsification_cases": 495,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -109,35 +110,39 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves accepted raw-ingress replay-set row-content binding, not arbitrary raw-byte parser internals.",
-      "It does not prove nullifier or replay-key cryptographic security, sled durability below accepted predicates, or complete native-node refinement.",
-      "Positive inbound bridge mint publication remains disabled until a PQ-clean verifier replaces the experimental envelope; this slice binds replay rows for accepted/planned surfaces."
+      "This slice narrows the deployed SmallWood spend-soundness target but does not prove complete SmallWood PCS/AIR soundness, witness extraction, or hash/security equivalence.",
+      "The tx-leaf projection theorem derives the projection assumption package from parser bytes, count evidence, canonical statement facts, and binding gates, but the remaining arbitrary-byte serialization-to-statement-vector proof is still explicit.",
+      "Complete native-node equivalence and primitive cryptographic assumptions remain open."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Added a production canonical replay-set row persistence gate. The new regression checks decoded nullifier rows, materialized and planned bridge replay keys, canonical rebuild plan rows, and persisted sled markers all agree in exact order.",
+    "summary": "Added production gates for SmallWood spend row-boundary constraints and native tx-leaf parser-to-canonical projection regressions. The SmallWood gate checks the valid inline-Merkle witness and rejects note, nullifier, Merkle, balance/stablecoin, and inactive-nullifier drift; the tx-leaf gate checks canonical statement vector projection and rejects count aliases plus stablecoin projection drift.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets",
-      "scripts/check_formal_core.sh canonical_index_rebuild_projects_decoded_materialized_wire_rows gate now runs both projection and replay-set tests",
-      "config/formal-security-claims.json formal.native-commitment-tree-refinement replay-set theorem metadata",
-      "config/formal-security-blueprint.json canonical replay-set row-content falsification case"
+      "circuits/transaction/src/smallwood_frontend.rs inactive nullifier zero constraints and active nullifier rho linkage constraints",
+      "circuits/transaction/src/smallwood_frontend.rs packed_smallwood_inline_merkle_rejects_* mutation gates",
+      "circuits/superneo-hegemon/src/lib.rs native_tx_leaf_artifact projection/count/stablecoin drift regressions",
+      "scripts/check_formal_core.sh SmallWood and tx-leaf projection gates",
+      "config/formal-security-claims.json spend-boundary and tx-leaf projection theorem metadata",
+      "config/formal-security-blueprint.json SmallWood and tx-leaf projection falsification cases"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.CommitmentTreeContentRefinement.*",
-      "Hegemon.Native.RawIngressFullBytePublicationSurface.*",
-      "Hegemon.Native.CanonicalPublicationRefinement.*",
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.*"
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.*",
+      "Hegemon.Native.TxLeafArtifactProjectionRefinement.*",
+      "Hegemon.Transaction.SpendAuthorization.*",
+      "Hegemon.Native.TxLeafCanonicalSurface.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects --lib -- --nocapture",
+        "cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present --lib -- --nocapture",
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T09:12:20Z with the replay-set row-content persistence gate enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T13:49:46Z with the SmallWood spend row-boundary and tx-leaf projection gates enabled",
       "claims": 118,
-      "named_lean_theorems": 1726,
+      "named_lean_theorems": 1735,
       "production_eligible_claims": 108,
-      "falsification_cases": 492,
+      "falsification_cases": 495,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -146,9 +151,9 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "This is a cfg(test) and formal-core conformance slice; it introduces no hot runtime path cost.",
-      "The gate hardens canonical replay-set row publication, but does not prove arbitrary parser internals or sled crash consistency below accepted transaction predicates.",
-      "The full native-node equivalence theorem still needs to compose all import, sync, reorg, startup, and repair paths end to end."
+      "The SmallWood constraints are runtime verifier/prover constraints, not just cfg(test); they are sparse row constraints and keep the shipped proof-size profile unchanged pending benchmark confirmation.",
+      "The tx-leaf projection regressions gate existing verifier/parser behavior but do not prove arbitrary-byte parser internals or primitive hash security.",
+      "The full deployed proof-system soundness theorem and complete native-node equivalence remain open."
     ]
   },
   "properties": [
@@ -217,7 +222,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 80,
+      "completion_percent": 82,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -257,7 +262,10 @@
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean proves the active SmallWood auth-link constraint implies input note pk_auth limbs equal PRF-derived spend-auth limbs and that wrong spend secrets reject",
         "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints now enforces the four active auth-link constraints before SmallWood proof verification, and the regression packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth mutates only sk_spend while keeping note pk_auth unchanged",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean now proves the deployed Goldilocks-field active SmallWood auth-link surface, including modular wraparound acceptance, per-limb mismatch rejection, and inactive no-constraint acceptance",
-        "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean emits no-wrap, wraparound, per-limb mismatch, and inactive auth-link cases checked by smallwood_spend_authorization_matches_lean_vectors_when_present"
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean emits no-wrap, wraparound, per-limb mismatch, and inactive auth-link cases checked by smallwood_spend_authorization_matches_lean_vectors_when_present",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean now proves active input commitment rows bind note openings, active nullifier rows bind public nullifiers, active Merkle rows bind public roots/positions/path acceptance, and inactive public/nullifier rows are zero",
+        "circuits/transaction/src/smallwood_frontend.rs now zero-constrains inactive public-nullifier limbs and ties active nullifier rho limbs to the note-opening rho limbs used by the commitment sponge",
+        "formal-core now gates note value/commitment, nullifier position/rho, Merkle sibling/root, and inactive public-nullifier mutation rejections through packed_smallwood_inline_merkle_rejects"
       ],
       "missing_work": [
         "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link slice.",
@@ -268,7 +276,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 82,
+      "completion_percent": 83,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -289,7 +297,8 @@
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean packages consensus-root/state-root/provided-root agreement, root-history membership, state path export, and transaction Merkle-path verifier acceptance into one membership handoff fact surface, including same-root changed-leaf rejection by the Merkle path rather than by root mismatch",
         "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
-        "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness"
+        "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness",
+        "SmallWood spend row-boundary gates now reject active Merkle sibling/root drift while Lean exposes active Merkle-root, position, and path-acceptance facts for the deployed inline-Merkle verifier surface"
       ],
       "missing_work": [
         "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant beyond the now production-bound append-root and membership-path handoff.",
@@ -411,7 +420,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -455,7 +464,10 @@
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean proves recursive_block_v2 pre-proof verifier-surface acceptance is exactly public tuple equality, fixed proof field width, supported tx count, derived header equality, canonical proof-prefix decoding, zero padding, projection success, projected-width admission, and explicit crypto-boundary acceptance",
         "circuits/block-recursion/src/tree_v2.rs verify_block_recursive_v2 now calls verify_block_recursive_v2_surface before verify_tree_child_v2, with Lean-generated vectors checked against the production helper",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean narrows the split balance/public-field deployed-verifier soundness target to concrete SmallWood public balance/stablecoin boundary facts",
-        "circuits/transaction/src/smallwood_frontend.rs inline-Merkle mutation gates require public balance/stablecoin tampering to reject even after recomputing auxiliary Merkle rows"
+        "circuits/transaction/src/smallwood_frontend.rs inline-Merkle mutation gates require public balance/stablecoin tampering to reject even after recomputing auxiliary Merkle rows",
+        "SmallWood spend row-boundary gates now reject Merkle sibling/root drift and active nullifier position drift, narrowing the deployed Merkle-membership proof target inside the inline-Merkle verifier surface",
+        "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now derives the parser-to-canonical projection assumption package from parser bytes, explicit count evidence, canonical statement facts, and accepted native binding gates",
+        "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
@@ -563,7 +575,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 89,
+      "completion_percent": 90,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -588,6 +600,7 @@
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean now separates permissive parser backend-byte defaults from strict release verifier admission, proving strict explicit-backend acceptance and strict missing-backend rejection",
         "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params now rejects noncanonical native tx-leaf artifacts whose decoded canonical encoding differs from the supplied bytes",
         "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression",
+        "circuits/superneo-hegemon/src/lib.rs native_tx_leaf_artifact regressions reject active-flag/vector-count aliases and stablecoin payload projection drift while preserving canonical statement vector projection",
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors."
       ],
       "missing_work": [

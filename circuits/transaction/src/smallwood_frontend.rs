@@ -2470,6 +2470,14 @@ fn build_packed_bridge_linear_constraints(
 
     for input in 0..MAX_INPUTS {
         if statement.public_values[PUB_INPUT_FLAG0 + input] == 0 {
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                push_linear_constraint(
+                    &mut constraints,
+                    &[],
+                    statement.public_values
+                        [PUB_NULLIFIERS + input * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                );
+            }
             continue;
         }
         let commitment0 = bridge_input_commitment_permutation(input, 0);
@@ -2593,6 +2601,22 @@ fn build_packed_bridge_linear_constraints(
             ));
         }
         push_bridge_constraint(&mut constraints, packing_factor, &position_terms, 0);
+        for limb in 0..4 {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(nullifier, 0, 2 + limb), nullifier_lane, 1),
+                    (poseidon_row(commitment1, 0, limb), lane1, neg_one),
+                    (
+                        poseidon_row(commitment0, layout.poseidon_last_row(), limb),
+                        lane0,
+                        1,
+                    ),
+                ],
+                0,
+            );
+        }
         for limb in 6..(POSEIDON2_WIDTH - 1) {
             push_bridge_constant(
                 &mut constraints,
@@ -3584,6 +3608,8 @@ mod tests {
         schema_version: u32,
         field_modulus: u64,
         smallwood_spend_authorization_cases: Vec<LeanSmallwoodSpendAuthorizationCase>,
+        #[serde(default)]
+        smallwood_spend_boundary_cases: Vec<LeanSmallwoodSpendBoundaryCase>,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -3593,6 +3619,22 @@ mod tests {
         previous_commitment_state_limbs: [u64; 4],
         spend_derived_auth_limbs: [u64; 4],
         commitment_auth_limbs: [u64; 4],
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendBoundaryCase {
+        name: String,
+        active_flag: u64,
+        note_opening_commitment: u64,
+        commitment_row_commitment: u64,
+        public_nullifier: u64,
+        nullifier_row: u64,
+        public_merkle_root: u64,
+        merkle_root_row: u64,
+        nullifier_position: u64,
+        merkle_position: u64,
+        merkle_path_accepted: bool,
         expected_valid: bool,
     }
 
@@ -3608,6 +3650,23 @@ mod tests {
                 Felt::from_u64(commitment_auth_limb)
                     == Felt::from_u64(previous_limb) + Felt::from_u64(derived_limb)
             })
+    }
+
+    fn smallwood_spend_boundary_case_accepts(case: &LeanSmallwoodSpendBoundaryCase) -> bool {
+        match case.active_flag {
+            1 => {
+                Felt::from_u64(case.commitment_row_commitment)
+                    == Felt::from_u64(case.note_opening_commitment)
+                    && Felt::from_u64(case.nullifier_row) == Felt::from_u64(case.public_nullifier)
+                    && Felt::from_u64(case.merkle_root_row)
+                        == Felt::from_u64(case.public_merkle_root)
+                    && Felt::from_u64(case.merkle_position)
+                        == Felt::from_u64(case.nullifier_position)
+                    && case.merkle_path_accepted
+            }
+            0 => case.public_nullifier == 0 && case.nullifier_row == 0,
+            _ => false,
+        }
     }
 
     fn sample_witness() -> TransactionWitness {
@@ -3744,6 +3803,18 @@ mod tests {
                 smallwood_active_auth_link_case_accepts(case),
                 case.expected_valid,
                 "Lean SmallWood auth vector case {} disagreed with Rust Goldilocks auth-link check",
+                case.name
+            );
+        }
+        assert!(
+            !vectors.smallwood_spend_boundary_cases.is_empty(),
+            "Lean SmallWood spend boundary vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_spend_boundary_cases {
+            assert_eq!(
+                smallwood_spend_boundary_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood spend boundary vector case {} disagreed with Rust row-boundary check",
                 case.name
             );
         }
@@ -4400,6 +4471,288 @@ mod tests {
             &material.auxiliary_witness_words,
         )
         .expect("inline-merkle auxiliary constraints must hold with padded dummy inputs");
+    }
+
+    fn assert_inline_merkle_relation_rejects(
+        label: &str,
+        statement: &SmallwoodPublicStatement,
+        packed_expanded_witness: &[u64],
+        linear_constraints: &SmallwoodLinearConstraints,
+        auxiliary_witness_words: &[u64],
+    ) {
+        let result = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &statement.public_values,
+            packed_expanded_witness,
+            statement.lppc_row_count as usize,
+            statement.lppc_packing_factor as usize,
+            statement.effective_constraint_degree,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+            auxiliary_witness_words,
+        );
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("smallwood"), "{label}: {err}");
+    }
+
+    fn overwrite_poseidon_permutation_rows(
+        material: &mut PackedSmallwoodAuxFrontendMaterial,
+        layout: SmallwoodBridgeRowLayout,
+        permutation: usize,
+        rows: &[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION],
+    ) {
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let lane = packed_bridge_permutation_lane(permutation, packing_factor);
+        for logical_row in 0..layout.poseidon_rows_per_permutation() {
+            let source_row = layout.poseidon_trace_row(logical_row);
+            for limb in 0..POSEIDON2_WIDTH {
+                let row =
+                    bridge_poseidon_row(packing_factor, layout, permutation, logical_row, limb);
+                material.packed_expanded_witness[row * packing_factor + lane] =
+                    rows[source_row][limb];
+            }
+        }
+    }
+
+    fn overwrite_input_merkle_permutation_rows(
+        material: &mut PackedSmallwoodAuxFrontendMaterial,
+        layout: SmallwoodBridgeRowLayout,
+        input: usize,
+        poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+    ) {
+        for level in 0..MERKLE_TREE_DEPTH {
+            for chunk in 0..2 {
+                let permutation = bridge_input_merkle_permutation(input, level, chunk);
+                overwrite_poseidon_permutation_rows(
+                    material,
+                    layout,
+                    permutation,
+                    &poseidon_rows[permutation],
+                );
+            }
+        }
+    }
+
+    fn inline_merkle_material_for_test(
+        witness: &TransactionWitness,
+    ) -> (
+        SmallwoodFrontendShape,
+        SmallwoodBridgeRowLayout,
+        PackedSmallwoodAuxFrontendMaterial,
+    ) {
+        let context = build_smallwood_witness_context(witness).unwrap();
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let shape =
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)
+                .unwrap();
+        let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+        (shape, layout, material)
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_active_input_note_value_and_commitment_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (_shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let commitment0 = bridge_input_commitment_permutation(0, 0);
+        let commitment2 = bridge_input_commitment_permutation(0, 2);
+        let commitment_lane = packed_bridge_permutation_lane(commitment0, packing_factor);
+        let output_lane = packed_bridge_permutation_lane(commitment2, packing_factor);
+
+        let mut mutated_value_rows = material.packed_expanded_witness.clone();
+        let value_row = bridge_row_input_value(layout, 0);
+        mutated_value_rows[value_row * packing_factor + commitment_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active input note value row mutation",
+            &material.public_statement,
+            &mutated_value_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+
+        let mut mutated_commitment_rows = material.packed_expanded_witness.clone();
+        let commitment_row = bridge_poseidon_row(
+            packing_factor,
+            layout,
+            commitment2,
+            layout.poseidon_last_row(),
+            0,
+        );
+        mutated_commitment_rows[commitment_row * packing_factor + output_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active input note commitment row mutation",
+            &material.public_statement,
+            &mutated_commitment_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_nullifier_position_and_rho_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let nullifier = bridge_input_nullifier_permutation(0);
+        let nullifier_lane = packed_bridge_permutation_lane(nullifier, packing_factor);
+        let (prf_hash, _) =
+            trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &bytes_to_felts(&witness.sk_spend));
+        let prf = prf_hash[0];
+
+        let mut position_material = material.clone();
+        let mut position_input = witness.inputs[0].clone();
+        position_input.position ^= 1;
+        let (position_nullifier, position_traces) = trace_sponge_hash(
+            NULLIFIER_DOMAIN_TAG,
+            &nullifier_inputs(prf, &position_input),
+        );
+        overwrite_poseidon_permutation_rows(
+            &mut position_material,
+            layout,
+            nullifier,
+            &position_traces[0],
+        );
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            position_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
+                position_nullifier[limb].as_canonical_u64();
+        }
+        let direction_row = bridge_row_input_direction(layout, 0, 0);
+        position_material.packed_expanded_witness
+            [direction_row * packing_factor + nullifier_lane] ^= 1;
+        position_material.auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &witness,
+                &position_material.public_statement.public_values,
+            )
+            .unwrap();
+        position_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &position_material.public_statement,
+                shape,
+                position_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input nullifier position row mutation",
+            &position_material.public_statement,
+            &position_material.packed_expanded_witness,
+            &position_material.linear_constraints,
+            &position_material.auxiliary_witness_words,
+        );
+
+        let mut rho_material = material.clone();
+        let mut rho_input = witness.inputs[0].clone();
+        rho_input.note.rho[0] ^= 1;
+        let (rho_nullifier, rho_traces) =
+            trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &nullifier_inputs(prf, &rho_input));
+        overwrite_poseidon_permutation_rows(&mut rho_material, layout, nullifier, &rho_traces[0]);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            rho_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
+                rho_nullifier[limb].as_canonical_u64();
+        }
+        rho_material.auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+            &witness,
+            &rho_material.public_statement.public_values,
+        )
+        .unwrap();
+        rho_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &rho_material.public_statement,
+                shape,
+                rho_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input nullifier rho row mutation",
+            &rho_material.public_statement,
+            &rho_material.packed_expanded_witness,
+            &rho_material.linear_constraints,
+            &rho_material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_merkle_sibling_and_root_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+
+        let mut root_material = material.clone();
+        root_material.public_statement.public_values[PUB_MERKLE_ROOT] ^= 1;
+        root_material.auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+            &witness,
+            &root_material.public_statement.public_values,
+        )
+        .unwrap();
+        root_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &root_material.public_statement,
+                shape,
+                root_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input public Merkle root mutation",
+            &root_material.public_statement,
+            &root_material.packed_expanded_witness,
+            &root_material.linear_constraints,
+            &root_material.auxiliary_witness_words,
+        );
+
+        let mut sibling_material = material.clone();
+        let mut sibling_witness = witness.clone();
+        sibling_witness.inputs[0].merkle_path.siblings[0][0] += Felt::ONE;
+        let tampered_poseidon_rows = poseidon_subtrace_rows(&sibling_witness).unwrap();
+        overwrite_input_merkle_permutation_rows(
+            &mut sibling_material,
+            layout,
+            0,
+            &tampered_poseidon_rows,
+        );
+        sibling_material.auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &sibling_witness,
+                &sibling_material.public_statement.public_values,
+            )
+            .unwrap();
+        assert_inline_merkle_relation_rejects(
+            "active input Merkle sibling row mutation",
+            &sibling_material.public_statement,
+            &sibling_material.packed_expanded_witness,
+            &sibling_material.linear_constraints,
+            &sibling_material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_inactive_nonzero_public_nullifier() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, _layout, material) = inline_merkle_material_for_test(&witness);
+        let mut statement = material.public_statement.clone();
+        statement.public_values[PUB_NULLIFIERS + SMALLWOOD_WORDS_PER_48_BYTES] = 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        assert_inline_merkle_relation_rejects(
+            "inactive input public nullifier mutation",
+            &statement,
+            &material.packed_expanded_witness,
+            &linear_constraints,
+            &auxiliary_witness_words,
+        );
     }
 
     #[test]

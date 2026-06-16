@@ -434,6 +434,7 @@ cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture
 cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture
+cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture
 cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture
@@ -448,7 +449,9 @@ cargo test -p transaction-circuit commitment_inputs_use_shared_core_preimage -- 
 cargo test -p transaction-circuit nullifier_inputs_use_shared_core_preimage -- --nocapture
 HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS="$LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS" \
   cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present -- --nocapture
+cargo test -p transaction-circuit packed_smallwood_frontend_compact_bindings_inline_merkle_skip_initial_mds_witness_satisfies_constraints --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture
+cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture
 cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture
 cargo test -p disclosure-circuit disclosure_commitment_inputs_use_shared_core_preimage -- --nocapture

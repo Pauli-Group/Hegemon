@@ -258,6 +258,97 @@ structure NativeTxLeafArtifactCanonicalProjectionAssumptions
       ∧ txLeaf.proofBackendMatches = true
       ∧ txLeaf.ciphertextPayloadHashesMatch = true
 
+structure NativeTxLeafArtifactCanonicalVectorCountEvidence
+    (summary : TxLeafSummary)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields :
+      Hegemon.Transaction.StatementHash.StatementFields) : Prop where
+  serializedInputFlagsProject :
+    summary.serialized.inputFlagCount = serializedFields.inputFlags.length
+  serializedOutputFlagsProject :
+    summary.serialized.outputFlagCount = serializedFields.outputFlags.length
+  balanceSlotsProject :
+    summary.serialized.balanceSlotCount = bound.balanceSlotAssets.length
+  nullifierCountProjects :
+    summary.publicTx.nullifierCount = statementFields.nullifierSeeds.length
+  commitmentCountProjects :
+    summary.publicTx.commitmentCount = statementFields.commitmentSeeds.length
+  ciphertextHashCountProjects :
+    summary.publicTx.ciphertextHashCount =
+      statementFields.ciphertextHashSeeds.length
+
+structure ParsedTxLeafArtifactSerializedPublicVectorFacts
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (shape : PublicInputShape)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields :
+      Hegemon.Transaction.StatementHash.StatementFields)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields) : Prop where
+  artifactByteShapeFacts :
+    AcceptedNativeTxLeafArtifactByteShapeFacts
+      artifactBytes
+      summary
+  serializedInputFlagsProject :
+    summary.serialized.inputFlagCount = serializedFields.inputFlags.length
+  serializedOutputFlagsProject :
+    summary.serialized.outputFlagCount = serializedFields.outputFlags.length
+  boundInputFlagsProject :
+    serializedFields.inputFlags = bound.inputFlags
+  boundOutputFlagsProject :
+    serializedFields.outputFlags = bound.outputFlags
+  shapeInputFlagsProject :
+    shape.inputFlags = bound.inputFlags
+  shapeOutputFlagsProject :
+    shape.outputFlags = bound.outputFlags
+  balanceSlotsProject :
+    summary.serialized.balanceSlotCount = bound.balanceSlotAssets.length
+  nullifierCountProjects :
+    summary.publicTx.nullifierCount = statementFields.nullifierSeeds.length
+  commitmentCountProjects :
+    summary.publicTx.commitmentCount = statementFields.commitmentSeeds.length
+  ciphertextHashCountProjects :
+    summary.publicTx.ciphertextHashCount =
+      statementFields.ciphertextHashSeeds.length
+  bindingNullifiersProject :
+    bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+  bindingCommitmentsProject :
+    bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+  bindingCiphertextHashesProject :
+    bindingFields.ciphertextHashSeeds =
+      statementFields.ciphertextHashSeeds
+
+structure ParsedTxLeafArtifactNativeBindingGateFacts
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (txLeaf : TxLeafActionBindingInput) : Prop where
+  artifactByteShapeFacts :
+    AcceptedNativeTxLeafArtifactByteShapeFacts
+      artifactBytes
+      summary
+  nativeVectorGates :
+    txLeaf.nullifiersMatch = true
+      ∧ txLeaf.commitmentsMatch = true
+      ∧ txLeaf.ciphertextHashesMatch = true
+      ∧ txLeaf.inputCountMatches = true
+      ∧ txLeaf.outputCountMatches = true
+  nativeScalarGates :
+    txLeaf.versionMatches = true
+      ∧ txLeaf.feeMatches = true
+      ∧ txLeaf.stablecoinPayloadMatches = true
+      ∧ txLeaf.balanceTagMatches = true
+  nativeStatementProofGates :
+    txLeaf.receiptStatementHashMatches = true
+      ∧ txLeaf.publicInputsDigestMatches = true
+      ∧ txLeaf.proofDigestMatches = true
+      ∧ txLeaf.proofBackendMatches = true
+      ∧ txLeaf.ciphertextPayloadHashesMatch = true
+
 structure ParsedNativeTxLeafArtifactCanonicalFacts
     (artifactBytes : List Byte)
     (summary : TxLeafSummary)
@@ -579,6 +670,182 @@ theorem tx_leaf_projection_assumptions_accept_binding
     hStablecoin, hBalanceTag, hReceipt, hPublicInputs, hProofDigest,
     hProofBackend, hCiphertextPayload]
 
+theorem parsed_tx_leaf_artifact_projects_serialized_public_vectors
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (counts :
+      NativeTxLeafArtifactCanonicalVectorCountEvidence
+        summary
+        serializedFields
+        bound
+        statementFields)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    ParsedTxLeafArtifactSerializedPublicVectorFacts
+      artifactBytes
+      summary
+      shape
+      serializedFields
+      bound
+      statementFields
+      bindingFields := by
+  have byteFacts :=
+    accepted_native_tx_leaf_artifact_bytes_expose_shape_facts parsed
+  have p3Facts :=
+    canonical_statement_surface_p3_public_input_binding_facts surface
+  exact
+    { artifactByteShapeFacts := byteFacts
+      serializedInputFlagsProject :=
+        counts.serializedInputFlagsProject
+      serializedOutputFlagsProject :=
+        counts.serializedOutputFlagsProject
+      boundInputFlagsProject := p3Facts.boundInputFlags.symm
+      boundOutputFlagsProject := p3Facts.boundOutputFlags.symm
+      shapeInputFlagsProject := surface.shapeInputFlags
+      shapeOutputFlagsProject := surface.shapeOutputFlags
+      balanceSlotsProject := counts.balanceSlotsProject
+      nullifierCountProjects := counts.nullifierCountProjects
+      commitmentCountProjects := counts.commitmentCountProjects
+      ciphertextHashCountProjects :=
+        counts.ciphertextHashCountProjects
+      bindingNullifiersProject := surface.bindingNullifiers
+      bindingCommitmentsProject := surface.bindingCommitments
+      bindingCiphertextHashesProject := surface.bindingCiphertextHashes }
+
+theorem parsed_tx_leaf_artifact_projects_native_binding_gates
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (accepted : txLeafActionBindingAccepts txLeaf = true) :
+    ParsedTxLeafArtifactNativeBindingGateFacts
+      artifactBytes
+      summary
+      txLeaf := by
+  have byteFacts :=
+    accepted_native_tx_leaf_artifact_bytes_expose_shape_facts parsed
+  have gateFacts :=
+    tx_leaf_action_accepts_implies_binding_facts accepted
+  rcases gateFacts with
+    ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+      hOutputCount, hVersion, hFee, hStablecoin, hBalanceTag,
+      hReceipt, hPublicInputs, hProofDigest, hProofBackend,
+      hCiphertextPayload⟩
+  exact
+    { artifactByteShapeFacts := byteFacts
+      nativeVectorGates :=
+        ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+          hOutputCount⟩
+      nativeScalarGates :=
+        ⟨hVersion, hFee, hStablecoin, hBalanceTag⟩
+      nativeStatementProofGates :=
+        ⟨hReceipt, hPublicInputs, hProofDigest, hProofBackend,
+          hCiphertextPayload⟩ }
+
+theorem accepted_native_tx_leaf_artifact_derives_canonical_projection_assumptions
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (counts :
+      NativeTxLeafArtifactCanonicalVectorCountEvidence
+        summary
+        serializedFields
+        bound
+        statementFields)
+    (accepted : txLeafActionBindingAccepts txLeaf = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    NativeTxLeafArtifactCanonicalProjectionAssumptions
+      summary
+      txLeaf
+      shape
+      serializedFields
+      bound
+      statementFields
+      bindingFields := by
+  have vectorFacts :=
+    parsed_tx_leaf_artifact_projects_serialized_public_vectors
+      parsed
+      counts
+      surface
+  have gateFacts :=
+    parsed_tx_leaf_artifact_projects_native_binding_gates
+      parsed
+      accepted
+  exact
+    { serializedInputFlagsProject :=
+        vectorFacts.serializedInputFlagsProject
+      serializedOutputFlagsProject :=
+        vectorFacts.serializedOutputFlagsProject
+      boundInputFlagsProject := vectorFacts.boundInputFlagsProject
+      boundOutputFlagsProject := vectorFacts.boundOutputFlagsProject
+      shapeInputFlagsProject := vectorFacts.shapeInputFlagsProject
+      shapeOutputFlagsProject := vectorFacts.shapeOutputFlagsProject
+      balanceSlotsProject := vectorFacts.balanceSlotsProject
+      nullifierCountProjects := vectorFacts.nullifierCountProjects
+      commitmentCountProjects := vectorFacts.commitmentCountProjects
+      ciphertextHashCountProjects :=
+        vectorFacts.ciphertextHashCountProjects
+      bindingNullifiersProject := vectorFacts.bindingNullifiersProject
+      bindingCommitmentsProject := vectorFacts.bindingCommitmentsProject
+      bindingCiphertextHashesProject :=
+        vectorFacts.bindingCiphertextHashesProject
+      nativeVectorGates := gateFacts.nativeVectorGates
+      nativeScalarGates := gateFacts.nativeScalarGates
+      nativeStatementProofGates :=
+        gateFacts.nativeStatementProofGates }
+
 theorem accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifact
     {artifactBytes : List Byte}
     {summary : TxLeafSummary}
@@ -645,6 +912,76 @@ theorem accepted_native_tx_leaf_artifact_projection_binds_full_statement_artifac
     { artifactByteShapeFacts := byteFacts
       projectionAssumptions := projection
       txLeafAccepted := txLeafAccepted
+      txLeafFullStatementArtifactFacts := txLeafFacts }
+
+theorem accepted_native_tx_leaf_artifact_binds_full_statement_artifact_from_derived_projection
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (counts :
+      NativeTxLeafArtifactCanonicalVectorCountEvidence
+        summary
+        serializedFields
+        bound
+        statementFields)
+    (accepted : txLeafActionBindingAccepts txLeaf = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    ParsedNativeTxLeafArtifactCanonicalFacts
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot := by
+  have projection :=
+    accepted_native_tx_leaf_artifact_derives_canonical_projection_assumptions
+      parsed
+      counts
+      accepted
+      surface
+  have byteFacts :=
+    accepted_native_tx_leaf_artifact_bytes_expose_shape_facts parsed
+  have txLeafFacts :=
+    native_tx_leaf_binding_and_canonical_surface_full_statement_artifact_facts
+      accepted
+      surface
+  exact
+    { artifactByteShapeFacts := byteFacts
+      projectionAssumptions := projection
+      txLeafAccepted := accepted
       txLeafFullStatementArtifactFacts := txLeafFacts }
 
 theorem accepted_native_tx_leaf_artifact_projection_binds_canonical_artifact_boundary_facts

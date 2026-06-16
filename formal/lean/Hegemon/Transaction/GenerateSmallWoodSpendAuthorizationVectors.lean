@@ -48,6 +48,34 @@ def caseJson (name : String) (surface : ActiveAuthLinkSurface) : String :=
     ++ boolJson (activeAuthLinkAccepted surface) ++ "\n"
     ++ "    }"
 
+def spendBoundaryCaseJson
+    (name : String)
+    (surface : ActiveInputSpendBoundarySurface) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"active_flag\": " ++ toString surface.activeFlag ++ ",\n"
+    ++ "      \"note_opening_commitment\": "
+    ++ toString surface.noteOpeningCommitment ++ ",\n"
+    ++ "      \"commitment_row_commitment\": "
+    ++ toString surface.commitmentRowCommitment ++ ",\n"
+    ++ "      \"public_nullifier\": "
+    ++ toString surface.publicNullifier ++ ",\n"
+    ++ "      \"nullifier_row\": "
+    ++ toString surface.nullifierRow ++ ",\n"
+    ++ "      \"public_merkle_root\": "
+    ++ toString surface.publicMerkleRoot ++ ",\n"
+    ++ "      \"merkle_root_row\": "
+    ++ toString surface.merkleRootRow ++ ",\n"
+    ++ "      \"nullifier_position\": "
+    ++ toString surface.nullifierPosition ++ ",\n"
+    ++ "      \"merkle_position\": "
+    ++ toString surface.merklePosition ++ ",\n"
+    ++ "      \"merkle_path_accepted\": "
+    ++ boolJson surface.merklePathAccepted ++ ",\n"
+    ++ "      \"expected_valid\": "
+    ++ boolJson (activeInputSpendBoundaryAccepted surface) ++ "\n"
+    ++ "    }"
+
 def validNoWrap : ActiveAuthLinkSurface :=
   { active := true,
     previousAuth0 := 1,
@@ -98,6 +126,36 @@ def inactiveMismatched : ActiveAuthLinkSurface :=
     commitmentAuth2 := 97,
     commitmentAuth3 := 96 }
 
+def activeBoundaryValid : ActiveInputSpendBoundarySurface :=
+  sampleActiveSpendBoundarySurface
+
+def activeBoundaryCommitmentMismatch : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with commitmentRowCommitment := 56 }
+
+def activeBoundaryNullifierMismatch : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with nullifierRow := 78 }
+
+def activeBoundaryMerkleRootMismatch : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with merkleRootRow := 100 }
+
+def activeBoundaryPositionMismatch : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with merklePosition := 4 }
+
+def activeBoundaryMerklePathRejected : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with merklePathAccepted := false }
+
+def inactiveBoundaryValid : ActiveInputSpendBoundarySurface :=
+  sampleInactiveSpendBoundarySurface
+
+def inactiveBoundaryPublicNullifierNonzero : ActiveInputSpendBoundarySurface :=
+  { inactiveBoundaryValid with publicNullifier := 1 }
+
+def inactiveBoundaryNullifierRowNonzero : ActiveInputSpendBoundarySurface :=
+  { inactiveBoundaryValid with nullifierRow := 1 }
+
+def boundaryMalformedFlag : ActiveInputSpendBoundarySurface :=
+  { activeBoundaryValid with activeFlag := 2 }
+
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
@@ -110,6 +168,36 @@ def vectorJson : String :=
     ++ caseJson "active-mismatched-limb-2-rejected" mismatchLimb2 ++ ",\n"
     ++ caseJson "active-mismatched-limb-3-rejected" mismatchLimb3 ++ ",\n"
     ++ caseJson "inactive-mismatched-limbs-accepted" inactiveMismatched ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"smallwood_spend_boundary_cases\": [\n"
+    ++ spendBoundaryCaseJson "active-boundary-valid" activeBoundaryValid ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "active-boundary-commitment-mismatch-rejected"
+      activeBoundaryCommitmentMismatch ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "active-boundary-nullifier-mismatch-rejected"
+      activeBoundaryNullifierMismatch ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "active-boundary-merkle-root-mismatch-rejected"
+      activeBoundaryMerkleRootMismatch ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "active-boundary-position-mismatch-rejected"
+      activeBoundaryPositionMismatch ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "active-boundary-merkle-path-rejected"
+      activeBoundaryMerklePathRejected ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "inactive-boundary-zero-nullifier-valid"
+      inactiveBoundaryValid ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "inactive-boundary-public-nullifier-nonzero-rejected"
+      inactiveBoundaryPublicNullifierNonzero ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "inactive-boundary-nullifier-row-nonzero-rejected"
+      inactiveBoundaryNullifierRowNonzero ++ ",\n"
+    ++ spendBoundaryCaseJson
+      "boundary-malformed-active-flag-rejected"
+      boundaryMalformedFlag ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 
