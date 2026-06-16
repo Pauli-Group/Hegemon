@@ -645,6 +645,40 @@ mod tests {
         )
     }
 
+    fn same_plaintext_reencryptions() -> (
+        AddressKeyMaterial,
+        NotePlaintext,
+        NoteCiphertext,
+        NoteCiphertext,
+    ) {
+        let mut setup_rng = StdRng::seed_from_u64(124);
+        let root = RootSecret::from_rng(&mut setup_rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(
+            42,
+            7,
+            MemoPlaintext::new(b"same plaintext memo".to_vec()),
+            &mut setup_rng,
+        );
+
+        let mut left_rng = StdRng::seed_from_u64(125);
+        let mut right_rng = StdRng::seed_from_u64(126);
+        let left = NoteCiphertext::encrypt(&address, &note, &mut left_rng).unwrap();
+        let right = NoteCiphertext::encrypt(&address, &note, &mut right_rng).unwrap();
+        (material, note, left, right)
+    }
+
+    fn assert_public_ciphertext_summary_shape_eq(left: &NoteCiphertext, right: &NoteCiphertext) {
+        assert_eq!(left.version, right.version);
+        assert_eq!(left.crypto_suite, right.crypto_suite);
+        assert_eq!(left.diversifier_index, right.diversifier_index);
+        assert_eq!(left.kem_ciphertext.len(), right.kem_ciphertext.len());
+        assert_eq!(left.note_payload.len(), right.note_payload.len());
+        assert_eq!(left.memo_payload.len(), right.memo_payload.len());
+    }
+
     #[test]
     fn encrypt_decrypt_round_trip() {
         let mut rng = StdRng::seed_from_u64(123);
@@ -662,32 +696,62 @@ mod tests {
 
     #[test]
     fn encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness() {
-        let mut setup_rng = StdRng::seed_from_u64(124);
-        let root = RootSecret::from_rng(&mut setup_rng);
-        let keys = root.derive();
-        let material = keys.address(0).unwrap();
-        let address = material.shielded_address();
-        let note = NotePlaintext::random(
-            42,
-            7,
-            MemoPlaintext::new(b"same plaintext memo".to_vec()),
-            &mut setup_rng,
-        );
-
-        let mut left_rng = StdRng::seed_from_u64(125);
-        let mut right_rng = StdRng::seed_from_u64(126);
-        let left = NoteCiphertext::encrypt(&address, &note, &mut left_rng).unwrap();
-        let right = NoteCiphertext::encrypt(&address, &note, &mut right_rng).unwrap();
+        let (material, note, left, right) = same_plaintext_reencryptions();
+        let left_chain_bytes = left.to_chain_bytes().unwrap();
+        let right_chain_bytes = right.to_chain_bytes().unwrap();
+        let left_da_bytes = left.to_da_bytes().unwrap();
+        let right_da_bytes = right.to_da_bytes().unwrap();
 
         assert_ne!(
             left.kem_ciphertext, right.kem_ciphertext,
             "fresh KEM randomness must unlink repeated plaintext encryption"
         );
         assert_ne!(
-            left.to_chain_bytes().unwrap(),
-            right.to_chain_bytes().unwrap(),
+            left_chain_bytes, right_chain_bytes,
             "chain wire bytes must not deterministically identify repeated plaintexts"
         );
+        assert_ne!(
+            left_da_bytes, right_da_bytes,
+            "DA wire bytes must not deterministically identify repeated plaintexts"
+        );
+        assert_ne!(
+            transaction_circuit::hashing_pq::ciphertext_hash_bytes(&left_da_bytes),
+            transaction_circuit::hashing_pq::ciphertext_hash_bytes(&right_da_bytes),
+            "public ciphertext hashes must remain bound to the randomized DA wire"
+        );
+
+        let recovered_left = left.decrypt(&material).unwrap();
+        let recovered_right = right.decrypt(&material).unwrap();
+        assert_eq!(recovered_left, note);
+        assert_eq!(recovered_right, note);
+    }
+
+    #[test]
+    fn reencryption_preserves_public_ciphertext_summary_shape() {
+        let (material, note, left, right) = same_plaintext_reencryptions();
+        let left_chain_bytes = left.to_chain_bytes().unwrap();
+        let right_chain_bytes = right.to_chain_bytes().unwrap();
+        let left_da_bytes = left.to_da_bytes().unwrap();
+        let right_da_bytes = right.to_da_bytes().unwrap();
+
+        assert_ne!(
+            left_chain_bytes, right_chain_bytes,
+            "fresh encryption must change raw chain wire bytes"
+        );
+        assert_ne!(
+            left_da_bytes, right_da_bytes,
+            "fresh encryption must change raw DA wire bytes"
+        );
+        assert_eq!(left_chain_bytes.len(), right_chain_bytes.len());
+        assert_eq!(left_da_bytes.len(), right_da_bytes.len());
+
+        let left_parsed = NoteCiphertext::from_chain_bytes(&left_chain_bytes).unwrap();
+        let right_parsed = NoteCiphertext::from_chain_bytes(&right_chain_bytes).unwrap();
+        let left_da_parsed = NoteCiphertext::from_da_bytes(&left_da_bytes).unwrap();
+        let right_da_parsed = NoteCiphertext::from_da_bytes(&right_da_bytes).unwrap();
+        assert_public_ciphertext_summary_shape_eq(&left, &right);
+        assert_public_ciphertext_summary_shape_eq(&left_parsed, &right_parsed);
+        assert_public_ciphertext_summary_shape_eq(&left_da_parsed, &right_da_parsed);
 
         let recovered_left = left.decrypt(&material).unwrap();
         let recovered_right = right.decrypt(&material).unwrap();

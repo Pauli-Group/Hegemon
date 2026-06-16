@@ -131,6 +131,15 @@ structure SecretResamplingPrivacyFacts
           privateWitness := rightPrivateWitness
           proverRandomnessSeed := rightProverRandomnessSeed }
 
+structure RawWireExcludedPublicLeakageFacts
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop) : Prop where
+  publicMetadataLeakage : samePublicMetadataLeakage left right
+  batchTimingLeakage : sameBatchTimingLeakage left right
+  rawWireIndistinguishable : wireIndistinguishable
+  sameWireDischargesFullObserverLeakage :
+    left.ciphertextBytes = right.ciphertextBytes -> sameAllowedLeakage left right
+
 structure CiphertextPrivacyOpenAssumptionBoundaryFacts
     (left right : ShieldedTransactionWorld)
     (wireIndistinguishable : Prop)
@@ -139,6 +148,8 @@ structure CiphertextPrivacyOpenAssumptionBoundaryFacts
     CiphertextPrivacyBoundaryFacts left right wireIndistinguishable assumptions
   secretResamplingBoundary :
     SecretResamplingPrivacyFacts left right wireIndistinguishable assumptions
+  rawWireExcludedPublicLeakageBoundary :
+    RawWireExcludedPublicLeakageFacts left right wireIndistinguishable
   sameWireDischargesRawWirePrivacy :
     left.ciphertextBytes = right.ciphertextBytes -> sameAllowedLeakage left right
   rawWireIndistinguishable : wireIndistinguishable
@@ -202,6 +213,19 @@ theorem ciphertext_privacy_game_only_open_crypto_obligation
     (game : CiphertextPrivacyGame left right) :
     game.wireIndistinguishable := by
   exact game.wireIndistinguishableProof
+
+theorem ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right) :
+    samePublicCiphertextShape left right
+      ∧ samePublicMetadataLeakage left right
+      ∧ sameBatchTimingLeakage left right
+      ∧ game.wireIndistinguishable := by
+  exact
+    ⟨ciphertext_privacy_game_preserves_public_ciphertext_shape game,
+      ciphertext_privacy_game_preserves_public_metadata_leakage game,
+      ciphertext_privacy_game_preserves_batch_timing_leakage game,
+      ciphertext_privacy_game_only_open_crypto_obligation game⟩
 
 theorem ciphertext_privacy_game_boundary_facts
     {left right : ShieldedTransactionWorld}
@@ -377,6 +401,27 @@ theorem same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
       sameWire
       game.placement
 
+theorem ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right) :
+    RawWireExcludedPublicLeakageFacts
+      left
+      right
+      game.wireIndistinguishable := by
+  exact {
+    publicMetadataLeakage :=
+      ciphertext_privacy_game_preserves_public_metadata_leakage game
+    batchTimingLeakage :=
+      ciphertext_privacy_game_preserves_batch_timing_leakage game
+    rawWireIndistinguishable :=
+      ciphertext_privacy_game_only_open_crypto_obligation game
+    sameWireDischargesFullObserverLeakage :=
+      fun sameWire =>
+        same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
+          game
+          sameWire
+  }
+
 theorem ciphertext_privacy_game_open_assumption_boundary_facts
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -397,6 +442,8 @@ theorem ciphertext_privacy_game_open_assumption_boundary_facts
       ciphertext_privacy_game_secret_resampling_boundary_facts
         game
         assumptionProofs
+    rawWireExcludedPublicLeakageBoundary :=
+      ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts game
     sameWireDischargesRawWirePrivacy :=
       fun sameWire =>
         same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
