@@ -632,7 +632,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99.6,
+      "completion_percent": 99.7,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -664,6 +664,7 @@
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now binds accepted decoded payload rows to validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows through named production projection facts",
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/planned/wire field-row agreement and canonical row projection at the raw-ingress full-byte publication surface",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean names the raw-ingress full-byte native publication row-equivalence package and composes it with accepted mined-block commit publication facts",
+        "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean now packages raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence facts into one native publication path-family theorem",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks raw block-action bytes, full decoded PendingAction fields, route payload fields, decoded validation input fields, materialized payload rows, planned effect rows, and wire replay rows are built from the same decoded actions",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean now lifts production decoded/validated/materialized/wire projection row agreement through the materialized sidecar DA publication surface",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive rows exactly match the decoded/materialized/planned/wire projection path",
@@ -681,7 +682,6 @@
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
-        "Generalize the named raw-ingress/mined row-equivalence surface across announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair paths as one complete native-node refinement theorem.",
         "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental offline envelope; the combined disabled-inbound restart/reorg fail-closed case is now gated."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."

@@ -75,6 +75,57 @@ structure MinedCommitNativePublicationRowEquivalenceFacts
       wireRows
       canonicalRows
 
+structure NativePublicationRows : Type where
+  decodedRows : List PendingActionFieldProjectionRow
+  validationRows : List PendingActionFieldProjectionRow
+  materializedRows : List PendingActionFieldProjectionRow
+  plannedRows : List PendingActionFieldProjectionRow
+  wireRows : List PendingActionFieldProjectionRow
+  canonicalRows : PendingActionCanonicalFieldRows
+
+def NativePublicationRows.equivalent
+    (rows : NativePublicationRows) : Prop :=
+  NativePublicationRowEquivalenceFacts
+    rows.decodedRows
+    rows.validationRows
+    rows.materializedRows
+    rows.plannedRows
+    rows.wireRows
+    rows.canonicalRows
+
+structure NativePublicationPathFamilyRowEquivalenceFacts
+    (minedInput : MinedBlockCommitPublicationInput)
+    (rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows) : Prop where
+  rawIngressRows :
+    rawIngress.equivalent
+  minedCommitRows :
+    MinedCommitNativePublicationRowEquivalenceFacts
+      minedInput
+      minedCommit.decodedRows
+      minedCommit.validationRows
+      minedCommit.materializedRows
+      minedCommit.plannedRows
+      minedCommit.wireRows
+      minedCommit.canonicalRows
+  announcedImportRows :
+    announcedImport.equivalent
+  syncImportRows :
+    syncImport.equivalent
+  reorgReplayRows :
+    reorgReplay.equivalent
+  canonicalIndexRebuildRows :
+    canonicalIndexRebuild.equivalent
+  blockRangeRows :
+    blockRange.equivalent
+  startupRepairRows :
+    startupRepair.equivalent
+  minedAndStartupShareDecodedRows :
+    minedCommit.decodedRows = startupRepair.decodedRows
+  rebuildAndBlockRangeShareCanonicalRows :
+    canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows
+
 theorem raw_ingress_full_byte_field_projection_binds_native_publication_rows
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : CodecAdmission.ExactDecodeInput}
@@ -303,6 +354,52 @@ theorem accepted_mined_block_commit_binds_native_publication_rows
       minedCommitFacts :=
         accepted_mined_block_commit_publication_facts accepted,
       nativePublicationRows := rows
+    }
+
+theorem accepted_native_publication_path_family_binds_native_publication_rows
+    {minedInput : MinedBlockCommitPublicationInput}
+    {rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows}
+    (rawIngressRows : rawIngress.equivalent)
+    (minedAccepted :
+      minedBlockCommitPublicationAccepts minedInput = true)
+    (minedRows : minedCommit.equivalent)
+    (announcedRows : announcedImport.equivalent)
+    (syncRows : syncImport.equivalent)
+    (reorgRows : reorgReplay.equivalent)
+    (rebuildRows : canonicalIndexRebuild.equivalent)
+    (blockRangeRows : blockRange.equivalent)
+    (startupRows : startupRepair.equivalent)
+    (minedStartupDecoded :
+      minedCommit.decodedRows = startupRepair.decodedRows)
+    (rebuildBlockRangeCanonical :
+      canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows) :
+    NativePublicationPathFamilyRowEquivalenceFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair := by
+  exact
+    {
+      rawIngressRows := rawIngressRows,
+      minedCommitRows :=
+        accepted_mined_block_commit_binds_native_publication_rows
+          minedAccepted
+          minedRows,
+      announcedImportRows := announcedRows,
+      syncImportRows := syncRows,
+      reorgReplayRows := reorgRows,
+      canonicalIndexRebuildRows := rebuildRows,
+      blockRangeRows := blockRangeRows,
+      startupRepairRows := startupRows,
+      minedAndStartupShareDecodedRows := minedStartupDecoded,
+      rebuildAndBlockRangeShareCanonicalRows := rebuildBlockRangeCanonical
     }
 
 end NativePublicationRowEquivalence

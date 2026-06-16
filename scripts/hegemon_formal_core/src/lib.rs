@@ -500,6 +500,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+        "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean",
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean",
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
