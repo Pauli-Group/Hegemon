@@ -6,19 +6,19 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 86.3,
   "last_full_formal_core": {
-    "date": "2026-06-16T23:01:28Z",
-    "commit": "e8c55c6b",
-    "status": "passed locally after lifting exact ordered commitment/nullifier/bridge replay content through the native publication path-family theorem",
+    "date": "2026-06-16T23:35:42Z",
+    "commit": "c0d8b546",
+    "status": "passed locally after binding pending-action production row projection packages to accepted exact canonical decode and adding the malleable action-byte rejection gate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1781,
+    "named_lean_theorems": 1782,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 986,
+    "axiom_dependent_theorems": 987,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 502,
+    "falsification_cases": 503,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -34,7 +34,7 @@
     "checks": [
       "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 4d606e68 to codex/superneo-formal-verification at 4c146251",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "highest-standard matrix recomputed to 86.30% with total weight 100 across 18 properties",
+      "highest-standard matrix recomputed to 86.27% with total weight 100 across 18 properties",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1781 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 502 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory passed and included formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
@@ -75,9 +75,11 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Lifted exact ordered commitment/nullifier/bridge replay content through the native publication path family: the new Lean theorem composes the existing path-family row-equivalence package with ordered content binders so raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair all expose canonical commitment values/indexes, nullifier rows, and bridge replay keys derived from decoded/planned rows.",
+    "summary": "Bound pending-action production row-projection packages to canonical decode: the new Lean theorem proves any accepted raw-byte production field-row package necessarily carried accepted exact pending-action decode and accepted exact block-action decode, and the native regression rejects trailing action bytes before canonical-index row projection.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
+      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+      "node/src/native/mod.rs",
+      "scripts/check_formal_core.sh",
       "config/formal-security-claims.json",
       "config/formal-security-blueprint.json",
       "config/highest-standard-formal-verification-matrix.json",
@@ -86,22 +88,21 @@
       "formal/lean/README.md"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CommitmentTreeContentRefinement.native_publication_rows_equivalence_binds_commitment_replay_content",
-      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_native_publication_path_family_binds_commitment_replay_content"
+      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_raw_byte_projection_requires_canonical_decode"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 146 jobs.",
-      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets --lib --no-default-features -- --nocapture and cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T23:01:28Z after adding the native publication path-family content theorem, citing it in claims/blueprint, and adding an explicit mixed replay-set falsification gate.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteReplayRowCountBinding passed locally with 56 jobs; full formal-core built Hegemon with 146 jobs.",
+      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_rejects_malleable_action_bytes_before_projection_rows --lib --no-default-features -- --nocapture passed locally, and full formal-core also passed the projection/rebuild/block_range/mined/startup native gates.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T23:35:42Z after adding the canonical-decode theorem, citing it in claims/blueprint, and adding the malleable action-byte projection falsification gate.",
       "claims": 118,
-      "named_lean_theorems": 1781,
+      "named_lean_theorems": 1782,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 986,
+      "axiom_dependent_theorems": 987,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 502,
+      "falsification_cases": 503,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -111,9 +112,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice composes existing path-family row-equivalence facts with ordered content binders; path-specific raw byte construction remains enforced by Rust conformance gates and blueprint bindings.",
-      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, and complete native-node refinement remain explicit residuals.",
-      "Positive mined/startup publication of accepted inbound bridge replay rows remains blocked until a PQ-clean verifier replaces the experimental/offline envelope."
+      "This slice proves canonical exact-decode acceptance for the existing production field-row package, not a full arbitrary-byte SCALE parser mechanization.",
+      "The larger next parser target is a dedicated PendingAction SCALE wire grammar/vector gate over bounded raw bytes.",
+      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive mined/startup inbound bridge publication, and complete native-node refinement remain explicit residuals."
     ]
   },
   "last_production_binding_slice": {
