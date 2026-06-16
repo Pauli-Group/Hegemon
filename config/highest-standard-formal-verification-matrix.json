@@ -7,7 +7,7 @@
   "overall_completion_percent": 84.34,
   "last_full_formal_core": {
     "date": "2026-06-16T03:13:50Z",
-    "commit": "84746ff3cbf8+worktree",
+    "commit": "cf69c7a6a6ec",
     "status": "passed locally after adding materialized sidecar observer privacy implementation-equivalence",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
