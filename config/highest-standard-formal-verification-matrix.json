@@ -7,7 +7,7 @@
   "overall_completion_percent": 84.53,
   "last_full_formal_core": {
     "date": "2026-06-16T05:47:16Z",
-    "commit": "working-tree-before-mined-byte-publication-commit",
+    "commit": "21143451",
     "status": "passed locally after adding mined action-byte equality at atomic commit, mined commit/startup publication conformance, and exact-decodable mined action-byte drift rejection",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
