@@ -28,31 +28,32 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T03:57:24Z",
-    "commit": "2321c4b52ebc",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild, service restart, remote formal metadata gates, targeted Lean, targeted block-action byte-budget Rust regression, RPC smoke, wallet-send, live mining advancement, sync health, service health, and NTP synchronization",
+    "date": "2026-06-16T04:36:15Z",
+    "commit": "9cce563f8f67",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild, service restart, remote formal metadata gates, targeted Lean, targeted bounded-request Rust conformance, targeted sync response-count Rust regression, RPC smoke, wallet-send, live mining advancement, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 2321c4b52ebc",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 9cce563f8f67",
       "make node rebuilt target/release/hegemon-node on hegemon-dev",
       "sudo systemctl restart hegemon-node.service completed and service returned active with NRestarts=0",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1706 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 475 falsification cases, 208 implementation bindings, and 162 result obligations",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1707 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 479 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed",
-      "lake build Hegemon.Native.PendingActionByteParserRefinement Hegemon passed on hegemon-dev after exporting /home/ubuntu/.elan/bin on PATH",
-      "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture passed on hegemon-dev",
-      "bash scripts/smoke-test.sh passed at live height 13030",
+      "lake build Hegemon.Native.SyncBlockReplayPublication Hegemon passed on hegemon-dev after exporting /home/ubuntu/.elan/bin on PATH",
+      "HEGEMON_LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bounded_request_admission_vectors_match_production --lib --no-default-features -- --nocapture passed on hegemon-dev",
+      "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture passed on hegemon-dev",
+      "bash scripts/smoke-test.sh passed at live height 13217",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height advanced from 13047 to 13054, blocks_found advanced from 17 to 24, and hash_rate stayed about 14.5-16.5 kH/s during the 20-second sample",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height advanced from 13222 to 13227, blocks_found advanced from 14 to 19, and hash_rate moved from about 15.0 kH/s to 17.4 kH/s during the 20-second sample",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0 after restart",
-      "timedatectl reported NTPSynchronized=yes at Tue 2026-06-16 03:57:24 UTC"
+      "timedatectl reported NTPSynchronized=yes at Tue 2026-06-16 04:36:15 UTC"
     ],
-    "runtime_note": "A release binary rebuild and service restart were required because this slice changes production native block-action decode admission.",
+    "runtime_note": "A release binary rebuild and service restart were required because this slice changes production native sync response-count admission.",
     "known_limitations": [
       "The remote validation proves targeted conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the same commit.",
-      "The live miner advanced during the 20-second sample, so isolated single-node block production was not rerun for this slice.",
-      "The formal slice still leaves SCALE parser internals, primitive cryptographic security/equivalence, deployed proof-system soundness/extraction, storage durability below accepted predicates, and complete native-node equivalence explicit."
+      "The live miner advanced during the 20-second sample, so isolated single-node block production was not run for this slice.",
+      "The formal slice still leaves SCALE/parser internals, primitive cryptographic security/equivalence, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
     ]
   },
   "last_coordinator_audit": {
