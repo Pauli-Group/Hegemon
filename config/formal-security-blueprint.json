@@ -9472,9 +9472,14 @@
           "id": "nonwinning-side-branch-reload-regression",
           "description": "A nonwinning announced side branch must persist as a hash-addressed block record across reopen without replacing the canonical height index.",
           "gate": "cargo test -p hegemon-node nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features"
+        },
+        {
+          "id": "mixed-restart-reorg-sidecar-nullifier-bridge-replay-rejection",
+          "description": "A restarted node must reject a multi-block side-branch reorg candidate that combines sidecar transfer nullifier rows with a disabled inbound bridge replay key before publishing canonical indexes, nullifiers, ciphertext indexes, or bridge replay rows.",
+          "gate": "cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, materialized inline/sidecar ciphertext counts, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper and checks reload without canonical-height replacement. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the composed replay/accounting helper now called by native mined-block import, announced-block import, and explicit-chain canonical branch replay over ordered decoded action summaries, materialized inline/sidecar ciphertext counts, checked native supply advancement, and block commitment predicates. The blueprint/regression gate now also binds nonwinning announced side-branch persistence through a named block-record helper, checks reload without canonical-height replacement, and covers a combined disabled-inbound sidecar/nullifier/bridge-replay reorg candidate failing closed before publication. It does not prove SCALE decoder correctness, sled transaction implementation correctness, filesystem/fsync durability, commitment-tree/hash security, BLAKE3/Blake2 implementation equivalence, full raw-action native-node replay equivalence, tx-leaf proof soundness, recursive proof soundness, PoW threshold validity, positive inbound bridge mint publication while the release path is disabled, or complete native-node equivalence."
     },
     {
       "id": "bridge.message-root-replay",

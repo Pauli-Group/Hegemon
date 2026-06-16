@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 84.54,
+  "overall_completion_percent": 84.55,
   "last_full_formal_core": {
     "date": "2026-06-16T06:18:11Z",
     "commit": "1a794c72",
@@ -590,7 +590,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99.4,
+      "completion_percent": 99.5,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -633,12 +633,13 @@
         "node/src/native/mod.rs announced_block_rejects_exact_decodable_action_byte_drift_before_persist_or_publish checks a substituted exact-decodable announced action body rejects before block persistence or best-state publication",
         "node/src/native/mod.rs startup_rejects_nonempty_exact_decodable_action_byte_drift_before_accepting_state checks startup canonical replay rejects a nonempty block body whose bytes decode to a different valid action",
         "node/src/native/mod.rs reorg_replay_rejects_exact_decodable_action_byte_drift_before_publish checks reorg replay rejects a corrupted persisted side-parent action body before publishing the winning child",
-        "node/src/native/mod.rs block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range checks sync block_range refuses a canonical block body whose valid action bytes no longer match the committed action root"
+        "node/src/native/mod.rs block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range checks sync block_range refuses a canonical block body whose valid action bytes no longer match the committed action root",
+        "node/src/native/mod.rs mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication checks a restarted noncanonical side-branch reorg candidate with sidecar transfer nullifier rows plus a disabled inbound bridge replay key fails closed before canonical publication rows change"
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
         "Generalize the decoded/validated/materialized/planned/wire field projection proof across mining, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair paths as one complete native-node refinement theorem.",
-        "Add one combined restart adversarial scenario that exercises nullifiers, sidecars, bridge replay, and multi-block reorg publication together."
+        "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental offline envelope; the combined disabled-inbound restart/reorg fail-closed case is now gated."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."
     },

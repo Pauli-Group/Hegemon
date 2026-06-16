@@ -15094,6 +15094,207 @@ mod tests {
     }
 
     #[test]
+    fn mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), test_pow_bits, "safe", false);
+        let shared_nullifier = [90u8; 48];
+        let side_commitment = [92u8; 48];
+
+        let (canonical, side_one, old_archive_len) = {
+            let node = NativeNode::open(config.clone()).expect("node");
+            let genesis = node.best_meta();
+
+            stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [91u8; 48]);
+            let canonical_work = node.prepare_work().expect("prepare canonical native work");
+            let canonical_seal =
+                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical = node
+                .import_mined_block(&canonical_work, canonical_seal)
+                .expect("canonical import")
+                .expect("canonical block");
+            assert_eq!(node.best_meta().hash, canonical.hash);
+            assert_eq!(node.ciphertext_archive_tree.len(), 1);
+
+            let side_one = (1..128)
+                .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+                .find(|candidate| !native_meta_better_than(candidate, &canonical))
+                .expect("side parent that does not beat canonical tip");
+            assert!(
+                !node
+                    .import_announced_block(side_one.clone())
+                    .expect("side parent import"),
+                "side parent should persist without reorganizing"
+            );
+            assert_eq!(node.best_meta().hash, canonical.hash);
+            node.db.flush().expect("flush mixed side parent");
+
+            (canonical, side_one, node.ciphertext_archive_tree.len())
+        };
+
+        let reopened = NativeNode::open(config.clone()).expect("reopen before mixed reorg attempt");
+        {
+            let state = reopened.state.read();
+            assert_eq!(state.best.hash, canonical.hash);
+            assert_eq!(state.best.height, 1);
+            assert_eq!(state.commitment_tree.leaf_count(), 1);
+            assert_eq!(state.commitment_tree.root(), canonical.state_root);
+            assert!(!state.nullifiers.contains(&shared_nullifier));
+            assert!(state.consumed_bridge_messages.is_empty());
+        }
+        assert_eq!(
+            reopened.hash_by_height(1).expect("reopened height one"),
+            Some(canonical.hash)
+        );
+        assert!(
+            reopened
+                .header_by_hash(&side_one.hash)
+                .expect("side parent record after restart")
+                .is_some(),
+            "nonwinning side parent must survive restart for reorg replay"
+        );
+        assert_eq!(reopened.ciphertext_archive_tree.len(), old_archive_len);
+
+        let sidecar =
+            test_sidecar_transfer_action(side_one.state_root, shared_nullifier, side_commitment, 0);
+        let sidecar_ciphertext_hash = sidecar.ciphertext_hashes[0];
+        let sidecar_hash = sidecar.tx_hash;
+        let inbound = test_disabled_risc0_inbound_bridge_action(b"mixed restart reorg inbound");
+        let inbound_replay_key = bridge_inbound_replay_key_from_action(&inbound)
+            .expect("derive inbound replay key")
+            .expect("inbound bridge action replay key");
+        let candidate = test_candidate_artifact_action(1, 91);
+        stage_test_sidecar_ciphertext(&reopened, &sidecar);
+        assert!(
+            reopened
+                .state
+                .read()
+                .staged_ciphertexts
+                .contains_key(&hex48(&sidecar_ciphertext_hash)),
+            "test must present the same sidecar marker the mempool path requires"
+        );
+
+        let bad_side_tip = mined_child_with_actions(
+            &side_one,
+            2,
+            test_pow_bits,
+            129,
+            vec![sidecar.clone(), inbound, candidate],
+        );
+        let err = reopened
+            .import_announced_block(bad_side_tip.clone())
+            .expect_err("mixed sidecar/nullifier/bridge replay candidate must fail before publish");
+        let err = format!("{err:?}");
+        assert!(err.contains("verification is disabled"), "{err}");
+        assert_eq!(
+            reopened.best_meta().hash,
+            canonical.hash,
+            "failed mixed reorg must not publish a new best block"
+        );
+        assert_eq!(
+            reopened
+                .hash_by_height(1)
+                .expect("height one after bad reorg"),
+            Some(canonical.hash),
+            "failed mixed reorg must not replace the canonical height-one index"
+        );
+        assert_eq!(
+            reopened
+                .hash_by_height(2)
+                .expect("height two after bad reorg"),
+            None
+        );
+        assert!(
+            reopened
+                .header_by_hash(&bad_side_tip.hash)
+                .expect("bad side tip lookup")
+                .is_none(),
+            "failed mixed side tip must not be persisted"
+        );
+        assert!(
+            reopened
+                .nullifier_tree
+                .get(shared_nullifier.as_slice())
+                .expect("read rejected sidecar nullifier")
+                .is_none(),
+            "failed mixed reorg must not publish transfer nullifier rows"
+        );
+        assert!(
+            reopened
+                .ciphertext_index_tree
+                .get(sidecar_ciphertext_hash.as_slice())
+                .expect("read rejected sidecar ciphertext index")
+                .is_none(),
+            "failed mixed reorg must not publish sidecar ciphertext index rows"
+        );
+        assert!(
+            reopened
+                .bridge_inbound_tree
+                .get(inbound_replay_key.as_slice())
+                .expect("read disabled inbound replay key")
+                .is_none(),
+            "failed mixed reorg must not publish inbound bridge replay rows"
+        );
+        assert_eq!(reopened.ciphertext_archive_tree.len(), old_archive_len);
+        assert_eq!(reopened.bridge_inbound_tree.len(), 0);
+        assert!(
+            reopened
+                .state
+                .read()
+                .staged_ciphertexts
+                .contains_key(&hex48(&sidecar_ciphertext_hash)),
+            "failed mixed reorg must not clear staged sidecar markers for rejected actions"
+        );
+
+        drop(reopened);
+        let reopened_after_failure =
+            NativeNode::open(config).expect("reopen after failed mixed reorg");
+        assert_eq!(reopened_after_failure.best_meta().hash, canonical.hash);
+        assert_eq!(
+            reopened_after_failure
+                .hash_by_height(1)
+                .expect("height one after failed mixed reorg restart"),
+            Some(canonical.hash)
+        );
+        assert_eq!(
+            reopened_after_failure
+                .hash_by_height(2)
+                .expect("height two after failed mixed reorg restart"),
+            None
+        );
+        assert_eq!(
+            reopened_after_failure.ciphertext_archive_tree.len(),
+            old_archive_len
+        );
+        assert_eq!(reopened_after_failure.bridge_inbound_tree.len(), 0);
+        assert!(reopened_after_failure
+            .nullifier_tree
+            .get(shared_nullifier.as_slice())
+            .expect("read rejected nullifier after restart")
+            .is_none());
+        assert!(reopened_after_failure
+            .ciphertext_index_tree
+            .get(sidecar_ciphertext_hash.as_slice())
+            .expect("read rejected ciphertext index after restart")
+            .is_none());
+        assert!(reopened_after_failure
+            .bridge_inbound_tree
+            .get(inbound_replay_key.as_slice())
+            .expect("read rejected replay key after restart")
+            .is_none());
+        assert!(reopened_after_failure
+            .state
+            .read()
+            .staged_ciphertexts
+            .contains_key(&hex48(&sidecar_ciphertext_hash)));
+        assert!(reopened_after_failure
+            .action_tree
+            .get(sidecar_hash.as_slice())
+            .expect("read rejected sidecar pending action after restart")
+            .is_none());
+    }
+
+    #[test]
     fn reorg_pending_revalidation_prioritizes_existing_pending_over_orphaned_duplicate_nullifier() {
         let test_pow_bits = 0x207f_ffff;
         let canonical_state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
@@ -26929,6 +27130,18 @@ mod tests {
         tree.insert(hash.as_slice(), bytes)
             .expect("insert test sidecar ciphertext");
         tree.flush().expect("flush test sidecar ciphertext");
+    }
+
+    fn stage_test_sidecar_ciphertext(node: &NativeNode, action: &PendingAction) {
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, action);
+        let mut state = node.state.write();
+        for (hash, size) in action
+            .ciphertext_hashes
+            .iter()
+            .zip(action.ciphertext_sizes.iter())
+        {
+            state.staged_ciphertexts.insert(hex48(hash), *size);
+        }
     }
 
     fn test_transfer_proof_artifact(
