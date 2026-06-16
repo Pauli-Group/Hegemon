@@ -217,6 +217,7 @@
         "node/src/native/mod.rs revalidates canonical reorg pending resurrection by semantically admitting existing pending actions before orphaned old-chain actions",
         "formal-core includes a hostile reorg pending duplicate-nullifier regression before reorg persistence/publication",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves canonical nullifier rows equal exact ordered decoded nullifier rows at the accepted raw-ingress full-byte publication boundary",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered nullifier-row content through raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair path-family packages",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets checks decoded nullifier rows, canonical rebuild rows, and persisted nullifier markers agree in order"
       ],
       "missing_work": [
@@ -305,6 +306,7 @@
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean packages consensus-root/state-root/provided-root agreement, root-history membership, state path export, and transaction Merkle-path verifier acceptance into one membership handoff fact surface, including same-root changed-leaf rejection by the Merkle path rather than by root mismatch",
         "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered commitment values and planned indexes through the full native publication path-family theorem",
         "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness",
         "SmallWood spend row-boundary gates now reject active Merkle sibling/root drift while Lean exposes active Merkle-root, position, and path-acceptance facts for the deployed inline-Merkle verifier surface"
       ],
@@ -634,7 +636,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99.75,
+      "completion_percent": 99.85,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -668,6 +670,7 @@
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/planned/wire field-row agreement and canonical row projection at the raw-ingress full-byte publication surface",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean names the raw-ingress full-byte native publication row-equivalence package and composes it with accepted mined-block commit publication facts",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean now packages raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence facts into one native publication path-family theorem",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered commitment values/indexes, nullifier rows, and bridge replay keys through the full native publication path-family theorem",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks raw block-action bytes, full decoded PendingAction fields, route payload fields, decoded validation input fields, materialized payload rows, planned effect rows, and wire replay rows are built from the same decoded actions",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean now lifts production decoded/validated/materialized/wire projection row agreement through the materialized sidecar DA publication surface",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive rows exactly match the decoded/materialized/planned/wire projection path",
@@ -781,6 +784,7 @@
         "node/src/native/mod.rs checks the schema-v2 abstract bridge mint/replay vectors against production `evaluate_native_bridge_mint_replay_policy`, including rejection precedence, duplicate-free replay-set inputs, exact next consumed/pending sets, and accepted replay-key consumption",
         "scripts/check_formal_core.sh now runs `lean_generated_bridge_mint_replay_policy_vectors_match_production` instead of only JSON-parsing the abstract policy generator output",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves canonical bridge replay rows equal exact ordered planned bridge replay keys at the accepted raw-ingress full-byte publication boundary",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered bridge replay keys through raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair path-family packages",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets checks materialized replay keys, planned replay keys, canonical rebuild rows, and persisted bridge replay markers agree in order"
       ],
       "missing_work": [

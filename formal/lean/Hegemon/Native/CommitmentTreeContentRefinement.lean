@@ -1,4 +1,5 @@
 import Hegemon.Native.CommitmentTreeRefinement
+import Hegemon.Native.NativePublicationRowEquivalence
 import Hegemon.Native.RawIngressFullBytePublicationSurface
 
 namespace Hegemon
@@ -13,6 +14,8 @@ open Hegemon.Native.BlockReplayInputProjection
 open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
+open Hegemon.Native.MinedBlockCommitPublication
+open Hegemon.Native.NativePublicationRowEquivalence
 open Hegemon.Native.PendingActionByteReplayRowCountBinding
 open Hegemon.Native.RawIngressFullBytePublicationSurface
 open Hegemon.Native.RawIngressSidecarReplayRecoverability
@@ -1004,6 +1007,189 @@ theorem accepted_raw_ingress_full_byte_publication_binds_replay_set_content
   exact
     raw_ingress_full_byte_field_projection_binds_replay_set_content
       fieldFacts
+
+structure NativePublicationRowsCommitmentReplayContentFacts
+    (rows : NativePublicationRows) : Prop where
+  nativePublicationRows :
+    rows.equivalent
+  exactCanonicalCommitmentRows :
+    rows.canonicalRows.commitmentRows =
+      projectedCommitmentRows rows.decodedRows
+  orderedCanonicalCommitmentContent :
+    rows.canonicalRows.commitmentRows.map (fun entry => entry.2) =
+      orderedDecodedCommitments rows.decodedRows
+  orderedCanonicalCommitmentIndexes :
+    rows.canonicalRows.commitmentRows.map (fun entry => entry.1) =
+      orderedDecodedCommitmentIndexes rows.decodedRows
+  canonicalCommitmentRowCount :
+    rows.canonicalRows.commitmentRows.length =
+      (orderedDecodedCommitments rows.decodedRows).length
+  exactCanonicalNullifierRows :
+    rows.canonicalRows.nullifierRows =
+      projectedNullifierRows rows.decodedRows
+  orderedCanonicalNullifierContent :
+    rows.canonicalRows.nullifierRows =
+      orderedDecodedNullifiers rows.decodedRows
+  canonicalNullifierRowCount :
+    rows.canonicalRows.nullifierRows.length =
+      (orderedDecodedNullifiers rows.decodedRows).length
+  exactCanonicalBridgeReplayRows :
+    rows.canonicalRows.bridgeReplayRows =
+      projectedBridgeReplayRows rows.plannedRows
+  orderedCanonicalBridgeReplayKeys :
+    rows.canonicalRows.bridgeReplayRows =
+      orderedPlannedBridgeReplayKeys rows.plannedRows
+  canonicalBridgeReplayRowCount :
+    rows.canonicalRows.bridgeReplayRows.length =
+      (orderedPlannedBridgeReplayKeys rows.plannedRows).length
+
+theorem native_publication_rows_equivalence_binds_commitment_replay_content
+    {rows : NativePublicationRows}
+    (facts : rows.equivalent) :
+    NativePublicationRowsCommitmentReplayContentFacts rows := by
+  exact
+    {
+      nativePublicationRows := facts,
+      exactCanonicalCommitmentRows :=
+        facts.canonicalCommitmentRowsMatchDecoded,
+      orderedCanonicalCommitmentContent :=
+        canonical_commitment_rows_bind_ordered_decoded_content
+          facts.canonicalCommitmentRowsMatchDecoded,
+      orderedCanonicalCommitmentIndexes :=
+        canonical_commitment_rows_bind_ordered_decoded_indexes
+          facts.canonicalCommitmentRowsMatchDecoded,
+      canonicalCommitmentRowCount :=
+        canonical_commitment_rows_bind_ordered_decoded_length
+          facts.canonicalCommitmentRowsMatchDecoded,
+      exactCanonicalNullifierRows :=
+        facts.canonicalNullifierRowsMatchDecoded,
+      orderedCanonicalNullifierContent :=
+        canonical_nullifier_rows_bind_ordered_decoded_content
+          facts.canonicalNullifierRowsMatchDecoded,
+      canonicalNullifierRowCount :=
+        canonical_nullifier_rows_bind_ordered_decoded_length
+          facts.canonicalNullifierRowsMatchDecoded,
+      exactCanonicalBridgeReplayRows :=
+        facts.canonicalBridgeReplayRowsMatchPlanned,
+      orderedCanonicalBridgeReplayKeys :=
+        canonical_bridge_replay_rows_bind_planned_replay_keys
+          facts.canonicalBridgeReplayRowsMatchPlanned,
+      canonicalBridgeReplayRowCount :=
+        canonical_bridge_replay_rows_bind_planned_replay_count
+          facts.canonicalBridgeReplayRowsMatchPlanned
+    }
+
+structure NativePublicationPathFamilyCommitmentReplayContentFacts
+    (minedInput : MinedBlockCommitPublicationInput)
+    (rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows) : Prop where
+  pathFamilyRows :
+    NativePublicationPathFamilyRowEquivalenceFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair
+  rawIngressContent :
+    NativePublicationRowsCommitmentReplayContentFacts rawIngress
+  minedCommitContent :
+    NativePublicationRowsCommitmentReplayContentFacts minedCommit
+  announcedImportContent :
+    NativePublicationRowsCommitmentReplayContentFacts announcedImport
+  syncImportContent :
+    NativePublicationRowsCommitmentReplayContentFacts syncImport
+  reorgReplayContent :
+    NativePublicationRowsCommitmentReplayContentFacts reorgReplay
+  canonicalIndexRebuildContent :
+    NativePublicationRowsCommitmentReplayContentFacts canonicalIndexRebuild
+  blockRangeContent :
+    NativePublicationRowsCommitmentReplayContentFacts blockRange
+  startupRepairContent :
+    NativePublicationRowsCommitmentReplayContentFacts startupRepair
+  minedAndStartupShareDecodedRows :
+    minedCommit.decodedRows = startupRepair.decodedRows
+  rebuildAndBlockRangeShareCanonicalRows :
+    canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows
+
+theorem accepted_native_publication_path_family_binds_commitment_replay_content
+    {minedInput : MinedBlockCommitPublicationInput}
+    {rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows}
+    (rawIngressRows : rawIngress.equivalent)
+    (minedAccepted :
+      minedBlockCommitPublicationAccepts minedInput = true)
+    (minedRows : minedCommit.equivalent)
+    (announcedRows : announcedImport.equivalent)
+    (syncRows : syncImport.equivalent)
+    (reorgRows : reorgReplay.equivalent)
+    (rebuildRows : canonicalIndexRebuild.equivalent)
+    (blockRangeRows : blockRange.equivalent)
+    (startupRows : startupRepair.equivalent)
+    (minedStartupDecoded :
+      minedCommit.decodedRows = startupRepair.decodedRows)
+    (rebuildBlockRangeCanonical :
+      canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows) :
+    NativePublicationPathFamilyCommitmentReplayContentFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair := by
+  let pathRows :=
+    accepted_native_publication_path_family_binds_native_publication_rows
+      rawIngressRows
+      minedAccepted
+      minedRows
+      announcedRows
+      syncRows
+      reorgRows
+      rebuildRows
+      blockRangeRows
+      startupRows
+      minedStartupDecoded
+      rebuildBlockRangeCanonical
+  exact
+    {
+      pathFamilyRows := pathRows,
+      rawIngressContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          rawIngressRows,
+      minedCommitContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          minedRows,
+      announcedImportContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          announcedRows,
+      syncImportContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          syncRows,
+      reorgReplayContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          reorgRows,
+      canonicalIndexRebuildContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          rebuildRows,
+      blockRangeContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          blockRangeRows,
+      startupRepairContent :=
+        native_publication_rows_equivalence_binds_commitment_replay_content
+          startupRows,
+      minedAndStartupShareDecodedRows :=
+        pathRows.minedAndStartupShareDecodedRows,
+      rebuildAndBlockRangeShareCanonicalRows :=
+        pathRows.rebuildAndBlockRangeShareCanonicalRows
+    }
 
 end CommitmentTreeContentRefinement
 end Native

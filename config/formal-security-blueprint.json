@@ -10167,8 +10167,8 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "claim_id": "native.raw-ingress-full-byte-publication-surface",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, the canonical statement surface, accepted block-action validation, named production projection facts, ordered field-projection evidence, accepted mined-block commit publication, and row-equivalence evidence for every native publication path imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, statement/proof artifact facts, decoded/validated/materialized/planned/wire/canonical field-row agreement, mined commit row-publication binding, and a native publication path-family row-equivalence package.",
-      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. `accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows` additionally constructs the pending-action replay row-count facts from that flattened surface and composes them with accepted block-action validation plus named production projection facts, so decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows agree at the raw-ingress full-byte boundary. `accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows` lifts the ordered field-row package into the same boundary, including exact commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection. `NativePublicationRowEquivalence.accepted_raw_ingress_full_byte_publication_binds_native_publication_rows` names that row-equivalence package as a review theorem, `accepted_mined_block_commit_binds_native_publication_rows` composes it with accepted mined-block commit publication facts, and `accepted_native_publication_path_family_binds_native_publication_rows` packages raw-ingress, mined-commit, announced-import, sync-import, reorg-replay, canonical-index-rebuild, block_range, and startup-repair row-equivalence facts into one path-family review surface.",
+      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, the canonical statement surface, accepted block-action validation, named production projection facts, ordered field-projection evidence, accepted mined-block commit publication, row-equivalence evidence for every native publication path, and ordered content binders imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, statement/proof artifact facts, decoded/validated/materialized/planned/wire/canonical field-row agreement, mined commit row-publication binding, a native publication path-family row-equivalence package, and exact commitment/nullifier/bridge replay content for every path-family member.",
+      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. `accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows` additionally constructs the pending-action replay row-count facts from that flattened surface and composes them with accepted block-action validation plus named production projection facts, so decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows agree at the raw-ingress full-byte boundary. `accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows` lifts the ordered field-row package into the same boundary, including exact commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection. `NativePublicationRowEquivalence.accepted_raw_ingress_full_byte_publication_binds_native_publication_rows` names that row-equivalence package as a review theorem, `accepted_mined_block_commit_binds_native_publication_rows` composes it with accepted mined-block commit publication facts, and `accepted_native_publication_path_family_binds_native_publication_rows` packages raw-ingress, mined-commit, announced-import, sync-import, reorg-replay, canonical-index-rebuild, block_range, and startup-repair row-equivalence facts into one path-family review surface. `CommitmentTreeContentRefinement.native_publication_rows_equivalence_binds_commitment_replay_content` derives exact ordered commitment values/indexes, nullifier rows, and bridge replay keys from any native publication row-equivalence package, and `accepted_native_publication_path_family_binds_commitment_replay_content` lifts those content facts to every path-family member while preserving mined/startup decoded-row sharing and rebuild/block_range canonical-row sharing.",
       "depends_on": [
         "native.raw-ingress-pending-action-publication-refinement",
         "native.tx-leaf-artifact-projection-refinement",
@@ -10180,6 +10180,7 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
@@ -10202,6 +10203,7 @@
         "scripts/check_lean_formal.sh",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
         "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
         "node/src/native/mod.rs"
       ],
@@ -10238,6 +10240,11 @@
           "gate": "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon"
         },
         {
+          "id": "lean-native-publication-path-family-content-theorem",
+          "description": "Removing or weakening the native publication path-family commitment/nullifier/bridge replay content theorem must fail the Lean formal gate or claims check.",
+          "gate": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon"
+        },
+        {
           "id": "rust-raw-ingress-full-byte-production-projection-test",
           "description": "Changing the production raw bytes to validation/materialization/planning/wire projection path so decoded fields or row contents diverge must fail the targeted Rust gate.",
           "gate": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture"
@@ -10246,6 +10253,11 @@
           "id": "rust-raw-ingress-full-byte-exact-canonical-row-test",
           "description": "Changing canonical rebuild or sync block-range publication so exact canonical rows diverge from decoded/materialized/planned rows must fail the targeted Rust gate.",
           "gate": "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "rust-mixed-replay-set-content-test",
+          "description": "Changing mixed canonical rebuild so nonempty commitment, nullifier, bridge replay, ciphertext-index, or archive rows diverge from decoded/materialized/planned content must fail the targeted Rust gate.",
+          "gate": "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets --lib --no-default-features -- --nocapture"
         },
         {
           "id": "rust-mined-commit-startup-publication-rows-test",
@@ -10278,7 +10290,7 @@
           "gate": "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, named production row projection facts, ordered field-row projection evidence, mined commit publication, and a native publication path-family row-equivalence package. Rust gates cover exact-decodable substituted action bodies across mined commit, announced import, startup replay, reorg replay, and sync block_range publication. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
+      "scope_boundary": "This node proves a flattened accepted-predicate surface over decoded pending-action bytes, raw-ingress sidecar publication, canonical replay/publication, parsed tx-leaf artifact facts, named production row projection facts, ordered field-row projection evidence, mined commit publication, a native publication path-family row-equivalence package, and exact commitment/nullifier/bridge replay content for every path-family member. Rust gates cover exact-decodable substituted action bodies across mined commit, announced import, startup replay, reorg replay, and sync block_range publication plus mixed canonical rebuild/block_range content. It does not prove arbitrary-byte parser internals, parser-to-canonical vector projection beyond explicit assumptions, positive mined/startup inbound bridge publication while the release bridge verifier remains disabled, hash security/equivalence, proof soundness, DA availability, storage durability, or complete native-node refinement."
     },
     {
       "id": "native.materialized-sidecar-da-blob-publication",
