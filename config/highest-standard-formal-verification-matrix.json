@@ -6,9 +6,9 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 84.55,
   "last_full_formal_core": {
-    "date": "2026-06-16T06:18:11Z",
-    "commit": "1a794c72",
-    "status": "passed locally after adding exact-decodable action-byte drift gates across announced import, startup replay, reorg replay, and sync block_range publication",
+    "date": "2026-06-16T07:02:17Z",
+    "commit": "ea5db551",
+    "status": "passed locally after adding the combined restarted side-branch fail-closed regression for sidecar transfer/nullifier rows plus disabled inbound bridge replay before publication",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
     "named_lean_theorems": 1707,
@@ -18,7 +18,7 @@
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 485,
+    "falsification_cases": 486,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -108,34 +108,30 @@
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Extended exact action-byte drift rejection from mined commit publication to all native publication/replay surfaces that can otherwise accept block metadata: announced import, nonempty startup replay, reorg replay over a persisted side parent, and sync block_range publication. The gates substitute exact-decodable but semantically different action bodies and require the action/extrinsics root mismatch to reject before best-state publication, canonical indexes, block records, or sync responses can expose the forged body.",
+    "summary": "Closed the combined disabled-inbound restart/reorg adversarial gap. A restarted node with a persisted nonwinning side branch stages a sidecar transfer, then rejects a higher-work side-tip candidate carrying both sidecar transfer nullifier rows and a disabled inbound bridge replay key before best state, height indexes, block records, nullifier rows, ciphertext indexes/archive rows, or bridge replay rows are published.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs commit_mined_block_atomically exact action-byte equality check",
-      "node/src/native/mod.rs mined_commit_startup_replay_matches_canonical_publication_rows",
-      "node/src/native/mod.rs mined_commit_rejects_meta_action_bytes_not_matching_planned_actions",
-      "node/src/native/mod.rs announced_block_rejects_exact_decodable_action_byte_drift_before_persist_or_publish",
-      "node/src/native/mod.rs startup_rejects_nonempty_exact_decodable_action_byte_drift_before_accepting_state",
-      "node/src/native/mod.rs reorg_replay_rejects_exact_decodable_action_byte_drift_before_publish",
-      "node/src/native/mod.rs block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range",
-      "scripts/check_formal_core.sh mined commit/startup raw-byte publication gates"
+      "node/src/native/mod.rs mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication",
+      "node/src/native/mod.rs stage_test_sidecar_ciphertext cfg(test) helper",
+      "scripts/check_formal_core.sh mixed restart/reorg fail-closed publication gate",
+      "config/formal-security-claims.json native.block-replay-refinement gate metadata",
+      "config/formal-security-blueprint.json native.block-replay-refinement falsification case"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.MinedBlockCommitPublication.*",
       "Hegemon.Native.RawIngressFullBytePublicationSurface.*",
       "Hegemon.Native.CanonicalPublicationRefinement.*",
-      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*"
+      "Hegemon.Native.MaterializedSidecarDaBlobPublication.*",
+      "Hegemon.Native.BlockReplayRefinement.*",
+      "Hegemon.Native.BridgeMintSafety.*"
     ],
     "validation": {
       "targeted_rust": [
-        "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T06:18:11Z with mined commit/startup publication plus announced-import/startup/reorg/block_range action-byte drift rejection gates enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T07:02:17Z with the combined sidecar/nullifier/disabled-inbound restart/reorg fail-closed gate enabled",
       "claims": 118,
       "named_lean_theorems": 1707,
       "production_eligible_claims": 108,
-      "falsification_cases": 485,
+      "falsification_cases": 486,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -144,9 +140,9 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "The new action-byte drift gates cover exact-decodable substituted action bodies on announced import, nonempty startup replay, reorg replay, and sync block_range publication; a combined mixed-action live mined/import/reorg/startup scenario remains open.",
+      "This is a fail-closed disabled-inbound bridge regression, not positive inbound bridge mint publication; release inbound bridge verification remains disabled until a PQ-clean verifier replaces the experimental envelope.",
       "This slice does not prove arbitrary SCALE/parser internals, hash security/equivalence, deployed proof-system soundness, external receipt soundness, peer honesty, sled durability below accepted predicates, or complete native-node equivalence.",
-      "The only production runtime equality check in this production-binding family remains the earlier mined-action re-encoding before commit; this exact-decodable drift slice adds cfg(test) regressions, formal metadata, docs, and the formal-core gate."
+      "The slice adds cfg(test) regression coverage, formal metadata, docs, and the formal-core gate; no hot production path changes or performance cost were introduced."
     ]
   },
   "properties": [
