@@ -1216,6 +1216,62 @@ mod tests {
         }
     }
 
+    fn stablecoin_issuance_witness() -> TransactionWitness {
+        let sk_spend = [18u8; 32];
+        let pk_auth = crate::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note = NoteData {
+            value: 5,
+            asset_id: 0,
+            pk_recipient: [11u8; 32],
+            pk_auth,
+            rho: [12u8; 32],
+            r: [13u8; 32],
+        };
+        let output_note = NoteData {
+            value: 5,
+            asset_id: 4242,
+            pk_recipient: [14u8; 32],
+            pk_auth: [15u8; 32],
+            rho: [16u8; 32],
+            r: [17u8; 32],
+        };
+        let merkle_path = MerklePath::default();
+        let leaf = note_commitment(
+            input_note.value,
+            input_note.asset_id,
+            &input_note.pk_recipient,
+            &input_note.pk_auth,
+            &input_note.rho,
+            &input_note.r,
+        );
+        let merkle_root = felts_to_bytes48(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
+
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position: 0,
+                rho_seed: [19u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![OutputNoteWitness { note: output_note }],
+            ciphertext_hashes: vec![[20u8; 48]; 1],
+            sk_spend,
+            merkle_root,
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding {
+                enabled: true,
+                asset_id: 4242,
+                policy_hash: [21u8; 48],
+                oracle_commitment: [22u8; 48],
+                attestation_commitment: [23u8; 48],
+                issuance_delta: -5,
+                policy_version: 1,
+            },
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
     #[test]
     fn p3_commitment_inputs_use_shared_core_preimage() {
         let note = &sample_witness().outputs[0].note;
@@ -1368,6 +1424,31 @@ mod tests {
         assert!(
             verify_transaction_proof_p3(&proof, &tampered).is_err(),
             "verification should fail when ciphertext hashes are modified"
+        );
+    }
+
+    #[test]
+    fn p3_air_balance_public_field_mutations_rejected() {
+        let witness = stablecoin_issuance_witness();
+        witness.validate().expect("stablecoin witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let proof = prover.prove(trace, &pub_inputs);
+        verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
+
+        let mut bad_value_balance = pub_inputs.clone();
+        bad_value_balance.value_balance_magnitude += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &bad_value_balance).is_err(),
+            "verification should fail when verifier-facing value-balance magnitude changes"
+        );
+
+        let mut bad_stablecoin_issuance = pub_inputs;
+        bad_stablecoin_issuance.stablecoin_issuance_magnitude += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &bad_stablecoin_issuance).is_err(),
+            "verification should fail when verifier-facing stablecoin issuance magnitude changes"
         );
     }
 

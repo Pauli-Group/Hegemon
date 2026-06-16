@@ -219,6 +219,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateReceiptRootVectors.lean
   lake env lean Hegemon/Shielded/Nullifier.lean
   lake env lean Hegemon/Shielded/GenerateVectors.lean
+  lake env lean Hegemon/Transaction/AirBalanceBoundary.lean
   lake env lean Hegemon/Transaction/Balance.lean
   lake env lean Hegemon/Transaction/GenerateVectors.lean
   lake env lean Hegemon/Transaction/NoteCommitmentInputs.lean

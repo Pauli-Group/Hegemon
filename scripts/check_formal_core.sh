@@ -441,6 +441,7 @@ cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helpe
 cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
+cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture
 HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS="$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" \
   cargo test -p transaction-circuit lean_generated_note_commitment_input_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NULLIFIER_INPUT_VECTORS="$LEAN_NULLIFIER_INPUT_VECTORS" \
