@@ -69,6 +69,7 @@ import Hegemon.Native.MinedWorkAdmission
 import Hegemon.Native.MinedBlockCommitPublication
 import Hegemon.Native.NativeBackendReleasePosture
 import Hegemon.Native.NativeBackendReviewPolicy
+import Hegemon.Native.NativePublicationRowEquivalence
 import Hegemon.Native.PreHeavyWorkResourceBoundSurface
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.RecursiveArtifactContextAdmission

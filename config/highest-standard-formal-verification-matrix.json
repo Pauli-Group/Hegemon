@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.15,
+  "overall_completion_percent": 86.16,
   "last_full_formal_core": {
-    "date": "2026-06-16T18:33:38Z",
-    "commit": "09a95a83",
-    "status": "passed locally after adding raw-ingress bridge authorized non-native asset-delta publication theorem slice",
+    "date": "2026-06-16T19:14:05Z",
+    "commit": "working-tree-on-e3072cea",
+    "status": "passed locally after adding native publication row-equivalence theorem slice",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1766,
+    "named_lean_theorems": 1769,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 971,
+    "axiom_dependent_theorems": 974,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 497,
+    "falsification_cases": 498,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -68,30 +68,30 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved accepted raw-ingress bridge canonical publication carries an explicit authorized non-native bridge asset-delta value, decoded/external asset equality, zero direct native mint delta, raw/canonical replayed supply equality, and replay uniqueness under existing Hegemon-side publication/replay assumptions.",
+    "summary": "Proved raw-ingress full-byte field projection facts imply a named native publication row-equivalence package for decoded, validation, materialized, planned, wire, and canonical rows, and accepted mined-block commit publication can carry that row package.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/BridgeMintSafety.lean",
-      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
+      "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+      "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.BridgeMintSafety.bridge_mint_asset_authorized_facts",
-      "Hegemon.Native.BridgeMintSafety.bridge_mint_asset_authorized_delta_value",
-      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_safe",
-      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_authorized_bridge_asset_delta"
+      "Hegemon.Native.NativePublicationRowEquivalence.raw_ingress_full_byte_field_projection_binds_native_publication_rows",
+      "Hegemon.Native.NativePublicationRowEquivalence.accepted_raw_ingress_full_byte_publication_binds_native_publication_rows",
+      "Hegemon.Native.NativePublicationRowEquivalence.accepted_mined_block_commit_binds_native_publication_rows"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.BridgeMintSafety Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon passed locally.",
+      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/NativePublicationRowEquivalence.lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 145 jobs.",
       "targeted_rust": "No runtime Rust changes in this slice; existing Lean-generated Rust conformance and native backend vector suites passed as part of the full formal-core gate.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T18:33:38Z after adding the raw-ingress bridge authorized non-native asset-delta theorem slice.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T19:14:05Z after adding the native publication row-equivalence theorem slice.",
       "claims": 118,
-      "named_lean_theorems": 1766,
+      "named_lean_theorems": 1769,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 971,
+      "axiom_dependent_theorems": 974,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 497,
+      "falsification_cases": 498,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -101,9 +101,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice has no runtime changes; it composes existing accepted raw-ingress bridge publication, bridge mint safety, replay, and canonical publication surfaces.",
-      "The explicit decoded bridge asset surface still must be bound to the future live PQ-clean bridge mint payload grammar, decoder, and verifier before inbound bridge minting can be enabled.",
-      "External receipt/PQ verifier soundness, primitive hash/security equivalence, parser internals, DA availability, storage durability below accepted predicates, dynamic stablecoin governance history, and complete native-node equivalence remain explicit residuals."
+      "This slice has no runtime changes; it composes existing accepted raw-ingress full-byte publication and mined commit publication predicates.",
+      "The theorem packages accepted row-equivalence facts and Rust conformance gates; it does not prove arbitrary parser internals, hash/security equivalence, proof soundness, storage durability, DA availability, or complete native-node equivalence.",
+      "The named row package still needs to be generalized across announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair as one complete native-node refinement theorem."
     ]
   },
   "last_production_binding_slice": {
@@ -621,7 +621,7 @@
     {
       "id": "node.replay-reorg-startup-refinement",
       "weight": 6,
-      "completion_percent": 99.5,
+      "completion_percent": 99.6,
       "top_level_theorem_target": "Live import, announced import, sync import, reorg, restart, and repair states equal replaying the accepted canonical chain from genesis.",
       "current_evidence": [
         "native block replay refinement gate",
@@ -652,6 +652,7 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now derives decoded action-row/raw replay-row agreement from accepted block-action decode plus accepted wire replay projection before sync raw canonical publication",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now binds accepted decoded payload rows to validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows through named production projection facts",
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean exposes decoded/validated/materialized/planned/wire field-row agreement and canonical row projection at the raw-ingress full-byte publication surface",
+        "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean names the raw-ingress full-byte native publication row-equivalence package and composes it with accepted mined-block commit publication facts",
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows checks raw block-action bytes, full decoded PendingAction fields, route payload fields, decoded validation input fields, materialized payload rows, planned effect rows, and wire replay rows are built from the same decoded actions",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean now lifts production decoded/validated/materialized/wire projection row agreement through the materialized sidecar DA publication surface",
         "node/src/native/mod.rs canonical_index_rebuild_projects_decoded_materialized_wire_rows checks multi-block canonical-index rebuild commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive rows exactly match the decoded/materialized/planned/wire projection path",
@@ -669,7 +670,7 @@
       ],
       "missing_work": [
         "Prove parser-internal implementation equivalence for arbitrary raw PendingAction bytes instead of relying on accepted exact-decode predicates plus Rust conformance gates.",
-        "Generalize the decoded/validated/materialized/planned/wire field projection proof across mining, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair paths as one complete native-node refinement theorem.",
+        "Generalize the named raw-ingress/mined row-equivalence surface across announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair paths as one complete native-node refinement theorem.",
         "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental offline envelope; the combined disabled-inbound restart/reorg fail-closed case is now gated."
       ],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import."

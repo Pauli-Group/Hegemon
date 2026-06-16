@@ -10158,8 +10158,8 @@
       "id": "native.raw-ingress-full-byte-publication-surface",
       "claim_id": "native.raw-ingress-full-byte-publication-surface",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, the canonical statement surface, accepted block-action validation, named production projection facts, and ordered field-projection evidence imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, statement/proof artifact facts, and decoded/validated/materialized/planned/wire/canonical field-row agreement.",
-      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. `accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows` additionally constructs the pending-action replay row-count facts from that flattened surface and composes them with accepted block-action validation plus named production projection facts, so decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows agree at the raw-ingress full-byte boundary. `accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows` lifts the ordered field-row package into the same boundary, including exact commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection.",
+      "formal_statement": "For the executable Lean raw-ingress full-byte publication surface, accepted raw-ingress sidecar replay, exact pending-action decode, block-action decode, action-hash admission, canonical publication gates, accepted raw ledger/tree replay, parsed native tx-leaf artifact bytes, explicit parser-to-canonical projection assumptions, the canonical statement surface, accepted block-action validation, named production projection facts, ordered field-projection evidence, and accepted mined-block commit publication imply one flattened record carrying parser exactness, wire replay, action-hash, DA sidecar, canonical publication, supply, commitment-root, replay-set uniqueness, tx-leaf artifact shape, statement/proof artifact facts, decoded/validated/materialized/planned/wire/canonical field-row agreement, and mined commit row-publication binding.",
+      "informal_argument": "`accepted_raw_ingress_full_byte_publication_surface` calls `accepted_raw_ingress_pending_action_bytes_bind_parsed_tx_leaf_publication`, then flattens the nested raw-ingress publication, pending-action byte publication, canonical publication, and parsed tx-leaf canonical artifact facts into a single review surface. `accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows` additionally constructs the pending-action replay row-count facts from that flattened surface and composes them with accepted block-action validation plus named production projection facts, so decoded payload rows, validated action rows, materialized action rows, materialized payload rows, and wire replay rows agree at the raw-ingress full-byte boundary. `accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows` lifts the ordered field-row package into the same boundary, including exact commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection. `NativePublicationRowEquivalence.accepted_raw_ingress_full_byte_publication_binds_native_publication_rows` names that row-equivalence package as a review theorem, and `accepted_mined_block_commit_binds_native_publication_rows` composes it with accepted mined-block commit publication facts.",
       "depends_on": [
         "native.raw-ingress-pending-action-publication-refinement",
         "native.tx-leaf-artifact-projection-refinement",
@@ -10170,6 +10170,7 @@
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
@@ -10177,6 +10178,7 @@
         "formal/lean/Hegemon.lean",
         "scripts/check_lean_formal.sh",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
         "node/src/native/mod.rs"
       ],
       "implementation_bindings": [],
@@ -10212,6 +10214,11 @@
           "id": "lean-raw-ingress-full-byte-production-projection-theorem",
           "description": "Removing or weakening the raw-ingress full-byte production projection theorem must fail the Lean formal gate or claims check.",
           "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "lean-native-publication-row-equivalence-theorem",
+          "description": "Removing or weakening the native publication row-equivalence theorem must fail the Lean formal gate or claims check.",
+          "gate": "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon"
         },
         {
           "id": "rust-raw-ingress-full-byte-production-projection-test",
