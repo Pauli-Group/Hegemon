@@ -24822,6 +24822,44 @@ mod tests {
     }
 
     #[test]
+    fn canonical_index_rebuild_rejects_malleable_action_bytes_before_projection_rows() {
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let (block, actions) = projection_equivalence_action_mix_block(&genesis, pow_bits);
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+        }
+        let canonical_chain = vec![genesis.clone(), block.clone()];
+        assert_canonical_projection_rows_match(
+            "canonical action-byte projection fixture",
+            &da_ciphertext_tree,
+            &canonical_chain,
+        );
+
+        let mut corrupted = block;
+        corrupted
+            .action_bytes
+            .first_mut()
+            .expect("projection fixture has actions")
+            .push(0xaa);
+        let decode_err = decode_block_actions(&corrupted)
+            .expect_err("trailing action bytes must reject before projection");
+        assert!(
+            decode_err.to_string().contains("trailing bytes"),
+            "unexpected action decode error: {decode_err}"
+        );
+
+        let corrupted_chain = vec![genesis, corrupted];
+        let rebuild_err = plan_canonical_index_rebuild(&corrupted_chain, &da_ciphertext_tree, None)
+            .expect_err("canonical rebuild must reject malleable action bytes");
+        assert!(
+            rebuild_err.to_string().contains("trailing bytes"),
+            "unexpected rebuild error: {rebuild_err}"
+        );
+    }
+
+    #[test]
     fn canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;

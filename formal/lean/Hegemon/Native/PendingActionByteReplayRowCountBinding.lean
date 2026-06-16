@@ -1097,6 +1097,76 @@ theorem accepted_pending_action_raw_bytes_bind_production_field_projection_rows
         fieldFacts.canonicalCiphertextArchiveRowsMatchPlanned
     }
 
+theorem pending_action_raw_byte_projection_requires_canonical_decode
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    (facts :
+      PendingActionRawByteProductionFieldProjectionFacts
+        pendingDecode
+        blockActionDecode
+        wireProjection
+        wireOutput
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows) :
+    exactDecodeAccepts pendingDecode = true
+      ∧ evaluateExactDecodeRejection pendingDecode = none
+      ∧ blockActionDecodeAccepts blockActionDecode = true
+      ∧ evaluateBlockActionDecodeRejection blockActionDecode = none := by
+  rcases facts.pendingDecodeExact with
+    ⟨pendingParserAccepted, pendingConsumedAll, pendingCanonical⟩
+  rcases facts.blockActionDecodeExact with
+    ⟨blockCountMatches, blockActionsExact⟩
+  have pendingPreconditions :
+      exactDecodePreconditions pendingDecode = true := by
+    simp [
+      exactDecodePreconditions,
+      pendingParserAccepted,
+      pendingConsumedAll,
+      pendingCanonical
+    ]
+  have pendingAccepted :
+      exactDecodeAccepts pendingDecode = true :=
+    (exact_accepts_iff_preconditions
+      (input := pendingDecode)).mpr pendingPreconditions
+  have pendingRejectsNone :
+      evaluateExactDecodeRejection pendingDecode = none := by
+    simpa [exactDecodeAccepts] using pendingAccepted
+  have blockPreconditions :
+      blockActionDecodePreconditions blockActionDecode = true := by
+    simp [
+      blockActionDecodePreconditions,
+      blockCountMatches,
+      blockActionsExact
+    ]
+  have blockAccepted :
+      blockActionDecodeAccepts blockActionDecode = true :=
+    (block_action_decode_accepts_iff_preconditions
+      (input := blockActionDecode)).mpr blockPreconditions
+  have blockRejectsNone :
+      evaluateBlockActionDecodeRejection blockActionDecode = none := by
+    simpa [blockActionDecodeAccepts] using blockAccepted
+  exact
+    ⟨ pendingAccepted,
+      pendingRejectsNone,
+      blockAccepted,
+      blockRejectsNone ⟩
+
 theorem accepted_pending_action_byte_decode_binds_validated_replay_row_counts
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
