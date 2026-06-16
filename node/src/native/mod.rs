@@ -23099,6 +23099,63 @@ mod tests {
     }
 
     #[test]
+    fn materialized_sidecar_observer_projection_ignores_received_time() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let first = test_sidecar_transfer_action(anchor, [80u8; 48], [81u8; 48], 0);
+        let mut second = first.clone();
+        second.received_ms = 987_654_321;
+        second.tx_hash = pending_action_hash(&second);
+
+        assert_ne!(
+            first.tx_hash, second.tx_hash,
+            "arrival metadata must remain visible only in the raw pending-action hash"
+        );
+        assert_eq!(
+            pending_action_semantic_hash(&first),
+            pending_action_semantic_hash(&second),
+            "sidecar semantic action identity must ignore arrival-time metadata"
+        );
+        assert_eq!(first.ciphertext_sizes, second.ciphertext_sizes);
+
+        validate_transfer_action_payload(&first).expect("first sidecar payload validates");
+        validate_transfer_action_payload(&second).expect("second sidecar payload validates");
+
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        insert_test_sidecar_ciphertext(&da_ciphertext_tree, &first);
+
+        let first_payloads =
+            materialize_native_action_payloads(&da_ciphertext_tree, std::slice::from_ref(&first))
+                .expect("materialize first sidecar payload");
+        let second_payloads =
+            materialize_native_action_payloads(&da_ciphertext_tree, std::slice::from_ref(&second))
+                .expect("materialize second sidecar payload");
+        assert_eq!(first_payloads.len(), 1);
+        assert_eq!(second_payloads.len(), 1);
+        let first_payload = first_payloads.first().expect("first payload");
+        let second_payload = second_payloads.first().expect("second payload");
+        assert_eq!(first_payload.ciphertexts, second_payload.ciphertexts);
+        assert_eq!(first_payload.replay_key, second_payload.replay_key);
+
+        let (first_tx, _first_artifact) =
+            consensus_tx_and_artifact_from_action(&first, first_payload)
+                .expect("first consensus tx");
+        let (second_tx, _second_artifact) =
+            consensus_tx_and_artifact_from_action(&second, second_payload)
+                .expect("second consensus tx");
+
+        assert_eq!(first_tx.nullifiers, second_tx.nullifiers);
+        assert_eq!(first_tx.commitments, second_tx.commitments);
+        assert_eq!(first_tx.balance_tag, second_tx.balance_tag);
+        assert_eq!(first_tx.version, second_tx.version);
+        assert_eq!(first_tx.ciphertext_hashes, second_tx.ciphertext_hashes);
+        assert_eq!(first_tx.ciphertexts, second_tx.ciphertexts);
+        assert_eq!(first_tx.id, second_tx.id);
+        assert_eq!(first_tx.hash(), second_tx.hash());
+    }
+
+    #[test]
     fn pending_action_raw_bytes_project_to_validated_materialized_replay_rows() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
