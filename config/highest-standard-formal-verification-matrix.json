@@ -7,7 +7,7 @@
   "overall_completion_percent": 85.92,
   "last_full_formal_core": {
     "date": "2026-06-16T16:54:33Z",
-    "commit": "working-tree-on-861032f7",
+    "commit": "b126c643",
     "status": "passed locally after adding the SmallWood output ciphertext-hash row binding fix, local metadata privacy boundary, and explicit active/inactive output-binding regressions to the formal-core gate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
@@ -28,33 +28,34 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T15:20:48Z",
-    "commit": "ee35c9c3",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, targeted AIR balance Lean/Rust conformance, RPC smoke, wallet-send, live mining/service/NTP sample, and isolated single-node mining fallback",
+    "date": "2026-06-16T16:59:31Z",
+    "commit": "b126c643",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild/restart, remote formal metadata gates, targeted SmallWood/privacy Lean/Rust conformance, RPC smoke, wallet-send, live mining/service/NTP sample",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at ee35c9c3",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at b126c643",
+      "rebuilt target/release/hegemon-node with make node and restarted hegemon-node.service",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "highest-standard matrix recomputed to 85.59% with total weight 100 across 18 properties",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1744 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "highest-standard matrix recomputed to 85.92% with total weight 100 across 18 properties",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1761 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 497 falsification cases, 209 implementation bindings, and 163 result obligations",
-      "cd formal/lean && lake build Hegemon.Transaction.AirBalanceBoundary Hegemon passed with 144 jobs",
-      "cd formal/lean && lake env lean Hegemon/Transaction/AirBalanceBoundary.lean passed",
-      "cd formal/lean && lake env lean Hegemon.lean passed",
-      "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture passed in 24.26s",
-      "bash scripts/smoke-test.sh passed at live height 14305",
+      "cd formal/lean && lake build Hegemon.Privacy.Observer Hegemon.Privacy.CiphertextPrivacy Hegemon.Privacy.NativeObserverSurface Hegemon.Privacy.NativeSidecarObserverSurface Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Transaction.GenerateSmallWoodSpendAuthorizationVectors Hegemon passed with 145 jobs",
+      "Lean-generated SmallWood spend authorization vector conformance passed in transaction-circuit",
+      "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_active_output_binding_mutation --lib -- --nocapture passed",
+      "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash --lib -- --nocapture passed",
+      "cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture passed",
+      "bash scripts/smoke-test.sh passed at live height 14381",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, and hash_rate about 20.5 kH/s during the 20-second sample; no live block was found during that short sample",
-      "bash scripts/test-node.sh single-node mined isolated height 28331",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, and hash_rate about 14.4 kH/s after the 20-second sample",
+      "live height advanced from 14389 to 14396 during the 20-second mining sample",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
-      "timedatectl reported NTP synchronization active at 2026-06-16T15:20:48Z"
+      "timedatectl reported NTP synchronization active at 2026-06-16T16:59:31Z"
     ],
-    "runtime_note": "No release rebuild or service restart was performed because this slice changes Lean/formal metadata/docs/scripts and cfg(test) P3 regression code only. The live service stayed active with NRestarts=0.",
+    "runtime_note": "A release rebuild and service restart were performed because this slice changes the shipped transaction-circuit SmallWood relation geometry used by the node binary. The live service came back active with NRestarts=0.",
     "known_limitations": [
-      "The remote validation proves targeted AIR balance Lean/Rust conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally for the ee35c9c3 code slice before recording.",
-      "The live 20-second mining sample confirmed mining stayed active but did not find a block at current difficulty; isolated single-node mining was run as the deterministic mining fallback.",
-      "The new regression covers verifier-facing public-field drift for a valid stablecoin P3 proof; full deployed proof-system soundness/extraction, hash/crypto security, and complete native-node refinement remain explicit assumptions.",
-      "The formal slice still leaves primitive cryptographic security/equivalence, simulator zero knowledge, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
+      "The remote validation proves targeted SmallWood/privacy Lean/Rust conformance and live smoke on hegemon-dev, not full remote formal-core because the full patched formal-core gate already passed locally for the b126c643 code slice before deployment.",
+      "The output ciphertext-hash row binding closes the deployed SmallWood statement-binding gap, but full SmallWood/AIR/PCS soundness, witness extraction, exact sampled proof-size refresh, hash/crypto security, and complete native-node refinement remain explicit assumptions.",
+      "The privacy local-metadata theorem is a deterministic leakage-model refinement; simulator zero knowledge, ML-KEM/AEAD/KDF/RNG security, wallet/network metadata privacy, and complete native-node equivalence remain explicit."
     ]
   },
   "last_coordinator_audit": {
