@@ -271,6 +271,9 @@ lean_exe gen_nullifier_input_vectors where
 lean_exe gen_smallwood_spend_authorization_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodSpendAuthorizationVectors
 
+lean_exe gen_smallwood_transcript_binding_vectors where
+  root := `Hegemon.Transaction.GenerateSmallWoodTranscriptBindingVectors
+
 lean_exe gen_merkle_vectors where
   root := `Hegemon.Transaction.GenerateMerkleVectors
 

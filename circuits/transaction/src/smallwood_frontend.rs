@@ -3350,21 +3350,33 @@ fn smallwood_transcript_binding(
     version: VersionBinding,
     arithmetization: SmallwoodArithmetization,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
-    let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
-    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(
-        version,
-        arithmetization,
-    ));
     let encoded = bincode::serialize(statement).map_err(|err| {
         TransactionCircuitError::ConstraintViolationOwned(format!(
             "failed to serialize smallwood public statement transcript binding: {err}"
         ))
     })?;
-    bytes.extend_from_slice(&encoded);
+    Ok(smallwood_transcript_binding_from_serialized_statement(
+        &encoded,
+        version,
+        arithmetization,
+    ))
+}
+
+fn smallwood_transcript_binding_from_serialized_statement(
+    statement_bytes: &[u8],
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Vec<u8> {
+    let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
+    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(
+        version,
+        arithmetization,
+    ));
+    bytes.extend_from_slice(statement_bytes);
     while bytes.len() % 8 != 0 {
         bytes.push(0);
     }
-    Ok(bytes)
+    bytes
 }
 
 fn encode_smallwood_candidate_proof(
@@ -3603,7 +3615,7 @@ mod tests {
     };
     use crate::note::NoteData;
     use crate::public_inputs::StablecoinPolicyBinding;
-    use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
 
     #[derive(Debug, serde::Deserialize)]
     struct LeanSmallwoodSpendAuthorizationVectors {
@@ -3654,6 +3666,30 @@ mod tests {
         expected_valid: bool,
     }
 
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodTranscriptBindingVectors {
+        schema_version: u32,
+        smallwood_binding_transcript_domain_hex: String,
+        smallwood_public_statement_domain_hex: String,
+        smallwood_field_xof_domain_hex: String,
+        smallwood_transcript_binding_cases: Vec<LeanSmallwoodTranscriptBindingCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodTranscriptBindingCase {
+        name: String,
+        circuit_version: u16,
+        crypto_suite: u16,
+        arithmetization: u64,
+        statement_bytes_hex: String,
+        expected_profile_material_hex: String,
+        expected_unpadded_transcript_hex: String,
+        expected_transcript_binding_hex: String,
+        expected_padding_len: usize,
+        expected_padding_bytes: Vec<u8>,
+        expected_aligned_to_eight: bool,
+    }
+
     fn smallwood_active_auth_link_case_accepts(case: &LeanSmallwoodSpendAuthorizationCase) -> bool {
         if !case.active {
             return true;
@@ -3698,6 +3734,77 @@ mod tests {
             0 => case.public_commitment == 0 && case.public_ciphertext_hash == 0,
             _ => false,
         }
+    }
+
+    fn smallwood_arithmetization_from_vector(value: u64) -> SmallwoodArithmetization {
+        match value {
+            0 => SmallwoodArithmetization::Bridge64V1,
+            1 => SmallwoodArithmetization::DirectPacked64V1,
+            2 => SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            3 => SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+            4 => SmallwoodArithmetization::DirectPacked16CompactBindingsV1,
+            5 => SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+            6 => SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+            7 => {
+                SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+            }
+            8 => {
+                SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+            }
+            _ => panic!("unsupported Lean SmallWood arithmetization tag {value}"),
+        }
+    }
+
+    fn decode_hex_bytes(value: &str) -> Vec<u8> {
+        let hex = value
+            .strip_prefix("0x")
+            .unwrap_or_else(|| panic!("hex string missing 0x prefix: {value}"));
+        assert_eq!(
+            hex.len() % 2,
+            0,
+            "hex string must contain an even number of nybbles"
+        );
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| {
+                u8::from_str_radix(&hex[index..index + 2], 16)
+                    .unwrap_or_else(|err| panic!("invalid hex byte in {value}: {err}"))
+            })
+            .collect()
+    }
+
+    fn load_smallwood_transcript_binding_vectors() -> LeanSmallwoodTranscriptBindingVectors {
+        if let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS") {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!("failed to read Lean SmallWood transcript vectors {path}: {err}")
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood transcript vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_transcript_binding_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!("failed to run Lean SmallWood transcript vector generator: {err}")
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood transcript vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!("failed to parse generated Lean SmallWood transcript vectors: {err}")
+        })
     }
 
     fn sample_witness() -> TransactionWitness {
@@ -3861,6 +3968,182 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
+        let vectors = load_smallwood_transcript_binding_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_binding_transcript_domain_hex),
+            SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN
+        );
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_public_statement_domain_hex),
+            SMALLWOOD_PUBLIC_STATEMENT_DOMAIN
+        );
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_field_xof_domain_hex),
+            b"hegemon.blake3-field-xof.v1"
+        );
+        assert!(
+            !vectors.smallwood_transcript_binding_cases.is_empty(),
+            "Lean SmallWood transcript binding bundle must contain at least one case"
+        );
+
+        let mut active_binding = None;
+        let mut statement_mutation_binding = None;
+        let mut version_mutation_profile = None;
+        let mut legacy_arith_profile = None;
+
+        for case in &vectors.smallwood_transcript_binding_cases {
+            let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+            let version = VersionBinding {
+                circuit: case.circuit_version,
+                crypto: case.crypto_suite,
+            };
+            let statement_bytes = decode_hex_bytes(&case.statement_bytes_hex);
+            let profile_material =
+                smallwood_candidate_verifier_profile_material(version, arithmetization);
+            let unpadded = [
+                SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN,
+                profile_material.as_slice(),
+                statement_bytes.as_slice(),
+            ]
+            .concat();
+            let transcript = smallwood_transcript_binding_from_serialized_statement(
+                &statement_bytes,
+                version,
+                arithmetization,
+            );
+            let expected_profile = decode_hex_bytes(&case.expected_profile_material_hex);
+            let expected_unpadded = decode_hex_bytes(&case.expected_unpadded_transcript_hex);
+            let expected_transcript = decode_hex_bytes(&case.expected_transcript_binding_hex);
+
+            assert_eq!(
+                profile_material, expected_profile,
+                "Lean SmallWood transcript case {} disagreed on verifier profile material",
+                case.name
+            );
+            assert_eq!(
+                unpadded, expected_unpadded,
+                "Lean SmallWood transcript case {} disagreed on unpadded transcript bytes",
+                case.name
+            );
+            assert_eq!(
+                transcript, expected_transcript,
+                "Lean SmallWood transcript case {} disagreed on padded transcript bytes",
+                case.name
+            );
+            assert_eq!(
+                transcript.len() % 8 == 0,
+                case.expected_aligned_to_eight,
+                "Lean SmallWood transcript case {} disagreed on eight-byte alignment",
+                case.name
+            );
+            assert_eq!(
+                transcript.len() - unpadded.len(),
+                case.expected_padding_len,
+                "Lean SmallWood transcript case {} disagreed on padding length",
+                case.name
+            );
+            assert_eq!(
+                &transcript[unpadded.len()..],
+                case.expected_padding_bytes.as_slice(),
+                "Lean SmallWood transcript case {} disagreed on zero padding bytes",
+                case.name
+            );
+
+            match case.name.as_str() {
+                "active-inline-merkle-binding" => active_binding = Some(transcript),
+                "statement-byte-mutation-changes-binding" => {
+                    statement_mutation_binding = Some(transcript)
+                }
+                "version-mutation-changes-profile-material" => {
+                    version_mutation_profile = Some(profile_material)
+                }
+                "legacy-direct-packed-arithmetization-changes-profile-material" => {
+                    legacy_arith_profile = Some(profile_material)
+                }
+                _ => {}
+            }
+        }
+
+        let active_binding = active_binding.expect("active transcript vector missing");
+        assert_ne!(
+            active_binding,
+            statement_mutation_binding.expect("statement mutation transcript vector missing"),
+            "statement byte mutation must alter the transcript binding"
+        );
+        let active_profile = smallwood_candidate_verifier_profile_material(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        assert_ne!(
+            active_profile,
+            version_mutation_profile.expect("version mutation profile vector missing"),
+            "version mutation must alter verifier profile material"
+        );
+        assert_ne!(
+            active_profile,
+            legacy_arith_profile.expect("arithmetization mutation profile vector missing"),
+            "arithmetization mutation must alter verifier profile material"
+        );
+
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        let serialized_statement = bincode::serialize(&material.public_statement)
+            .expect("serialize SmallWood public statement");
+        assert_eq!(
+            material.transcript_binding,
+            smallwood_transcript_binding(
+                &material.public_statement,
+                witness.version,
+                arithmetization
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            material.transcript_binding,
+            smallwood_transcript_binding_from_serialized_statement(
+                &serialized_statement,
+                witness.version,
+                arithmetization
+            ),
+            "production statement serialization must feed the modeled transcript boundary"
+        );
+
+        let mut mutated_statement = serialized_statement.clone();
+        mutated_statement[0] ^= 1;
+        assert_ne!(
+            material.transcript_binding,
+            smallwood_transcript_binding_from_serialized_statement(
+                &mutated_statement,
+                witness.version,
+                arithmetization
+            ),
+            "serialized statement byte mutation must alter production binding"
+        );
+
+        let mut ciphertext_mutated_witness = witness.clone();
+        ciphertext_mutated_witness.ciphertext_hashes[0][0] ^= 1;
+        let ciphertext_mutated_material =
+            build_packed_smallwood_frontend_material_with_shape_from_witness(
+                &ciphertext_mutated_witness,
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+            )
+            .unwrap();
+        assert_ne!(
+            material.transcript_binding, ciphertext_mutated_material.transcript_binding,
+            "ciphertext hash mutation must alter the public statement transcript binding"
+        );
     }
 
     fn stablecoin_witness() -> TransactionWitness {

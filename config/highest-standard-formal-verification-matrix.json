@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.16,
+  "overall_completion_percent": 86.26,
   "last_full_formal_core": {
-    "date": "2026-06-16T19:14:05Z",
-    "commit": "b02e036e",
-    "status": "passed locally after adding native publication row-equivalence theorem slice",
+    "date": "2026-06-16T20:45:59Z",
+    "commit": "a627627a",
+    "status": "passed locally after adding SmallWood transcript/profile byte-binding theorem slice and deterministic mixed restart/reorg proof-gate fix",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1769,
+    "named_lean_theorems": 1776,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 974,
+    "axiom_dependent_theorems": 981,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 498,
+    "falsification_cases": 499,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -68,30 +68,36 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved raw-ingress full-byte field projection facts imply a named native publication row-equivalence package for decoded, validation, materialized, planned, wire, and canonical rows, and accepted mined-block commit publication can carry that row package.",
+    "summary": "Proved the SmallWood transcript/profile byte boundary and production vector conformance: accepted transcript binding starts with the domain, includes version/arithmetization profile material, includes serialized statement bytes, pads to eight-byte alignment, and mutates on statement, version, arithmetization, or ciphertext-hash drift. Also fixed formal-core mixed restart/reorg test determinism.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
-      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
-      "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
+      "circuits/transaction/src/smallwood_frontend.rs",
+      "node/src/native/mod.rs",
+      "scripts/check_formal_core.sh"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.NativePublicationRowEquivalence.raw_ingress_full_byte_field_projection_binds_native_publication_rows",
-      "Hegemon.Native.NativePublicationRowEquivalence.accepted_raw_ingress_full_byte_publication_binds_native_publication_rows",
-      "Hegemon.Native.NativePublicationRowEquivalence.accepted_mined_block_commit_binds_native_publication_rows"
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_version",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_arithmetization",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_starts_with_domain",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_profile_material",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_statement_bytes",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_padding_aligned_to_eight",
+      "Hegemon.Transaction.SmallWoodTranscriptBinding.accepted_smallwood_transcript_binding_implies_statement_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake env lean Hegemon/Native/NativePublicationRowEquivalence.lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 145 jobs.",
-      "targeted_rust": "No runtime Rust changes in this slice; existing Lean-generated Rust conformance and native backend vector suites passed as part of the full formal-core gate.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T19:14:05Z after adding the native publication row-equivalence theorem slice.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodTranscriptBinding gen_smallwood_transcript_binding_vectors Hegemon passed locally with 151 jobs.",
+      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture passed locally; cargo test -p hegemon-node native::tests::mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication -- --nocapture passed locally after making the test seal deterministic.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T20:45:59Z after adding the SmallWood transcript/profile theorem slice, adding the new Lean files to the formal inventory, and applying the deterministic mixed restart/reorg proof-gate fix.",
       "claims": 118,
-      "named_lean_theorems": 1769,
+      "named_lean_theorems": 1776,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 974,
+      "axiom_dependent_theorems": 981,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 498,
+      "falsification_cases": 499,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -101,9 +107,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice has no runtime changes; it composes existing accepted raw-ingress full-byte publication and mined commit publication predicates.",
-      "The theorem packages accepted row-equivalence facts and Rust conformance gates; it does not prove arbitrary parser internals, hash/security equivalence, proof soundness, storage durability, DA availability, or complete native-node equivalence.",
-      "The named row package still needs to be generalized across announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair as one complete native-node refinement theorem."
+      "This slice proves the byte-boundary and production conformance for serialized SmallWood transcript/profile binding, not bincode correctness, BLAKE security, SmallWood PCS/AIR soundness, witness extraction, or zero knowledge.",
+      "The production helper still consumes already-serialized statement bytes; arbitrary Rust serialization correctness remains a separate implementation-equivalence target.",
+      "The deterministic mixed restart/reorg change hardens a formal-core regression only; it does not by itself prove complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
@@ -422,7 +428,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 86,
+      "completion_percent": 87,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -471,13 +477,15 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now derives the parser-to-canonical projection assumption package from parser bytes, explicit count evidence, canonical statement facts, and accepted native binding gates",
         "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean narrows the balance/public-field deployed-verifier target to concrete P3 final-row AIR equations for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
-        "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof"
+        "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
+        "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, includes serialized statement bytes, pads to eight-byte alignment, and changes when version or arithmetization profile material changes",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
-        "Discharge the split spend-only and balance/public-field deployed verifier soundness assumptions with deployed verifier/AIR/refinement theorems instead of leaving them explicit."
+        "Discharge the split spend-only, balance/public-field, and SmallWood transcript/profile deployed verifier soundness assumptions with deployed verifier/AIR/refinement theorems instead of leaving them explicit."
       ],
       "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
     },

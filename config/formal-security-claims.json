@@ -632,7 +632,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, proves that an authorized stablecoin exception preserves the exact public/bound/statement/proof-binding policy metadata and rejects unauthorized or mismatched payload surfaces, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, adds a SmallWood public balance-boundary target that exposes native and stablecoin delta facts while rejecting noncanonical signed zero, and adds a P3 AIR final-row balance target with public-field verifier mutation regressions. It provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, proves that an authorized stablecoin exception preserves the exact public/bound/statement/proof-binding policy metadata and rejects unauthorized or mismatched payload surfaces, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, adds a SmallWood public balance-boundary target that exposes native and stablecoin delta facts while rejecting noncanonical signed zero, adds a P3 AIR final-row balance target with public-field verifier mutation regressions, and adds a SmallWood transcript/profile binding target that proves the modeled transcript bytes include the domain, verifier profile material, serialized statement bytes, and eight-byte padding. It provides a compatibility theorem back to the monolithic assumption while keeping real proof-system soundness explicit.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -711,7 +711,14 @@
         "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_selected_slot_asset",
         "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_nonselected_slot_delta_zero",
         "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_metadata_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_non_native_delta_zero"
+        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_non_native_delta_zero",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_version",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_arithmetization",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_starts_with_domain",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_profile_material",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_statement_bytes",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_padding_aligned_to_eight",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.accepted_smallwood_transcript_binding_implies_statement_boundary_facts"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
@@ -724,13 +731,16 @@
         "`AuthorizedStablecoinMintExceptionSurface` now has theorem-level anti-mismatch projections: the exact canonical payload is authorized, policy hash/oracle/attestation/version fields are preserved across public inputs, bound inputs, statement rows, and proof-binding rows, and unauthorized, asset-mismatched, delta-mismatched, or policy-metadata-mismatched payloads cannot inhabit the authorized surface.",
         "These theorems still keep `LiveStablecoinPolicyAuthorizes` as an explicit predicate; production policy/oracle/attestation lookup, freshness, and dispute checks remain separate implementation-equivalence work.",
         "`Hegemon.Transaction.SmallWoodBalanceBoundary` narrows the future balance/public-field verifier target to concrete public native-delta, selected-stablecoin-delta, disabled-stablecoin-zero, non-selected non-native zero, and signed-magnitude canonicality facts; the production mutation gates require the inline-Merkle SmallWood constraint path to reject public balance/stablecoin tampering even when auxiliary Merkle rows are recomputed from the tampered public values.",
-        "`Hegemon.Transaction.AirBalanceBoundary` narrows the deployed P3 AIR target by modeling the final-row value-balance and stablecoin equations directly; `p3_air_balance_public_field_mutations_rejected` proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof."
+        "`Hegemon.Transaction.AirBalanceBoundary` narrows the deployed P3 AIR target by modeling the final-row value-balance and stablecoin equations directly; `p3_air_balance_public_field_mutations_rejected` proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof.",
+        "`Hegemon.Transaction.SmallWoodTranscriptBinding` narrows the SmallWood verifier target by modeling the transcript/profile bytes over already serialized public statement bytes; the generated-vector gate checks the production transcript helper, version/profile material, arithmetization label, statement byte inclusion, and eight-byte padding. This does not prove bincode serialization correctness or SmallWood cryptographic soundness."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
@@ -747,6 +757,7 @@
         "bash scripts/check_lean_formal.sh",
     "bash scripts/check_formal_core.sh",
     "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
+    "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture",
     "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
       ],

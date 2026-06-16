@@ -1200,6 +1200,10 @@ Follow [runbooks/miner_wallet_quickstart.md](runbooks/miner_wallet_quickstart.md
 - `runbooks/security_testing.md` documents how to rerun the `security-adversarial` job locally, capture artifacts, and notify auditors if a regression appears on CI. Treat it as mandatory reading before release tagging.
 - Run `./scripts/dependency-audit-gate.sh` for dependency advisories; CI and release builds fail on any unwaived finding. Use `./scripts/dependency-audit.sh --record` only to append a human-readable snapshot after updating `config/dependency-audit-waivers.json`.
 
+### Formal transcript/profile conformance
+
+- The SmallWood transcript/profile binding slice proves the byte layout that the shipped transcript helper must expose: transcript domain, verifier profile material, arithmetization label, serialized public statement bytes, and eight-byte padding. `gen_smallwood_transcript_binding_vectors` emits Lean-derived cases for the active inline-Merkle profile, statement mutation, version/profile mutation, legacy arithmetization mutation, and padding-boundary behavior; the production `transaction-circuit` gate checks those vectors against `smallwood_transcript_binding_from_serialized_statement` and the materialized public statement path. This is an implementation-equivalence gate over the existing helper and adds no runtime verifier cost. It does not prove bincode correctness, SmallWood PCS/AIR soundness, BLAKE3/BLAKE2 security, or full verifier/native-node refinement.
+
 ### Documentation + threat-model synchronization
 
 Whenever you touch an API, threat mitigation, or performance assumption:

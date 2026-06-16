@@ -14979,8 +14979,7 @@ mod tests {
                 .next()
                 .expect("staged canonical action");
             let canonical_work = node.prepare_work().expect("prepare canonical native work");
-            let canonical_seal =
-                mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+            let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
             let canonical = node
                 .import_mined_block(&canonical_work, canonical_seal)
                 .expect("canonical import")

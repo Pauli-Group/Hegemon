@@ -135,6 +135,7 @@ import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodSpendAuthorization
+import Hegemon.Transaction.SmallWoodTranscriptBinding
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash
 import Hegemon.Wallet.NoteCiphertextDecrypt
