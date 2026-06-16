@@ -247,6 +247,9 @@ lean_exe gen_network_secure_channel_vectors where
 lean_exe gen_pq_noise_vectors where
   root := `Hegemon.Network.GeneratePqNoiseVectors
 
+lean_exe gen_frame_resource_admission_vectors where
+  root := `Hegemon.Network.GenerateFrameResourceAdmissionVectors
+
 lean_exe gen_note_ciphertext_wire_vectors where
   root := `Hegemon.Wallet.GenerateNoteCiphertextWireVectors
 
@@ -264,6 +267,9 @@ lean_exe gen_note_commitment_input_vectors where
 
 lean_exe gen_nullifier_input_vectors where
   root := `Hegemon.Transaction.GenerateNullifierInputVectors
+
+lean_exe gen_smallwood_spend_authorization_vectors where
+  root := `Hegemon.Transaction.GenerateSmallWoodSpendAuthorizationVectors
 
 lean_exe gen_merkle_vectors where
   root := `Hegemon.Transaction.GenerateMerkleVectors

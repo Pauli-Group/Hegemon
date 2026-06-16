@@ -677,8 +677,8 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "claim_id": "formal.transaction-spend-authorization-boundary",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean transaction spend-authorization relation, successful authorization forces the public input-flag vector, public-nullifier vector, and private witness vector to have matching lengths; each indexed public input slot is then either inactive with a zero public nullifier or active and authorized only by a private witness that reconstructs the note commitment, derives the spend-authority public key from the spend secret, derives the public nullifier from the same secret/rho/position tuple, and verifies Merkle membership under the stated root. Accepted proof wrappers imply this relation only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link surface additionally requires active input commitment auth limbs to equal PRF-derived spend-auth limbs.",
-      "informal_argument": "The Lean theorems `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful slot authorization and transaction spend authorization cannot be established over mismatched public flag/nullifier vectors or mismatched private witness vectors. `Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_facts` exposes commitment, spend-authority, nullifier, and Merkle-membership facts for every authorized input witness. `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts` lifts those facts to the head active public input slot, while `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at` lifts them to any indexed active slot. `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_input_slot_facts_at` covers every indexed slot, proving inactive slots carry zero nullifiers and active slots expose spend facts. `Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization` plus `accepted_wrapper_implies_input_slot_facts_at` tie accepted proof-wrapper verification to total slot authorization through the named `SpendAuthorizationSoundnessAssumption`. Negative theorems reject wrong spend secrets, wrong public nullifiers, and wrong Merkle roots in the executable model. `Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_pk_auth_eq_derived` and `active_auth_link_wrong_secret_rejects` model the packed SmallWood linear constraints that bind active input note `pk_auth` limbs to the same PRF-derived spend secret used by nullifier derivation.",
+      "formal_statement": "For the executable Lean transaction spend-authorization relation, successful authorization forces the public input-flag vector, public-nullifier vector, and private witness vector to have matching lengths; each indexed public input slot is then either inactive with a zero public nullifier or active and authorized only by a private witness that reconstructs the note commitment, derives the spend-authority public key from the spend secret, derives the public nullifier from the same secret/rho/position tuple, and verifies Merkle membership under the stated root. Accepted proof wrappers imply this relation only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link surface additionally requires active input commitment auth limbs to equal previous commitment-state auth limbs plus PRF-derived spend-auth limbs modulo the deployed Goldilocks field.",
+      "informal_argument": "The Lean theorems `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful slot authorization and transaction spend authorization cannot be established over mismatched public flag/nullifier vectors or mismatched private witness vectors. `Hegemon.Transaction.SpendAuthorization.authorizedInputWitness_implies_facts` exposes commitment, spend-authority, nullifier, and Merkle-membership facts for every authorized input witness. `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_head_active_facts` lifts those facts to the head active public input slot, while `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at` lifts them to any indexed active slot. `Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_input_slot_facts_at` covers every indexed slot, proving inactive slots carry zero nullifiers and active slots expose spend facts. `Hegemon.Transaction.SpendAuthorization.accepted_wrapper_implies_spend_authorization` plus `accepted_wrapper_implies_input_slot_facts_at` tie accepted proof-wrapper verification to total slot authorization through the named `SpendAuthorizationSoundnessAssumption`. Negative theorems reject wrong spend secrets, wrong public nullifiers, and wrong Merkle roots in the executable model. `Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_goldilocks_auth_link`, `active_auth_link_mismatched_active_limbs_reject`, `active_auth_link_wraparound_accepts`, and `inactive_auth_link_allows_mismatched_limbs` model the packed SmallWood Goldilocks-field auth-link surface; Lean-generated no-wrap, wraparound, per-limb mismatch, and inactive cases are checked against Rust, while the packed SmallWood wrong-secret regression checks the production constraint-builder path.",
       "depends_on": [
         "formal.transaction-merkle-membership",
         "formal.transaction-public-input-shape",
@@ -686,10 +686,11 @@
         "formal.transaction-statement-hash-binding"
       ],
       "implementation_paths": [
-        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
-        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
-        "formal/lean/Hegemon.lean",
         "circuits/transaction/src/smallwood_frontend.rs",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -706,12 +707,13 @@
         }
       ],
       "evidence_paths": [
-        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
-        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
-        "formal/lean/Hegemon.lean",
-        "circuits/transaction/src/smallwood_frontend.rs",
         "DESIGN.md",
         "METHODS.md",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+        "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -723,14 +725,19 @@
       },
       "falsification_cases": [
         {
+          "id": "formal-core-spend-authorization-boundary-gate",
+          "description": "The release formal-core wrapper must include the spend-authorization module in the Lean root and claims ledger.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
           "id": "lean-spend-authorization-boundary-theorem",
           "description": "Removing or weakening the spend-authorization boundary theorems or their proofs must fail the Lean formal gate.",
           "gate": "bash scripts/check_lean_formal.sh"
         },
         {
-          "id": "formal-core-spend-authorization-boundary-gate",
-          "description": "The release formal-core wrapper must include the spend-authorization module in the Lean root and claims ledger.",
-          "gate": "bash scripts/check_formal_core.sh"
+          "id": "smallwood-active-auth-link-lean-vector-regression",
+          "description": "The Rust SmallWood auth-link helper must match Lean-generated active no-wrap, active wraparound, per-limb mismatch rejection, and inactive mismatch acceptance cases over the Goldilocks field.",
+          "gate": "HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS=<generated-json> cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present -- --nocapture"
         },
         {
           "id": "smallwood-active-auth-link-wrong-secret-regression",
@@ -738,7 +745,7 @@
           "gate": "cargo test -p transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves the executable spend-authorization relation and its accepted-wrapper assumption boundary, plus the SmallWood active-auth-link constraint surface and production regression. It uses abstract digest arithmetic and does not prove Poseidon2/BLAKE3 implementation equivalence, hash collision resistance, nullifier PRF security, note commitment hiding/binding, complete deployed STARK/AIR or SmallWood proof-system soundness, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
+      "scope_boundary": "This node proves the executable spend-authorization relation and its accepted-wrapper assumption boundary, plus the SmallWood active-auth-link Goldilocks-field constraint surface, Lean-generated vector conformance, and production wrong-secret regression. It uses abstract digest arithmetic and does not prove Poseidon2/BLAKE3 implementation equivalence, hash collision resistance, nullifier PRF security, note commitment hiding/binding, complete deployed STARK/AIR or SmallWood proof-system soundness, witness extraction, wallet key custody, note encryption correctness, or complete Rust/native-node refinement."
     },
     {
       "id": "formal.transaction-accepted-soundness-boundary",
@@ -9803,8 +9810,8 @@
       "id": "formal.native-commitment-tree-refinement",
       "claim_id": "formal.native-commitment-tree-refinement",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native action stream, acceptance determines the same planned commitment-start sequence and next leaf cursor accepted by the canonical action-plan application model, and an accepted consensus tree transition exposes the applied commitment-tree root. Accepted ledger/tree replay chains additionally thread the commitment-root cursor in lockstep with accepted ledger replay, so the final root is exactly the result of the accepted tree-transition chain while the corresponding ledger replay still proves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. Raw-decoded native ledger/tree replay projections are proved extensionally equal to accepted tree replay over the projected inputs and inherit the same root-cursor, replay, carried-state, nullifier, and bridge replay facts. Accepted canonical publication additionally carries those ledger/tree replay facts across accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, and storage durability admission.",
-      "informal_argument": "`Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from` proves that accepted action-stream replay determines a commitment-start schedule. `commitment_starts_plan_application_accepts` and `accepted_stream_canonical_plan_accepts` prove that replaying those counts and starts through the action-plan admission model accepts with the same next leaf cursor. `accepted_stream_tree_transition_refines_applied_root` then composes that plan fact with `Hegemon.Consensus.TreeTransition.accepted_transition_returns_applied_root` so an accepted tree transition publishes the applied root. `Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity` lifts that boundary to accepted ledger/tree replay chains: the modeled root cursor follows accepted tree transitions, the projected ledger replay is accepted, and the existing accepted-ledger replay theorem still gives supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. `Hegemon.Native.BlockReplayInputProjection.accepted_raw_projected_ledger_tree_state_after_startup_equivalence` adds the raw-decoded native tree replay surface: decoded replay fields and decoded tree-transition inputs project into the ledger/tree replay model, the raw projected executor is tied to accepted tree replay, and accepted raw-projected tree replay exposes commitment-root progression, accepted ledger replay, supply equality, leaf-cursor equality, canonical commitment-plan preconditions, raw tree carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. `Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay` composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and ledger/tree replay into one publication package carrying replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness. `accepted_raw_canonical_publication_refines_ledger_tree_replay` lifts the same package through raw decoded ledger/tree replay while preserving raw carried-state preconditions. The valid raw tree example pins the root cursor at `50 -> 52`, and the stale raw root example rejects.",
+      "formal_statement": "For the executable Lean native action stream, acceptance determines the same planned commitment-start sequence and next leaf cursor accepted by the canonical action-plan application model, and an accepted consensus tree transition exposes the applied commitment-tree root. Accepted ledger/tree replay chains additionally thread the commitment-root cursor in lockstep with accepted ledger replay, so the final root is exactly the result of the accepted tree-transition chain while the corresponding ledger replay still proves supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. Raw-decoded native ledger/tree replay projections are proved extensionally equal to accepted tree replay over the projected inputs and inherit the same root-cursor, replay, carried-state, nullifier, and bridge replay facts. Accepted canonical publication additionally carries those ledger/tree replay facts across accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, and storage durability admission. Accepted raw-ingress full-byte publication further binds canonical commitment rows to the exact ordered commitments and planned indexes decoded from accepted action rows.",
+      "informal_argument": "`Hegemon.Native.CommitmentTreeRefinement.accepted_stream_commitment_starts_from` proves that accepted action-stream replay determines a commitment-start schedule. `commitment_starts_plan_application_accepts` and `accepted_stream_canonical_plan_accepts` prove that replaying those counts and starts through the action-plan admission model accepts with the same next leaf cursor. `accepted_stream_tree_transition_refines_applied_root` then composes that plan fact with `Hegemon.Consensus.TreeTransition.accepted_transition_returns_applied_root` so an accepted tree transition publishes the applied root. `Hegemon.Native.AcceptedChain.accepted_native_ledger_tree_replay_chain_integrity` lifts that boundary to accepted ledger/tree replay chains: the modeled root cursor follows accepted tree transitions, the projected ledger replay is accepted, and the existing accepted-ledger replay theorem still gives supply replay, leaf-cursor replay, canonical commitment plans, nullifier uniqueness, and bridge replay uniqueness. `Hegemon.Native.BlockReplayInputProjection.accepted_raw_projected_ledger_tree_state_after_startup_equivalence` adds the raw-decoded native tree replay surface: decoded replay fields and decoded tree-transition inputs project into the ledger/tree replay model, the raw projected executor is tied to accepted tree replay, and accepted raw-projected tree replay exposes commitment-root progression, accepted ledger replay, supply equality, leaf-cursor equality, canonical commitment-plan preconditions, raw tree carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. `Hegemon.Native.CanonicalPublicationRefinement.accepted_canonical_publication_refines_ledger_tree_replay` composes accepted block-index reload, canonical-state reload, canonical reorg-chain admission, atomic commit-manifest admission, storage durability admission, and ledger/tree replay into one publication package carrying replayed supply, leaf cursor, commitment-root publication, canonical commitment plan, final nullifier uniqueness, and final bridge replay-key uniqueness. `accepted_raw_canonical_publication_refines_ledger_tree_replay` lifts the same package through raw decoded ledger/tree replay while preserving raw carried-state preconditions. The valid raw tree example pins the root cursor at `50 -> 52`, and the stale raw root example rejects. `Hegemon.Native.CommitmentTreeContentRefinement.projectedCommitmentRows_values`, `projectedCommitmentRows_indexes`, and `canonical_commitment_rows_bind_ordered_decoded_content` prove that canonical commitment rows expose exactly the ordered decoded commitments and planned indexes. `raw_ingress_full_byte_field_projection_binds_commitment_tree_content` and `accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content` package those row-content facts with accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, and replayed leaf-cursor facts over the same raw witness.",
       "depends_on": [
         "consensus.commitment-tree-membership-handoff",
         "native.action-stream-effect-planning",
@@ -9814,25 +9821,27 @@
         "release.dependency-waivers"
       ],
       "implementation_paths": [
-        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "formal/lean/Hegemon.lean",
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
-        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "evidence_paths": [
-        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        ".agent/HIGHEST_STANDARD_LEAN_FORMAL_VERIFICATION_EXECPLAN.md",
+        "config/highest-standard-formal-verification-matrix.json",
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
         "formal/lean/Hegemon/Native/AcceptedChain.lean",
+        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
+        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean",
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
-        "formal/lean/Hegemon/Native/ActionStreamEffect.lean",
-        "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
-        "formal/lean/Hegemon/Consensus/TreeTransition.lean",
-        "formal/lean/Hegemon.lean",
-        "config/highest-standard-formal-verification-matrix.json",
-        ".agent/HIGHEST_STANDARD_LEAN_FORMAL_VERIFICATION_EXECPLAN.md",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
+        "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
@@ -9854,7 +9863,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves a Lean refinement boundary between existing action-stream planning, action-plan application, consensus tree-transition, and accepted ledger replay models. It proves modeled chain-level commitment-root cursor agreement, not Merkle hash security, note commitment correctness, transaction proof soundness, raw byte decoding, production Rust tree implementation equivalence, reorg/startup replay equivalence, storage durability, or complete native-node refinement."
+      "scope_boundary": "This node proves a non-production implementation-equivalence refinement across existing Lean action-stream, action-plan, tree-transition, accepted-ledger replay, raw projection, canonical publication, and raw-ingress full-byte field-projection kernels. It now carries exact ordered decoded commitment content and indexes through canonical commitment rows, but it does not prove arbitrary parser internals, complete production Merkle-tree mutation implementation equivalence, Merkle hash security/equivalence, sled durability, or complete native-node refinement."
     },
     {
       "id": "crypto.native-backend-candidate",
@@ -10310,6 +10319,63 @@
         }
       ],
       "scope_boundary": "This node composes accepted local mined-work freshness, native block-commitment admission, and atomic mined-block manifest admission into one Lean publication surface. It does not prove mining work-template construction, body/replay parser internals, proof-system soundness, PoW hash-threshold validity beyond the production verifier call, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, or complete native-node equivalence."
+    },
+    {
+      "id": "network.frame-resource-admission",
+      "claim_id": "network.frame-resource-admission",
+      "kind": "target_claim",
+      "formal_statement": "For the executable Lean frame-resource predicates, accepted network and PQ frame decoding occurs exactly when the encoded byte length is within the configured production cap, the codec marker matches the frame family, postcard decoding succeeds for postcard-encoded frames, and the postcard decoder consumes all bytes. Encode admission occurs exactly when the four-byte marker plus body length is within the configured cap. Oversize frames reject before marker or parser work, missing markers reject before postcard work, postcard failures reject before trailing-byte acceptance, and trailing bytes reject. The PQ session plaintext cap plus AEAD tag equals the session ciphertext cap.",
+      "informal_argument": "`Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff` and companion rejection theorems prove the executable admission table and rejection precedence. `accepted_frame_decode_exposes_facts` packages the bound, marker, postcard, and no-trailing-byte facts exposed by accepted inputs. `evaluate_frame_encode_accepts_iff` and `accepted_frame_encode_within_bound` prove outbound marker-plus-body size admission. Marker length and domain-separation theorems pin the HNW/PNH/PNS/PNT byte markers, while the PQ plaintext-plus-tag theorem connects postcard session plaintext admission to the encrypted frame cap. `gen_frame_resource_admission_vectors` emits Lean-derived constants and acceptance/rejection cases; formal-core checks those vectors against production `network::wire` and `pq-noise::codec` constants and representative encode/decode paths.",
+      "depends_on": [
+        "network.secure-channel-key-schedule",
+        "network.pq-noise-key-schedule",
+        "native.codec-admission"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
+        "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+        "network/src/wire.rs",
+        "pq-noise/src/codec.rs",
+        "scripts/check_formal_core.sh"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
+        "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+        "network/src/wire.rs",
+        "pq-noise/src/codec.rs",
+        "formal/lean/README.md",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-16",
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for network/PQ frame caps, marker-domain admission, postcard success, and no-trailing-byte rejection. Scope is admission and codec-resource behavior, not parser implementation soundness, primitive crypto, or full transport/session liveness."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-frame-resource-theorem",
+          "description": "Removing or weakening the frame-resource admission theorems or companion examples must fail the Lean formal gate.",
+          "gate": "bash scripts/check_lean_formal.sh"
+        },
+        {
+          "id": "network-frame-resource-conformance",
+          "description": "Changing production network HNW frame caps, marker bytes, oversize rejection, missing-marker rejection, postcard failure handling, or trailing-byte rejection away from the Lean executable table must fail the generated-vector conformance test.",
+          "gate": "HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_frame_resource_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "pq-noise-frame-resource-conformance",
+          "description": "Changing production PQ Noise frame caps, marker bytes, oversize rejection, missing-marker rejection, postcard failure handling, transcript marker, session plaintext cap, or trailing-byte rejection away from the Lean executable table must fail the generated-vector conformance test.",
+          "gate": "HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_frame_resource_admission_vectors_match_production -- --nocapture"
+        },
+        {
+          "id": "formal-core-frame-resource-gate",
+          "description": "The release formal-core wrapper must generate frame-resource vectors and run both production conformance tests.",
+          "gate": "bash scripts/check_formal_core.sh"
+        }
+      ],
+      "scope_boundary": "This node proves and vector-checks bounded frame admission, marker-domain separation, postcard-decode success, no-trailing-byte rejection, outbound marker-plus-body bounds, and PQ plaintext/tag cap accounting for the network and PQ Noise frame codecs. It does not prove postcard implementation correctness, SHA/HKDF/AEAD/ML-KEM/ML-DSA security, tokio length-delimited transport correctness, network liveness, peer honesty, or complete native-node equivalence."
     }
   ]
 }

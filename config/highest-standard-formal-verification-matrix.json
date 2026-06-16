@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 83.9,
+  "overall_completion_percent": 84.1,
   "last_full_formal_core": {
-    "date": "2026-06-16T00:32:02Z",
-    "commit": "14609021+worktree",
-    "status": "passed locally after adding pending-action field projection, raw-ingress field projection lifting, and exact canonical row equality gates for native implementation equivalence",
+    "date": "2026-06-16T02:35:22Z",
+    "commit": "232373b4a4b4+worktree",
+    "status": "passed locally after adding network/PQ frame-resource admission, SmallWood Goldilocks auth-link vector conformance, and commitment-tree content refinement",
     "command": "bash scripts/check_formal_core.sh",
-    "claims": 117,
-    "named_lean_theorems": 1679,
-    "axiom_free_theorems": 768,
-    "axiom_dependent_theorems": 911,
+    "claims": 118,
+    "named_lean_theorems": 1704,
+    "axiom_free_theorems": 771,
+    "axiom_dependent_theorems": 933,
     "temporary_axiom_theorems": 0,
-    "production_eligible_claims": 107,
+    "production_eligible_claims": 108,
     "residual_risks": 45,
-    "blueprint_edges": 488,
-    "falsification_cases": 468,
+    "blueprint_edges": 491,
+    "falsification_cases": 473,
     "implementation_bindings": 207,
     "implementation_result_obligations": 161,
     "implementation_order_constraints": 143,
@@ -65,29 +65,40 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Strengthened native implementation equivalence from count-level replay agreement to ordered field-level projection. Accepted pending-action bytes, block-action decode, validation rows, materialized action rows, planned/wire replay rows, and raw-ingress full-byte publication now compose through explicit decoded-field projection evidence. Canonical index rebuild and block-range import regressions now assert exact commitment, nullifier, bridge replay, ciphertext archive, and ciphertext-index rows rather than only matching row counts.",
+    "summary": "Closed three implementation-equivalence slices: network/PQ frame-resource admission; SmallWood Goldilocks auth-link vector conformance; and commitment-tree content refinement binding canonical commitment rows to decoded ordered commitments and planned indexes on the accepted raw-ingress publication surface.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
-      "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean"
+      "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
+      "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
+      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_field_projection_binds_decoded_validation_materialized_wire_rows",
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_field_projection_binds_decoded_validation_materialized_wire_rows",
-      "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_field_projection_rows"
+      "Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff",
+      "Hegemon.Network.FrameResourceAdmission.accepted_frame_decode_exposes_facts",
+      "Hegemon.Network.FrameResourceAdmission.evaluate_frame_encode_accepts_iff",
+      "Hegemon.Network.FrameResourceAdmission.pq_session_plaintext_plus_tag_eq_ciphertext_bound",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_constraints_imply_goldilocks_auth_link",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_mismatched_active_limbs_reject",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.active_auth_link_wraparound_accepts",
+      "Hegemon.Transaction.SmallWoodSpendAuthorization.inactive_auth_link_allows_mismatched_limbs",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_content",
+      "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_indexes",
+      "Hegemon.Native.CommitmentTreeContentRefinement.accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content"
     ],
     "validation": {
-      "lean_formal": "lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon.Native.RawIngressFullBytePublicationSurface Hegemon passed locally",
-      "targeted_rust": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture and cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed locally",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T00:32:02Z with pending-action field projection and exact canonical row gates integrated",
-      "claims": 117,
-      "named_lean_theorems": 1679,
-      "axiom_free_theorems": 768,
-      "axiom_dependent_theorems": 911,
+      "lean_formal": "lake build Hegemon.Network.FrameResourceAdmission Hegemon.Transaction.SmallWoodSpendAuthorization Hegemon.Native.CommitmentTreeContentRefinement Hegemon passed locally",
+      "targeted_rust": "Lean-generated SmallWood auth-link vectors and the wrong-secret regression passed; network and pq-noise frame-resource vector tests passed in full formal-core; native exact-row regressions pending_action_raw_bytes_project_to_validated_materialized_replay_rows, canonical_index_rebuild_projects_decoded_materialized_wire_rows, and block_range_projects_decoded_materialized_wire_rows passed in full formal-core.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T02:35:22Z with 118 claims, 1704 named Lean theorem declarations, 771 axiom-free declarations, 933 declarations depending only on allowed Lean kernel axioms, 0 temporary axiom dependencies, 108 production-eligible claims, 473 falsification cases, and 207 implementation bindings.",
+      "claims": 118,
+      "named_lean_theorems": 1704,
+      "axiom_free_theorems": 771,
+      "axiom_dependent_theorems": 933,
       "temporary_axiom_theorems": 0,
-      "production_eligible_claims": 107,
+      "production_eligible_claims": 108,
       "residual_risks": 45,
-      "blueprint_edges": 488,
-      "falsification_cases": 468,
+      "blueprint_edges": 491,
+      "falsification_cases": 473,
       "implementation_bindings": 207,
       "implementation_result_obligations": 161,
       "implementation_order_constraints": 143,
@@ -97,9 +108,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "The Lean proof still takes decoded-field projection evidence as the production bridge; it does not prove arbitrary SCALE/postcard/parser internals byte-for-byte.",
-      "The exact canonical row gates cover the modeled native replay/index rebuild paths, not every future storage schema or external database durability failure.",
-      "Deployed proof-system soundness, primitive hash/crypto security, DA availability, sled durability below accepted predicates, and complete native-node equivalence remain explicit open work."
+      "Frame-resource admission proves cheap cap/domain/parser-precondition equivalence, not postcard internals, transport liveness, or primitive crypto security.",
+      "SmallWood auth-link vectors cover the deployed active Goldilocks auth-link surface, not complete AIR/STARK/SmallWood proof-system soundness or witness extraction.",
+      "Commitment-tree content refinement binds accepted decoded rows to canonical commitment rows and planned indexes, but not arbitrary parser internals, Merkle hash security, storage durability below accepted predicates, or complete native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
@@ -208,7 +219,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 79,
+      "completion_percent": 80,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -246,7 +257,9 @@
         "split proof-system boundary theorem `spend_soundness_canonical_surface_input_slot_boundary_facts` exposes spend-only input-slot authorization and statement/proof nullifier-slot binding without depending on balance/public-field soundness",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean now pairs raw-ingress parsed tx-leaf publication with spend-only deployed verifier boundary facts, keeping parsed artifact, pending-action publication, raw-ingress publication, canonical statement, and no-theft target facts on one accepted surface",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean proves the active SmallWood auth-link constraint implies input note pk_auth limbs equal PRF-derived spend-auth limbs and that wrong spend secrets reject",
-        "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints now enforces the four active auth-link constraints before SmallWood proof verification, and the regression packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth mutates only sk_spend while keeping note pk_auth unchanged"
+        "circuits/transaction/src/smallwood_frontend.rs build_packed_bridge_linear_constraints now enforces the four active auth-link constraints before SmallWood proof verification, and the regression packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth mutates only sk_spend while keeping note pk_auth unchanged",
+        "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean now proves the deployed Goldilocks-field active SmallWood auth-link surface, including modular wraparound acceptance, per-limb mismatch rejection, and inactive no-constraint acceptance",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean emits no-wrap, wraparound, per-limb mismatch, and inactive auth-link cases checked by smallwood_spend_authorization_matches_lean_vectors_when_present"
       ],
       "missing_work": [
         "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link slice.",
@@ -257,7 +270,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -276,7 +289,9 @@
         "consensus/src/proof.rs validate_statement_anchor_history is production-bound before recursive semantic derivation, artifact verification, or final tree transition",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean carries synced raw block batches through raw canonical publication to accepted ledger/tree replay and commitment-root publication facts",
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean packages consensus-root/state-root/provided-root agreement, root-history membership, state path export, and transaction Merkle-path verifier acceptance into one membership handoff fact surface, including same-root changed-leaf rejection by the Merkle path rather than by root mismatch",
-        "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner"
+        "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
+        "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness"
       ],
       "missing_work": [
         "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant beyond the now production-bound append-root and membership-path handoff.",
@@ -339,16 +354,16 @@
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean now proves authorized stablecoin exception surfaces preserve exact public/bound/statement/proof-binding policy metadata and reject unauthorized, mismatched-asset, mismatched-delta, mismatched-public-payload, or mismatched-policy-metadata surfaces",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
         "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases",
-      "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
-      "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean now instantiates LiveStablecoinPolicyAuthorizes from the accepted native stablecoin policy authorization predicate for the exact canonical StablecoinMintExceptionPayload, proves the predicate authorizes only that exact payload, exposes policy lifecycle/freshness/bounds facts, denies not-live payload authorization, and upgrades any publication-plus-exception-surface package to an authorized stablecoin mint exception surface",
-      "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
-      "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
-      "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
+        "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
+        "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean now instantiates LiveStablecoinPolicyAuthorizes from the accepted native stablecoin policy authorization predicate for the exact canonical StablecoinMintExceptionPayload, proves the predicate authorizes only that exact payload, exposes policy lifecycle/freshness/bounds facts, denies not-live payload authorization, and upgrades any publication-plus-exception-surface package to an authorized stablecoin mint exception surface",
+        "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
+        "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
       ],
-    "missing_work": [
-      "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
-      "Extend the native-policy LiveStablecoinPolicyAuthorizes bridge from manifest-time authorization predicates to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence."
-    ],
+      "missing_work": [
+        "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution, including raw action decoding, reorg, and startup replay.",
+        "Extend the native-policy LiveStablecoinPolicyAuthorizes bridge from manifest-time authorization predicates to replayed native policy/oracle/attestation state, including governance/update history and oracle freshness evidence."
+      ],
       "performance_constraint": "Use already-public asset and policy fields; avoid scanning private data."
     },
     {
@@ -542,7 +557,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 87,
+      "completion_percent": 88,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -564,7 +579,8 @@
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode, full decoded field roundtrip, route payload projection, validation-step projection, materialized/planned payload equality, and wire projection",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean now separates permissive parser backend-byte defaults from strict release verifier admission, proving strict explicit-backend acceptance and strict missing-backend rejection",
         "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params now rejects noncanonical native tx-leaf artifacts whose decoded canonical encoding differs from the supplied bytes",
-        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression"
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression",
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors."
       ],
       "missing_work": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates.",
@@ -720,7 +736,7 @@
     {
       "id": "network.pq-channel-safety",
       "weight": 3,
-      "completion_percent": 88,
+      "completion_percent": 89,
       "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
       "current_evidence": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
@@ -735,7 +751,8 @@
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves the first local protected PQ frame is admitted by the peer open path under the matching peer receive slot and zero nonce",
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active PQ frames below u64 overflow",
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean now emits eight-frame initiator/responder PQ frame-sequence vectors",
-        "pq-noise/src/lib.rs formal vector gate drives production SecureSession send/recv, raw ciphertext emission, and raw open/decrypt against Lean slot, nonce, counter, and AAD expectations"
+        "pq-noise/src/lib.rs formal vector gate drives production SecureSession send/recv, raw ciphertext emission, and raw open/decrypt against Lean slot, nonce, counter, and AAD expectations",
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves HNW/PNH/PNS/PNT marker domains, PQ session plaintext-plus-tag frame accounting, and generated vector gates for network and PQ Noise frame caps/rejection precedence."
       ],
       "missing_work": [
         "Extend bounded SecureSession frame-vector conformance to full transport/session completion outputs and all integration paths.",
@@ -747,7 +764,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -761,7 +778,8 @@
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean now proves `action_request_projection_accepts_implies_preheavy_bounds`, deriving strict submit-action JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates from accepted action-request projection before heavy work",
         "formal/lean/Hegemon/Native/ReceiptRoot.lean now proves `receipt_root_schedule_accepts_implies_facts`, and PreHeavyWorkResourceBoundSurface carries receipt-root nonzero expected-leaf, exact leaf/fold-count, and fold-shape schedule facts before receipt-root folding",
         "formal/lean/Hegemon/Resource/BoundedRequestAdmission.lean proves a reusable raw-bytes, decoded-bytes, item-count, item-bytes, aggregate-bytes, and work-unit cap table with exact-limit acceptance and fail-closed rejection precedence before aggregate/work-heavy paths",
-        "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean emits parse-checked acceptance/rejection examples for the reusable bounded-request table"
+        "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean emits parse-checked acceptance/rejection examples for the reusable bounded-request table",
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean and generated Rust conformance tests bind network/PQ frame-size caps and fail-closed oversize-before-parse rejection to production codecs."
       ],
       "missing_work": [
         "Bind the remaining consensus-facing parser families to the reusable bounded-request admission table.",
@@ -771,25 +789,25 @@
       "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work."
     },
     {
-    "id": "release.dependency-posture",
-    "weight": 2,
-    "completion_percent": 83,
-    "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
-    "current_evidence": [
-      ".github/workflows/ci.yml release-build security dependencies and binary audit",
-      ".github/workflows/release.yml security-gates and per-platform binary audits",
-      "formal/lean/Hegemon/Release/CiReleaseGate.lean",
-      "scripts/check_ci_release_gate_policy.py",
-      "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
-      "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
-      "native backend review-policy and release-posture gates",
-      "formal-core dependency and release posture checks"
-    ],
-    "missing_work": [
-      "Move any remaining advisory/waiver drift that is outside cargo-audit visibility into mandatory CI evidence.",
-      "Add binary scanner completeness review and accepted external-review artifact requirements.",
-      "Make repository-admin branch protection/ruleset evidence require formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
-    ],
+      "id": "release.dependency-posture",
+      "weight": 2,
+      "completion_percent": 83,
+      "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
+      "current_evidence": [
+        ".github/workflows/ci.yml release-build security dependencies and binary audit",
+        ".github/workflows/release.yml security-gates and per-platform binary audits",
+        "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+        "scripts/check_ci_release_gate_policy.py",
+        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+        "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
+        "native backend review-policy and release-posture gates",
+        "formal-core dependency and release posture checks"
+      ],
+      "missing_work": [
+        "Move any remaining advisory/waiver drift that is outside cargo-audit visibility into mandatory CI evidence.",
+        "Add binary scanner completeness review and accepted external-review artifact requirements.",
+        "Make repository-admin branch protection/ruleset evidence require formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
+      ],
       "performance_constraint": "Release-time only; no production runtime overhead."
     }
   ]

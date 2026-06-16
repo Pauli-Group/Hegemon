@@ -100,4 +100,227 @@ mod tests {
 
         assert!(decode::<Sample>(&encoded, 128).is_err());
     }
+
+    #[derive(serde::Deserialize)]
+    struct LeanFrameResourceVectorFile {
+        schema_version: u32,
+        constants: Vec<LeanFrameResourceConstant>,
+        decode_cases: Vec<LeanFrameResourceDecodeCase>,
+        encode_cases: Vec<LeanFrameResourceEncodeCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanFrameResourceConstant {
+        kind: String,
+        max_len: usize,
+        magic_hex: String,
+        postcard_encoded: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanFrameResourceDecodeCase {
+        name: String,
+        kind: String,
+        encoded_bytes: usize,
+        marker_matches: bool,
+        postcard_decodes: bool,
+        postcard_consumes_all: bool,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_max_len: usize,
+        expected_magic_hex: String,
+        expected_postcard_encoded: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanFrameResourceEncodeCase {
+        name: String,
+        kind: String,
+        body_bytes: usize,
+        expected_total_len: usize,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_max_len: usize,
+        expected_magic_hex: String,
+    }
+
+    fn lean_network_frame_kind_constants(kind: &str) -> Option<(usize, &'static [u8; 4], bool)> {
+        match kind {
+            "network_handshake" => Some((MAX_HANDSHAKE_FRAME_LEN, NETWORK_WIRE_MAGIC, true)),
+            "network_wire" => Some((MAX_WIRE_FRAME_LEN, NETWORK_WIRE_MAGIC, true)),
+            "network_peer_store" => Some((MAX_PEER_STORE_LEN, NETWORK_WIRE_MAGIC, true)),
+            _ => None,
+        }
+    }
+
+    fn lean_magic_hex(magic: &[u8; 4]) -> String {
+        format!("0x{}", hex::encode(magic))
+    }
+
+    fn mirror_frame_decode_rejection(
+        case: &LeanFrameResourceDecodeCase,
+        max_len: usize,
+        postcard_encoded: bool,
+    ) -> Option<&'static str> {
+        if case.encoded_bytes > max_len {
+            Some("encoded_bytes_exceeded")
+        } else if !case.marker_matches {
+            Some("missing_marker")
+        } else if postcard_encoded && !case.postcard_decodes {
+            Some("postcard_decode_failed")
+        } else if postcard_encoded && !case.postcard_consumes_all {
+            Some("trailing_bytes")
+        } else {
+            None
+        }
+    }
+
+    fn mirror_frame_encode_rejection(
+        case: &LeanFrameResourceEncodeCase,
+        max_len: usize,
+    ) -> Option<&'static str> {
+        if case.expected_total_len > max_len {
+            Some("encoded_bytes_exceeded")
+        } else {
+            None
+        }
+    }
+
+    fn assert_decode_error_contains(bytes: &[u8], max_len: usize, fragment: &str, label: &str) {
+        let err = decode::<Sample>(bytes, max_len).expect_err(label);
+        assert!(
+            err.to_string().contains(fragment),
+            "{label}: expected error containing {fragment:?}, got {err}"
+        );
+    }
+
+    fn assert_network_decode_case_hits_production_path(case: &LeanFrameResourceDecodeCase) {
+        let Some((max_len, _magic, _postcard_encoded)) =
+            lean_network_frame_kind_constants(&case.kind)
+        else {
+            return;
+        };
+        let sample = Sample {
+            name: "frame".to_string(),
+            payload: vec![1, 2, 3],
+        };
+        match case.expected_reject.as_deref() {
+            None => {
+                let encoded = encode(&sample, max_len).expect("encode valid frame");
+                let decoded: Sample = decode(&encoded, max_len).expect("decode valid frame");
+                assert_eq!(decoded, sample, "{}", case.name);
+            }
+            Some("encoded_bytes_exceeded") => {
+                let oversized = vec![0u8; max_len + 1];
+                assert_decode_error_contains(
+                    &oversized,
+                    max_len,
+                    "encoded frame too large",
+                    &case.name,
+                );
+            }
+            Some("missing_marker") => {
+                assert_decode_error_contains(
+                    b"BAD1\x00",
+                    max_len,
+                    "missing network wire codec marker",
+                    &case.name,
+                );
+            }
+            Some("postcard_decode_failed") => {
+                assert_decode_error_contains(
+                    NETWORK_WIRE_MAGIC,
+                    max_len,
+                    "postcard decode failed",
+                    &case.name,
+                );
+            }
+            Some("trailing_bytes") => {
+                let mut encoded = encode(&sample, max_len).expect("encode valid frame");
+                encoded.push(0xff);
+                assert_decode_error_contains(&encoded, max_len, "postcard decode left", &case.name);
+            }
+            Some(other) => panic!("unknown Lean rejection {other} in {}", case.name),
+        }
+    }
+
+    #[test]
+    fn lean_generated_frame_resource_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS") else {
+            eprintln!("skipping Lean frame-resource vectors; env var not set");
+            return;
+        };
+        let contents = std::fs::read_to_string(path).expect("read Lean frame-resource vectors");
+        let vectors: LeanFrameResourceVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean frame-resource vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for constant in &vectors.constants {
+            let Some((max_len, magic, postcard_encoded)) =
+                lean_network_frame_kind_constants(&constant.kind)
+            else {
+                continue;
+            };
+            assert_eq!(constant.max_len, max_len, "{}", constant.kind);
+            assert_eq!(
+                constant.magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                constant.kind
+            );
+            assert_eq!(
+                constant.postcard_encoded, postcard_encoded,
+                "{}",
+                constant.kind
+            );
+        }
+
+        for case in &vectors.decode_cases {
+            let Some((max_len, magic, postcard_encoded)) =
+                lean_network_frame_kind_constants(&case.kind)
+            else {
+                continue;
+            };
+            assert_eq!(case.expected_max_len, max_len, "{}", case.name);
+            assert_eq!(
+                case.expected_magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                case.expected_postcard_encoded, postcard_encoded,
+                "{}",
+                case.name
+            );
+            let expected = mirror_frame_decode_rejection(case, max_len, postcard_encoded);
+            assert_eq!(case.expected_valid, expected.is_none(), "{}", case.name);
+            assert_eq!(case.expected_reject.as_deref(), expected, "{}", case.name);
+            assert_network_decode_case_hits_production_path(case);
+        }
+
+        for case in &vectors.encode_cases {
+            let Some((max_len, magic, _postcard_encoded)) =
+                lean_network_frame_kind_constants(&case.kind)
+            else {
+                continue;
+            };
+            assert_eq!(case.expected_max_len, max_len, "{}", case.name);
+            assert_eq!(
+                case.expected_magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                case.expected_total_len,
+                NETWORK_WIRE_MAGIC.len() + case.body_bytes,
+                "{}",
+                case.name
+            );
+            let expected = mirror_frame_encode_rejection(case, max_len);
+            assert_eq!(case.expected_valid, expected.is_none(), "{}", case.name);
+            assert_eq!(case.expected_reject.as_deref(), expected, "{}", case.name);
+        }
+    }
 }

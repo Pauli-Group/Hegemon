@@ -60,6 +60,7 @@ import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseAccountingAdmission
 import Hegemon.Native.CommitmentTreeMembershipRefinement
+import Hegemon.Native.CommitmentTreeContentRefinement
 import Hegemon.Native.CommitmentTreeRefinement
 import Hegemon.Native.InboundBridgeReceiptAdmission
 import Hegemon.Native.MineableActionAdmission
@@ -106,6 +107,7 @@ import Hegemon.Native.TxLeafArtifact
 import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.PqNoiseHandshakeChannel
+import Hegemon.Network.FrameResourceAdmission
 import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer

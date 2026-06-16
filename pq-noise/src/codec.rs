@@ -115,4 +115,265 @@ mod tests {
 
         assert!(decode_session::<Sample>(&encoded, 128).is_err());
     }
+
+    #[derive(Deserialize)]
+    struct LeanFrameResourceVectorFile {
+        schema_version: u32,
+        constants: Vec<LeanFrameResourceConstant>,
+        decode_cases: Vec<LeanFrameResourceDecodeCase>,
+        encode_cases: Vec<LeanFrameResourceEncodeCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanFrameResourceConstant {
+        kind: String,
+        max_len: usize,
+        magic_hex: String,
+        postcard_encoded: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanFrameResourceDecodeCase {
+        name: String,
+        kind: String,
+        encoded_bytes: usize,
+        marker_matches: bool,
+        postcard_decodes: bool,
+        postcard_consumes_all: bool,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_max_len: usize,
+        expected_magic_hex: String,
+        expected_postcard_encoded: bool,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanFrameResourceEncodeCase {
+        name: String,
+        kind: String,
+        body_bytes: usize,
+        expected_total_len: usize,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_max_len: usize,
+        expected_magic_hex: String,
+    }
+
+    fn lean_pq_frame_kind_constants(kind: &str) -> Option<(usize, &'static [u8; 4], bool)> {
+        match kind {
+            "pq_handshake" => Some((HANDSHAKE_MAX_FRAME_LEN, HANDSHAKE_MAGIC, true)),
+            "pq_session_plaintext" => Some((
+                crate::session::SESSION_MAX_PLAINTEXT_LEN,
+                SESSION_MAGIC,
+                true,
+            )),
+            "pq_transcript" => Some((HANDSHAKE_MAX_FRAME_LEN, TRANSCRIPT_MAGIC, true)),
+            _ => None,
+        }
+    }
+
+    fn lean_magic_hex(magic: &[u8; 4]) -> String {
+        format!("0x{}", hex::encode(magic))
+    }
+
+    fn mirror_frame_decode_rejection(
+        case: &LeanFrameResourceDecodeCase,
+        max_len: usize,
+        postcard_encoded: bool,
+    ) -> Option<&'static str> {
+        if case.encoded_bytes > max_len {
+            Some("encoded_bytes_exceeded")
+        } else if !case.marker_matches {
+            Some("missing_marker")
+        } else if postcard_encoded && !case.postcard_decodes {
+            Some("postcard_decode_failed")
+        } else if postcard_encoded && !case.postcard_consumes_all {
+            Some("trailing_bytes")
+        } else {
+            None
+        }
+    }
+
+    fn mirror_frame_encode_rejection(
+        case: &LeanFrameResourceEncodeCase,
+        max_len: usize,
+    ) -> Option<&'static str> {
+        if case.expected_total_len > max_len {
+            Some("encoded_bytes_exceeded")
+        } else {
+            None
+        }
+    }
+
+    fn assert_decode_error_contains(result: Result<Sample>, fragment: &str, label: &str) {
+        let err = result.expect_err(label);
+        assert!(
+            err.to_string().contains(fragment),
+            "{label}: expected error containing {fragment:?}, got {err}"
+        );
+    }
+
+    fn assert_pq_decode_case_hits_production_path(case: &LeanFrameResourceDecodeCase) {
+        let Some((max_len, _magic, _postcard_encoded)) = lean_pq_frame_kind_constants(&case.kind)
+        else {
+            return;
+        };
+        if case.kind == "pq_transcript" {
+            return;
+        }
+        let sample = Sample {
+            nonce: 13,
+            payload: vec![1, 2, 3],
+        };
+        match (case.kind.as_str(), case.expected_reject.as_deref()) {
+            ("pq_handshake", None) => {
+                let encoded = encode_handshake(&sample).expect("encode valid handshake frame");
+                let decoded: Sample = decode_handshake(&encoded).expect("decode valid frame");
+                assert_eq!(decoded, sample, "{}", case.name);
+            }
+            ("pq_session_plaintext", None) => {
+                let encoded = encode_session(&sample, max_len).expect("encode valid session frame");
+                let decoded: Sample =
+                    decode_session(&encoded, max_len).expect("decode valid session frame");
+                assert_eq!(decoded, sample, "{}", case.name);
+            }
+            (_, Some("encoded_bytes_exceeded")) => {
+                let oversized = vec![0u8; max_len + 1];
+                let result = match case.kind.as_str() {
+                    "pq_handshake" => decode_handshake::<Sample>(&oversized),
+                    "pq_session_plaintext" => decode_session::<Sample>(&oversized, max_len),
+                    other => panic!("unsupported PQ decode kind {other}"),
+                };
+                assert_decode_error_contains(result, "encoded frame too large", &case.name);
+            }
+            (_, Some("missing_marker")) => {
+                let result = match case.kind.as_str() {
+                    "pq_handshake" => decode_handshake::<Sample>(b"BAD1\x00"),
+                    "pq_session_plaintext" => decode_session::<Sample>(b"BAD1\x00", max_len),
+                    other => panic!("unsupported PQ decode kind {other}"),
+                };
+                assert_decode_error_contains(result, "missing PQ Noise codec marker", &case.name);
+            }
+            ("pq_handshake", Some("postcard_decode_failed")) => {
+                assert_decode_error_contains(
+                    decode_handshake::<Sample>(HANDSHAKE_MAGIC),
+                    "postcard decode failed",
+                    &case.name,
+                );
+            }
+            ("pq_session_plaintext", Some("postcard_decode_failed")) => {
+                assert_decode_error_contains(
+                    decode_session::<Sample>(SESSION_MAGIC, max_len),
+                    "postcard decode failed",
+                    &case.name,
+                );
+            }
+            ("pq_handshake", Some("trailing_bytes")) => {
+                let mut encoded = encode_handshake(&sample).expect("encode valid handshake frame");
+                encoded.push(0xff);
+                assert_decode_error_contains(
+                    decode_handshake::<Sample>(&encoded),
+                    "postcard decode left",
+                    &case.name,
+                );
+            }
+            ("pq_session_plaintext", Some("trailing_bytes")) => {
+                let mut encoded = encode_session(&sample, max_len).expect("encode valid frame");
+                encoded.push(0xff);
+                assert_decode_error_contains(
+                    decode_session::<Sample>(&encoded, max_len),
+                    "postcard decode left",
+                    &case.name,
+                );
+            }
+            (_, Some(other)) => panic!("unknown Lean rejection {other} in {}", case.name),
+            (other, None) => panic!("unsupported PQ valid decode kind {other}"),
+        }
+    }
+
+    #[test]
+    fn lean_generated_frame_resource_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS") else {
+            eprintln!("skipping Lean frame-resource vectors; env var not set");
+            return;
+        };
+        let contents = std::fs::read_to_string(path).expect("read Lean frame-resource vectors");
+        let vectors: LeanFrameResourceVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean frame-resource vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for constant in &vectors.constants {
+            let Some((max_len, magic, postcard_encoded)) =
+                lean_pq_frame_kind_constants(&constant.kind)
+            else {
+                continue;
+            };
+            assert_eq!(constant.max_len, max_len, "{}", constant.kind);
+            assert_eq!(
+                constant.magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                constant.kind
+            );
+            assert_eq!(
+                constant.postcard_encoded, postcard_encoded,
+                "{}",
+                constant.kind
+            );
+        }
+
+        for case in &vectors.decode_cases {
+            let Some((max_len, magic, postcard_encoded)) = lean_pq_frame_kind_constants(&case.kind)
+            else {
+                continue;
+            };
+            assert_eq!(case.expected_max_len, max_len, "{}", case.name);
+            assert_eq!(
+                case.expected_magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                case.expected_postcard_encoded, postcard_encoded,
+                "{}",
+                case.name
+            );
+            let expected = mirror_frame_decode_rejection(case, max_len, postcard_encoded);
+            assert_eq!(case.expected_valid, expected.is_none(), "{}", case.name);
+            assert_eq!(case.expected_reject.as_deref(), expected, "{}", case.name);
+            assert_pq_decode_case_hits_production_path(case);
+        }
+
+        for case in &vectors.encode_cases {
+            let Some((max_len, magic, _postcard_encoded)) =
+                lean_pq_frame_kind_constants(&case.kind)
+            else {
+                continue;
+            };
+            assert_eq!(case.expected_max_len, max_len, "{}", case.name);
+            assert_eq!(
+                case.expected_magic_hex,
+                lean_magic_hex(magic),
+                "{}",
+                case.name
+            );
+            assert_eq!(
+                case.expected_total_len,
+                magic.len() + case.body_bytes,
+                "{}",
+                case.name
+            );
+            let expected = mirror_frame_encode_rejection(case, max_len);
+            assert_eq!(case.expected_valid, expected.is_none(), "{}", case.name);
+            assert_eq!(case.expected_reject.as_deref(), expected, "{}", case.name);
+        }
+
+        let transcript = encode_transcript(&Sample {
+            nonce: 21,
+            payload: vec![8, 9],
+        })
+        .expect("encode transcript");
+        assert!(transcript.starts_with(TRANSCRIPT_MAGIC));
+    }
 }

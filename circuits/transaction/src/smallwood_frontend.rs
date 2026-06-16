@@ -3563,6 +3563,37 @@ mod tests {
     use crate::public_inputs::StablecoinPolicyBinding;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendAuthorizationVectors {
+        schema_version: u32,
+        field_modulus: u64,
+        smallwood_spend_authorization_cases: Vec<LeanSmallwoodSpendAuthorizationCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendAuthorizationCase {
+        name: String,
+        active: bool,
+        previous_commitment_state_limbs: [u64; 4],
+        spend_derived_auth_limbs: [u64; 4],
+        commitment_auth_limbs: [u64; 4],
+        expected_valid: bool,
+    }
+
+    fn smallwood_active_auth_link_case_accepts(case: &LeanSmallwoodSpendAuthorizationCase) -> bool {
+        if !case.active {
+            return true;
+        }
+        case.commitment_auth_limbs
+            .iter()
+            .zip(case.previous_commitment_state_limbs.iter())
+            .zip(case.spend_derived_auth_limbs.iter())
+            .all(|((&commitment_auth_limb, &previous_limb), &derived_limb)| {
+                Felt::from_u64(commitment_auth_limb)
+                    == Felt::from_u64(previous_limb) + Felt::from_u64(derived_limb)
+            })
+    }
+
     fn sample_witness() -> TransactionWitness {
         let sk_spend = [42u8; 32];
         let pk_auth = spend_auth_key_bytes(&sk_spend);
@@ -3669,6 +3700,37 @@ mod tests {
             nullifier_inputs(prf, input),
             core_nullifier_inputs(prf, &input.note.rho, input.position)
         );
+    }
+
+    #[test]
+    fn smallwood_spend_authorization_matches_lean_vectors_when_present() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS") else {
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+            panic!("failed to read Lean SmallWood auth vectors {path}: {err}")
+        });
+        let vectors: LeanSmallwoodSpendAuthorizationVectors = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood auth vectors {path}: {err}")
+            });
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.field_modulus,
+            transaction_core::constants::FIELD_MODULUS_U64
+        );
+        assert!(
+            !vectors.smallwood_spend_authorization_cases.is_empty(),
+            "Lean SmallWood auth vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_spend_authorization_cases {
+            assert_eq!(
+                smallwood_active_auth_link_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood auth vector case {} disagreed with Rust Goldilocks auth-link check",
+                case.name
+            );
+        }
     }
 
     fn stablecoin_witness() -> TransactionWitness {
