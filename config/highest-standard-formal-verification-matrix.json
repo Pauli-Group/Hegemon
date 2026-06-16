@@ -28,32 +28,31 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T05:17:36Z",
-    "commit": "738689529500",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild, service restart, remote formal metadata gates, targeted bridge Lean, generated bridge mint/replay Rust conformance, RPC smoke, wallet-send, live mining advancement, sync health, service health, and NTP synchronization",
+    "date": "2026-06-16T05:51:37Z",
+    "commit": "254e06d532b9",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild, service restart, remote formal metadata gates, targeted mined-byte publication Rust conformance, RPC smoke, wallet-send, live mining advancement, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 738689529500",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at 254e06d532b9",
       "make node rebuilt target/release/hegemon-node on hegemon-dev",
       "sudo systemctl restart hegemon-node.service completed and service returned active with NRestarts=0",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1707 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 479 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 481 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed",
-      "lake env lean passed for Hegemon/Bridge/Replay.lean, Hegemon/Bridge/MintReplayPolicy.lean, and Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean on hegemon-dev after exporting /home/ubuntu/.elan/bin on PATH",
-      "lake exe gen_bridge_mint_replay_policy_vectors produced JSON accepted by python3 -m json.tool on hegemon-dev",
-      "HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture passed on hegemon-dev",
-      "bash scripts/smoke-test.sh passed at live height 13433",
+      "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture passed on hegemon-dev",
+      "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture passed on hegemon-dev",
+      "bash scripts/smoke-test.sh passed at live height 13633",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height advanced from 13447 to 13451, blocks_found advanced from 36 to 40, and hash_rate moved from about 18.0 kH/s to 18.4 kH/s during the 20-second sample",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height advanced from 13634 to 13640, blocks_found advanced from 7 to 13, and hash_rate moved from about 10.95 kH/s to 14.26 kH/s during the 20-second sample",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0 after restart",
-      "timedatectl reported NTPSynchronized=yes at 2026-06-16T05:17:36Z"
+      "timedatectl reported NTPSynchronized=yes at 2026-06-16T05:51:37Z"
     ],
-    "runtime_note": "A release binary rebuild and service restart were required because this slice changes node/src/native/mod.rs. The added bridge mint/replay helper is currently a production-compiled conformance boundary, not an enabled bridge mint path.",
+    "runtime_note": "A release binary rebuild and service restart were required because this slice changes node/src/native/mod.rs. The added runtime check re-encodes the mined action slice once before atomic commit so mismatched metadata bytes reject before sled mutation.",
     "known_limitations": [
-      "The remote validation proves targeted bridge conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the same commit.",
+      "The remote validation proves targeted mined-byte publication conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the implementation commit.",
       "The live miner advanced during the 20-second sample, so isolated single-node block production was not run for this slice.",
-      "The bridge slice still leaves the live PQ-clean bridge mint payload grammar, decoder, verifier, and external receipt soundness explicit before inbound bridge minting can be enabled.",
+      "The mined/startup positive conformance gate exercises the coinbase production path; mixed transfer, sidecar, nullifier, bridge replay, and multi-block reorg publication still need a combined adversarial restart/reorg scenario.",
       "The formal slice still leaves SCALE/parser internals, primitive cryptographic security/equivalence, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
     ]
   },
