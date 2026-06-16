@@ -6,9 +6,9 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 84.54,
   "last_full_formal_core": {
-    "date": "2026-06-16T05:47:16Z",
-    "commit": "21143451",
-    "status": "passed locally after adding mined action-byte equality at atomic commit, mined commit/startup publication conformance, and exact-decodable mined action-byte drift rejection",
+    "date": "2026-06-16T06:18:11Z",
+    "commit": "1a794c72",
+    "status": "passed locally after adding exact-decodable action-byte drift gates across announced import, startup replay, reorg replay, and sync block_range publication",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
     "named_lean_theorems": 1707,
@@ -18,7 +18,7 @@
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 481,
+    "falsification_cases": 485,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -111,11 +111,15 @@
   },
   "last_production_binding_slice": {
     "date": "2026-06-16",
-    "summary": "Bound mined native commit publication to exact action bytes before sled mutation, and checked the live mined coinbase import path from raw action bytes through atomic commit rows, canonical rebuild rows, and reopened startup replay rows. The positive conformance gate proves the imported block body, canonical indexes, and startup-loaded state agree; the negative gate proves an exact-decodable substituted action byte stream is rejected before block, best, commitment, archive, pending, or staged-DA trees mutate.",
+    "summary": "Extended exact action-byte drift rejection from mined commit publication to all native publication/replay surfaces that can otherwise accept block metadata: announced import, nonempty startup replay, reorg replay over a persisted side parent, and sync block_range publication. The gates substitute exact-decodable but semantically different action bodies and require the action/extrinsics root mismatch to reject before best-state publication, canonical indexes, block records, or sync responses can expose the forged body.",
     "changed_runtime_paths": [
       "node/src/native/mod.rs commit_mined_block_atomically exact action-byte equality check",
       "node/src/native/mod.rs mined_commit_startup_replay_matches_canonical_publication_rows",
       "node/src/native/mod.rs mined_commit_rejects_meta_action_bytes_not_matching_planned_actions",
+      "node/src/native/mod.rs announced_block_rejects_exact_decodable_action_byte_drift_before_persist_or_publish",
+      "node/src/native/mod.rs startup_rejects_nonempty_exact_decodable_action_byte_drift_before_accepting_state",
+      "node/src/native/mod.rs reorg_replay_rejects_exact_decodable_action_byte_drift_before_publish",
+      "node/src/native/mod.rs block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range",
       "scripts/check_formal_core.sh mined commit/startup raw-byte publication gates"
     ],
     "supporting_theorem_families": [
@@ -127,13 +131,14 @@
     "validation": {
       "targeted_rust": [
         "cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture",
-        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture"
+        "cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture"
       ],
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T05:47:16Z with the mined commit/startup publication and byte-drift rejection gates enabled",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T06:18:11Z with mined commit/startup publication plus announced-import/startup/reorg/block_range action-byte drift rejection gates enabled",
       "claims": 118,
       "named_lean_theorems": 1707,
       "production_eligible_claims": 108,
-      "falsification_cases": 481,
+      "falsification_cases": 485,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -142,9 +147,9 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "The mined/startup conformance gate exercises the coinbase production path plus a direct exact-decodable mismatch rejection at the atomic commit helper; mixed transfer, sidecar, nullifier, and bridge replay publication remain covered by separate projection gates and still need one combined live mined/import/reorg/startup scenario.",
+      "The new action-byte drift gates cover exact-decodable substituted action bodies on announced import, nonempty startup replay, reorg replay, and sync block_range publication; a combined mixed-action live mined/import/reorg/startup scenario remains open.",
       "This slice does not prove arbitrary SCALE/parser internals, hash security/equivalence, deployed proof-system soundness, external receipt soundness, peer honesty, sled durability below accepted predicates, or complete native-node equivalence.",
-      "The added runtime equality check re-encodes mined actions once before commit; this is intentionally low cost and occurs after PoW/import admission but before sled mutation."
+      "The only production runtime equality check in this production-binding family remains the earlier mined-action re-encoding before commit; this exact-decodable drift slice adds cfg(test) regressions, formal metadata, docs, and the formal-core gate."
     ]
   },
   "properties": [
