@@ -7,7 +7,7 @@
   "overall_completion_percent": 86.16,
   "last_full_formal_core": {
     "date": "2026-06-16T19:14:05Z",
-    "commit": "working-tree-on-e3072cea",
+    "commit": "b02e036e",
     "status": "passed locally after adding native publication row-equivalence theorem slice",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
@@ -28,29 +28,29 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T18:36:45Z",
-    "commit": "09a95a83",
-    "status": "passed after fast-forward to codex/superneo-formal-verification without rebuild/restart, remote formal metadata gates, targeted raw-ingress bridge Lean, RPC smoke, wallet-send, live mining/service/NTP sample, and isolated single-node mining",
+    "date": "2026-06-16T19:18:23Z",
+    "commit": "b02e036e",
+    "status": "passed after fast-forward to codex/superneo-formal-verification without rebuild/restart, remote formal metadata gates, targeted native publication row-equivalence Lean, RPC smoke, wallet-send, live mining/service/NTP sample, and isolated single-node mining",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from bd164fd4 to codex/superneo-formal-verification at 09a95a83",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from e3072cea to codex/superneo-formal-verification at b02e036e",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "highest-standard matrix recomputed to 86.15% with total weight 100 across 18 properties",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1766 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 497 falsification cases, 209 implementation bindings, and 163 result obligations",
-      "cd formal/lean && lake build Hegemon.Native.BridgeMintSafety Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon passed with 144 jobs after exporting the remote elan/cargo toolchain path",
-      "bash scripts/smoke-test.sh passed at live height 14645",
+      "highest-standard matrix recomputed to 86.16% with total weight 100 across 18 properties",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1769 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 498 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed with 145 jobs after exporting the remote elan/cargo toolchain path",
+      "bash scripts/smoke-test.sh passed at live height 14688",
       "bash scripts/test-node.sh wallet-send passed",
       "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, and hash_rate about 19.6 kH/s before and after the 20-second sample",
-      "live height remained at 14645 during the 20-second mining sample at current difficulty, so bash scripts/test-node.sh single-node was run and mined height 29200 in an isolated dev node",
+      "live height remained at 14688 during the 20-second mining sample at current difficulty, so bash scripts/test-node.sh single-node was run and mined height 29387 in an isolated dev node",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active"
     ],
     "runtime_note": "No release rebuild or service restart was performed because this slice changes only Lean/formal metadata/docs. The live service stayed active with NRestarts=0 while the branch fast-forwarded.",
     "known_limitations": [
-      "The remote validation proves targeted raw-ingress bridge Lean conformance and live smoke on hegemon-dev, not full remote formal-core because the full patched formal-core gate already passed locally for the 09a95a83 theorem slice before deployment.",
-      "The raw-ingress bridge theorem slice carries authorized non-native bridge asset-delta facts through accepted Hegemon-side publication, but external bridge receipt/PQ verifier soundness, parser internals, and hash/crypto security remain explicit assumptions.",
-      "Binding this bridge asset surface to the future production PQ-clean bridge mint grammar/decoder/verifier, dynamic stablecoin governance history, storage durability below accepted predicates, and complete native-node equivalence remain explicit residuals."
+      "The remote validation proves targeted native publication row-equivalence Lean conformance and live smoke on hegemon-dev, not full remote formal-core because the full patched formal-core gate already passed locally for the b02e036e theorem slice before deployment.",
+      "The theorem slice packages accepted row-equivalence facts across raw-ingress full-byte publication and mined commit publication; arbitrary parser internals, storage durability below accepted predicates, and complete native-node equivalence remain explicit assumptions.",
+      "Hash/crypto security, proof-system soundness, DA availability, and the remaining announced/sync/reorg/startup generalization into one complete native-node refinement theorem remain explicit residuals."
     ]
   },
   "last_coordinator_audit": {
