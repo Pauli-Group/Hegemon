@@ -6,19 +6,19 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 86.26,
   "last_full_formal_core": {
-    "date": "2026-06-16T20:45:59Z",
-    "commit": "efa8e7c4",
-    "status": "passed locally after adding SmallWood transcript/profile byte-binding theorem slice and deterministic mixed restart/reorg proof-gate fix",
+    "date": "2026-06-16T21:31:25Z",
+    "commit": "9cdd36d3",
+    "status": "passed locally after packaging native publication path-family row-equivalence theorem and adding the cited Lean module to the formal inventory",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1776,
+    "named_lean_theorems": 1777,
     "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 981,
+    "axiom_dependent_theorems": 982,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 45,
     "blueprint_edges": 492,
-    "falsification_cases": 499,
+    "falsification_cases": 500,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -71,36 +71,32 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-16",
-    "summary": "Proved the SmallWood transcript/profile byte boundary and production vector conformance: accepted transcript binding starts with the domain, includes version/arithmetization profile material, includes serialized statement bytes, pads to eight-byte alignment, and mutates on statement, version, arithmetization, or ciphertext-hash drift. Also fixed formal-core mixed restart/reorg test determinism.",
+    "summary": "Packaged native publication path-family row equivalence: one Lean theorem now carries raw ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence facts over decoded, validated, materialized, planned, wire, and canonical rows, with mined/startup decoded-row and rebuild/block_range canonical-row agreement surfaced explicitly.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
-      "circuits/transaction/src/smallwood_frontend.rs",
-      "node/src/native/mod.rs",
-      "scripts/check_formal_core.sh"
+      "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+      "config/formal-security-claims.json",
+      "config/formal-security-blueprint.json",
+      "config/highest-standard-formal-verification-matrix.json",
+      "scripts/hegemon_formal_core/src/lib.rs"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_version",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_arithmetization",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_starts_with_domain",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_profile_material",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_includes_statement_bytes",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_transcript_binding_padding_aligned_to_eight",
-      "Hegemon.Transaction.SmallWoodTranscriptBinding.accepted_smallwood_transcript_binding_implies_statement_boundary_facts"
+      "Hegemon.Native.NativePublicationRowEquivalence.accepted_native_publication_path_family_binds_native_publication_rows",
+      "Hegemon.Native.NativePublicationRowEquivalence.accepted_mined_block_commit_binds_native_publication_rows",
+      "Hegemon.Native.NativePublicationRowEquivalence.raw_ingress_full_byte_field_projection_binds_native_publication_rows"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodTranscriptBinding gen_smallwood_transcript_binding_vectors Hegemon passed locally with 151 jobs.",
-      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture passed locally; cargo test -p hegemon-node native::tests::mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication -- --nocapture passed locally after making the test seal deterministic.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T20:45:59Z after adding the SmallWood transcript/profile theorem slice, adding the new Lean files to the formal inventory, and applying the deterministic mixed restart/reorg proof-gate fix.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.NativePublicationRowEquivalence Hegemon passed locally with 146 jobs.",
+      "targeted_rust": "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features; cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features; cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features; cargo test -p hegemon-node action_byte_drift --lib --no-default-features all passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T21:31:25Z after adding the native publication path-family theorem, citing it in claims/blueprint, and adding NativePublicationRowEquivalence.lean to the formal inventory.",
       "claims": 118,
-      "named_lean_theorems": 1776,
+      "named_lean_theorems": 1777,
       "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 981,
+      "axiom_dependent_theorems": 982,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 45,
       "blueprint_edges": 492,
-      "falsification_cases": 499,
+      "falsification_cases": 500,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -110,9 +106,9 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves the byte-boundary and production conformance for serialized SmallWood transcript/profile binding, not bincode correctness, BLAKE security, SmallWood PCS/AIR soundness, witness extraction, or zero knowledge.",
-      "The production helper still consumes already-serialized statement bytes; arbitrary Rust serialization correctness remains a separate implementation-equivalence target.",
-      "The deterministic mixed restart/reorg change hardens a formal-core regression only; it does not by itself prove complete native-node refinement."
+      "This slice packages row-equivalence facts that existing path-specific Rust gates construct; it does not yet prove parser-internal implementation equivalence for arbitrary malformed raw PendingAction bytes.",
+      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, and complete native-node refinement remain explicit residuals.",
+      "Positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental/offline envelope."
     ]
   },
   "last_production_binding_slice": {
