@@ -28,28 +28,29 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T06:23:38Z",
-    "commit": "c0529482",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, exact-decodable action-byte drift Rust conformance, RPC smoke, wallet-send, live mining advancement, sync health, service health, and NTP synchronization",
+    "date": "2026-06-16T07:06:07Z",
+    "commit": "da1e691f",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, mixed restart/reorg fail-closed Rust conformance, RPC smoke, wallet-send, live mining status, isolated single-node mining, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at c0529482",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at da1e691f",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1707 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 485 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json passed with 118 nodes, 492 edges, 486 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed",
-      "cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture passed on hegemon-dev with 4 exact-decodable drift rejection tests",
-      "bash scripts/smoke-test.sh passed at live height 13810",
+      "cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture passed on hegemon-dev",
+      "bash scripts/smoke-test.sh passed at live height 13865",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height advanced from 13810 to 13814, blocks_found advanced from 183 to 187, and hash_rate stayed around 20.9 kH/s during the 20-second sample",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height stayed at 13865, blocks_found stayed at 238, and hash_rate stayed around 21.2 kH/s during the 20-second sample",
+      "bash scripts/test-node.sh single-node mined height 25940",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
-      "timedatectl reported NTPSynchronized=yes at 2026-06-16T06:23:38Z"
+      "timedatectl reported NTP=yes and NTPSynchronized=yes at 2026-06-16T07:06:07Z"
     ],
-    "runtime_note": "No release rebuild or service restart was required for this slice after the prior mined-action production check; the new changes are docs, formal metadata, formal-core script gating, and cfg(test) native regressions. The live release service stayed running.",
+    "runtime_note": "No release rebuild or service restart was required for this slice; the new changes are docs, formal metadata, formal-core script gating, and cfg(test) native regressions. The live release service stayed running.",
     "known_limitations": [
-      "The remote validation proves targeted action-byte drift conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the implementation commit.",
-      "The live miner advanced during the 20-second sample, so isolated single-node block production was not run for this slice.",
-      "The new regressions cover exact-decodable action-byte drift across announced import, startup replay, reorg replay, and sync block_range; mixed transfer, sidecar, nullifier, bridge replay, and multi-block reorg publication still need one combined adversarial restart/reorg scenario.",
+      "The remote validation proves targeted mixed restart/reorg fail-closed conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on the implementation commit.",
+      "The live miner stayed active but did not find a block during the 20-second sample; isolated single-node block production was run as the mining liveness backstop.",
+      "The new regression covers the combined disabled-inbound sidecar/nullifier/bridge-replay restart/reorg fail-closed scenario; positive inbound bridge replay publication remains disabled until a PQ-clean verifier replaces the experimental envelope.",
       "The formal slice still leaves SCALE/parser internals, primitive cryptographic security/equivalence, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
     ]
   },
