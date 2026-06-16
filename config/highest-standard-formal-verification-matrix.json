@@ -7,7 +7,7 @@
   "overall_completion_percent": 85.07,
   "last_full_formal_core": {
     "date": "2026-06-16T09:12:20Z",
-    "commit": "7388f711",
+    "commit": "ce74fbc8",
     "status": "passed locally after adding the raw-ingress replay-set row-content theorem and canonical replay-set row persistence gate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
@@ -28,31 +28,31 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-16T08:57:02Z",
-    "commit": "a50ef7b2",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, targeted SmallWood balance Lean, SmallWood inline-Merkle public balance/stablecoin mutation regressions, RPC smoke, wallet-send, live mining status, isolated single-node mining, sync health, service health, and NTP synchronization",
+    "date": "2026-06-16T09:39:17Z",
+    "commit": "ce74fbc8",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, remote formal metadata gates, targeted replay-set content Lean, canonical replay-set row persistence regression, RPC smoke, wallet-send, live mining status, isolated single-node mining, sync health, service health, and NTP synchronization",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at a50ef7b2",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 to codex/superneo-formal-verification at ce74fbc8",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1716 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 491 falsification cases, 209 implementation bindings, and 163 result obligations",
+      "highest-standard matrix recomputed to 85.07% with total weight 100 and measured axiom counts 784 axiom-free / 942 kernel-axiom-dependent",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1726 named Lean theorem declarations, 108 production-eligible claims, and 45 residual risks",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 492 falsification cases, 209 implementation bindings, and 163 result obligations",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory --root . passed",
-      "cd formal/lean && lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean passed after adding /home/ubuntu/.elan/bin to PATH",
-      "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture passed on hegemon-dev",
-      "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture passed on hegemon-dev",
-      "bash scripts/smoke-test.sh passed at live height 13944",
+      "cd formal/lean && lake env lean Hegemon/Native/CommitmentTreeContentRefinement.lean passed after adding /home/ubuntu/.elan/bin to PATH",
+      "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture passed on hegemon-dev, including canonical_index_rebuild_projects_decoded_materialized_wire_rows_replay_sets",
+      "bash scripts/smoke-test.sh passed at live height 13962",
       "bash scripts/test-node.sh wallet-send passed",
-      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height stayed at 13944, blocks_found stayed at 317, and hash_rate stayed around 21.28 kH/s during the 20-second sample",
-      "bash scripts/test-node.sh single-node mined height 26492",
+      "live hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, block_height stayed at 13962, blocks_found stayed at 335, and hash_rate stayed around 21.29 kH/s during the 20-second sample",
+      "bash scripts/test-node.sh single-node mined height 26696",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
-      "timedatectl reported NTP=yes and NTPSynchronized=yes at 2026-06-16T08:57:02Z"
+      "timedatectl reported NTP synchronization active at 2026-06-16T09:39:17Z"
     ],
-    "runtime_note": "No release rebuild or service restart was required for this slice; the new changes are Lean/formal metadata/docs/formal-core gating and cfg(test) transaction regressions. The live release service stayed running.",
+    "runtime_note": "No release rebuild or service restart was required for this slice; the new changes are Lean/formal metadata/docs and cfg(test) native regressions. The live release service stayed running.",
     "known_limitations": [
-      "The remote validation proves targeted SmallWood balance-boundary Lean/Rust conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on a50ef7b2 before recording.",
+      "The remote validation proves targeted replay-set row-content Lean/Rust conformance and live smoke on hegemon-dev, not full remote formal-core because the full gate already passed locally on ce74fbc8 before recording.",
       "The live miner stayed active but did not find a block during the 20-second sample; isolated single-node block production was run as the mining liveness backstop.",
-      "The new regressions cover public balance/stablecoin tampering against the inline-Merkle SmallWood constraint path; deployed PCS/AIR soundness, witness extraction, hash security, and complete verifier refinement remain explicit assumptions.",
+      "The new regression covers canonical replay-set row content and persistence; arbitrary parser internals, sled durability below accepted predicates, nullifier/replay-key cryptographic security, and complete native-node refinement remain explicit assumptions.",
       "The formal slice still leaves primitive cryptographic security/equivalence, simulator zero knowledge, deployed proof-system soundness/extraction, peer honesty, storage durability below accepted predicates, and complete native-node equivalence explicit."
     ]
   },
