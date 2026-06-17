@@ -1,5 +1,5 @@
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
-use rand::rngs::OsRng;
+use rand::{rngs::OsRng, RngCore};
 use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
@@ -191,73 +191,26 @@ pub fn build_transaction_with_binding(
         ciphertexts.push(ciphertext);
     }
 
-    if plan.output_change > 0 {
-        if outputs.len() >= MAX_OUTPUTS {
-            return Err(WalletError::InvalidArgument(
-                "change would exceed output limit",
-            ));
-        }
-        let address = store.reserve_internal_address()?;
-        let note = NotePlaintext::random(
-            plan.output_change,
-            plan.output_asset,
-            MemoPlaintext::default(),
-            &mut rng,
-        );
-        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
-        let output_index = outputs.len() as u32;
-        let recipient_address = address.encode()?;
-        let memo = if note.memo.as_bytes().is_empty() {
-            None
-        } else {
-            Some(note.memo.clone())
-        };
-        let commitment = felts_to_bytes48(&note_data.commitment());
-        outgoing_disclosures.push(OutgoingDisclosureDraft {
-            output_index,
-            recipient_address,
-            note: note_data.clone(),
-            commitment,
-            memo,
-        });
-        ciphertexts.push(ciphertext.clone());
-        outputs.push(OutputNoteWitness { note: note_data });
-    }
-
-    if plan.native_change > 0 {
-        if outputs.len() >= MAX_OUTPUTS {
-            return Err(WalletError::InvalidArgument(
-                "native change would exceed output limit",
-            ));
-        }
-        let address = store.reserve_internal_address()?;
-        let note = NotePlaintext::random(
-            plan.native_change,
-            NATIVE_ASSET_ID,
-            MemoPlaintext::default(),
-            &mut rng,
-        );
-        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
-        let output_index = outputs.len() as u32;
-        let recipient_address = address.encode()?;
-        let memo = if note.memo.as_bytes().is_empty() {
-            None
-        } else {
-            Some(note.memo.clone())
-        };
-        let commitment = felts_to_bytes48(&note_data.commitment());
-        outgoing_disclosures.push(OutgoingDisclosureDraft {
-            output_index,
-            recipient_address,
-            note: note_data.clone(),
-            commitment,
-            memo,
-        });
-        ciphertexts.push(ciphertext.clone());
-        outputs.push(OutputNoteWitness { note: note_data });
-    }
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        plan.output_change,
+        plan.output_asset,
+        "change would exceed output limit",
+        &mut rng,
+    )?;
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        plan.native_change,
+        NATIVE_ASSET_ID,
+        "native change would exceed output limit",
+        &mut rng,
+    )?;
 
     let tree = store.commitment_tree()?;
     let wallet_root = tree.root();
@@ -447,59 +400,26 @@ pub fn build_stablecoin_burn(
     let mut ciphertexts = Vec::new();
     let mut outgoing_disclosures = Vec::new();
 
-    if asset_change > 0 {
-        let address = store.reserve_internal_address()?;
-        let note =
-            NotePlaintext::random(asset_change, asset_id, MemoPlaintext::default(), &mut rng);
-        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
-        let output_index = outputs.len() as u32;
-        let recipient_address = address.encode()?;
-        let memo = if note.memo.as_bytes().is_empty() {
-            None
-        } else {
-            Some(note.memo.clone())
-        };
-        let commitment = felts_to_bytes48(&note_data.commitment());
-        outgoing_disclosures.push(OutgoingDisclosureDraft {
-            output_index,
-            recipient_address,
-            note: note_data.clone(),
-            commitment,
-            memo,
-        });
-        ciphertexts.push(ciphertext.clone());
-        outputs.push(OutputNoteWitness { note: note_data });
-    }
-
-    if native_change > 0 {
-        let address = store.reserve_internal_address()?;
-        let note = NotePlaintext::random(
-            native_change,
-            NATIVE_ASSET_ID,
-            MemoPlaintext::default(),
-            &mut rng,
-        );
-        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng)?;
-        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
-        let output_index = outputs.len() as u32;
-        let recipient_address = address.encode()?;
-        let memo = if note.memo.as_bytes().is_empty() {
-            None
-        } else {
-            Some(note.memo.clone())
-        };
-        let commitment = felts_to_bytes48(&note_data.commitment());
-        outgoing_disclosures.push(OutgoingDisclosureDraft {
-            output_index,
-            recipient_address,
-            note: note_data.clone(),
-            commitment,
-            memo,
-        });
-        ciphertexts.push(ciphertext.clone());
-        outputs.push(OutputNoteWitness { note: note_data });
-    }
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        asset_change,
+        asset_id,
+        "burn asset change would exceed output limit",
+        &mut rng,
+    )?;
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        native_change,
+        NATIVE_ASSET_ID,
+        "burn native change would exceed output limit",
+        &mut rng,
+    )?;
 
     let tree = store.commitment_tree()?;
     let mut inputs = Vec::new();
@@ -843,6 +763,51 @@ fn burn_output_batch_count(asset_change: u64, native_change: u64) -> usize {
     usize::from(asset_change > 0) + usize::from(native_change > 0)
 }
 
+fn change_output_address(store: &WalletStore) -> Result<ShieldedAddress, WalletError> {
+    store.primary_address()
+}
+
+fn append_change_output<R: RngCore + ?Sized>(
+    store: &WalletStore,
+    outputs: &mut Vec<OutputNoteWitness>,
+    ciphertexts: &mut Vec<NoteCiphertext>,
+    outgoing_disclosures: &mut Vec<OutgoingDisclosureDraft>,
+    value: u64,
+    asset_id: u64,
+    limit_error: &'static str,
+    rng: &mut R,
+) -> Result<(), WalletError> {
+    if value == 0 {
+        return Ok(());
+    }
+    if outputs.len() >= MAX_OUTPUTS {
+        return Err(WalletError::InvalidArgument(limit_error));
+    }
+
+    let address = change_output_address(store)?;
+    let note = NotePlaintext::random(value, asset_id, MemoPlaintext::default(), rng);
+    let ciphertext = NoteCiphertext::encrypt(&address, &note, rng)?;
+    let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
+    let output_index = outputs.len() as u32;
+    let recipient_address = address.encode()?;
+    let memo = if note.memo.as_bytes().is_empty() {
+        None
+    } else {
+        Some(note.memo.clone())
+    };
+    let commitment = felts_to_bytes48(&note_data.commitment());
+    outgoing_disclosures.push(OutgoingDisclosureDraft {
+        output_index,
+        recipient_address,
+        note: note_data.clone(),
+        commitment,
+        memo,
+    });
+    ciphertexts.push(ciphertext);
+    outputs.push(OutputNoteWitness { note: note_data });
+    Ok(())
+}
+
 fn select_notes(notes: &mut [SpendableNote], target: u64) -> Result<Selection, WalletError> {
     // Sort by value descending - prefer larger notes to minimize input count
     notes.sort_by_key(|n| std::cmp::Reverse(n.value()));
@@ -1108,8 +1073,19 @@ mod tests {
         alternate_private_witness_seed: u64,
         alternate_local_metadata_seed: u64,
         expected_output_count: usize,
+        expected_recipient_output_count: usize,
+        expected_change_output_count: usize,
+        expected_change_diversifier_index: u32,
+        expected_change_diversifier_cursor_independent: bool,
         expected_valid: bool,
         expected_within_max_outputs: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct WalletOutputBatchProjection {
+        output_count: usize,
+        recipient_output_count: usize,
+        change_diversifier_indices: Vec<u32>,
     }
 
     struct WalletOutputBatchFixture {
@@ -1301,32 +1277,60 @@ mod tests {
             .collect()
     }
 
-    fn planned_wallet_output_batch_case_count(
+    fn projection_from_counts(
+        fixture: &WalletOutputBatchFixture,
+        output_count: usize,
+        recipient_output_count: usize,
+    ) -> Result<WalletOutputBatchProjection, WalletError> {
+        let change_output_count =
+            output_count
+                .checked_sub(recipient_output_count)
+                .ok_or(WalletError::InvalidState(
+                    "recipient output count exceeds output count",
+                ))?;
+        let change_diversifier_indices = if change_output_count == 0 {
+            Vec::new()
+        } else {
+            let index = change_output_address(&fixture.sender)?.diversifier_index;
+            vec![index; change_output_count]
+        };
+        Ok(WalletOutputBatchProjection {
+            output_count,
+            recipient_output_count,
+            change_diversifier_indices,
+        })
+    }
+
+    fn planned_wallet_output_batch_case_projection(
         case: &LeanWalletOutputBatchCase,
         private_witness_seed: u64,
         local_metadata_seed: u64,
-    ) -> Result<usize, WalletError> {
+    ) -> Result<WalletOutputBatchProjection, WalletError> {
         let fixture = wallet_output_batch_fixture(case, private_witness_seed, local_metadata_seed);
         match case.kind.as_str() {
             "native" => {
                 let recipients = recipients_for_case(&fixture, case, private_witness_seed);
                 let stablecoin = StablecoinPolicyBinding::default();
                 let plan = plan_selections(&fixture.sender, &recipients, case.fee, &stablecoin)?;
-                Ok(transfer_output_batch_count(
+                projection_from_counts(
+                    &fixture,
+                    transfer_output_batch_count(recipients.len(), plan.output_change, 0),
                     recipients.len(),
-                    plan.output_change,
-                    0,
-                ))
+                )
             }
             "stablecoin" => {
                 let recipients = recipients_for_case(&fixture, case, private_witness_seed);
                 let binding = stablecoin_binding(case.issuance_delta);
                 let plan = plan_selections(&fixture.sender, &recipients, case.fee, &binding)?;
-                Ok(transfer_output_batch_count(
+                projection_from_counts(
+                    &fixture,
+                    transfer_output_batch_count(
+                        recipients.len(),
+                        plan.output_change,
+                        plan.native_change,
+                    ),
                     recipients.len(),
-                    plan.output_change,
-                    plan.native_change,
-                ))
+                )
             }
             "burn" => {
                 assert_eq!(
@@ -1361,7 +1365,7 @@ mod tests {
                         "burn outputs exceed output limit",
                     ));
                 }
-                Ok(outputs_needed)
+                projection_from_counts(&fixture, outputs_needed, 0)
             }
             "consolidation" => {
                 let notes = fixture.sender.spendable_notes(NATIVE_ASSET_ID)?;
@@ -1376,7 +1380,7 @@ mod tests {
                         available: total,
                     });
                 }
-                Ok(1)
+                projection_from_counts(&fixture, 1, 0)
             }
             other => panic!("unknown Lean wallet output-batch kind {other}"),
         }
@@ -1591,7 +1595,7 @@ mod tests {
             .expect("read generated Lean wallet output-batch vectors");
         let vectors: LeanWalletOutputBatchVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean wallet output-batch vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert_eq!(vectors.max_outputs, MAX_OUTPUTS);
         assert!(
             vectors.wallet_output_batch_cases.len() >= 10,
@@ -1606,30 +1610,56 @@ mod tests {
                 case.name
             );
 
-            let first = planned_wallet_output_batch_case_count(
+            assert_eq!(
+                case.expected_output_count,
+                case.expected_recipient_output_count + case.expected_change_output_count,
+                "Lean case {} has inconsistent output role counts",
+                case.name
+            );
+
+            let first = planned_wallet_output_batch_case_projection(
                 case,
                 case.private_witness_seed,
                 case.local_metadata_seed,
             );
             if case.expected_valid {
-                let first_count = first.unwrap_or_else(|err| {
+                let first_projection = first.unwrap_or_else(|err| {
                     panic!(
                         "Lean wallet output-batch case {} rejected: {err}",
                         case.name
                     )
                 });
                 assert_eq!(
-                    first_count, case.expected_output_count,
+                    first_projection.output_count, case.expected_output_count,
                     "production output count drifted from Lean case {}",
                     case.name
                 );
+                assert_eq!(
+                    first_projection.recipient_output_count, case.expected_recipient_output_count,
+                    "production recipient output count drifted from Lean case {}",
+                    case.name
+                );
+                assert_eq!(
+                    first_projection.change_diversifier_indices.len(),
+                    case.expected_change_output_count,
+                    "production change output count drifted from Lean case {}",
+                    case.name
+                );
                 assert!(
-                    first_count <= MAX_OUTPUTS,
+                    first_projection
+                        .change_diversifier_indices
+                        .iter()
+                        .all(|index| *index == case.expected_change_diversifier_index),
+                    "production change diversifier policy drifted from Lean case {}",
+                    case.name
+                );
+                assert!(
+                    first_projection.output_count <= MAX_OUTPUTS,
                     "production accepted over-MAX_OUTPUTS output batch for {}",
                     case.name
                 );
 
-                let second = planned_wallet_output_batch_case_count(
+                let second_projection = planned_wallet_output_batch_case_projection(
                     case,
                     case.alternate_private_witness_seed,
                     case.alternate_local_metadata_seed,
@@ -1641,10 +1671,18 @@ mod tests {
                     )
                 });
                 assert_eq!(
-                    second, first_count,
+                    second_projection.output_count, first_projection.output_count,
                     "private witness/local metadata changed output count for {}",
                     case.name
                 );
+                if case.expected_change_diversifier_cursor_independent {
+                    assert_eq!(
+                        second_projection.change_diversifier_indices,
+                        first_projection.change_diversifier_indices,
+                        "local metadata changed change-output public diversifier summary for {}",
+                        case.name
+                    );
+                }
             } else {
                 assert!(
                     first.is_err(),

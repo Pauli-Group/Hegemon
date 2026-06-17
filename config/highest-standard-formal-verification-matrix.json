@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.35,
+  "overall_completion_percent": 88.77,
   "last_full_formal_core": {
-    "date": "2026-06-17T16:58:27Z",
+    "date": "2026-06-17T17:56:20Z",
     "commit": "pre-commit-working-tree",
-    "status": "passed locally after adding bridge action resource admission, composing bridge resource facts into the pre-heavy verification-path bounds, binding Lean native-cap vectors to production constants, and moving inbound bridge resource rejection before payload-hash binding and receipt verification",
+    "status": "passed locally after hardening release CI gate acceptance and binding wallet output-batch privacy vectors to cursor-independent change-output public metadata",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1969,
-    "axiom_free_theorems": 889,
-    "axiom_dependent_theorems": 1080,
+    "named_lean_theorems": 1978,
+    "axiom_free_theorems": 892,
+    "axiom_dependent_theorems": 1086,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
@@ -73,49 +73,51 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the SmallWood public-statement implementation-equivalence slice. Lean now models the verifier public statement as exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, proves exact length/no-extension and transcript-surface feed facts, and generates vectors checked against the production SmallWood helper and live candidate profile surfaces for normal and stablecoin witnesses.",
+    "summary": "Added the wallet output-batch change-diversifier privacy slice and strengthened the release CI gate theorem slice. Lean now proves wallet change-output count and change-output diversifier policy ignore local metadata seeds and use the primary-address diversifier, while the release gate proves acceptance requires security-adversarial and native-backend-security jobs, release-build dependencies on those jobs, and tag-release native backend review/posture checks.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodPublicStatementBindingVectors.lean"
+      "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean",
+      "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean",
+      "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+      "formal/lean/Hegemon/Release/GenerateCiReleaseGateVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.base_p3_public_vector_length",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_append_version_binding",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_length",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_exposes_p3_prefix",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_exposes_version_suffix",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_forbids_public_value_extension",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_feeds_transcript_surface",
-      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_facts"
+      "Hegemon.Privacy.WalletOutputBatch.change_output_count_ignores_local_metadata_seed",
+      "Hegemon.Privacy.WalletOutputBatch.change_diversifier_ignores_local_metadata_seed",
+      "Hegemon.Privacy.WalletOutputBatch.change_diversifier_is_primary_address",
+      "Hegemon.Release.CiReleaseGate.security_adversarial_missing_rejects_after_formal_core",
+      "Hegemon.Release.CiReleaseGate.native_backend_security_missing_rejects_after_adversarial",
+      "Hegemon.Release.CiReleaseGate.release_build_security_adversarial_dependency_missing_rejects",
+      "Hegemon.Release.CiReleaseGate.release_build_native_backend_security_dependency_missing_rejects",
+      "Hegemon.Release.CiReleaseGate.tag_release_native_backend_review_missing_rejects",
+      "Hegemon.Release.CiReleaseGate.tag_release_native_backend_posture_missing_rejects"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodPublicStatementBinding gen_smallwood_public_statement_binding_vectors && lake build Hegemon passed locally.",
-      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture passed locally.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the new SmallWood public-statement theorem names, generator, production helper, integration test, and formal-core gate to the canonical verifier boundary claim."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Privacy.WalletOutputBatch Hegemon.Privacy.GenerateWalletOutputBatchVectors gen_wallet_output_batch_vectors Hegemon.Release.CiReleaseGate Hegemon.Release.GenerateCiReleaseGateVectors gen_ci_release_gate_vectors passed locally.",
+      "targeted_rust": "HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS=<generated-json> cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture passed locally; python3 scripts/check_ci_release_gate_policy.py <generated-ci-vectors> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml passed locally.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the new wallet output-batch change-diversifier theorem names, release CI gate theorem names, generated vector producers, production helper, workflow policy checker, and formal-core gates."
     },
     "known_limitations": [
-      "This slice proves and gates public-value vector shape and version-suffix binding. It still treats bincode serialization of the statement bytes, hash security, STARK/FRI/PCS soundness, witness extraction, and complete native-node/verifier refinement as explicit residual work."
+      "The wallet slice proves deterministic public-shape and cursor-independent change-diversifier policy for newly built wallet outputs; it still leaves raw-wire crypto indistinguishability, simulator zero knowledge, timing/network metadata, and full wallet/native-node refinement explicit. The release slice gates checked-in workflow structure; external branch-protection/ruleset evidence and scanner completeness remain explicit release residuals."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound inline transfer ciphertext resource projection and wallet output-batch public-shape projection to executable Lean-generated vectors and production Rust. The runtime now calls admitted_inline_ciphertext_metadata at submit-action construction and transfer payload validation before per-ciphertext hash/materialization, and wallet tx construction exposes theorem-backed transfer/burn output-count helpers checked by generated vectors.",
+    "summary": "Bound wallet output-batch public metadata privacy policy and release workflow policy to executable Lean-generated vectors and production tooling. Newly built wallet change outputs now use the cursor-independent primary-address helper instead of reserving cursor-derived internal addresses, and release workflow checks now require security-adversarial/native-backend-security jobs plus native backend review/posture gates.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs now maps inline transfer route payload bytes, proof bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into NativeBoundedRequestAdmissionInput before hashing ciphertexts or staging the action.",
-      "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean schema-v2 vectors add valid, exact-limit, raw-byte, decoded-byte, item-count, item-byte, aggregate-byte, and precedence cases for inline transfer ciphertext resources.",
-      "wallet/src/tx_builder.rs maps native, stablecoin, burn, and consolidation planning into transfer_output_batch_count and burn_output_batch_count helpers checked by formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean schema-v1 cases.",
-      "scripts/check_formal_core.sh regenerates transfer action payload and wallet output-batch vectors, then runs the hegemon-node and wallet production conformance gates, so the resource and public-shape cases are release-gated with cheap runtime checks."
+      "wallet/src/tx_builder.rs routes transfer and burn change outputs through change_output_address, returning the primary shielded address instead of reserve_internal_address, so newly built change-output diversifier_index values no longer encode the local address cursor.",
+      "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean schema-v2 emits recipient/change-output counts, expected primary change diversifier, and cursor-independence cases checked by wallet/src/tx_builder.rs against production transaction construction.",
+      "scripts/check_ci_release_gate_policy.py checks generated release-gate vectors against .github/workflows/ci.yml and .github/workflows/release.yml, including security-adversarial/native-backend-security release-build dependencies and tag-release native backend review/posture steps.",
+      "scripts/check_formal_core.sh regenerates wallet output-batch and CI release-gate vectors, then runs the wallet production conformance gate and release workflow policy gate."
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.TransferActionPayloadAdmission",
-      "Hegemon.Resource.BoundedRequestAdmission",
-      "Hegemon.Privacy.WalletOutputBatch"
+      "Hegemon.Privacy.WalletOutputBatch",
+      "Hegemon.Release.CiReleaseGate"
     ],
     "validation": {
-      "status": "targeted Lean build, generated-vector JSON validation, transfer payload/resource Rust conformance, wallet output-batch Rust conformance, submit-action resource regression, cargo fmt, metadata gates, axiom audit, and full formal-core passed locally."
+      "status": "targeted Lean builds, generated-vector JSON validation, wallet output-batch Rust conformance, CI release workflow policy conformance, cargo fmt/check, metadata gates, axiom audit, and full formal-core passed locally."
     },
     "known_limitations": [
-      "This slice changes shipped native runtime admission, so hegemon-dev must rebuild/restart after fast-forward, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes wallet transaction construction and release tooling, not the shipped live node service path. hegemon-dev still must fast-forward, run remote formal-core or targeted gates, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "last_implementation_equivalence_checker_slice": {
@@ -217,7 +219,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 84.5,
+      "completion_percent": 87,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -501,7 +503,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 74,
+      "completion_percent": 76.5,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -546,7 +548,7 @@
         "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
         "wallet/src/store.rs local_address_metadata_does_not_change_public_ciphertext_projection regression proves next_address_index advancement and persistence through address reservation/reopen do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
         "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean proves wallet transfer, stablecoin, burn, and consolidation output-batch counts are determined by public shape, ignore private witness and local metadata seeds, and stay within MAX_OUTPUTS for accepted cases",
-        "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean emits native/stablecoin/burn/consolidation output-batch cases, and wallet/src/tx_builder.rs checks them against production transfer_output_batch_count and burn_output_batch_count through lean_generated_wallet_output_batch_vectors_match_production",
+        "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean emits native/stablecoin/burn/consolidation output-batch cases, recipient/change-output counts, and primary-address change diversifier expectations; wallet/src/tx_builder.rs checks them against production transfer/burn output planning plus the same change_output_address helper used by transaction construction",
         "Proof-wrapper metadata projection is now explicitly bounded: accepted wrappers cannot change the public statement projection or extend public nullifier/ciphertext/asset rows outside the bound statement, reducing proof-wrapper metadata leakage surface.",
         "formal/lean/Hegemon/Privacy/Observer.lean now models local network metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed PQ peer/connection/relay counters",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local network metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and remote network assumptions explicit",
@@ -566,7 +568,7 @@
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet output-batch public-shape policy, wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet output-batch public-shape/change-diversifier policy, wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
@@ -906,7 +908,7 @@
     {
       "id": "release.dependency-posture",
       "weight": 2,
-      "completion_percent": 84.5,
+      "completion_percent": 87,
       "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
       "current_evidence": [
         ".github/workflows/ci.yml release-build security dependencies and binary audit",
@@ -918,12 +920,13 @@
         "native backend review-policy and release-posture gates",
         "formal-core dependency and release posture checks",
         "DependencyAuditPolicy now rejects unused/stale waivers, generated vectors cover unused-waiver and unwaived-before-unused precedence, and scripts/dependency-audit-gate.sh fails release CI when a waiver no longer matches a current cargo-audit finding.",
-        "config/dependency-audit-waivers.json now contains only the 8 current cargo-audit findings after removing stale tracing-subscriber, derivative, and rustls-pemfile waivers; scripts/dependency-audit-gate.sh reports 8 waived, 0 unwaived, and 0 unused waivers."
+        "config/dependency-audit-waivers.json now contains only the 8 current cargo-audit findings after removing stale tracing-subscriber, derivative, and rustls-pemfile waivers; scripts/dependency-audit-gate.sh reports 8 waived, 0 unwaived, and 0 unused waivers.",
+        "Hegemon.Release.CiReleaseGate now proves release acceptance requires security-adversarial and native-backend-security jobs, release-build dependencies on those jobs, and tag-release native backend review/posture gates; scripts/check_ci_release_gate_policy.py checks those requirements against the checked-in GitHub workflows."
       ],
       "missing_work": [
         "Move any remaining advisory drift that is outside cargo-audit visibility into mandatory CI evidence.",
         "Add binary scanner completeness review and accepted external-review artifact requirements.",
-        "Make repository-admin branch protection/ruleset evidence require formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
+        "Add external repository branch-protection/ruleset export evidence requiring formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
       ],
       "performance_constraint": "Release-time only; no production runtime overhead."
     }

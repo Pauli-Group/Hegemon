@@ -34,6 +34,17 @@ def walletOutputBatchCaseJson
       ++ toString alternateLocalMetadataSeed ++ ",\n"
     ++ "      \"expected_output_count\": "
       ++ toString (walletOutputCount input) ++ ",\n"
+    ++ "      \"expected_recipient_output_count\": "
+      ++ toString (recipientOutputCount input) ++ ",\n"
+    ++ "      \"expected_change_output_count\": "
+      ++ toString (changeOutputCount input) ++ ",\n"
+    ++ "      \"expected_change_diversifier_index\": "
+      ++ toString (expectedChangeDiversifierIndex input) ++ ",\n"
+    ++ "      \"expected_change_diversifier_cursor_independent\": "
+      ++ boolJson
+        (decide (expectedChangeDiversifierIndex
+            { input with localMetadataSeed := alternateLocalMetadataSeed } =
+          expectedChangeDiversifierIndex input)) ++ ",\n"
     ++ "      \"expected_valid\": "
       ++ boolJson (walletOutputBatchAccepts input) ++ ",\n"
     ++ "      \"expected_within_max_outputs\": "
@@ -42,7 +53,7 @@ def walletOutputBatchCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"max_outputs\": " ++ toString MaxOutputs ++ ",\n"
     ++ "  \"wallet_output_batch_cases\": [\n"
     ++ walletOutputBatchCaseJson "native-exact-no-change"

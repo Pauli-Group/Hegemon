@@ -5,6 +5,7 @@ namespace Privacy
 namespace WalletOutputBatch
 
 abbrev MaxOutputs : Nat := Hegemon.Transaction.PublicInputs.maxOutputs
+abbrev PrimaryChangeDiversifierIndex : Nat := 0
 
 inductive WalletOutputBatchKind where
   | native
@@ -85,6 +86,30 @@ def outputCountFromPublicShape :
 def walletOutputCount (input : WalletOutputBatchInput) : Nat :=
   outputCountFromPublicShape (publicShape input)
 
+def recipientOutputCountFromPublicShape :
+    WalletOutputBatchPublicShape -> Nat
+  | { kind := WalletOutputBatchKind.native, recipientCount, .. } =>
+      recipientCount
+  | { kind := WalletOutputBatchKind.stablecoin, recipientCount, .. } =>
+      recipientCount
+  | { kind := WalletOutputBatchKind.burn, .. } =>
+      0
+  | { kind := WalletOutputBatchKind.consolidation, .. } =>
+      0
+
+def changeOutputCountFromPublicShape
+    (shape : WalletOutputBatchPublicShape) : Nat :=
+  outputCountFromPublicShape shape - recipientOutputCountFromPublicShape shape
+
+def recipientOutputCount (input : WalletOutputBatchInput) : Nat :=
+  recipientOutputCountFromPublicShape (publicShape input)
+
+def changeOutputCount (input : WalletOutputBatchInput) : Nat :=
+  changeOutputCountFromPublicShape (publicShape input)
+
+def expectedChangeDiversifierIndex (_input : WalletOutputBatchInput) : Nat :=
+  PrimaryChangeDiversifierIndex
+
 def recipientShapeAccepts : WalletOutputBatchInput -> Bool
   | { kind := WalletOutputBatchKind.native, recipientCount, .. } =>
       recipientCount = 1
@@ -141,6 +166,24 @@ theorem output_count_ignores_local_metadata_seed
     (input : WalletOutputBatchInput) (seed : Nat) :
     walletOutputCount { input with localMetadataSeed := seed } =
       walletOutputCount input := by
+  rfl
+
+theorem change_output_count_ignores_local_metadata_seed
+    (input : WalletOutputBatchInput) (seed : Nat) :
+    changeOutputCount { input with localMetadataSeed := seed } =
+      changeOutputCount input := by
+  rfl
+
+theorem change_diversifier_ignores_local_metadata_seed
+    (input : WalletOutputBatchInput) (seed : Nat) :
+    expectedChangeDiversifierIndex
+        { input with localMetadataSeed := seed } =
+      expectedChangeDiversifierIndex input := by
+  rfl
+
+theorem change_diversifier_is_primary_address
+    (input : WalletOutputBatchInput) :
+    expectedChangeDiversifierIndex input = PrimaryChangeDiversifierIndex := by
   rfl
 
 theorem acceptance_ignores_private_witness_seed
