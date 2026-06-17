@@ -64,6 +64,12 @@ def peerRole : PqNoise.Role -> PqNoise.Role
   | PqNoise.Role.initiator => PqNoise.Role.responder
   | PqNoise.Role.responder => PqNoise.Role.initiator
 
+def roleIsInitiator : PqNoise.Role -> Bool
+  | PqNoise.Role.initiator => true
+  | PqNoise.Role.responder => false
+
+def pqAeadTagBytes : Nat := 16
+
 def peerPqChannelStateFromHandshake
     (surface : HandshakeChannelSurface) :
     PqNoise.ChannelState :=
@@ -113,6 +119,16 @@ theorem pq_send_slot_matches_peer_recv
 theorem pq_recv_slot_matches_peer_send
     {role : PqNoise.Role} :
     PqNoise.recvSlot role = PqNoise.sendSlot (peerRole role) := by
+  cases role <;> rfl
+
+theorem peerRole_ne
+    {role : PqNoise.Role} :
+    peerRole role ≠ role := by
+  cases role <;> decide
+
+theorem roleIsInitiator_peer
+    {role : PqNoise.Role} :
+    roleIsInitiator (peerRole role) = !roleIsInitiator role := by
   cases role <;> rfl
 
 theorem secure_send_recv_labels_distinct
@@ -345,6 +361,88 @@ theorem accepted_authenticated_pq_handshake_transport_completion_facts
       (PqNoise.aad_info_distinct_from_send (role := peerRole surface.role))
   · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
       (PqNoise.aad_info_distinct_from_recv (role := peerRole surface.role))
+
+structure PqWrapperCompletionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (localState peerState : PqNoise.ChannelState)
+    (localBytesSent localBytesReceived peerBytesSent peerBytesReceived : Nat)
+    (firstFramePayloadBytes firstFrameTagBytes firstFrameWireBytes : Nat) : Prop where
+  transportCompletion :
+    PqTransportCompletionFacts surface crypto localState peerState
+  localRoleIsSurfaceRole :
+    localState.role = surface.role
+  peerRoleIsOpposite :
+    peerState.role = peerRole surface.role
+  localIsInitiatorBound :
+    roleIsInitiator localState.role = roleIsInitiator surface.role
+  peerIsInitiatorBound :
+    roleIsInitiator peerState.role = roleIsInitiator (peerRole surface.role)
+  peerInitiatorOpposite :
+    roleIsInitiator peerState.role = !roleIsInitiator localState.role
+  rolesDistinct :
+    localState.role ≠ peerState.role
+  localBytesSentZero :
+    localBytesSent = 0
+  localBytesReceivedZero :
+    localBytesReceived = 0
+  peerBytesSentZero :
+    peerBytesSent = 0
+  peerBytesReceivedZero :
+    peerBytesReceived = 0
+  firstFrameTagBytesBound :
+    firstFrameTagBytes = pqAeadTagBytes
+  firstFrameWireBytesBound :
+    firstFrameWireBytes = firstFramePayloadBytes + firstFrameTagBytes
+
+theorem accepted_authenticated_pq_handshake_wrapper_completion_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (firstFramePayloadBytes : Nat) :
+    PqWrapperCompletionFacts
+      surface
+      crypto
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes) := by
+  refine
+    { transportCompletion :=
+        accepted_authenticated_pq_handshake_transport_completion_facts handshake
+      localRoleIsSurfaceRole := ?_
+      peerRoleIsOpposite := ?_
+      localIsInitiatorBound := ?_
+      peerIsInitiatorBound := ?_
+      peerInitiatorOpposite := ?_
+      rolesDistinct := ?_
+      localBytesSentZero := ?_
+      localBytesReceivedZero := ?_
+      peerBytesSentZero := ?_
+      peerBytesReceivedZero := ?_
+      firstFrameTagBytesBound := ?_
+      firstFrameWireBytesBound := ?_ }
+  · simp [pqChannelStateFromHandshake, PqNoise.initialState]
+  · simp [peerPqChannelStateFromHandshake, PqNoise.initialState]
+  · simp [pqChannelStateFromHandshake, PqNoise.initialState]
+  · simp [peerPqChannelStateFromHandshake, PqNoise.initialState]
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      (roleIsInitiator_peer (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      (Ne.symm (peerRole_ne (role := surface.role)))
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rfl
 
 theorem accepted_authenticated_pq_handshake_establishes_channel_facts
     {surface : HandshakeChannelSurface}

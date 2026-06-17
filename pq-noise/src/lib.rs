@@ -276,7 +276,7 @@ mod formal_vectors {
         let contents = std::fs::read_to_string(path).expect("read Lean PQ Noise vectors");
         let vectors: LeanPqNoiseVectorFile =
             serde_json::from_str(&contents).expect("parse Lean PQ Noise vectors");
-        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.schema_version, 3);
         let frame_keys = vector_session_keys(&vectors);
 
         for case in &vectors.session_key_cases {

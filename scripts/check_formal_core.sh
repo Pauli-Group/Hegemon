@@ -480,6 +480,10 @@ HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTOR
   cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
   cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture
+HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
+  cargo test -p network lean_generated_pq_wrapper_completion_vectors_match_network_transport --lib -- --nocapture
+HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
+  cargo test -p network lean_generated_pq_wrapper_completion_vectors_match_native_transport --lib -- --nocapture
 HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p network lean_generated_frame_resource_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS="$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS" \

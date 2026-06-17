@@ -1,4 +1,5 @@
 import Hegemon.Network.PqNoise
+import Hegemon.Network.PqNoiseHandshakeChannel
 
 open Hegemon
 open Hegemon.Network.PqNoise
@@ -133,6 +134,50 @@ def transportCompletionCaseJson
     ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
     ++ "    }"
 
+def wrapperCompletionCaseJson
+    (name wrapperKind : String)
+    (plaintextLen seed : Nat) : String :=
+  let localRole := Role.initiator
+  let peer := peerRole localRole
+  let plaintext := patternedBytes plaintextLen seed
+  let tagBytes := Hegemon.Network.PqNoiseHandshakeChannel.pqAeadTagBytes
+  let firstFrameWireBytes := plaintext.length + tagBytes
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"wrapper_kind\": \"" ++ wrapperKind ++ "\",\n"
+    ++ "      \"local_role\": " ++ roleJson localRole ++ ",\n"
+    ++ "      \"peer_role\": " ++ roleJson peer ++ ",\n"
+    ++ "      \"expected_completed\": true,\n"
+    ++ "      \"expected_local_is_initiator\": true,\n"
+    ++ "      \"expected_peer_is_initiator\": false,\n"
+    ++ "      \"expected_roles_distinct\": true,\n"
+    ++ "      \"expected_local_send_slot\": "
+      ++ keySlotJson (sendSlot localRole) ++ ",\n"
+    ++ "      \"expected_local_recv_slot\": "
+      ++ keySlotJson (recvSlot localRole) ++ ",\n"
+    ++ "      \"expected_peer_send_slot\": "
+      ++ keySlotJson (sendSlot peer) ++ ",\n"
+    ++ "      \"expected_peer_recv_slot\": "
+      ++ keySlotJson (recvSlot peer) ++ ",\n"
+    ++ "      \"expected_local_send_matches_peer_recv\": true,\n"
+    ++ "      \"expected_local_recv_matches_peer_send\": true,\n"
+    ++ "      \"expected_initial_local_bytes_sent\": \"0\",\n"
+    ++ "      \"expected_initial_local_bytes_received\": \"0\",\n"
+    ++ "      \"expected_initial_peer_bytes_sent\": \"0\",\n"
+    ++ "      \"expected_initial_peer_bytes_received\": \"0\",\n"
+    ++ "      \"expected_first_frame_payload_bytes\": \""
+      ++ toString plaintext.length ++ "\",\n"
+    ++ "      \"expected_first_frame_tag_bytes\": \""
+      ++ toString tagBytes ++ "\",\n"
+    ++ "      \"expected_first_frame_wire_bytes\": \""
+      ++ toString firstFrameWireBytes ++ "\",\n"
+    ++ "      \"expected_after_first_local_bytes_sent\": \""
+      ++ toString firstFrameWireBytes ++ "\",\n"
+    ++ "      \"expected_after_first_peer_bytes_received\": \""
+      ++ toString firstFrameWireBytes ++ "\",\n"
+    ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
+    ++ "    }"
+
 def initSigningCaseJson (name : String) (input : InitHelloSigningInput) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -197,7 +242,7 @@ def alternateFinishSigningInput : FinishSigningInput := {
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"session_key_cases\": [\n"
     ++ sessionKeyCaseJson "patterned-session" sampleSessionInput ++ ",\n"
     ++ sessionKeyCaseJson "alternate-session" alternateSessionInput ++ "\n"
@@ -222,6 +267,12 @@ def vectorJson : String :=
       Role.initiator 19 37 ++ ",\n"
     ++ transportCompletionCaseJson "local-responder-transport-completion"
       Role.responder 23 89 ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"wrapper_completion_cases\": [\n"
+    ++ wrapperCompletionCaseJson "network-pq-transport-wrapper-completion"
+      "network_pq_transport" 29 131 ++ ",\n"
+    ++ wrapperCompletionCaseJson "native-pq-transport-wrapper-completion"
+      "native_pq_transport" 31 173 ++ "\n"
     ++ "  ],\n"
     ++ "  \"init_signing_cases\": [\n"
     ++ initSigningCaseJson "patterned-init" sampleInitSigningInput ++ ",\n"
