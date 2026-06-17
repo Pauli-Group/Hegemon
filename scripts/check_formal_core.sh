@@ -467,6 +467,7 @@ cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_
 cargo test -p hegemon-node native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture
+cargo test -p network --lib pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection -- --nocapture
 HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" \
   cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \

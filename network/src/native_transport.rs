@@ -514,4 +514,49 @@ mod tests {
         assert!(info.is_outbound);
         assert_eq!(info.bytes_sent, 1000);
     }
+
+    #[test]
+    fn connection_info_metadata_does_not_change_wire_message_encoding() {
+        let first = PqConnectionInfo {
+            peer_id: [1u8; 32],
+            addr: "127.0.0.1:30333".parse().unwrap(),
+            is_outbound: true,
+            bytes_sent: 1000,
+            bytes_received: 2000,
+            protocol: "/hegemon/pq/1".to_string(),
+        };
+        let second = PqConnectionInfo {
+            peer_id: [2u8; 32],
+            addr: "[::1]:40444".parse().unwrap(),
+            is_outbound: false,
+            bytes_sent: 9000,
+            bytes_received: 12000,
+            protocol: "/hegemon/pq/1/local-test".to_string(),
+        };
+        assert_ne!(first.peer_id, second.peer_id);
+        assert_ne!(first.addr, second.addr);
+        assert_ne!(first.is_outbound, second.is_outbound);
+        assert_ne!(first.bytes_sent, second.bytes_sent);
+        assert_ne!(first.bytes_received, second.bytes_received);
+        assert_ne!(first.protocol, second.protocol);
+
+        let payload = crate::p2p::WireMessage::Proto(crate::ProtocolMessage {
+            protocol: 7,
+            payload: b"shielded-transfer-announcement".to_vec(),
+        });
+        let encoded_first = crate::wire::encode(&payload, crate::wire::MAX_WIRE_FRAME_LEN).unwrap();
+        let encoded_second =
+            crate::wire::encode(&payload, crate::wire::MAX_WIRE_FRAME_LEN).unwrap();
+
+        assert_eq!(encoded_first, encoded_second);
+        let decoded: crate::p2p::WireMessage =
+            crate::wire::decode(&encoded_first, crate::wire::MAX_WIRE_FRAME_LEN).unwrap();
+        match decoded {
+            crate::p2p::WireMessage::Proto(message) => {
+                assert_eq!(message.protocol, 7);
+                assert_eq!(message.payload, b"shielded-transfer-announcement".to_vec());
+            }
+            other => panic!("decoded unexpected wire message: {other:?}"),
+        }
+    }
 }

@@ -133,6 +133,42 @@ structure CiphertextPrivacyBoundaryFacts
           { right with
             localActionMetadata := localActionMetadata } =
         batchTimingView right
+  leftObserverIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      observerView
+          { left with
+            localNetworkMetadata := localNetworkMetadata } =
+        observerView left
+  rightObserverIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      observerView
+          { right with
+            localNetworkMetadata := localNetworkMetadata } =
+        observerView right
+  leftPublicMetadataIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      publicMetadataView
+          { left with
+            localNetworkMetadata := localNetworkMetadata } =
+        publicMetadataView left
+  rightPublicMetadataIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      publicMetadataView
+          { right with
+            localNetworkMetadata := localNetworkMetadata } =
+        publicMetadataView right
+  leftBatchTimingIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      batchTimingView
+          { left with
+            localNetworkMetadata := localNetworkMetadata } =
+        batchTimingView left
+  rightBatchTimingIgnoresLocalNetworkMetadata :
+    ∀ localNetworkMetadata,
+      batchTimingView
+          { right with
+            localNetworkMetadata := localNetworkMetadata } =
+        batchTimingView right
 
 structure SecretResamplingPrivacyFacts
     (left right : ShieldedTransactionWorld)
@@ -192,6 +228,32 @@ structure SecretResamplingPrivacyFacts
           privateWitness := rightPrivateWitness
           proverRandomnessSeed := rightProverRandomnessSeed
           localActionMetadata := rightLocal }
+  publicMetadataStableUnderIndependentSecretAndLocalNetworkResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftNetwork rightNetwork,
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localNetworkMetadata := leftNetwork }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localNetworkMetadata := rightNetwork }
+  batchTimingStableUnderIndependentSecretAndLocalNetworkResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftNetwork rightNetwork,
+      sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localNetworkMetadata := leftNetwork }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localNetworkMetadata := rightNetwork }
 
 structure RawWireExcludedPublicLeakageFacts
     (left right : ShieldedTransactionWorld)
@@ -388,6 +450,36 @@ theorem ciphertext_privacy_game_boundary_facts
         batch_timing_view_ignores_local_action_metadata
           right
           localActionMetadata
+    leftObserverIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        observer_view_ignores_local_network_metadata
+          left
+          localNetworkMetadata
+    rightObserverIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        observer_view_ignores_local_network_metadata
+          right
+          localNetworkMetadata
+    leftPublicMetadataIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        public_metadata_view_ignores_local_network_metadata
+          left
+          localNetworkMetadata
+    rightPublicMetadataIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        public_metadata_view_ignores_local_network_metadata
+          right
+          localNetworkMetadata
+    leftBatchTimingIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        batch_timing_view_ignores_local_network_metadata
+          left
+          localNetworkMetadata
+    rightBatchTimingIgnoresLocalNetworkMetadata :=
+      fun localNetworkMetadata =>
+        batch_timing_view_ignores_local_network_metadata
+          right
+          localNetworkMetadata
   }
 
 theorem ciphertext_privacy_game_secret_resampling_boundary_facts
@@ -519,6 +611,66 @@ theorem ciphertext_privacy_game_secret_resampling_boundary_facts
                 rightPrivateWitness
                 rightProverRandomnessSeed
                 rightLocal).symm
+    publicMetadataStableUnderIndependentSecretAndLocalNetworkResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftNetwork rightNetwork => by
+        unfold samePublicMetadataLeakage
+        calc
+          publicMetadataView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localNetworkMetadata := leftNetwork } =
+            publicMetadataView left :=
+              public_metadata_view_ignores_private_witness_randomness_and_local_network_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftNetwork
+          _ = publicMetadataView right :=
+              boundary.publicMetadataLeakage
+          _ =
+            publicMetadataView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localNetworkMetadata := rightNetwork } :=
+              (public_metadata_view_ignores_private_witness_randomness_and_local_network_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightNetwork).symm
+    batchTimingStableUnderIndependentSecretAndLocalNetworkResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftNetwork rightNetwork => by
+        unfold sameBatchTimingLeakage
+        calc
+          batchTimingView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localNetworkMetadata := leftNetwork } =
+            batchTimingView left :=
+              batch_timing_view_ignores_private_witness_randomness_and_local_network_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftNetwork
+          _ = batchTimingView right :=
+              boundary.batchTimingLeakage
+          _ =
+            batchTimingView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localNetworkMetadata := rightNetwork } :=
+              (batch_timing_view_ignores_private_witness_randomness_and_local_network_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightNetwork).symm
   }
 
 def buildCiphertextPrivacyGame
@@ -654,6 +806,63 @@ theorem ciphertext_privacy_game_local_address_metadata_boundary_facts
       assumptionProofs.timingAndBatchingPolicy,
       assumptionProofs.networkMetadataPolicy⟩
 
+def ciphertext_privacy_game_resample_local_network_metadata
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyGame
+      { left with localNetworkMetadata := leftNetwork }
+      { right with localNetworkMetadata := rightNetwork } := by
+  exact
+    { leftValid :=
+        valid_observer_chain_surface_stable_under_local_network_metadata
+          game.leftValid
+          leftNetwork
+      rightValid :=
+        valid_observer_chain_surface_stable_under_local_network_metadata
+          game.rightValid
+          rightNetwork
+      publicInputs := by
+        simpa [samePublicInputs] using game.publicInputs
+      summaries := by
+        simpa using game.summaries
+      placement := by
+        simpa [samePlacement] using game.placement
+      wireIndistinguishable := game.wireIndistinguishable
+      wireIndistinguishableProof := game.wireIndistinguishableProof }
+
+theorem ciphertext_privacy_game_local_network_metadata_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+        { left with localNetworkMetadata := leftNetwork }
+        { right with localNetworkMetadata := rightNetwork }
+      ∧ sameBatchTimingLeakage
+        { left with localNetworkMetadata := leftNetwork }
+        { right with localNetworkMetadata := rightNetwork }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨same_public_metadata_leakage_stable_under_local_network_metadata
+        (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+        leftNetwork
+        rightNetwork,
+      same_batch_timing_leakage_stable_under_local_network_metadata
+        (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftNetwork
+        rightNetwork,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      assumptionProofs.proofSystemZeroKnowledge,
+      assumptionProofs.walletMetadataHygiene,
+      assumptionProofs.timingAndBatchingPolicy,
+      assumptionProofs.networkMetadataPolicy⟩
+
 theorem same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -758,6 +967,25 @@ theorem ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_
         game
         leftAddress
         rightAddress)
+      assumptionProofs
+
+theorem ciphertext_privacy_game_local_network_metadata_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      { left with localNetworkMetadata := leftNetwork }
+      { right with localNetworkMetadata := rightNetwork }
+      game.wireIndistinguishable
+      assumptions := by
+  simpa [ciphertext_privacy_game_resample_local_network_metadata] using
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      (ciphertext_privacy_game_resample_local_network_metadata
+        game
+        leftNetwork
+        rightNetwork)
       assumptionProofs
 
 end CiphertextPrivacy

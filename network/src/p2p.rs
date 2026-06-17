@@ -266,6 +266,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PqConnectionInfo, RelayConfig};
     use tokio::io::duplex;
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
@@ -278,6 +279,83 @@ mod tests {
 
         assert_eq!(CompactAddress::from(ipv4).to_socket_addr(), ipv4);
         assert_eq!(CompactAddress::from(ipv6).to_socket_addr(), ipv6);
+    }
+
+    #[test]
+    fn pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection() {
+        fn proto_wire_and_payload_projection(
+            _connection: &PqConnectionInfo,
+            _relay: &RelayConfig,
+            msg: &ProtocolMessage,
+        ) -> (Vec<u8>, Vec<u8>) {
+            let encoded = wire::encode(&WireMessage::Proto(msg.clone()), wire::MAX_WIRE_FRAME_LEN)
+                .expect("encode proto wire message");
+            let decoded: WireMessage = wire::decode(&encoded, wire::MAX_WIRE_FRAME_LEN)
+                .expect("decode proto wire message");
+            let payload = match decoded {
+                WireMessage::Proto(proto) => proto.payload,
+                other => panic!("expected proto wire message, got {other:?}"),
+            };
+            (encoded, payload)
+        }
+
+        fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+            !needle.is_empty()
+                && haystack
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+        }
+
+        let consensus_payload = b"consensus-payload-v1".to_vec();
+        let msg = ProtocolMessage {
+            protocol: 0x4847_0001,
+            payload: consensus_payload.clone(),
+        };
+        let connection_a = PqConnectionInfo {
+            peer_id: [0xa5; 32],
+            addr: "10.254.0.11:30333".parse().unwrap(),
+            is_outbound: true,
+            bytes_sent: 0x1111_2222_3333_4444,
+            bytes_received: 0x5555_6666_7777_8888,
+            protocol: "local-pq-relay-alpha-sentinel".to_string(),
+        };
+        let relay_a = RelayConfig {
+            allow_relay: true,
+            relays: vec!["relay-alpha-sentinel.invalid:30333".to_string()],
+        };
+        let connection_b = PqConnectionInfo {
+            peer_id: [0x5a; 32],
+            addr: "10.254.0.22:40444".parse().unwrap(),
+            is_outbound: false,
+            bytes_sent: 0x9999_aaaa_bbbb_cccc,
+            bytes_received: 0xdddd_eeee_ffff_0001,
+            protocol: "local-pq-relay-beta-sentinel".to_string(),
+        };
+        let relay_b = RelayConfig {
+            allow_relay: false,
+            relays: vec!["relay-beta-sentinel.invalid:40444".to_string()],
+        };
+
+        let (wire_a, payload_a) = proto_wire_and_payload_projection(&connection_a, &relay_a, &msg);
+        let (wire_b, payload_b) = proto_wire_and_payload_projection(&connection_b, &relay_b, &msg);
+
+        assert_eq!(wire_a, wire_b);
+        assert_eq!(payload_a, consensus_payload);
+        assert_eq!(payload_b, consensus_payload);
+
+        for forbidden in [
+            &connection_a.peer_id[..],
+            connection_a.protocol.as_bytes(),
+            relay_a.relays[0].as_bytes(),
+            &connection_b.peer_id[..],
+            connection_b.protocol.as_bytes(),
+            relay_b.relays[0].as_bytes(),
+        ] {
+            assert!(!contains_subslice(&wire_a, forbidden));
+            assert!(!contains_subslice(&wire_b, forbidden));
+            assert!(!contains_subslice(&payload_a, forbidden));
+            assert!(!contains_subslice(&payload_b, forbidden));
+        }
     }
 
     #[tokio::test]

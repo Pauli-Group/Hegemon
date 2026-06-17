@@ -55,6 +55,14 @@ structure LocalAddressMetadata where
   addressBookGeneration : Nat
 deriving DecidableEq, Repr
 
+structure LocalNetworkMetadata where
+  remotePeerTag : Nat
+  connectionEpoch : Nat
+  bytesSent : Nat
+  bytesReceived : Nat
+  gossipHopCount : Nat
+deriving DecidableEq, Repr
+
 structure ShieldedTransactionWorld where
   publicInputs : PublicInputShape
   ciphertextBytes : List (List Byte)
@@ -63,6 +71,7 @@ structure ShieldedTransactionWorld where
   actionIndex : Nat
   localActionMetadata : LocalActionMetadata
   localAddressMetadata : LocalAddressMetadata
+  localNetworkMetadata : LocalNetworkMetadata
   privateWitness : PrivateWitness
   proverRandomnessSeed : Nat
 deriving DecidableEq, Repr
@@ -339,6 +348,27 @@ theorem batch_timing_view_ignores_local_address_metadata
       batchTimingView world := by
   rfl
 
+theorem observer_view_ignores_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    observerView { world with localNetworkMetadata := localNetworkMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    publicMetadataView { world with localNetworkMetadata := localNetworkMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    batchTimingView { world with localNetworkMetadata := localNetworkMetadata } =
+      batchTimingView world := by
+  rfl
+
 theorem observer_view_ignores_private_witness_and_randomness
     (world : ShieldedTransactionWorld)
     (privateWitness : PrivateWitness)
@@ -408,6 +438,45 @@ theorem batch_timing_view_ignores_private_witness_randomness_and_local_metadata
           privateWitness := privateWitness
           proverRandomnessSeed := proverRandomnessSeed
           localActionMetadata := localActionMetadata } =
+      batchTimingView world := by
+  rfl
+
+theorem observer_view_ignores_private_witness_randomness_and_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    observerView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localNetworkMetadata := localNetworkMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_private_witness_randomness_and_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    publicMetadataView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localNetworkMetadata := localNetworkMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_private_witness_randomness_and_local_network_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    batchTimingView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localNetworkMetadata := localNetworkMetadata } =
       batchTimingView world := by
   rfl
 
@@ -769,6 +838,33 @@ theorem same_batch_timing_leakage_stable_under_local_address_metadata
       { right with localAddressMetadata := rightAddress } := by
   exact same
 
+theorem same_allowed_leakage_stable_under_local_network_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    sameAllowedLeakage
+      { left with localNetworkMetadata := leftNetwork }
+      { right with localNetworkMetadata := rightNetwork } := by
+  exact same
+
+theorem same_public_metadata_leakage_stable_under_local_network_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : samePublicMetadataLeakage left right)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+      { left with localNetworkMetadata := leftNetwork }
+      { right with localNetworkMetadata := rightNetwork } := by
+  exact same
+
+theorem same_batch_timing_leakage_stable_under_local_network_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameBatchTimingLeakage left right)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    sameBatchTimingLeakage
+      { left with localNetworkMetadata := leftNetwork }
+      { right with localNetworkMetadata := rightNetwork } := by
+  exact same
+
 theorem valid_observer_chain_surface_stable_under_local_action_metadata
     {world : ShieldedTransactionWorld}
     (valid : validObserverChainSurface world)
@@ -783,6 +879,14 @@ theorem valid_observer_chain_surface_stable_under_local_address_metadata
     (localAddressMetadata : LocalAddressMetadata) :
     validObserverChainSurface
       { world with localAddressMetadata := localAddressMetadata } := by
+  simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
+theorem valid_observer_chain_surface_stable_under_local_network_metadata
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    validObserverChainSurface
+      { world with localNetworkMetadata := localNetworkMetadata } := by
   simpa [validObserverChainSurface, summariesMatchChainWire] using valid
 
 end Observer

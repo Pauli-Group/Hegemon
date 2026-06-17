@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.82,
+  "overall_completion_percent": 86.98,
   "last_full_formal_core": {
-    "date": "2026-06-17T03:39:59Z",
-    "commit": "2f13004f",
-    "status": "passed locally after integrating stale dependency-waiver rejection, proof-statement partition-length binding, proof-wrapper metadata row-boundary admission, wallet address-metadata privacy projection, and native sync response-range bounded-request facts",
+    "date": "2026-06-17T04:19:39Z",
+    "commit": "552afd05",
+    "status": "passed locally after adding LocalNetworkMetadata privacy theorems, PQ connection/relay metadata projection regressions, and formal claims/blueprint/docs bindings",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1833,
-    "axiom_free_theorems": 822,
-    "axiom_dependent_theorems": 1011,
+    "named_lean_theorems": 1845,
+    "axiom_free_theorems": 831,
+    "axiom_dependent_theorems": 1014,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 509,
+    "falsification_cases": 511,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -85,58 +85,45 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Integrated four zero/near-zero-runtime formal-verification slices: dependency waivers must be exact and live, statement-binding transcripts bind vector partition lengths, proof-wrapper metadata cannot extend statement/public row boundaries, wallet address-cursor metadata stays outside public ciphertext projections, and outbound sync response ranges expose bounded-request item-count facts.",
+    "summary": "Extended the privacy observer and ciphertext privacy-game boundary with explicit LocalNetworkMetadata exclusion: observer, public metadata, batch/timing, valid observer-chain, secret-resampling, and open-assumption privacy-game surfaces ignore local PQ peer/connection/relay counters while keeping raw-wire, proof-system, wallet, timing, and remote network assumptions explicit.",
     "lean_modules": [
-      "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
-      "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
-      "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
       "formal/lean/Hegemon/Privacy/Observer.lean",
-      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Native/SyncAdmission.lean"
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Release.DependencyAuditPolicy.unused_waiver_rejects",
-      "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_precedes_unused_waiver",
-      "Hegemon.Transaction.ProofStatementBinding.bindingMessage_distinguishes_vector_partition_lengths",
-      "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension",
-      "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_address_metadata",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_boundary_facts",
-      "Hegemon.Native.SyncAdmission.accepted_response_range_exposes_bounded_request_facts",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_facts"
+      "Hegemon.Privacy.Observer.observer_view_ignores_local_network_metadata",
+      "Hegemon.Privacy.Observer.public_metadata_view_ignores_local_network_metadata",
+      "Hegemon.Privacy.Observer.batch_timing_view_ignores_local_network_metadata",
+      "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_network_metadata",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_network_metadata_boundary_facts",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_network_metadata_open_assumption_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Release.DependencyAuditPolicy Hegemon.Release.GenerateDependencyAuditPolicyVectors Hegemon.Transaction.ProofWrapperAdmission Hegemon.Transaction.ProofStatementBinding Hegemon.Transaction.GenerateProofStatementBindingVectors Hegemon passed locally with 150 jobs; targeted Lean files for privacy and sync admission passed through the integrated Hegemon build.",
-      "targeted_rust": "dependency-audit-gate passed with 8 waived / 0 unwaived / 0 unused waivers; generated proof-statement and proof-wrapper vectors passed production Rust conformance; wallet local bookkeeping and address metadata projection regressions passed; native sync response-range bounded-request regression passed.",
-      "claims_blueprint": "formal-core claims, blueprint, and inventory checks passed locally with 118 claims, 1833 named Lean theorem declarations, 509 falsification cases, and 209 implementation bindings."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Privacy.CiphertextPrivacy Hegemon.Privacy.NativeObserverSurface Hegemon.Privacy.NativeSidecarObserverSurface passed locally with 67 jobs; full bash scripts/check_formal_core.sh passed with 1845 named Lean theorem declarations, 831 axiom-free theorem declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "cargo test -p network --lib pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection -- --nocapture passed; cargo test -p network --lib connection_info_metadata_does_not_change_wire_message_encoding -- --nocapture passed; the stronger p2p regression also passed inside scripts/check_formal_core.sh.",
+      "claims_blueprint": "formal-core claims, blueprint, inventory, independent bridge vectors, native backend vectors, and release posture checks passed locally with 118 claims, 511 falsification cases, 209 implementation bindings, and 108 production nodes."
     },
     "known_limitations": [
-      "These slices do not discharge hash collision resistance, STARK/FRI/PCS soundness, ML-KEM/AEAD indistinguishability, simulator zero knowledge, advisory database completeness, scanner completeness, or complete native-node refinement."
+      "This slice does not discharge ML-KEM/AEAD/KDF/RNG raw-wire indistinguishability, simulator zero knowledge, remote topology privacy, timing/batching privacy, hash security, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound the new theorem slices to executable gates: dependency-audit rejects stale waivers, proof-statement/proof-wrapper Lean vectors are checked against production transcript/admission code, wallet metadata regressions check public ciphertext projections, and native sync response-range caps are checked before peer response allocation/serving.",
+    "summary": "Bound local network metadata exclusion to executable network regressions: consensus-carrying WireMessage::Proto payload projection is invariant under changed PqConnectionInfo and RelayConfig metadata, sentinel metadata is absent from encoded wire/payload bytes, and the formal-core gate runs that regression.",
     "changed_runtime_paths": [
-      "scripts/dependency-audit-gate.sh rejects unused validated waivers",
-      "config/dependency-audit-waivers.json removes stale waivers no longer present in cargo audit findings",
-      "circuits/transaction/src/proof.rs consumes proof-wrapper metadata projection vector cases in the existing generated-vector test",
-      "wallet/src/store.rs adds cfg(test) address metadata public-ciphertext projection regression",
-      "node/src/native/mod.rs adds cfg(test) native sync response-range bounded-request regression",
-      "scripts/check_formal_core.sh includes the new stale-waiver, wallet metadata, and sync response-range gates"
+      "network/src/p2p.rs adds cfg(test) consensus payload projection regression for PqConnectionInfo and RelayConfig metadata exclusion",
+      "network/src/native_transport.rs adds cfg(test) low-level PqConnectionInfo identical-payload wire encoding regression",
+      "scripts/check_formal_core.sh runs the consensus payload projection regression before network secure-channel vector gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Release.DependencyAuditPolicy",
-      "Hegemon.Transaction.ProofStatementBinding",
-      "Hegemon.Transaction.ProofWrapperAdmission",
       "Hegemon.Privacy.Observer",
-      "Hegemon.Privacy.CiphertextPrivacy",
-      "Hegemon.Native.SyncAdmission"
+      "Hegemon.Privacy.CiphertextPrivacy"
     ],
     "validation": {
-      "status": "full local formal-core passed with 118 claims, 1833 named Lean theorem declarations, 822 axiom-free theorem declarations, 1011 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 509 falsification cases, 209 implementation bindings, 163 result obligations, and 11 native backend reference vectors"
+      "status": "full local formal-core passed with 118 claims, 1845 named Lean theorem declarations, 831 axiom-free theorem declarations, 1014 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 511 falsification cases, 209 implementation bindings, 163 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "No shipped node hot-path logic changes beyond release script/policy and cfg(test) conformance gates."
+      "No shipped node hot-path logic changes; this is Lean/formal metadata plus cfg(test) implementation-equivalence hardening."
     ]
   },
   "properties": [
@@ -479,7 +466,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 68,
+      "completion_percent": 70,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -523,11 +510,15 @@
         "node/src/native/mod.rs materialized_sidecar_observer_projection_ignores_received_time regression proves arrival-time-only pending-action hash changes do not alter the sidecar semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection",
         "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
         "wallet/src/store.rs local_address_metadata_does_not_change_public_ciphertext_projection regression proves next_address_index advancement and persistence through address reservation/reopen do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
-        "Proof-wrapper metadata projection is now explicitly bounded: accepted wrappers cannot change the public statement projection or extend public nullifier/ciphertext/asset rows outside the bound statement, reducing proof-wrapper metadata leakage surface."
+        "Proof-wrapper metadata projection is now explicitly bounded: accepted wrappers cannot change the public statement projection or extend public nullifier/ciphertext/asset rows outside the bound statement, reducing proof-wrapper metadata leakage surface.",
+        "formal/lean/Hegemon/Privacy/Observer.lean now models local network metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed PQ peer/connection/relay counters",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local network metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and remote network assumptions explicit",
+        "network/src/p2p.rs pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection regression proves PQ connection info and relay config sentinel metadata do not change consensus-carrying proto wire bytes or decoded consensus payload projection and do not appear in those byte projections",
+        "network/src/native_transport.rs connection_info_metadata_does_not_change_wire_message_encoding regression checks low-level PqConnectionInfo changes do not alter identical payload wire encoding"
       ],
       "missing_work": [
-        "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, and arrival-time sidecar projection into batching policy, remaining wallet metadata, and network metadata surfaces.",
+        "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, and PQ connection/relay consensus-payload projection into batching policy, remaining wallet metadata, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
