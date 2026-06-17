@@ -67,6 +67,7 @@ pub struct BlueprintReport {
 struct ClaimProjection {
     production_eligible: bool,
     evidence_paths: BTreeSet<String>,
+    lean_theorems: BTreeSet<String>,
 }
 
 #[derive(Debug)]
@@ -167,6 +168,8 @@ struct ImplementationCallOrderConstraint {
     result_obligation: Option<String>,
     #[serde(default)]
     must_dominate_successors: bool,
+    #[serde(default)]
+    lean_theorems: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -279,6 +282,7 @@ fn validate_claims_for_blueprint(root: &Path, claims_path: &Path) -> Result<Clai
             ClaimProjection {
                 production_eligible: claim.production_eligible,
                 evidence_paths: claim.evidence_paths.into_iter().collect(),
+                lean_theorems: claim.lean_theorems.into_iter().collect(),
             },
         );
     }
@@ -1085,7 +1089,7 @@ fn validate_blueprint_node(
             claim_evidence
         );
     }
-    validate_implementation_bindings(root, node)?;
+    validate_implementation_bindings(root, node, claim)?;
     validate_falsification_cases(node)?;
     if claim.production_eligible {
         ensure!(
@@ -1107,7 +1111,11 @@ fn validate_blueprint_node(
     Ok(())
 }
 
-fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result<()> {
+fn validate_implementation_bindings(
+    root: &Path,
+    node: &BlueprintNode,
+    claim: &ClaimProjection,
+) -> Result<()> {
     for binding in &node.implementation_bindings {
         ensure!(
             node.implementation_paths.contains(&binding.path),
@@ -1181,8 +1189,48 @@ fn validate_implementation_bindings(root: &Path, node: &BlueprintNode) -> Result
                 &binding.callee,
                 constraint.result_obligation.as_deref(),
             )?;
+            validate_implementation_call_order_theorems(&node.id, claim, constraint)?;
         }
         validate_rust_implementation_binding(root, &node.id, binding)?;
+    }
+    Ok(())
+}
+
+fn validate_implementation_call_order_theorems(
+    node_id: &str,
+    claim: &ClaimProjection,
+    constraint: &ImplementationCallOrderConstraint,
+) -> Result<()> {
+    if constraint.lean_theorems.is_empty() {
+        return Ok(());
+    }
+
+    let mut theorem_refs = BTreeSet::new();
+    for theorem in &constraint.lean_theorems {
+        validate_lean_theorem_name(node_id, theorem)?;
+        ensure!(
+            theorem_refs.insert(theorem.as_str()),
+            "{} implementation binding order constraint for {} lists duplicate Lean theorem {}",
+            node_id,
+            constraint.caller,
+            theorem
+        );
+    }
+    ensure!(
+        !claim.lean_theorems.is_empty(),
+        "{} implementation binding order constraint for {} lists Lean theorem refs but claim has no Lean theorem evidence",
+        node_id,
+        constraint.caller
+    );
+    for theorem in &constraint.lean_theorems {
+        ensure!(
+            claim.lean_theorems.contains(theorem),
+            "{} implementation binding order constraint for {} lists Lean theorem {} that is not listed by claim {}",
+            node_id,
+            constraint.caller,
+            theorem,
+            node_id
+        );
     }
     Ok(())
 }
@@ -4424,6 +4472,9 @@ mod tests {
     use serde_json::{json, Value};
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    const TARGET_ORDER_THEOREM: &str = "Hegemon.Native.ActionOrder.order_gate_precedes_mutation";
+    const TARGET_ORDER_THEOREM_PATH: &str = "formal/lean/Hegemon/Native/ActionOrder.lean";
+
     #[test]
     fn compact_lengths_match_scale_shape() {
         let mut out = Vec::new();
@@ -7624,6 +7675,75 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_accepts_theorem_indexed_order_constraint() {
+        let root = test_root("theorem-indexed-order-constraint");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_target_order_theorem(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        let mut claims = claims_fixture();
+        make_target_lean_theorem_claim(&mut claims, &[TARGET_ORDER_THEOREM]);
+        write_json(&claims_path, claims);
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_theorem_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["apply_actions"],
+                &[TARGET_ORDER_THEOREM],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("theorem-indexed order constraint");
+        assert_eq!(report.implementation_order_constraints, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_unknown_theorem_ref_on_order_constraint() {
+        let root = test_root("unknown-theorem-indexed-order-constraint");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_target_order_theorem(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        let mut claims = claims_fixture();
+        make_target_lean_theorem_claim(&mut claims, &[TARGET_ORDER_THEOREM]);
+        write_json(&claims_path, claims);
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_theorem_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["apply_actions"],
+                &["Hegemon.Native.ActionOrder.unknown_order_theorem"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("unknown theorem ref must reject");
+        assert!(err.to_string().contains("not listed by claim target.prod"));
+    }
+
+    #[test]
     fn blueprint_accepts_path_qualified_order_successor() {
         let root = test_root("path-qualified-order-successor");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8247,6 +8367,31 @@ mod tests {
         })
     }
 
+    fn write_target_order_theorem(root: &Path) {
+        write_repo_file(
+            root,
+            TARGET_ORDER_THEOREM_PATH,
+            "namespace Hegemon.Native.ActionOrder\n\
+             theorem order_gate_precedes_mutation : True := by\n\
+               trivial\n\
+             end Hegemon.Native.ActionOrder\n",
+        );
+    }
+
+    fn make_target_lean_theorem_claim(claims: &mut Value, lean_theorems: &[&str]) {
+        let target = claims["claims"][1].as_object_mut().expect("target claim");
+        target.insert("claim_class".to_owned(), json!("lean_theorem"));
+        target.insert(
+            "proof_model".to_owned(),
+            json!("lean4_theorem_no_sorry_generated_rust_conformance_vectors"),
+        );
+        target.insert("lean_theorems".to_owned(), json!(lean_theorems));
+        target.insert(
+            "evidence_paths".to_owned(),
+            json!(["evidence/target.txt", TARGET_ORDER_THEOREM_PATH]),
+        );
+    }
+
     fn blueprint_fixture(
         target_review_status: &str,
         support_deps: &[&str],
@@ -8332,6 +8477,26 @@ mod tests {
                 }
             ]),
         );
+        blueprint
+    }
+
+    fn blueprint_fixture_with_theorem_ordered_binding(
+        callee: &str,
+        callers: &[&str],
+        ordered_caller: &str,
+        successors: &[&str],
+        lean_theorems: &[&str],
+    ) -> Value {
+        let mut blueprint =
+            blueprint_fixture_with_ordered_binding(callee, callers, ordered_caller, successors);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        target.insert(
+            "evidence_paths".to_owned(),
+            json!(["evidence/target.txt", TARGET_ORDER_THEOREM_PATH]),
+        );
+        let constraint = &mut target["implementation_bindings"][0]["call_order_constraints"][0];
+        constraint["lean_theorems"] = json!(lean_theorems);
         blueprint
     }
 

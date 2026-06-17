@@ -1513,6 +1513,11 @@
           "id": "native-fork-choice-publication-binding",
           "description": "Native announced-block import must bind fork-choice comparison before either canonical reorg publication or noncanonical side-branch persistence can run.",
           "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
+        },
+        {
+          "id": "native-fork-choice-publication-theorem-index",
+          "description": "Native announced-block fork-choice publication order constraints must reference fork-choice Lean theorems listed by the claims ledger; removing those theorem refs or pointing at an unclaimed theorem must fail the blueprint gate.",
+          "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
       "scope_boundary": "This node proves deterministic two-tip ordering, selected-tip source/facts, and no-lower-work selection only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, fork-choice convergence/liveness, or long-range adversarial mining schedule.",
@@ -1531,7 +1536,11 @@
                 "reorganize_chain_to_best_locked",
                 "persist_noncanonical_block_record"
               ],
-              "must_dominate_successors": true
+              "must_dominate_successors": true,
+              "lean_theorems": [
+                "Hegemon.Consensus.selectBest_selection_facts",
+                "Hegemon.Consensus.selectBest_work_not_lower"
+              ]
             }
           ]
         }
