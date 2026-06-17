@@ -1,4 +1,5 @@
 import Hegemon.Native.ActionRequestProjectionAdmission
+import Hegemon.Native.BridgeActionResourceAdmission
 import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.MineableActionAdmission
 import Hegemon.Native.ReceiptRoot
@@ -14,6 +15,7 @@ namespace PreHeavyWorkResourceBoundSurface
 
 open Hegemon.Native.MineableActionAdmission
 open Hegemon.Native.ActionRequestProjectionAdmission
+open Hegemon.Native.BridgeActionResourceAdmission
 open Hegemon.Native.CandidateArtifactAdmission
 open Hegemon.Native.ReceiptRoot
 open Hegemon.Native.ResourceBudgetAdmission
@@ -22,6 +24,7 @@ open Hegemon.Native.SidecarUploadAdmission
 open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafArtifactProjectionRefinement
+open Hegemon.Resource.BoundedRequestAdmission
 
 structure PreHeavyWorkResourceBoundSurface where
   mempoolBudget : MempoolBudgetInput
@@ -691,6 +694,8 @@ structure PreHeavyWorkVerificationPathSurface where
   resourceSurface : PreHeavyWorkResourceBoundSurface
   actionRequest : ActionRequestProjectionInput
   transferPayload : TransferPayloadInput
+  bridgeResourcePolicy : ResourcePolicy
+  bridgeResource : BridgeActionResourceInput
   candidateArtifact : CandidateArtifactInput
   txLeafArtifactBytes : List Byte
   txLeafArtifactSummary : TxLeafSummary
@@ -708,6 +713,10 @@ structure AcceptedPreHeavyWorkVerificationPathInputs
     actionRequestProjectionAccepts surface.actionRequest = true
   transferPayloadAccepted :
     transferPayloadAccepts surface.transferPayload = true
+  bridgeResourceAccepted :
+    evaluateBoundedRequest
+        surface.bridgeResourcePolicy
+        (bridgeActionResourceRequest surface.bridgeResource) = none
   candidateArtifactAccepted :
     evaluateCandidateArtifact surface.candidateArtifact = Except.ok ()
   txLeafArtifactParsed :
@@ -738,6 +747,10 @@ structure AcceptedPreHeavyWorkVerificationPathBounds
     AcceptedActionRequestProjectionPreHeavyBounds surface.actionRequest
   transferBounds :
     AcceptedTransferPayloadPreHeavyBounds surface.transferPayload
+  bridgeResourceFacts :
+    AcceptedBridgeActionResourceFacts
+      surface.bridgeResourcePolicy
+      surface.bridgeResource
   candidateBounds :
     AcceptedCandidateArtifactPreHeavyBounds surface.candidateArtifact
   txLeafArtifactByteShapeFacts :
@@ -780,6 +793,9 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
     transferBounds :=
       transfer_payload_accepts_implies_preheavy_bounds
         accepted.transferPayloadAccepted,
+    bridgeResourceFacts :=
+      accepted_bridge_action_resource_exposes_bounds
+        accepted.bridgeResourceAccepted,
     candidateBounds :=
       candidate_artifact_accepts_implies_preheavy_bounds
         accepted.candidateArtifactAccepted,

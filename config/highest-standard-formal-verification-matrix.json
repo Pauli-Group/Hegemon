@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.33,
+  "overall_completion_percent": 88.35,
   "last_full_formal_core": {
-    "date": "2026-06-17T13:41:51Z",
-    "commit": "362dbecf",
-    "status": "passed locally and on hegemon-dev after proving the accepted-block admission-safety certificate over the raw-ingress full-byte publication facts",
+    "date": "2026-06-17T16:58:27Z",
+    "commit": "pre-commit-working-tree",
+    "status": "passed locally after adding bridge action resource admission, composing bridge resource facts into the pre-heavy verification-path bounds, binding Lean native-cap vectors to production constants, and moving inbound bridge resource rejection before payload-hash binding and receipt verification",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1952,
-    "axiom_free_theorems": 887,
-    "axiom_dependent_theorems": 1065,
+    "named_lean_theorems": 1969,
+    "axiom_free_theorems": 889,
+    "axiom_dependent_theorems": 1080,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
-    "blueprint_edges": 492,
-    "falsification_cases": 528,
+    "blueprint_edges": 493,
+    "falsification_cases": 531,
     "implementation_bindings": 216,
     "implementation_result_obligations": 169,
     "implementation_order_constraints": 144,
@@ -870,7 +870,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 85.5,
+      "completion_percent": 86.4,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -893,10 +893,11 @@
         "formal/lean/Hegemon/Native/SyncAdmission.lean now proves `accepted_response_range_exposes_bounded_request_facts`, carrying the outbound sync response-range cap into reusable bounded-request item-count facts before block_range publication; node/src/native/mod.rs regression `native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts` checks an overwide response-range request is capped to MAX_NATIVE_SYNC_RESPONSE_BLOCKS before block_range can allocate or serve peer response rows, and formal-core runs that focused regression.",
         "formal/lean/Hegemon/Network/QueueResourceAdmission.lean proves peer-send and event-channel byte-budget reserve/send accounting, including exact-limit acceptance, message-over-cap rejection, usize overflow rejection, aggregate queue-budget rejection, accepted-send queued-byte increments, full/closed rollback, and reserve-before-channel-state precedence; `network/src/network_backend.rs` checks Lean-generated queue-resource vectors against the production queue accounting helpers.",
         "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean proves accepted candidate artifacts project declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunks into reusable bounded-request caps; node/src/native/mod.rs checks that projection before accepting candidate artifacts.",
-        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean proves inline transfer ciphertext resources project route payload bytes, proof-plus-ciphertext decoded bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into reusable bounded-request caps; node/src/native/mod.rs calls validate_inline_transfer_ciphertext_resource before per-ciphertext hash/materialization at submit-action construction and decoded transfer validation."
+        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean proves inline transfer ciphertext resources project route payload bytes, proof-plus-ciphertext decoded bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into reusable bounded-request caps; node/src/native/mod.rs calls validate_inline_transfer_ciphertext_resource before per-ciphertext hash/materialization at submit-action construction and decoded transfer validation.",
+        "formal/lean/Hegemon/Native/BridgeActionResourceAdmission.lean proves bridge action public_args, outbound payload, inbound proof-receipt, inbound message-payload, aggregate dynamic-byte, item-count, and payload-work caps through the reusable bounded-request table; formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean composes those bridge resource facts into the pre-heavy verification-path bounds; node/src/native/mod.rs now rejects oversized inbound proof receipts and bridge message payloads before payload-hash binding, nested receipt decode, or receipt verification, and formal-core checks Lean-generated bridge action resource vectors plus focused regressions."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

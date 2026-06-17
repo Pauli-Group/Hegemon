@@ -25,8 +25,8 @@ use consensus_light_client::{
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
     RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
-    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
-    HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use crypto::ml_dsa::{
     MlDsaPublicKey, MlDsaSecretKey, MlDsaSignature, ML_DSA_PUBLIC_KEY_LEN, ML_DSA_SIGNATURE_LEN,
@@ -89,6 +89,11 @@ const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
 const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
 const NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED: bool = false;
 const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
+const MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES: usize = 512 * 1024;
+const MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES: usize =
+    HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1;
+const MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES: usize =
+    MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES + MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
@@ -996,6 +1001,21 @@ struct NativeBridgeActionPayloadAdmissionInput {
     inbound_replay_key_matches: bool,
     inbound_destination_matches: bool,
     inbound_payload_hash_matches: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeActionResourceAdmissionInput {
+    raw_byte_cap: usize,
+    decoded_byte_cap: usize,
+    item_count_cap: usize,
+    item_byte_cap: usize,
+    aggregate_byte_cap: usize,
+    work_unit_cap: usize,
+    action_kind: NativeBridgeActionPayloadKind,
+    public_args_bytes: usize,
+    outbound_payload_bytes: usize,
+    inbound_proof_receipt_bytes: usize,
+    inbound_message_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -8942,11 +8962,29 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
             evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
                 native_bridge_action_payload_admission_error(action.action_id, rejection)
             })?;
+            validate_bridge_action_resource_projection(
+                native_bridge_action_resource_projection_input(
+                    action_kind,
+                    action.public_args.len(),
+                    args.payload.len(),
+                    0,
+                    0,
+                ),
+            )?;
             Ok(())
         }
         NativeBridgeActionPayloadKind::Inbound => {
             let args: InboundBridgeArgsV1 =
                 decode_scale_exact(&action.public_args, "inbound bridge action args")?;
+            validate_bridge_action_resource_projection(
+                native_bridge_action_resource_projection_input(
+                    action_kind,
+                    action.public_args.len(),
+                    0,
+                    args.proof_receipt.len(),
+                    args.message.payload.len(),
+                ),
+            )?;
             let input = native_bridge_action_payload_admission_input(
                 bridge_route,
                 state_deltas_absent,
@@ -8980,6 +9018,15 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
             evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
                 native_bridge_action_payload_admission_error(action.action_id, rejection)
             })?;
+            validate_bridge_action_resource_projection(
+                native_bridge_action_resource_projection_input(
+                    action_kind,
+                    action.public_args.len(),
+                    0,
+                    0,
+                    0,
+                ),
+            )?;
             Ok(())
         }
         NativeBridgeActionPayloadKind::Unsupported => {
@@ -9020,6 +9067,75 @@ fn bridge_action_has_no_state_deltas(action: &PendingAction) -> bool {
         && action.candidate_artifact.is_none()
 }
 
+fn native_bridge_action_resource_projection_input(
+    action_kind: NativeBridgeActionPayloadKind,
+    public_args_bytes: usize,
+    outbound_payload_bytes: usize,
+    inbound_proof_receipt_bytes: usize,
+    inbound_message_payload_bytes: usize,
+) -> NativeBridgeActionResourceAdmissionInput {
+    NativeBridgeActionResourceAdmissionInput {
+        raw_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        decoded_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        item_count_cap: 2,
+        item_byte_cap: MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES,
+        aggregate_byte_cap: MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES,
+        work_unit_cap: MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES,
+        action_kind,
+        public_args_bytes,
+        outbound_payload_bytes,
+        inbound_proof_receipt_bytes,
+        inbound_message_payload_bytes,
+    }
+}
+
+fn native_bridge_action_resource_item_count(
+    input: NativeBridgeActionResourceAdmissionInput,
+) -> usize {
+    match input.action_kind {
+        NativeBridgeActionPayloadKind::Outbound => 1,
+        NativeBridgeActionPayloadKind::Inbound => 2,
+        NativeBridgeActionPayloadKind::Register | NativeBridgeActionPayloadKind::Unsupported => 0,
+    }
+}
+
+fn bridge_action_resource_bounded_request(
+    input: NativeBridgeActionResourceAdmissionInput,
+) -> NativeBoundedRequestAdmissionInput {
+    let aggregate_bytes = input
+        .outbound_payload_bytes
+        .saturating_add(input.inbound_proof_receipt_bytes)
+        .saturating_add(input.inbound_message_payload_bytes);
+    NativeBoundedRequestAdmissionInput {
+        raw_byte_cap: input.raw_byte_cap,
+        decoded_byte_cap: input.decoded_byte_cap,
+        item_count_cap: input.item_count_cap,
+        item_byte_cap: input.item_byte_cap,
+        aggregate_byte_cap: input.aggregate_byte_cap,
+        work_unit_cap: input.work_unit_cap,
+        raw_bytes: input.public_args_bytes,
+        decoded_bytes: input.public_args_bytes,
+        item_count: native_bridge_action_resource_item_count(input),
+        max_item_bytes: input
+            .outbound_payload_bytes
+            .max(input.inbound_proof_receipt_bytes)
+            .max(input.inbound_message_payload_bytes),
+        aggregate_bytes,
+        work_units: input
+            .outbound_payload_bytes
+            .max(input.inbound_message_payload_bytes),
+    }
+}
+
+fn validate_bridge_action_resource_projection(
+    input: NativeBridgeActionResourceAdmissionInput,
+) -> Result<NativeBoundedRequestAdmissionInput> {
+    let bounded = bridge_action_resource_bounded_request(input);
+    evaluate_native_bounded_request_admission(bounded)
+        .map(|_| bounded)
+        .map_err(|rejection| bridge_action_resource_admission_error(bounded, rejection))
+}
+
 fn native_bridge_action_payload_admission_input(
     bridge_route: bool,
     state_deltas_absent: bool,
@@ -9039,6 +9155,44 @@ fn native_bridge_action_payload_admission_input(
         inbound_replay_key_matches,
         inbound_destination_matches,
         inbound_payload_hash_matches,
+    }
+}
+
+fn bridge_action_resource_admission_error(
+    input: NativeBoundedRequestAdmissionInput,
+    rejection: NativeBoundedRequestAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+            "bridge action public_args byte count {} exceeds cap {}",
+            input.raw_bytes,
+            input.raw_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+            "bridge action decoded byte count {} exceeds cap {}",
+            input.decoded_bytes,
+            input.decoded_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+            "bridge action dynamic item count {} exceeds cap {}",
+            input.item_count,
+            input.item_count_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+            "bridge action proof receipt or payload item byte count {} exceeds cap {}",
+            input.max_item_bytes,
+            input.item_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+            "bridge action dynamic byte aggregate {} exceeds cap {}",
+            input.aggregate_bytes,
+            input.aggregate_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+            "bridge action message payload byte count {} exceeds cap {}",
+            input.work_units,
+            input.work_unit_cap
+        ),
     }
 }
 
@@ -14047,6 +14201,38 @@ mod tests {
         inbound_replay_key_matches: bool,
         inbound_destination_matches: bool,
         inbound_payload_hash_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeActionResourceAdmissionVectorFile {
+        schema_version: u32,
+        bridge_action_resource_admission_cases: Vec<LeanBridgeActionResourceAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeActionResourceAdmissionCase {
+        name: String,
+        action_kind: String,
+        public_args_bytes: usize,
+        outbound_payload_bytes: usize,
+        inbound_proof_receipt_bytes: usize,
+        inbound_message_payload_bytes: usize,
+        raw_byte_cap: usize,
+        decoded_byte_cap: usize,
+        item_count_cap: usize,
+        item_byte_cap: usize,
+        aggregate_byte_cap: usize,
+        work_unit_cap: usize,
+        expected_raw_bytes: usize,
+        expected_decoded_bytes: usize,
+        expected_item_count: usize,
+        expected_max_item_bytes: usize,
+        expected_aggregate_bytes: usize,
+        expected_work_units: usize,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -20687,6 +20873,137 @@ mod tests {
             "unsupported" => NativeBridgeActionPayloadKind::Unsupported,
             other => panic!("{case_name} has unknown bridge action kind {other}"),
         }
+    }
+
+    #[test]
+    fn lean_generated_bridge_action_resource_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge action resource admission vectors");
+        let vectors: LeanBridgeActionResourceAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge action resource admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_action_resource_admission_cases.is_empty(),
+            "Lean bridge action resource admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        let mut native_cap_cases = BTreeSet::new();
+        for case in &vectors.bridge_action_resource_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            if verify_lean_bridge_action_resource_admission_case(case) {
+                native_cap_cases.insert(case.name.clone());
+            }
+        }
+        assert!(
+            native_cap_cases.contains("valid-inbound-bridge-resource-accepted"),
+            "Lean bridge action resource vectors must bind valid inbound caps to production constants"
+        );
+        assert!(
+            native_cap_cases.contains("valid-outbound-bridge-resource-accepted"),
+            "Lean bridge action resource vectors must bind valid outbound caps to production constants"
+        );
+        assert!(
+            native_cap_cases.contains("exact-inbound-receipt-and-payload-limits-accepted"),
+            "Lean bridge action resource vectors must bind exact inbound limits to production constants"
+        );
+    }
+
+    fn verify_lean_bridge_action_resource_admission_case(
+        case: &LeanBridgeActionResourceAdmissionCase,
+    ) -> bool {
+        let input = NativeBridgeActionResourceAdmissionInput {
+            raw_byte_cap: case.raw_byte_cap,
+            decoded_byte_cap: case.decoded_byte_cap,
+            item_count_cap: case.item_count_cap,
+            item_byte_cap: case.item_byte_cap,
+            aggregate_byte_cap: case.aggregate_byte_cap,
+            work_unit_cap: case.work_unit_cap,
+            action_kind: lean_bridge_action_payload_kind(&case.action_kind, &case.name),
+            public_args_bytes: case.public_args_bytes,
+            outbound_payload_bytes: case.outbound_payload_bytes,
+            inbound_proof_receipt_bytes: case.inbound_proof_receipt_bytes,
+            inbound_message_payload_bytes: case.inbound_message_payload_bytes,
+        };
+        let bounded = bridge_action_resource_bounded_request(input);
+        let uses_native_caps = case.raw_byte_cap == MAX_NATIVE_RPC_ACTION_BYTES
+            && case.decoded_byte_cap == MAX_NATIVE_RPC_ACTION_BYTES
+            && case.item_count_cap == 2
+            && case.item_byte_cap == MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES
+            && case.aggregate_byte_cap == MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES
+            && case.work_unit_cap == MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES;
+        if uses_native_caps {
+            let production_input = native_bridge_action_resource_projection_input(
+                input.action_kind,
+                input.public_args_bytes,
+                input.outbound_payload_bytes,
+                input.inbound_proof_receipt_bytes,
+                input.inbound_message_payload_bytes,
+            );
+            assert_eq!(
+                production_input, input,
+                "{} Lean bridge action resource policy caps drifted from production constants",
+                case.name
+            );
+            assert_eq!(
+                bridge_action_resource_bounded_request(production_input),
+                bounded,
+                "{} production bridge action resource projection drifted from Lean spec",
+                case.name
+            );
+        }
+        assert_eq!(
+            bounded.raw_bytes, case.expected_raw_bytes,
+            "{} bridge action public_args projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.decoded_bytes, case.expected_decoded_bytes,
+            "{} bridge action decoded-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.item_count, case.expected_item_count,
+            "{} bridge action dynamic item-count projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.max_item_bytes, case.expected_max_item_bytes,
+            "{} bridge action max item-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.aggregate_bytes, case.expected_aggregate_bytes,
+            "{} bridge action aggregate-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.work_units, case.expected_work_units,
+            "{} bridge action work-unit projection drifted from Lean spec",
+            case.name
+        );
+
+        let actual = evaluate_native_bounded_request_admission(bounded);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bridge action resource validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge action resource rejection drifted from Lean spec",
+            case.name
+        );
+        uses_native_caps
     }
 
     #[test]
@@ -28174,6 +28491,96 @@ mod tests {
         let err = validate_bridge_action_payload(&action)
             .expect_err("wrong inbound bridge payload hash must be rejected before receipt verify");
         assert!(err.to_string().contains("payload hash mismatch"));
+    }
+
+    #[test]
+    fn bridge_inbound_resource_projection_uses_native_caps() {
+        let action = test_inbound_bridge_action(b"inbound payload");
+        let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        let input = native_bridge_action_resource_projection_input(
+            NativeBridgeActionPayloadKind::Inbound,
+            action.public_args.len(),
+            0,
+            args.proof_receipt.len(),
+            args.message.payload.len(),
+        );
+        assert_eq!(input.raw_byte_cap, MAX_NATIVE_RPC_ACTION_BYTES);
+        assert_eq!(input.decoded_byte_cap, MAX_NATIVE_RPC_ACTION_BYTES);
+        assert_eq!(input.item_count_cap, 2);
+        assert_eq!(input.item_byte_cap, MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES);
+        assert_eq!(
+            input.aggregate_byte_cap,
+            MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES
+        );
+        assert_eq!(input.work_unit_cap, MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES);
+
+        let bounded = bridge_action_resource_bounded_request(input);
+        assert_eq!(bounded.raw_bytes, action.public_args.len());
+        assert_eq!(bounded.decoded_bytes, action.public_args.len());
+        assert_eq!(bounded.item_count, 2);
+        assert_eq!(
+            bounded.max_item_bytes,
+            args.proof_receipt.len().max(args.message.payload.len())
+        );
+        assert_eq!(
+            bounded.aggregate_bytes,
+            args.proof_receipt.len() + args.message.payload.len()
+        );
+        assert_eq!(bounded.work_units, args.message.payload.len());
+        assert_eq!(evaluate_native_bounded_request_admission(bounded), Ok(()));
+    }
+
+    #[test]
+    fn bridge_inbound_proof_receipt_resource_rejects_before_receipt_decode_or_verify() {
+        let mut action = test_inbound_bridge_action(b"inbound payload");
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.proof_receipt = vec![0x42; MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES + 1];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action)
+            .expect_err("oversized inbound bridge receipt must reject before receipt decode");
+        let err = err.to_string();
+        assert!(
+            err.contains("proof receipt or payload item byte count"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("exceeds cap"), "unexpected error: {err}");
+        assert!(
+            !err.contains("RISC Zero"),
+            "oversized receipt reached nested receipt decode/verify: {err}"
+        );
+    }
+
+    #[test]
+    fn bridge_inbound_message_payload_resource_rejects_before_receipt_verify() {
+        let oversized_payload = vec![0x2a; MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES + 1];
+        let mut action = test_inbound_bridge_action(&oversized_payload);
+        let mut args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge test args");
+        args.message.payload_hash = [0x33; 48];
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_bridge_action_payload(&action).expect_err(
+            "oversized inbound bridge message payload must reject before payload-hash or receipt verify",
+        );
+        let err = err.to_string();
+        assert!(
+            err.contains("message payload byte count"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("exceeds cap"), "unexpected error: {err}");
+        assert!(
+            !err.contains("payload hash mismatch"),
+            "oversized payload reached payload hash binding before resource gate: {err}"
+        );
+        assert!(
+            !err.contains("verification is disabled"),
+            "oversized payload reached receipt verifier: {err}"
+        );
     }
 
     #[test]

@@ -139,6 +139,9 @@ lean_exe gen_block_action_validation_vectors where
 lean_exe gen_bridge_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateBridgeActionPayloadAdmissionVectors
 
+lean_exe gen_bridge_action_resource_admission_vectors where
+  root := `Hegemon.Native.GenerateBridgeActionResourceAdmissionVectors
+
 lean_exe gen_bridge_witness_backscan_vectors where
   root := `Hegemon.Native.GenerateBridgeWitnessBackscanVectors
 

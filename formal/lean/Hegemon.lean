@@ -51,6 +51,7 @@ import Hegemon.Native.BlockCommitmentAdmission
 import Hegemon.Native.BlockReplayInputProjection
 import Hegemon.Native.BlockReplayRefinement
 import Hegemon.Native.BridgeActionPayloadAdmission
+import Hegemon.Native.BridgeActionResourceAdmission
 import Hegemon.Native.BridgeMintSafety
 import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission

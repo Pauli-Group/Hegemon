@@ -462,6 +462,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateBlockActionValidationVectors.lean",
         "formal/lean/Hegemon/Native/BridgeActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/BridgeActionResourceAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeActionResourceAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateInboundBridgeReceiptAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/Risc0ReleaseVerifier.lean",
