@@ -1,4 +1,5 @@
 import Hegemon.Consensus.CommitmentTreeAppend
+import Hegemon.Native.ActionPlanApplicationAdmission
 import Hegemon.Native.CommitmentTreeRefinement
 import Hegemon.Native.NativePublicationRowEquivalence
 import Hegemon.Native.RawIngressFullBytePublicationSurface
@@ -8,6 +9,7 @@ namespace Native
 namespace CommitmentTreeContentRefinement
 
 open Hegemon.Native.AcceptedChain
+open Hegemon.Native.ActionPlanApplicationAdmission
 open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.BlockActionValidation
 open Hegemon.Native.BlockIndexReload
@@ -63,6 +65,24 @@ def rawIngressAppendSummaries
     historyLimit
     initial.ledger.leafCount
     (orderedDecodedCommitments decodedRows).length
+
+def rowCommitmentCounts
+    (rows : List PendingActionFieldProjectionRow) : List Nat :=
+  rows.map (fun row => row.commitments.length)
+
+def rowCommitmentStarts
+    (rows : List PendingActionFieldProjectionRow) : List Nat :=
+  rows.map (fun row => row.commitmentStart)
+
+def rowActionPlanInput
+    (leafStart : Nat)
+    (rows : List PendingActionFieldProjectionRow) :
+    ActionPlanApplicationInput :=
+  {
+    leafStart := leafStart,
+    actionCommitmentCounts := rowCommitmentCounts rows,
+    plannedStarts := rowCommitmentStarts rows
+  }
 
 theorem rowsWithOffsets_values
     (start : Nat)
@@ -414,10 +434,10 @@ structure RawIngressCommitmentAppendPublicationFacts
   appendMutationSummaryCount :
     (rawIngressAppendSummaries depth historyLimit initial decodedRows).length =
       (orderedDecodedCommitments decodedRows).length
-  appendMutationIndexesMatchDecoded :
-    (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
-        (fun summary => summary.leafIndex) =
-      orderedDecodedCommitmentIndexes decodedRows
+  decodedRowsAcceptedByRowStartPlan :
+    actionPlanApplicationAccepts
+      (rowActionPlanInput initial.ledger.leafCount decodedRows) =
+      true
   canonicalCommitmentRowsDriveAppendCount :
     (rawIngressAppendSummaries depth historyLimit initial decodedRows).length =
       canonicalRows.commitmentRows.length
@@ -1059,10 +1079,10 @@ theorem raw_ingress_commitment_tree_content_binds_append_publication_surface
         wireRows
         canonicalRows)
     (depth historyLimit : Nat)
-    (appendMutationIndexesMatchDecoded :
-      (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
-          (fun summary => summary.leafIndex) =
-        orderedDecodedCommitmentIndexes decodedRows) :
+    (decodedRowsAcceptedByRowStartPlan :
+      actionPlanApplicationAccepts
+        (rowActionPlanInput initial.ledger.leafCount decodedRows) =
+        true) :
     RawIngressCommitmentAppendPublicationFacts
       surface
       pendingDecode
@@ -1111,7 +1131,7 @@ theorem raw_ingress_commitment_tree_content_binds_append_publication_surface
     {
       contentFacts := facts,
       appendMutationSummaryCount := appendMutationSummaryCount,
-      appendMutationIndexesMatchDecoded := appendMutationIndexesMatchDecoded,
+      decodedRowsAcceptedByRowStartPlan := decodedRowsAcceptedByRowStartPlan,
       canonicalCommitmentRowsDriveAppendCount := by
         rw [appendMutationSummaryCount]
         exact facts.canonicalCommitmentRowCount.symm,
@@ -1209,10 +1229,10 @@ theorem accepted_raw_ingress_full_byte_publication_binds_commitment_append_publi
       decodedRows.length =
         blockActionDecode.actualActionPayloadCount)
     (depth historyLimit : Nat)
-    (appendMutationIndexesMatchDecoded :
-      (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
-          (fun summary => summary.leafIndex) =
-        orderedDecodedCommitmentIndexes decodedRows) :
+    (decodedRowsAcceptedByRowStartPlan :
+      actionPlanApplicationAccepts
+        (rowActionPlanInput initial.ledger.leafCount decodedRows) =
+        true) :
     RawIngressCommitmentAppendPublicationFacts
       surface
       pendingDecode
@@ -1265,7 +1285,7 @@ theorem accepted_raw_ingress_full_byte_publication_binds_commitment_append_publi
       contentFacts
       depth
       historyLimit
-      appendMutationIndexesMatchDecoded
+      decodedRowsAcceptedByRowStartPlan
 
 theorem accepted_raw_ingress_full_byte_publication_binds_replay_set_content
     {surface : RawIngressSidecarReplaySurface}

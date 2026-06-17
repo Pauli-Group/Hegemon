@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 89.03,
+  "overall_completion_percent": 89.1,
   "last_full_formal_core": {
     "date": "2026-06-17T19:12:29Z",
     "commit": "01d4fdb8",
@@ -212,7 +212,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 87,
+      "completion_percent": 88,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -295,13 +295,13 @@
         "formal/lean/Hegemon/Consensus/CommitmentTreeAppend.lean proves executable append-summary facts for leaf index/count progression, trace length, sibling orientation/default selection, bounded history retention, and zero-limit unbounded history",
         "formal/lean/Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean emits append mutation vectors checked by `lean_generated_commitment_tree_append_vectors_match_production` against the production append certificate and real Merkle combiner replay",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
-        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now derives an accepted raw-ingress append-publication fact package that carries append mutation summary counts, explicit append-index schedule alignment, commitment-root publication, and replayed leaf-cursor publication over the same raw witness",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now derives an accepted raw-ingress append-publication fact package that carries append mutation summary counts, accepted action-plan row-start gating over decoded commitment starts/counts, commitment-root publication, and replayed leaf-cursor publication over the same raw witness",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered commitment values and planned indexes through the full native publication path-family theorem",
         "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness",
         "SmallWood spend row-boundary gates now reject active Merkle sibling/root drift while Lean exposes active Merkle-root, position, and path-acceptance facts for the deployed inline-Merkle verifier surface"
       ],
       "missing_work": [
-        "Discharge the explicit append-index schedule alignment hypothesis from production row-start planning instead of passing it into the accepted append-publication theorem.",
+        "Prove the pure flattened append-index equality theorem from accepted action-plan row-start gating and lift it into consumers that require literal index-list equality.",
         "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
         "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],
