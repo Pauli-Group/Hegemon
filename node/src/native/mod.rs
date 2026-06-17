@@ -13338,6 +13338,31 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanConsensusVectorFile {
+        schema_version: u32,
+        fork_choice_cases: Vec<LeanForkChoiceCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanForkChoiceCase {
+        name: String,
+        current_work: String,
+        current_height: u64,
+        current_hash: String,
+        candidate_work: String,
+        candidate_height: u64,
+        candidate_hash: String,
+        select_candidate: bool,
+        selected_source: String,
+        selected_work: String,
+        selected_height: u64,
+        selected_hash: String,
+        selected_work_at_least_current: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanNativeSupplyCase {
         name: String,
         parent_supply: String,
@@ -18297,6 +18322,148 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn lean_generated_native_fork_choice_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CONSENSUS_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CONSENSUS_VECTORS not set; skipping generated Lean consensus vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean consensus vectors");
+        let vectors: LeanConsensusVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean consensus vectors");
+        assert_eq!(vectors.schema_version, 2);
+        assert!(
+            !vectors.fork_choice_cases.is_empty(),
+            "Lean fork-choice cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.fork_choice_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_native_fork_choice_case(case);
+        }
+    }
+
+    fn verify_lean_native_fork_choice_case(case: &LeanForkChoiceCase) {
+        let current = native_fork_choice_meta(
+            case.current_height,
+            parse_lean_hash32(&case.current_hash),
+            parse_lean_work48(&case.current_work),
+        );
+        let candidate = native_fork_choice_meta(
+            case.candidate_height,
+            parse_lean_hash32(&case.candidate_hash),
+            parse_lean_work48(&case.candidate_work),
+        );
+        let production_selected_candidate = native_meta_better_than(&candidate, &current);
+        assert_eq!(
+            production_selected_candidate, case.select_candidate,
+            "{} native fork-choice wrapper drifted from Lean preference",
+            case.name
+        );
+
+        let selected = if production_selected_candidate {
+            &candidate
+        } else {
+            &current
+        };
+        let expected_source = if production_selected_candidate {
+            "candidate"
+        } else {
+            "current"
+        };
+        assert_eq!(
+            case.selected_source, expected_source,
+            "{} native selected source drifted from Lean selectBest",
+            case.name
+        );
+        assert_eq!(
+            selected.height, case.selected_height,
+            "{} native selected height drifted from Lean selectBest",
+            case.name
+        );
+        assert_eq!(
+            selected.hash,
+            parse_lean_hash32(&case.selected_hash),
+            "{} native selected hash drifted from Lean selectBest",
+            case.name
+        );
+        assert_eq!(
+            selected.cumulative_work,
+            parse_lean_work48(&case.selected_work),
+            "{} native selected Work48 drifted from Lean selectBest",
+            case.name
+        );
+        assert!(
+            case.selected_work_at_least_current,
+            "{} Lean selected-work monotonicity flag must be true",
+            case.name
+        );
+        assert!(
+            matches!(
+                compare_work(&selected.cumulative_work, &current.cumulative_work),
+                std::cmp::Ordering::Equal | std::cmp::Ordering::Greater
+            ),
+            "{} native fork-choice selection must not lower cumulative work",
+            case.name
+        );
+    }
+
+    fn native_fork_choice_meta(
+        height: u64,
+        hash: [u8; 32],
+        cumulative_work: [u8; 48],
+    ) -> NativeBlockMeta {
+        NativeBlockMeta {
+            chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            height,
+            hash,
+            parent_hash: [0u8; 32],
+            state_root: [0u8; 48],
+            kernel_root: [0u8; 48],
+            nullifier_root: [0u8; 48],
+            extrinsics_root: [0u8; 32],
+            message_root: [0u8; 48],
+            message_count: 0,
+            header_mmr_root: [0u8; 32],
+            header_mmr_len: 0,
+            timestamp_ms: 0,
+            pow_bits: 0,
+            nonce: [0u8; 32],
+            work_hash: hash,
+            cumulative_work,
+            supply_digest: 0,
+            tx_count: 0,
+            action_bytes: Vec::new(),
+            miner_commitment: [0u8; 48],
+            miner_public_key: Vec::new(),
+            miner_signature: Vec::new(),
+        }
+    }
+
+    fn parse_lean_work48(raw: &str) -> [u8; 48] {
+        let value = raw
+            .parse::<num_bigint::BigUint>()
+            .expect("Lean work value must be decimal BigUint");
+        let bytes = value.to_bytes_be();
+        assert!(bytes.len() <= 48, "Lean Work48 value must fit in 48 bytes");
+        let mut out = [0u8; 48];
+        out[48 - bytes.len()..].copy_from_slice(&bytes);
+        out
+    }
+
+    fn parse_lean_hash32(raw: &str) -> [u8; 32] {
+        let clean = raw.strip_prefix("0x").unwrap_or(raw);
+        let bytes = hex::decode(clean).expect("Lean hash must be valid hex");
+        assert_eq!(bytes.len(), 32, "Lean hash must be 32 bytes");
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&bytes);
+        out
     }
 
     #[test]

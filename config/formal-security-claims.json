@@ -1335,11 +1335,12 @@
       "id": "formal.pow-fork-choice",
       "component": "native PoW consensus",
       "claim_class": "lean_theorem",
-      "summary": "The Lean fork-choice kernel proves deterministic work, height, and hash tie-break ordering; generated Lean vectors are checked against the production helper used by PoW consensus and native block import, and the blueprint binds native fork-choice before side-branch persistence or canonical reorg publication.",
+      "summary": "The Lean fork-choice kernel proves deterministic work, height, hash tie-break, selected-tip, and no-lower-work facts; generated Lean vectors are checked against the production helper and the native import wrapper, and the blueprint binds native fork-choice before side-branch persistence or canonical reorg publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
       "lean_theorems": [
+        "Hegemon.Consensus.betterThan_true_implies_work_not_lower",
         "Hegemon.Consensus.equal_work_height_uses_hash_order",
         "Hegemon.Consensus.equal_work_higher_height_wins",
         "Hegemon.Consensus.equal_work_lower_height_loses",
@@ -1347,12 +1348,19 @@
         "Hegemon.Consensus.lexLt_irrefl",
         "Hegemon.Consensus.lower_work_loses",
         "Hegemon.Consensus.same_tip_not_better",
+        "Hegemon.Consensus.selectBest_candidate_when_better",
+        "Hegemon.Consensus.selectBest_current_when_not_better",
+        "Hegemon.Consensus.selectBest_equal_work_height_lower_hash_returns_candidate",
+        "Hegemon.Consensus.selectBest_equal_work_height_not_lower_hash_keeps_current",
         "Hegemon.Consensus.selectBest_higher_work_returns_candidate",
-        "Hegemon.Consensus.selectBest_lower_work_keeps_current"
+        "Hegemon.Consensus.selectBest_is_current_or_candidate",
+        "Hegemon.Consensus.selectBest_lower_work_keeps_current",
+        "Hegemon.Consensus.selectBest_selection_facts",
+        "Hegemon.Consensus.selectBest_work_not_lower"
       ],
       "assumptions": [
         "The Lean ForkChoiceTip work model represents the ordering result of BigUint work and fixed-width Work48 comparisons, not PoW admission arithmetic or SHA-256 header-hash implementation equivalence.",
-        "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and native block import; blueprint bindings require native announced-block import to call the native fork-choice wrapper before reorg or side-branch persistence.",
+        "Generated Lean conformance vectors cover the consensus::fork_choice helper used by PowConsensus and the native native_meta_better_than wrapper used by native block import; blueprint bindings require native announced-block import to call the native fork-choice wrapper before reorg or side-branch persistence.",
         "The theorem covers deterministic two-tip fork-choice ordering, not every network partition, timestamp edge case, or long-range adversarial mining schedule."
       ],
       "evidence_paths": [

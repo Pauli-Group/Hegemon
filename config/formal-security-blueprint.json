@@ -1449,8 +1449,8 @@
       "id": "formal.pow-fork-choice",
       "claim_id": "formal.pow-fork-choice",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean fork-choice transition, a candidate tip is selected over the current tip exactly when it has greater work, or equal work with greater height, or equal work and height with a lexicographically lower hash.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.higher_work_wins`, `Hegemon.Consensus.lower_work_loses`, `Hegemon.Consensus.equal_work_higher_height_wins`, `Hegemon.Consensus.equal_work_lower_height_loses`, `Hegemon.Consensus.equal_work_height_uses_hash_order`, and `Hegemon.Consensus.same_tip_not_better` prove deterministic two-tip ordering over the executable fork-choice kernel. `gen_consensus_vectors` emits Lean-derived fork-choice examples, and the formal-core gate runs the production `consensus::fork_choice` conformance test against them. `PowConsensus` and native block import both call that helper, and the blueprint now binds native announced-block fork-choice to the side-branch persistence or canonical reorg publication split. The existing TLA+ model remains the bounded aggregate-work/finality abstraction.",
+      "formal_statement": "For the executable Lean fork-choice transition, a candidate tip is selected over the current tip exactly when it has greater work, or equal work with greater height, or equal work and height with a lexicographically lower hash; the selected tip is always either the current or candidate tip and never lowers cumulative work.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.higher_work_wins`, `Hegemon.Consensus.lower_work_loses`, `Hegemon.Consensus.equal_work_higher_height_wins`, `Hegemon.Consensus.equal_work_lower_height_loses`, `Hegemon.Consensus.equal_work_height_uses_hash_order`, `Hegemon.Consensus.same_tip_not_better`, `Hegemon.Consensus.selectBest_selection_facts`, and `Hegemon.Consensus.selectBest_work_not_lower` prove deterministic two-tip ordering and selected-tip monotonicity over the executable fork-choice kernel. `gen_consensus_vectors` emits Lean-derived fork-choice examples with selected-source, selected-tip, and no-lower-work fields, and the formal-core gate runs both the production `consensus::fork_choice` helper conformance test and the native `native_meta_better_than` wrapper conformance test against them. `PowConsensus` and native block import both call the helper/wrapper path, and the blueprint binds native announced-block fork-choice to the side-branch persistence or canonical reorg publication split. The existing TLA+ model remains the bounded aggregate-work/finality abstraction.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -1495,6 +1495,11 @@
           "gate": "bash scripts/check_formal_core.sh"
         },
         {
+          "id": "lean-generated-native-fork-choice-conformance",
+          "description": "Changing the native import fork-choice wrapper, selected source, selected tip, or no-lower-work behavior away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
           "id": "invariant-name-required",
           "description": "Removing `ForkChoiceInvariant` or `FinalityInvariant` from the model must fail the formal inventory check.",
           "gate": "bash scripts/check_formal_core.sh"
@@ -1510,7 +1515,7 @@
           "gate": "cargo run --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json"
         }
       ],
-      "scope_boundary": "This node proves deterministic two-tip ordering only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, or long-range adversarial mining schedule.",
+      "scope_boundary": "This node proves deterministic two-tip ordering, selected-tip source/facts, and no-lower-work selection only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, every network partition, timestamp edge case, fork-choice convergence/liveness, or long-range adversarial mining schedule.",
       "implementation_bindings": [
         {
           "path": "node/src/native/mod.rs",

@@ -18,6 +18,8 @@ def boolJson (value : Bool) : String :=
 def forkChoiceCaseJson
     (name : String)
     (current candidate : ForkChoiceTip) : String :=
+  let selected := selectBest current candidate
+  let selectCandidate := betterThan candidate current
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"current_work\": \"" ++ toString current.work ++ "\",\n"
@@ -26,7 +28,12 @@ def forkChoiceCaseJson
     ++ "      \"candidate_work\": \"" ++ toString candidate.work ++ "\",\n"
     ++ "      \"candidate_height\": " ++ toString candidate.height ++ ",\n"
     ++ "      \"candidate_hash\": \"" ++ hexBytes candidate.hash ++ "\",\n"
-    ++ "      \"select_candidate\": " ++ boolJson (betterThan candidate current) ++ "\n"
+    ++ "      \"select_candidate\": " ++ boolJson selectCandidate ++ ",\n"
+    ++ "      \"selected_source\": \"" ++ (if selectCandidate then "candidate" else "current") ++ "\",\n"
+    ++ "      \"selected_work\": \"" ++ toString selected.work ++ "\",\n"
+    ++ "      \"selected_height\": " ++ toString selected.height ++ ",\n"
+    ++ "      \"selected_hash\": \"" ++ hexBytes selected.hash ++ "\",\n"
+    ++ "      \"selected_work_at_least_current\": " ++ boolJson (current.work <= selected.work) ++ "\n"
     ++ "    }"
 
 def currentBase : ForkChoiceTip :=
@@ -34,7 +41,7 @@ def currentBase : ForkChoiceTip :=
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"fork_choice_cases\": [\n"
     ++ forkChoiceCaseJson "higher-work-wins" currentBase { work := 1000001, height := 19, hash := highHash } ++ ",\n"
     ++ forkChoiceCaseJson "lower-work-loses" currentBase { work := 999999, height := 30, hash := lowHash } ++ ",\n"

@@ -45,6 +45,11 @@ mod tests {
         candidate_height: u64,
         candidate_hash: String,
         select_candidate: bool,
+        selected_source: String,
+        selected_work: String,
+        selected_height: u64,
+        selected_hash: String,
+        selected_work_at_least_current: bool,
     }
 
     #[test]
@@ -58,7 +63,7 @@ mod tests {
         let raw = std::fs::read_to_string(&path).expect("read generated Lean consensus vectors");
         let vectors: LeanConsensusVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean consensus vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.fork_choice_cases.is_empty(),
             "Lean fork-choice cases must not be empty"
@@ -74,8 +79,10 @@ mod tests {
     fn verify_lean_fork_choice_case(case: &LeanForkChoiceCase) {
         let current_work = parse_biguint(&case.current_work);
         let candidate_work = parse_biguint(&case.candidate_work);
+        let selected_work = parse_biguint(&case.selected_work);
         let current_hash = parse_hash32(&case.current_hash);
         let candidate_hash = parse_hash32(&case.candidate_hash);
+        let selected_hash = parse_hash32(&case.selected_hash);
         let selected = fork_choice_prefers_candidate(
             candidate_work.cmp(&current_work),
             case.candidate_height,
@@ -86,6 +93,52 @@ mod tests {
         assert_eq!(
             selected, case.select_candidate,
             "{} production fork-choice ordering drifted from Lean spec",
+            case.name
+        );
+        let expected_source = if selected { "candidate" } else { "current" };
+        assert_eq!(
+            case.selected_source, expected_source,
+            "{} Lean selected source must match the production preference",
+            case.name
+        );
+        let expected_work = if selected {
+            &candidate_work
+        } else {
+            &current_work
+        };
+        let expected_height = if selected {
+            case.candidate_height
+        } else {
+            case.current_height
+        };
+        let expected_hash = if selected {
+            candidate_hash
+        } else {
+            current_hash
+        };
+        assert_eq!(
+            selected_work, *expected_work,
+            "{} selected work drifted from Lean selectBest",
+            case.name
+        );
+        assert_eq!(
+            case.selected_height, expected_height,
+            "{} selected height drifted from Lean selectBest",
+            case.name
+        );
+        assert_eq!(
+            selected_hash, expected_hash,
+            "{} selected hash drifted from Lean selectBest",
+            case.name
+        );
+        assert!(
+            case.selected_work_at_least_current,
+            "{} Lean selectBest must not lower cumulative work",
+            case.name
+        );
+        assert!(
+            selected_work >= current_work,
+            "{} production-selected work must not lower cumulative work",
             case.name
         );
     }

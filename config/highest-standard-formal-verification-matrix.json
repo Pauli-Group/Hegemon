@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.05,
+  "overall_completion_percent": 88.06,
   "last_full_formal_core": {
-    "date": "2026-06-17T10:45:23Z",
+    "date": "2026-06-17T11:16:31Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after adding inline transfer ciphertext resource-admission theorem coverage, schema-v2 transfer payload/resource vectors, wallet output-batch public-shape theorem coverage, schema-v1 wallet output-batch vectors, production native resource conformance, and production wallet planner conformance",
+    "status": "passed locally after adding fork-choice selected-tip/no-lower-work theorem coverage, schema-v2 consensus fork-choice selected-tip vectors, production consensus helper conformance, and native import wrapper conformance",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1933,
+    "named_lean_theorems": 1941,
     "axiom_free_theorems": 883,
-    "axiom_dependent_theorems": 1050,
+    "axiom_dependent_theorems": 1058,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 525,
+    "falsification_cases": 526,
     "implementation_bindings": 216,
     "implementation_result_obligations": 169,
     "implementation_order_constraints": 144,
@@ -76,34 +76,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the inline transfer ciphertext resource-admission theorem package and the wallet output-batch public-shape theorem package. The executable Lean models project inline transfer route/proof/ciphertext resources into the reusable bounded-request table before per-ciphertext hashing/materialization, and prove wallet transfer/stablecoin/burn/consolidation output counts are determined by public shape rather than private witness or local metadata seeds.",
+    "summary": "Added the fork-choice selected-tip/no-lower-work theorem package and bound schema-v2 Lean consensus vectors to both the shared consensus helper and the native import fork-choice wrapper. The executable Lean model now proves selected tips are current-or-candidate, better candidates select the candidate, non-better candidates keep current, selected work never lowers cumulative work, and equal-work/equal-height hash tie-break selection returns the expected source.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean",
-      "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean",
-      "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean"
+      "formal/lean/Hegemon/Consensus/ForkChoice.lean",
+      "formal/lean/Hegemon/Consensus/GenerateVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.TransferActionPayloadAdmission.accepted_inline_transfer_ciphertext_resource_exposes_bounds",
-      "Hegemon.Native.TransferActionPayloadAdmission.valid_inline_transfer_ciphertext_resource_accepts",
-      "Hegemon.Native.TransferActionPayloadAdmission.exact_inline_transfer_ciphertext_resource_limits_accept",
-      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_count_over_cap_rejects",
-      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_item_over_cap_rejects",
-      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_aggregate_over_cap_rejects",
-      "Hegemon.Privacy.WalletOutputBatch.output_count_eq_public_shape",
-      "Hegemon.Privacy.WalletOutputBatch.accepted_output_count_le_max",
-      "Hegemon.Privacy.WalletOutputBatch.native_change_has_two_outputs",
-      "Hegemon.Privacy.WalletOutputBatch.stablecoin_native_change_has_two_outputs",
-      "Hegemon.Privacy.WalletOutputBatch.burn_asset_and_native_change_has_two_outputs",
-      "Hegemon.Privacy.WalletOutputBatch.consolidation_has_one_output"
+      "Hegemon.Consensus.betterThan_true_implies_work_not_lower",
+      "Hegemon.Consensus.selectBest_candidate_when_better",
+      "Hegemon.Consensus.selectBest_current_when_not_better",
+      "Hegemon.Consensus.selectBest_equal_work_height_lower_hash_returns_candidate",
+      "Hegemon.Consensus.selectBest_equal_work_height_not_lower_hash_keeps_current",
+      "Hegemon.Consensus.selectBest_is_current_or_candidate",
+      "Hegemon.Consensus.selectBest_selection_facts",
+      "Hegemon.Consensus.selectBest_work_not_lower"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.TransferActionPayloadAdmission Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors Hegemon.Privacy.WalletOutputBatch Hegemon.Privacy.GenerateWalletOutputBatchVectors passed locally; schema-v2 transfer payload vectors and schema-v1 wallet output-batch vectors generated.",
-      "targeted_rust": "HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture and HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS=<generated-json> cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture passed locally, covering production evaluate_native_transfer_payload_admission, inline_transfer_ciphertext_resource_bounded_request, transfer_output_batch_count, and burn_output_batch_count.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the inline resource theorem names, schema-v2 generated-vector conformance gate, submit-action resource regression, and production call graph requiring admitted_inline_ciphertext_metadata and validate_inline_transfer_ciphertext_resource."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Consensus.ForkChoice passed locally; lake exe gen_consensus_vectors emitted schema-v2 fork-choice vectors with selected_source, selected_work, selected_height, selected_hash, and selected_work_at_least_current fields.",
+      "targeted_rust": "HEGEMON_LEAN_CONSENSUS_VECTORS=<generated-json> cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture and HEGEMON_LEAN_CONSENSUS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_native_fork_choice_vectors_match_production -- --nocapture passed locally, covering production consensus::fork_choice and native_meta_better_than selected-tip behavior.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the selected-tip theorem names, schema-v2 generated-vector conformance gate, native fork-choice wrapper conformance, and production call graph requiring native_meta_better_than before canonical reorg or side-branch persistence."
     },
     "known_limitations": [
-      "This slice gates after the existing bounded submit-action public_args decode path; it does not prove SCALE decoder allocation internals below that cap, ciphertext hash cryptographic correctness, proof soundness, full proof artifact construction for every wallet vector, or complete native-node refinement."
+      "This slice proves deterministic two-tip ordering, selected source/facts, and no-lower-work selection only. It does not prove PoW admission arithmetic, SHA-256 header-hash implementation equivalence, network convergence, fork-choice liveness, adversarial mining schedules, or complete native-node equivalence."
     ]
   },
   "last_production_binding_slice": {
@@ -697,7 +691,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 91.5,
+      "completion_percent": 91.8,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -711,12 +705,12 @@
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean and gen_recursive_block_v2_verifier_surface_vectors prove/check recursive_block_v2 pre-proof surface admission before cryptographic child proof verification",
         "config/formal-security-blueprint.json requires verify_block_recursive_v2_surface to propagate and dominate verify_tree_child_v2 in the shipped recursive_block_v2 verifier path",
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean now rejects malformed candidate route public_args and public_args/candidate_artifact mismatch before accepting candidate artifacts; node/src/native/mod.rs revalidates those predicates on mempool staging, block validation, reload/reorg semantic admission, and mined action recovery paths",
-        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean and consensus/src/proof.rs now gate provided block tx-validity claims against verified backend artifact claims field-for-field before downstream proof-admission paths rely on them"
+        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean and consensus/src/proof.rs now gate provided block tx-validity claims against verified backend artifact claims field-for-field before downstream proof-admission paths rely on them",
+        "formal/lean/Hegemon/Consensus/ForkChoice.lean now proves selected-tip source/facts and no-lower-work monotonicity for selectBest; schema-v2 consensus vectors bind selected source, selected tip, and selected-work monotonicity to both consensus::fork_choice and native_meta_better_than production gates"
       ],
       "missing_work": [
         "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",
-        "Make order/dominance constraints theorem-indexed rather than only blueprint-indexed.",
-        "Add explicit fork-choice safety theorem boundary."
+        "Make order/dominance constraints theorem-indexed rather than only blueprint-indexed."
       ],
       "performance_constraint": "Order checks are compile/CI evidence; runtime order should stay as current cheap prechecks before heavy work."
     },

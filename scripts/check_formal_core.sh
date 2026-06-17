@@ -252,6 +252,8 @@ HEGEMON_LEAN_SHIELDED_VECTORS="$LEAN_SHIELDED_VECTORS" \
   cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture
 HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
   cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture
+HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
+  cargo test -p hegemon-node lean_generated_native_fork_choice_vectors_match_production -- --nocapture
 HEGEMON_LEAN_HEADER_VECTORS="$LEAN_HEADER_VECTORS" \
   cargo test -p consensus lean_generated_header_preimage_vectors_match_production -- --nocapture
 HEGEMON_LEAN_MINER_IDENTITY_VECTORS="$LEAN_MINER_IDENTITY_VECTORS" \
