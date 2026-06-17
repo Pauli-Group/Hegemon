@@ -6369,8 +6369,8 @@
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean action-ordering transition, the transfer-key subsequence of a native block is canonical exactly when it is nondecreasing in lexicographic byte order, non-transfer actions do not affect that predicate, and accepted shielded-transfer order-key preimages are determined by public transfer binding hash plus nullifiers rather than local arrival metadata.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.empty_canonical`, `Hegemon.Native.single_transfer_canonical`, `Hegemon.Native.non_transfer_ignored`, `Hegemon.Native.ordered_pair_accepts`, `Hegemon.Native.descending_pair_rejects`, and `Hegemon.Native.equal_pair_accepts` prove core facts about the executable order predicate. The theorems `Hegemon.Native.transfer_order_preimage_ignores_local_received_ms`, `transfer_order_action_ignores_local_received_ms`, `transfer_order_preimage_eq_of_public_fields`, `transfer_relative_order_ignores_local_received_ms`, and `canonical_transfer_pair_order_ignores_local_received_ms` prove that the modeled transfer order preimage and pairwise relative transfer order ignore local arrival metadata once binding hash and nullifiers are fixed. `gen_action_order_vectors` emits Lean-derived empty, single, ascending, equal-key, descending, tail-inversion, non-transfer-interleaved, non-transfer-only, inline/sidecar transfer preimage, two-nullifier, binding-drift, nullifier-drift, and received_ms-resampling examples. The formal-core gate checks those vectors against a Rust fold over the production `transfer_key_extends_canonical_order` helper and the production `action_order_key_preimage` helper used by native block import and mining selection, while focused native regressions validate full block-action ordering and arrival-time-insensitive mineable transfer ordering.",
+      "formal_statement": "For the executable Lean action-ordering transition, the transfer-key subsequence of a native block is canonical exactly when it is nondecreasing in lexicographic byte order, non-transfer actions do not affect that transfer-order predicate, accepted shielded-transfer order-key preimages are determined by public transfer binding hash plus nullifiers rather than local arrival metadata, and non-transfer order-key preimages are determined by public family/action IDs plus arrival-time-insensitive semantic action hash rather than raw pending-action identity.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.empty_canonical`, `Hegemon.Native.single_transfer_canonical`, `Hegemon.Native.non_transfer_ignored`, `Hegemon.Native.ordered_pair_accepts`, `Hegemon.Native.descending_pair_rejects`, and `Hegemon.Native.equal_pair_accepts` prove core facts about the executable order predicate. The theorems `Hegemon.Native.transfer_order_preimage_ignores_local_received_ms`, `transfer_order_action_ignores_local_received_ms`, `transfer_order_preimage_eq_of_public_fields`, `transfer_relative_order_ignores_local_received_ms`, and `canonical_transfer_pair_order_ignores_local_received_ms` prove that the modeled transfer order preimage and pairwise relative transfer order ignore local arrival metadata once binding hash and nullifiers are fixed. `Hegemon.Native.non_transfer_order_preimage_ignores_local_metadata`, `non_transfer_order_action_ignores_local_metadata`, `non_transfer_order_preimage_eq_of_public_fields`, and `non_transfer_relative_order_ignores_local_metadata` prove the same local metadata exclusion for non-transfer preimages once family/action IDs, semantic hash, and nullifiers are fixed. `gen_action_order_vectors` emits Lean-derived empty, single, ascending, equal-key, descending, tail-inversion, non-transfer-interleaved, non-transfer-only, inline/sidecar transfer preimage, two-nullifier, binding-drift, nullifier-drift, transfer received_ms-resampling, and bridge/candidate-artifact/coinbase non-transfer metadata-resampling examples. The formal-core gate checks those vectors against a Rust fold over the production `transfer_key_extends_canonical_order` helper and the production `action_order_key_preimage` helper used by native block import and mining selection, while focused native regressions validate full block-action ordering, arrival-time-insensitive mineable transfer ordering, and arrival-time-insensitive non-transfer pending ordering.",
       "depends_on": [
         "formal.transaction-balance",
         "shielded.nullifier-state",
@@ -6400,6 +6400,13 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "non_transfer_action_order_key_preimage",
+          "required_callers": [
+            "action_order_key_preimage"
+          ]
         }
       ],
       "evidence_paths": [
@@ -6413,7 +6420,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate and accepted-transfer preimage construction. Scope is ordering and local-arrival-insensitive transfer preimage construction, not hash security or full payload validation."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate, accepted-transfer preimage construction, and public non-transfer semantic-hash preimage construction. Scope is ordering and local-arrival-insensitive preimage construction, not hash security, fairness policy, or full payload validation."
       },
       "falsification_cases": [
         {
@@ -6440,9 +6447,19 @@
           "id": "native-mineable-transfer-order-arrival-regression",
           "description": "Mineable accepted transfer relative ordering must remain stable when only received_ms is resampled.",
           "gate": "cargo test -p hegemon-node mineable_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-non-transfer-order-arrival-preimage-regression",
+          "description": "Bridge, candidate-artifact, and coinbase non-transfer order-key preimages must use the semantic hash and ignore received_ms while raw pending-action hashes continue recording received_ms.",
+          "gate": "cargo test -p hegemon-node non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-pending-non-transfer-order-arrival-regression",
+          "description": "Pending non-transfer relative ordering must remain stable when only received_ms is resampled.",
+          "gate": "cargo test -p hegemon-node pending_non_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate and the accepted-transfer key-preimage boundary `binding_hash || nullifiers`, including independence from local received_ms. It does not prove BLAKE2 action-order key derivation security, native action hash/count admission, full block action payload validation, non-transfer ordering privacy, tx leaf proof soundness, DA ordering, miner fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate, the accepted-transfer key-preimage boundary `binding_hash || nullifiers`, and the non-transfer semantic-hash preimage boundary, including independence from local received_ms/raw tx_hash metadata. It does not prove BLAKE2 action-order key derivation security, semantic-hash preimage/collision resistance, native action hash/count admission, full block action payload validation, tx leaf proof soundness, DA ordering, miner fairness policy, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-hash-admission",

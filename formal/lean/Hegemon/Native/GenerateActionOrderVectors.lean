@@ -30,6 +30,30 @@ def nullifierB : NullifierBytes :=
 def nullifierC : NullifierBytes :=
   patternedBytes 48 0xe0
 
+def familyShieldedPool : Nat := 1
+def familyBridge : Nat := 5
+def actionBridgeOutbound : Nat := 1
+def actionSubmitCandidateArtifact : Nat := 5
+def actionMintCoinbase : Nat := 6
+
+def semanticHashA : SemanticHash :=
+  patternedBytes 32 0x21
+
+def semanticHashB : SemanticHash :=
+  patternedBytes 32 0x61
+
+def semanticHashC : SemanticHash :=
+  patternedBytes 32 0xa1
+
+def rawTxHashA : RawTxHash :=
+  patternedBytes 32 0x31
+
+def rawTxHashB : RawTxHash :=
+  patternedBytes 32 0x71
+
+def rawTxHashC : RawTxHash :=
+  patternedBytes 32 0xb1
+
 def inlineArrivalZero : TransferOrderPreimageInput :=
   { bindingHash := bindingHashA
     nullifiers := [nullifierA]
@@ -59,6 +83,30 @@ def nullifierDriftTransfer : TransferOrderPreimageInput :=
   { bindingHash := bindingHashA
     nullifiers := [nullifierC]
     localReceivedMs := 17 }
+
+def bridgeOutboundArrivalZero : NonTransferOrderPreimageInput :=
+  { familyId := familyBridge
+    actionId := actionBridgeOutbound
+    semanticHash := semanticHashA
+    nullifiers := []
+    localReceivedMs := 0
+    localTxHash := rawTxHashA }
+
+def candidateArrivalHigh : NonTransferOrderPreimageInput :=
+  { familyId := familyShieldedPool
+    actionId := actionSubmitCandidateArtifact
+    semanticHash := semanticHashB
+    nullifiers := []
+    localReceivedMs := 123456789
+    localTxHash := rawTxHashB }
+
+def coinbaseArrivalMax : NonTransferOrderPreimageInput :=
+  { familyId := familyShieldedPool
+    actionId := actionMintCoinbase
+    semanticHash := semanticHashC
+    nullifiers := [nullifierA]
+    localReceivedMs := 18446744073709551615
+    localTxHash := rawTxHashC }
 
 def actionJson (action : OrderedAction) : String :=
   "{ \"is_transfer\": " ++ boolJson action.isTransfer
@@ -97,9 +145,37 @@ def transferPreimageCaseJson
       ++ "\n"
     ++ "    }"
 
+def nonTransferPreimageCaseJson
+    (name route : String)
+    (input : NonTransferOrderPreimageInput)
+    (resampledReceivedMs : Nat)
+    (resampledTxHash : RawTxHash) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"route\": \"" ++ route ++ "\",\n"
+    ++ "      \"family_id\": " ++ toString input.familyId ++ ",\n"
+    ++ "      \"action_id\": " ++ toString input.actionId ++ ",\n"
+    ++ "      \"semantic_hash\": \"" ++ hexBytes input.semanticHash ++ "\",\n"
+    ++ "      \"nullifiers\": " ++ hexStringList input.nullifiers ++ ",\n"
+    ++ "      \"received_ms\": " ++ toString input.localReceivedMs ++ ",\n"
+    ++ "      \"resampled_received_ms\": " ++ toString resampledReceivedMs ++ ",\n"
+    ++ "      \"tx_hash\": \"" ++ hexBytes input.localTxHash ++ "\",\n"
+    ++ "      \"resampled_tx_hash\": \"" ++ hexBytes resampledTxHash ++ "\",\n"
+    ++ "      \"expected_preimage\": \"" ++ hexBytes (nonTransferOrderPreimage input) ++ "\",\n"
+    ++ "      \"expected_preimage_len\": " ++ toString (nonTransferOrderPreimage input).length ++ ",\n"
+    ++ "      \"expected_same_after_resample\": "
+      ++ boolJson
+        (nonTransferOrderPreimage
+          { input with
+            localReceivedMs := resampledReceivedMs
+            localTxHash := resampledTxHash } =
+          nonTransferOrderPreimage input)
+      ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"action_order_cases\": [\n"
     ++ actionOrderCaseJson "empty-block-is-canonical" [] ++ ",\n"
     ++ actionOrderCaseJson "single-transfer-is-canonical" [transfer midKey] ++ ",\n"
@@ -117,6 +193,11 @@ def vectorJson : String :=
     ++ transferPreimageCaseJson "inline-transfer-two-nullifiers" "inline" twoNullifierTransfer 88 ++ ",\n"
     ++ transferPreimageCaseJson "binding-hash-drift-changes-preimage" "inline" bindingDriftTransfer 17 ++ ",\n"
     ++ transferPreimageCaseJson "nullifier-drift-changes-preimage" "sidecar" nullifierDriftTransfer 17 ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"non_transfer_order_preimage_cases\": [\n"
+    ++ nonTransferPreimageCaseJson "bridge-outbound-arrival-zero" "bridge_outbound" bridgeOutboundArrivalZero 42 rawTxHashB ++ ",\n"
+    ++ nonTransferPreimageCaseJson "candidate-artifact-arrival-high" "candidate_artifact" candidateArrivalHigh 1 rawTxHashC ++ ",\n"
+    ++ nonTransferPreimageCaseJson "coinbase-arrival-max" "coinbase" coinbaseArrivalMax 0 rawTxHashA ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

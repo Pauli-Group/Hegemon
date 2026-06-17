@@ -4,22 +4,22 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 87.28,
+  "overall_completion_percent": 87.4,
   "last_full_formal_core": {
-    "date": "2026-06-17T07:12:56Z",
-    "commit": "working-tree-on-f141e96a",
-    "status": "passed locally after adding SmallWood candidate wrapper admission theorems, generated vectors, production decoder conformance, and formal claims/blueprint/docs bindings",
+    "date": "2026-06-17T07:51:08Z",
+    "commit": "working-tree-on-codex/superneo-formal-verification",
+    "status": "passed locally after binding non-transfer action ordering to semantic hashes, adding Lean metadata-resampling theorems, schema-v3 action-order vectors, production order-key conformance, and arrival-time resampling regressions",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1897,
+    "named_lean_theorems": 1901,
     "axiom_free_theorems": 862,
-    "axiom_dependent_theorems": 1035,
+    "axiom_dependent_theorems": 1039,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 517,
-    "implementation_bindings": 213,
+    "falsification_cases": 519,
+    "implementation_bindings": 214,
     "implementation_result_obligations": 167,
     "implementation_order_constraints": 144,
     "implementation_order_edges": 374,
@@ -74,48 +74,42 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the SmallWood candidate wrapper admission theorem package. The executable Lean selector proves accepted candidate wrappers are exact/canonical current or legacy encodings, current wrappers take precedence over legacy when accepted, legacy is selected only after current rejection, selected wrappers expose nonempty inner ARK proof bytes, and malformed/trailing/empty-inner-proof cases fail closed before verifier profile routing.",
+    "summary": "Added the non-transfer action-order metadata-resampling theorem package. The executable Lean model proves non-transfer order preimages and actions are fixed by public family/action IDs, semantic action hash, and nullifiers, and ignore local received_ms plus raw tx_hash metadata; pairwise relative non-transfer order is therefore stable under local metadata resampling.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean"
+      "formal/lean/Hegemon/Native/ActionOrder.lean",
+      "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.wrapper_accepts_iff_selected_canonical_nonempty",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.current_wrapper_selected_precedes_legacy",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.legacy_wrapper_selected_requires_current_rejected",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.accepted_current_wrapper_exposes_surface",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.accepted_legacy_wrapper_exposes_surface",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.valid_current_wrapper_accepts",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.valid_legacy_wrapper_accepts",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.current_empty_ark_rejects_before_legacy",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.legacy_empty_ark_rejects",
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.no_canonical_wrapper_rejects"
+      "Hegemon.Native.non_transfer_order_preimage_ignores_local_metadata",
+      "Hegemon.Native.non_transfer_order_action_ignores_local_metadata",
+      "Hegemon.Native.non_transfer_order_preimage_eq_of_public_fields",
+      "Hegemon.Native.non_transfer_relative_order_ignores_local_metadata"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodCandidateWrapperAdmission Hegemon.Transaction.GenerateSmallWoodCandidateWrapperAdmissionVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1897 named Lean theorem declarations, 862 axiom-free theorem declarations, 1035 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production --lib -- --nocapture passed locally and inside scripts/check_formal_core.sh.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the SmallWoodCandidateWrapperAdmission theorem names, evidence paths, generated-vector conformance gate, and a production implementation binding requiring verify_smallwood_candidate_proof_bytes to propagate decode_smallwood_candidate_proof; full formal-core passed with 118 claims, 517 falsification cases, 213 implementation bindings, 167 result obligations, and 108 production nodes."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.ActionOrder Hegemon.Native.GenerateActionOrderVectors passed locally; full bash scripts/check_formal_core.sh passed with 1901 named Lean theorem declarations, 862 axiom-free theorem declarations, 1039 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture plus non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes and pending_non_transfer_relative_order_ignores_received_ms_resampling passed locally and inside scripts/check_formal_core.sh.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the non-transfer ActionOrder theorem names, evidence paths, schema-v3 generated-vector conformance gate, and a production implementation binding requiring action_order_key_preimage to call non_transfer_action_order_key_preimage; full formal-core passed with 118 claims, 519 falsification cases, 214 implementation bindings, 167 result obligations, and 108 production nodes."
     },
     "known_limitations": [
-      "This slice does not prove bincode parser implementation correctness, BLAKE2/BLAKE3 cryptographic security or implementation equivalence, full proof-system soundness, SmallWood PCS/AIR soundness, simulator zero knowledge, arbitrary parser implementation correctness, scheduler/network liveness, or complete native-node refinement."
+      "This slice proves local metadata exclusion for accepted order-key inputs; it does not prove BLAKE2/BLAKE3 cryptographic security or implementation equivalence, miner fairness policy, scheduler/network timing privacy, full proof-system soundness, simulator zero knowledge, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound SmallWood candidate proof wrapper selection to executable Lean-generated vectors and production Rust decoding. The transaction circuit now exposes current/legacy wrapper kind internally, reuses exact/canonical current and legacy decoders, checks Lean-generated current/legacy/malformed/trailing/empty-inner-proof fixtures against production behavior, and the blueprint requires the product verifier path to propagate decode_smallwood_candidate_proof before profile routing.",
+    "summary": "Bound non-transfer action ordering to executable Lean-generated vectors and production Rust ordering. The native node now derives non-transfer order-key preimages from domain-separated family/action IDs, semantic action hash, and nullifiers instead of raw pending tx_hash; Lean schema-v3 action-order vectors and Rust regressions check bridge outbound, candidate artifact, and coinbase routes plus pending relative-order stability under received_ms resampling.",
     "changed_runtime_paths": [
-      "circuits/transaction/src/smallwood_frontend.rs factors SmallWood candidate wrapper decoding into exact current and exact legacy helpers plus decode_smallwood_candidate_proof_with_kind while preserving the public decode_smallwood_candidate_proof product path",
-      "circuits/transaction/src/smallwood_frontend.rs checks Lean-generated SmallWood candidate wrapper admission vectors against production current/legacy selection, trailing-byte rejection, malformed-byte rejection, and empty inner ARK proof rejection",
-      "scripts/check_formal_core.sh generates SmallWood candidate wrapper admission vectors and runs the production conformance regression"
+      "node/src/native/mod.rs factors non_transfer_action_order_key_preimage and routes non-transfer action_order_key_preimage through pending_action_semantic_hash instead of raw tx_hash",
+      "node/src/native/mod.rs checks bridge outbound, candidate artifact, and coinbase non-transfer order preimages and keys stay stable when received_ms changes while raw pending tx_hash changes",
+      "scripts/check_formal_core.sh runs the schema-v3 action-order vector conformance gate plus both non-transfer metadata-resampling regressions"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission"
+      "Hegemon.Native.ActionOrder"
     ],
     "validation": {
-      "status": "targeted Lean build, generated-vector JSON validation, SmallWood candidate wrapper Rust conformance test, metadata gates, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1897 named Lean theorem declarations, 862 axiom-free theorem declarations, 1035 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 517 falsification cases, 213 implementation bindings, 167 result obligations, and 11 native backend reference vectors"
+      "status": "targeted Lean build, generated-vector JSON validation, action-order Rust conformance test, non-transfer metadata-resampling regressions, metadata gates, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1901 named Lean theorem declarations, 862 axiom-free theorem declarations, 1039 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 519 falsification cases, 214 implementation bindings, 167 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "This slice changes production transaction-circuit decoding helpers, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes production native action ordering, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
@@ -460,7 +454,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 72,
+      "completion_percent": 73.5,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -512,11 +506,15 @@
         "formal/lean/Hegemon/Native/ActionOrder.lean now models accepted shielded-transfer order-key preimages as binding_hash concatenated with nullifiers and proves transfer preimages/actions plus pairwise relative transfer order ignore local received_ms resampling",
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean emits inline/sidecar/two-nullifier/binding-drift/nullifier-drift/received_ms-resampling preimage cases checked against production action_order_key_preimage",
         "node/src/native/mod.rs transfer_action_order_key_preimage_ignores_received_ms_for_inline_and_sidecar proves valid inline and sidecar transfer order preimages and keys ignore received_ms while raw pending-action hashes still change",
-        "node/src/native/mod.rs mineable_transfer_relative_order_ignores_received_ms_resampling proves select_mineable_actions preserves accepted transfer relative order under received_ms resampling"
+        "node/src/native/mod.rs mineable_transfer_relative_order_ignores_received_ms_resampling proves select_mineable_actions preserves accepted transfer relative order under received_ms resampling",
+        "formal/lean/Hegemon/Native/ActionOrder.lean now models non-transfer order-key preimages as domain-separated family/action IDs plus semantic action hash and proves preimages/actions plus pairwise relative order ignore local received_ms and raw tx_hash metadata",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean emits bridge/candidate-artifact/coinbase non-transfer metadata-resampling preimage cases checked against the production semantic preimage helper",
+        "node/src/native/mod.rs non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes proves bridge, candidate-artifact, and coinbase order preimages/keys ignore received_ms while raw pending-action hashes still change",
+        "node/src/native/mod.rs pending_non_transfer_relative_order_ignores_received_ms_resampling proves pending non-transfer relative order is stable under received_ms resampling"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted-transfer order independence from arrival metadata, and PQ connection/relay consensus-payload projection into remaining batching policy, remaining wallet metadata, non-transfer ordering/fairness, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer and non-transfer order independence from arrival metadata, and PQ connection/relay consensus-payload projection into remaining batching policy, remaining wallet metadata, miner fairness policy, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."

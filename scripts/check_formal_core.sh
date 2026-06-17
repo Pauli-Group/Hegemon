@@ -290,6 +290,8 @@ HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
   cargo test -p hegemon-node lean_generated_native_supply_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_ORDER_VECTORS="$LEAN_ACTION_ORDER_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node pending_non_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS="$LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_request_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS="$LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS" \

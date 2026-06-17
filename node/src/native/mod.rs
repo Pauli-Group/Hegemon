@@ -8741,10 +8741,12 @@ fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
             }
         }
         _ => {
-            preimage.extend_from_slice(b"non-transfer");
-            preimage.extend_from_slice(&action.family_id.to_le_bytes());
-            preimage.extend_from_slice(&action.action_id.to_le_bytes());
-            preimage.extend_from_slice(&action.tx_hash);
+            return non_transfer_action_order_key_preimage(
+                action.family_id,
+                action.action_id,
+                pending_action_semantic_hash(action),
+                &action.nullifiers,
+            );
         }
     }
     for nullifier in &action.nullifiers {
@@ -8752,6 +8754,23 @@ fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
     }
     if preimage.is_empty() {
         preimage.extend_from_slice(&action.tx_hash);
+    }
+    preimage
+}
+
+fn non_transfer_action_order_key_preimage(
+    family_id: u16,
+    action_id: u16,
+    semantic_hash: [u8; 32],
+    nullifiers: &[[u8; 48]],
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(12 + 2 + 2 + 32 + 48 * nullifiers.len());
+    preimage.extend_from_slice(b"non-transfer");
+    preimage.extend_from_slice(&family_id.to_le_bytes());
+    preimage.extend_from_slice(&action_id.to_le_bytes());
+    preimage.extend_from_slice(&semantic_hash);
+    for nullifier in nullifiers {
+        preimage.extend_from_slice(nullifier);
     }
     preimage
 }
@@ -13216,6 +13235,7 @@ mod tests {
         schema_version: u32,
         action_order_cases: Vec<LeanActionOrderCase>,
         transfer_order_preimage_cases: Vec<LeanTransferOrderPreimageCase>,
+        non_transfer_order_preimage_cases: Vec<LeanNonTransferOrderPreimageCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -13242,6 +13262,24 @@ mod tests {
         nullifiers: Vec<String>,
         received_ms: u64,
         resampled_received_ms: u64,
+        expected_preimage: String,
+        expected_preimage_len: usize,
+        expected_same_after_resample: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNonTransferOrderPreimageCase {
+        name: String,
+        route: String,
+        family_id: u16,
+        action_id: u16,
+        semantic_hash: String,
+        nullifiers: Vec<String>,
+        received_ms: u64,
+        resampled_received_ms: u64,
+        tx_hash: String,
+        resampled_tx_hash: String,
         expected_preimage: String,
         expected_preimage_len: usize,
         expected_same_after_resample: bool,
@@ -17947,12 +17985,109 @@ mod tests {
         );
     }
 
+    #[test]
+    fn non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes() {
+        let cases = vec![
+            (
+                "bridge-outbound",
+                test_outbound_bridge_action(b"arrival metadata bridge payload"),
+            ),
+            ("candidate-artifact", test_candidate_artifact_action(1, 47)),
+            ("coinbase", test_coinbase_action(50)),
+        ];
+
+        for (idx, (name, action)) in cases.into_iter().enumerate() {
+            let mut resampled = action.clone();
+            resampled.received_ms = u64::MAX - u64::try_from(idx).expect("idx fits u64");
+            resampled.tx_hash = pending_action_hash(&resampled);
+
+            assert_ne!(
+                action.tx_hash, resampled.tx_hash,
+                "{name} raw pending-action identity still records local arrival metadata"
+            );
+            assert_eq!(
+                pending_action_semantic_hash(&action),
+                pending_action_semantic_hash(&resampled),
+                "{name} semantic identity must ignore local arrival metadata"
+            );
+
+            let expected_preimage = non_transfer_action_order_key_preimage(
+                action.family_id,
+                action.action_id,
+                pending_action_semantic_hash(&action),
+                &action.nullifiers,
+            );
+            assert_eq!(
+                action_order_key_preimage(&action),
+                expected_preimage,
+                "{name} non-transfer order preimage must be domain/family/action/semantic-hash bound"
+            );
+            assert_eq!(
+                action_order_key_preimage(&action),
+                action_order_key_preimage(&resampled),
+                "{name} non-transfer order-key preimage must ignore local arrival metadata"
+            );
+            assert_eq!(
+                action_order_key(&action),
+                action_order_key(&resampled),
+                "{name} non-transfer order key must ignore local arrival metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn pending_non_transfer_relative_order_ignores_received_ms_resampling() {
+        let pow_bits = 0x207f_ffff;
+        let best = genesis_meta(pow_bits).expect("genesis");
+        let mut state = test_state(best);
+        let bridge = test_outbound_bridge_action(b"stable non-transfer bridge order");
+        let candidate = test_candidate_artifact_action(1, 53);
+        let coinbase = test_coinbase_action(75);
+
+        for action in [&bridge, &candidate, &coinbase] {
+            state.pending_actions.insert(action.tx_hash, action.clone());
+        }
+        let projection = selected_action_order_projection(&ordered_pending_actions(&state));
+
+        let mut resampled_state = state.clone();
+        resampled_state.pending_actions.clear();
+        for (idx, action) in [bridge, candidate, coinbase].into_iter().enumerate() {
+            let mut resampled = action.clone();
+            resampled.received_ms = 10_000 + u64::try_from(idx).expect("idx fits u64");
+            resampled.tx_hash = pending_action_hash(&resampled);
+            resampled_state
+                .pending_actions
+                .insert(resampled.tx_hash, resampled);
+        }
+
+        assert_eq!(
+            selected_action_order_projection(&ordered_pending_actions(&resampled_state)),
+            projection,
+            "pending non-transfer relative order must ignore local arrival metadata"
+        );
+    }
+
     fn selected_transfer_order_projection(
         actions: &[PendingAction],
     ) -> Vec<(Vec<u8>, [u8; 32], [u8; 32])> {
         actions
             .iter()
             .filter(|action| is_shielded_transfer_action(action))
+            .map(|action| {
+                (
+                    action_order_key_preimage(action),
+                    action_order_key(action),
+                    pending_action_semantic_hash(action),
+                )
+            })
+            .collect()
+    }
+
+    fn selected_action_order_projection(
+        actions: &[PendingAction],
+    ) -> Vec<(Vec<u8>, [u8; 32], [u8; 32])> {
+        actions
+            .iter()
             .map(|action| {
                 (
                     action_order_key_preimage(action),
@@ -17974,7 +18109,7 @@ mod tests {
         let raw = std::fs::read_to_string(&path).expect("read generated Lean action-order vectors");
         let vectors: LeanActionOrderVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean action-order vectors");
-        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.schema_version, 3);
         assert!(
             !vectors.action_order_cases.is_empty(),
             "Lean action-order cases must not be empty"
@@ -17982,6 +18117,10 @@ mod tests {
         assert!(
             !vectors.transfer_order_preimage_cases.is_empty(),
             "Lean transfer-order preimage cases must not be empty"
+        );
+        assert!(
+            !vectors.non_transfer_order_preimage_cases.is_empty(),
+            "Lean non-transfer-order preimage cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
@@ -17992,6 +18131,10 @@ mod tests {
         for case in &vectors.transfer_order_preimage_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_transfer_order_preimage_case(case);
+        }
+        for case in &vectors.non_transfer_order_preimage_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_non_transfer_order_preimage_case(case);
         }
     }
 
@@ -18094,6 +18237,61 @@ mod tests {
         action.received_ms = received_ms;
         action.tx_hash = pending_action_hash(&action);
         action
+    }
+
+    fn verify_lean_non_transfer_order_preimage_case(case: &LeanNonTransferOrderPreimageCase) {
+        match case.route.as_str() {
+            "bridge_outbound" | "candidate_artifact" | "coinbase" => {}
+            other => panic!("unknown Lean non-transfer-order route {other}"),
+        }
+        let semantic_hash =
+            parse_hash32(&case.semantic_hash).expect("Lean semantic_hash must be 32-byte hex");
+        let tx_hash = parse_hash32(&case.tx_hash).expect("Lean tx_hash must be 32-byte hex");
+        let resampled_tx_hash = parse_hash32(&case.resampled_tx_hash)
+            .expect("Lean resampled_tx_hash must be 32-byte hex");
+        assert_ne!(
+            (case.received_ms, tx_hash),
+            (case.resampled_received_ms, resampled_tx_hash),
+            "{} Lean non-transfer local metadata fixture must resample arrival identity",
+            case.name
+        );
+        let nullifiers = case
+            .nullifiers
+            .iter()
+            .map(|raw| parse_hex48(raw).expect("Lean nullifier must be 48-byte hex"))
+            .collect::<Vec<_>>();
+        let expected_preimage =
+            decode_lean_hex_bytes(&case.expected_preimage).expect("decode Lean preimage hex");
+        let actual_preimage = non_transfer_action_order_key_preimage(
+            case.family_id,
+            case.action_id,
+            semantic_hash,
+            &nullifiers,
+        );
+        assert_eq!(
+            actual_preimage.len(),
+            case.expected_preimage_len,
+            "{} non-transfer action-order preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_preimage, expected_preimage,
+            "{} non-transfer action-order preimage bytes drifted from Lean spec",
+            case.name
+        );
+
+        let resampled_preimage = non_transfer_action_order_key_preimage(
+            case.family_id,
+            case.action_id,
+            semantic_hash,
+            &nullifiers,
+        );
+        assert_eq!(
+            actual_preimage == resampled_preimage,
+            case.expected_same_after_resample,
+            "{} non-transfer action-order local-metadata resampling predicate drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]

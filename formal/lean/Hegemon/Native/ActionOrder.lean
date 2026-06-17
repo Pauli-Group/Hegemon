@@ -6,6 +6,8 @@ namespace Native
 abbrev OrderKey := List Byte
 abbrev BindingHash := List Byte
 abbrev NullifierBytes := List Byte
+abbrev SemanticHash := List Byte
+abbrev RawTxHash := List Byte
 
 structure OrderedAction where
   isTransfer : Bool
@@ -16,6 +18,15 @@ structure TransferOrderPreimageInput where
   bindingHash : BindingHash
   nullifiers : List NullifierBytes
   localReceivedMs : Nat
+deriving DecidableEq, Repr
+
+structure NonTransferOrderPreimageInput where
+  familyId : Nat
+  actionId : Nat
+  semanticHash : SemanticHash
+  nullifiers : List NullifierBytes
+  localReceivedMs : Nat
+  localTxHash : RawTxHash
 deriving DecidableEq, Repr
 
 def transfer (key : OrderKey) : OrderedAction :=
@@ -32,9 +43,24 @@ def transferOrderPreimage
     (input : TransferOrderPreimageInput) : OrderKey :=
   input.bindingHash ++ concatByteRows input.nullifiers
 
+def nonTransferOrderDomain : List Byte :=
+  asciiBytes "non-transfer"
+
+def nonTransferOrderPreimage
+    (input : NonTransferOrderPreimageInput) : OrderKey :=
+  nonTransferOrderDomain
+    ++ u16le input.familyId
+    ++ u16le input.actionId
+    ++ input.semanticHash
+    ++ concatByteRows input.nullifiers
+
 def transferOrderAction
     (input : TransferOrderPreimageInput) : OrderedAction :=
   transfer (transferOrderPreimage input)
+
+def nonTransferOrderAction
+    (input : NonTransferOrderPreimageInput) : OrderedAction :=
+  nonTransfer (nonTransferOrderPreimage input)
 
 def lexLt : List Byte -> List Byte -> Bool
   | [], [] => false
@@ -114,6 +140,28 @@ theorem transfer_order_action_ignores_local_received_ms
       transferOrderAction input := by
   rfl
 
+theorem non_transfer_order_preimage_ignores_local_metadata
+    (input : NonTransferOrderPreimageInput)
+    (localReceivedMs : Nat)
+    (localTxHash : RawTxHash) :
+    nonTransferOrderPreimage
+        { input with
+          localReceivedMs := localReceivedMs
+          localTxHash := localTxHash } =
+      nonTransferOrderPreimage input := by
+  rfl
+
+theorem non_transfer_order_action_ignores_local_metadata
+    (input : NonTransferOrderPreimageInput)
+    (localReceivedMs : Nat)
+    (localTxHash : RawTxHash) :
+    nonTransferOrderAction
+        { input with
+          localReceivedMs := localReceivedMs
+          localTxHash := localTxHash } =
+      nonTransferOrderAction input := by
+  rfl
+
 theorem transfer_order_preimage_eq_of_public_fields
     {left right : TransferOrderPreimageInput}
     (bindingHash : left.bindingHash = right.bindingHash)
@@ -123,6 +171,18 @@ theorem transfer_order_preimage_eq_of_public_fields
   cases right
   simp [transferOrderPreimage] at bindingHash nullifiers ⊢
   simp [bindingHash, nullifiers]
+
+theorem non_transfer_order_preimage_eq_of_public_fields
+    {left right : NonTransferOrderPreimageInput}
+    (familyId : left.familyId = right.familyId)
+    (actionId : left.actionId = right.actionId)
+    (semanticHash : left.semanticHash = right.semanticHash)
+    (nullifiers : left.nullifiers = right.nullifiers) :
+    nonTransferOrderPreimage left = nonTransferOrderPreimage right := by
+  cases left
+  cases right
+  simp [nonTransferOrderPreimage] at familyId actionId semanticHash nullifiers ⊢
+  simp [familyId, actionId, semanticHash, nullifiers]
 
 theorem transfer_relative_order_ignores_local_received_ms
     (left right : TransferOrderPreimageInput)
@@ -146,6 +206,22 @@ theorem canonical_transfer_pair_order_ignores_local_received_ms
       canonicalTransferOrder
         [ transferOrderAction left,
           transferOrderAction right ] := by
+  rfl
+
+theorem non_transfer_relative_order_ignores_local_metadata
+    (left right : NonTransferOrderPreimageInput)
+    (leftReceivedMs rightReceivedMs : Nat)
+    (leftTxHash rightTxHash : RawTxHash) :
+    lexLe
+        (nonTransferOrderPreimage
+          { left with
+            localReceivedMs := leftReceivedMs
+            localTxHash := leftTxHash })
+        (nonTransferOrderPreimage
+          { right with
+            localReceivedMs := rightReceivedMs
+            localTxHash := rightTxHash }) =
+      lexLe (nonTransferOrderPreimage left) (nonTransferOrderPreimage right) := by
   rfl
 
 end Native
