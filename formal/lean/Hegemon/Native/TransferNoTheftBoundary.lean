@@ -13,6 +13,7 @@ open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TransferStateAdmission
 open Hegemon.Native.TxLeafCanonicalSurface
 open Hegemon.Transaction.CanonicalVerifierBoundary
+open Hegemon.Transaction.ProofSystemBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
 
@@ -842,6 +843,271 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
           publicBindingValid,
           surface.statementPreimage,
           surface.bindingMessage,
+          statementRoot,
+          bindingRoot,
+          statementSlot,
+          bindingSlot,
+          ⟨hNullifiers,
+            hCommitments,
+            hCiphertextHashes,
+            hInputCount,
+            hOutputCount,
+            hVersion,
+            hFee,
+            hStablecoinPayload,
+            hBalanceTag,
+            hReceiptStatementHash,
+            hPublicInputsDigest,
+            hProofDigest,
+            hProofBackend,
+            hCiphertextPayloadHashes⟩,
+          hNullifiers,
+          hInputCount,
+          hFee,
+          hReceiptStatementHash,
+          hPublicInputsDigest,
+          hProofDigest,
+          hProofBackend,
+          hCiphertextPayloadHashes⟩ }
+
+theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend_boundary_facts
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (payloadAccepted : transferPayloadAccepts payload = true)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (spendFacts :
+      CanonicalDeployedVerifierSpendBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1) :
+    ValidatedTransferPayloadNoTheftBoundaryFacts
+      payload
+      transferKey
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness := by
+  have slotsAuthorized :=
+    Hegemon.Transaction.SpendAuthorization.transactionSpendAuthorized_implies_slots_authorized
+      spendFacts.spendAuthorized
+  have inputSpendFacts :=
+    Hegemon.Transaction.SpendAuthorization.authorizeInputSlots_active_input_facts_at
+      slot
+      active
+      slotsAuthorized
+  have slotFacts :=
+    canonical_spend_boundary_facts_input_slot_bound_to_statement
+      spendFacts
+      slot
+  have payloadBinding :=
+    transfer_payload_accepts_implies_binding_facts payloadAccepted
+  have txLeafFacts :=
+    tx_leaf_action_accepts_implies_binding_facts bindingAccepted
+  rcases slotFacts with
+    ⟨_authorizationFacts, statementRoot, bindingRoot, statementSlot,
+      bindingSlot⟩
+  rcases payloadBinding with
+    ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
+  rcases txLeafFacts with
+    ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    { payloadBlockValidationAccepted :=
+        singleton_transfer_payload_validation_accepts payloadAccepted
+      payloadRejectionPrecedesTransferOrder :=
+        transfer_payload_precedes_order
+      transferOrderRejectionPrecedesState :=
+        transfer_order_precedes_state
+      noTheftFullBinding :=
+        ⟨inputSpendFacts,
+          slot,
+          ⟨payloadBindingHash, proofBindingHash, payloadFee⟩,
+          payloadBindingHash,
+          proofBindingHash,
+          payloadFee,
+          spendFacts.wrapperPreconditions,
+          spendFacts.wrapperSurface,
+          spendFacts.publicBindingValid,
+          spendFacts.statementPreimage,
+          spendFacts.bindingMessage,
+          statementRoot,
+          bindingRoot,
+          statementSlot,
+          bindingSlot,
+          ⟨hNullifiers,
+            hCommitments,
+            hCiphertextHashes,
+            hInputCount,
+            hOutputCount,
+            hVersion,
+            hFee,
+            hStablecoinPayload,
+            hBalanceTag,
+            hReceiptStatementHash,
+            hPublicInputsDigest,
+            hProofDigest,
+            hProofBackend,
+            hCiphertextPayloadHashes⟩,
+          hNullifiers,
+          hInputCount,
+          hFee,
+          hReceiptStatementHash,
+          hPublicInputsDigest,
+          hProofDigest,
+          hProofBackend,
+          hCiphertextPayloadHashes⟩ }
+
+theorem validated_transfer_payload_input_slot_authorization_full_binding_from_spend_boundary_facts
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    (payloadAccepted : transferPayloadAccepts payload = true)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (spendFacts :
+      CanonicalDeployedVerifierSpendBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    ValidatedTransferPayloadInputSlotAuthorizationBoundaryFacts
+      payload
+      transferKey
+      input
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness := by
+  have inputSlotFacts :=
+    canonical_spend_boundary_facts_input_slot_bound_to_statement
+      spendFacts
+      slot
+  have payloadBinding :=
+    transfer_payload_accepts_implies_binding_facts payloadAccepted
+  have txLeafFacts :=
+    tx_leaf_action_accepts_implies_binding_facts bindingAccepted
+  rcases inputSlotFacts with
+    ⟨authorizationFacts, statementRoot, bindingRoot, statementSlot,
+      bindingSlot⟩
+  rcases payloadBinding with
+    ⟨payloadBindingHash, proofBindingHash, payloadFee⟩
+  rcases txLeafFacts with
+    ⟨hNullifiers, hCommitments, hCiphertextHashes, hInputCount,
+      hOutputCount, hVersion, hFee, hStablecoinPayload, hBalanceTag,
+      hReceiptStatementHash, hPublicInputsDigest, hProofDigest,
+      hProofBackend, hCiphertextPayloadHashes⟩
+  exact
+    { payloadBlockValidationAccepted :=
+        singleton_transfer_payload_validation_accepts payloadAccepted
+      payloadRejectionPrecedesTransferOrder :=
+        transfer_payload_precedes_order
+      transferOrderRejectionPrecedesState :=
+        transfer_order_precedes_state
+      inputSlotFullBinding :=
+        ⟨authorizationFacts,
+          slot,
+          ⟨payloadBindingHash, proofBindingHash, payloadFee⟩,
+          payloadBindingHash,
+          proofBindingHash,
+          payloadFee,
+          spendFacts.wrapperPreconditions,
+          spendFacts.wrapperSurface,
+          spendFacts.publicBindingValid,
+          spendFacts.statementPreimage,
+          spendFacts.bindingMessage,
           statementRoot,
           bindingRoot,
           statementSlot,

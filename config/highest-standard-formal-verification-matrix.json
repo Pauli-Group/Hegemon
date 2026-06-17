@@ -219,7 +219,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 88,
+      "completion_percent": 91.3,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -266,7 +266,9 @@
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean now proves active output commitment rows bind to note openings and public commitments, active ciphertext rows bind to public ciphertext hashes, inactive public output fields are zero, and mismatched active output public commitment/ciphertext rows reject in the executable SmallWood boundary model",
         "circuits/transaction/src/smallwood_frontend.rs now rejects shipped inline-Merkle active output public commitment/hash mutations, output commitment/ciphertext row mutations, and inactive output ciphertext-hash drift even when auxiliary Merkle rows are recomputed from the tampered public statement",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now packages split spend-only and balance/public-field assumptions into `CanonicalProofSystemNoTheftBoundaryFacts`, carrying spend boundary facts, witness-authorized deltas, public-authorized deltas, and public stablecoin exception surfaces",
-        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean composes accepted SmallWood candidate wrapper, transcript/profile, active auth-link, input row-boundary, output row-boundary, balance, and AIR final-row facts with the packaged no-theft/public-conservation boundary"
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean composes accepted SmallWood candidate wrapper, transcript/profile, active auth-link, input row-boundary, output row-boundary, balance, and AIR final-row facts with the packaged no-theft/public-conservation boundary",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now constructs decoded-transfer no-theft and total input-slot authorization directly from `CanonicalDeployedVerifierSpendBoundaryFacts`, eliminating a fresh spend-soundness premise at downstream native publication boundaries",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean and MaterializedTransferNoTheftPublication.lean now prove raw-ingress and materialized transfer publication certificates from `SmallWoodPublicStatementVerifierExportFacts`, binding concrete SmallWood verifier-surface export facts to active-input no-theft and total input-slot authorization on the production publication surfaces"
       ],
       "missing_work": [
         "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link, input row-boundary, output row-boundary, and composed verifier-envelope slices.",
@@ -317,7 +319,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 85.3,
+      "completion_percent": 91.2,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -341,7 +343,9 @@
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves accepted raw-ingress transfer publication carries the same authorized per-asset delta value as the canonical native tx-leaf surface",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves accepted raw-ingress bridge canonical publication carries an explicit authorized non-native bridge asset-delta value equal to the decoded payload amount while direct native mint delta remains zero",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes public-authorized deltas and stablecoin exception surfaces from the split balance/public-field boundary inside `CanonicalProofSystemNoTheftBoundaryFacts`",
-        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean carries those public-authorized deltas with SmallWood wrapper/transcript/spend/balance/AIR verifier-surface facts"
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean carries those public-authorized deltas with SmallWood wrapper/transcript/spend/balance/AIR verifier-surface facts",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves `accepted_raw_ingress_transfer_payload_from_smallwood_native_policy_certificate`, packaging raw-ingress publication, SmallWood public-statement verifier export facts, exact public-authorized per-asset delta equality, native policy-authorized stablecoin exception surface, and native live authorization facts over one accepted raw replay surface",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves `accepted_materialized_transfer_publication_from_smallwood_native_policy_certificate`, packaging materialized DA/tx-leaf publication, SmallWood public-statement verifier export facts, exact public-authorized per-asset delta equality, native policy-authorized stablecoin exception surface, and native live authorization facts over one materialized publication surface"
       ],
       "missing_work": [
         "Complete and discharge full deployed AIR/proof-system soundness for all balance slots and spend authorization, beyond the now-modeled P3 final-row public balance equations and SmallWood verifier envelope.",
@@ -352,7 +356,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 91,
+      "completion_percent": 94.5,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -378,6 +382,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now exposes the accepted production tx-leaf/action stablecoin payload equality gate as a named theorem",
         "wallet/src/node_rpc.rs stablecoin_policy_binding_from_admitted_state binds storage-backed policy/oracle/attestation lookup records into the exact StablecoinPolicyBinding payload and formal-core gates inactive, ambiguous, stale, disputed, zero-issuance, and over-range rejection cases",
         "formal/lean/Hegemon/Native/StablecoinPolicyAuthorization.lean proves the executable native stablecoin policy authorization decision table for missing/inactive/not-live policy, asset/hash/version mismatch, oracle and attestation commitment mismatch, disputed attestation, stale oracle, zero issuance, and over-limit issuance, with generated vectors checked against production Rust",
+        "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean native live-policy facts are now composed into raw-ingress and materialized transfer certificates, so accepted non-native nonzero transfer deltas must carry an exact native policy-authorized stablecoin exception payload at the publication boundary",
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean and MaterializedTransferNoTheftPublication.lean now thread `SmallWoodPublicStatementVerifierExportFacts` through native stablecoin policy authorization, tying asset-isolation exceptions to concrete SmallWood public conservation and native policy acceptance",
         "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean now instantiates LiveStablecoinPolicyAuthorizes from the accepted native stablecoin policy authorization predicate for the exact canonical StablecoinMintExceptionPayload, proves the predicate authorizes only that exact payload, exposes policy lifecycle/freshness/bounds facts, denies not-live payload authorization, and upgrades any publication-plus-exception-surface package to an authorized stablecoin mint exception surface",
         "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
@@ -392,7 +398,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 97.9,
+      "completion_percent": 98.1,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -427,7 +433,8 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table",
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production.",
         "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean proves SmallWood public statement values are exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, with exact length/no-extension and transcript-surface feed facts",
-        "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values_for_p3`"
+        "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values_for_p3`",
+        "raw-ingress and materialized transfer publication certificates now carry `SmallWoodPublicStatementVerifierExportFacts` through the same native tx-leaf statement surface used by production publication, preserving statement/proof-binding rows while deriving no-theft, conservation, and stablecoin exception consequences"
       ],
       "missing_work": [
         "Prove bincode/postcard serialization correctness for the statement bytes and proof wrapper bytes, beyond the now-gated public-value vector and transcript/profile byte boundaries.",
@@ -438,7 +445,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 94,
+      "completion_percent": 95.2,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -496,7 +503,8 @@
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now defines `CanonicalProofSystemNoTheftBoundaryFacts` and proves split deployed soundness assumptions imply the packaged no-theft/public-conservation boundary plus live-policy-authorized stablecoin exception surface",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, SmallWood balance facts, P3 AIR final-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
         "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean and its generated-vector Rust gate narrow the SmallWood verifier implementation-equivalence target by binding the public statement vector used before transcript/profile and backend verification",
-        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now exports `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export`, joining accepted public-statement binding and statement-byte equality with the SmallWood verifier envelope while carrying no-theft, public conservation, and non-native stablecoin exception consequences"
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now exports `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export`, joining accepted public-statement binding and statement-byte equality with the SmallWood verifier envelope while carrying no-theft, public conservation, and non-native stablecoin exception consequences",
+        "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean, RawIngressTransferNoTheftPublication.lean, and MaterializedTransferNoTheftPublication.lean now consume the exported canonical spend-boundary facts from the SmallWood verifier surface at native publication boundaries, narrowing the remaining proof-system residual to the explicit SmallWood/AIR soundness assumptions rather than a separate downstream publication assumption"
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation behind the exported SmallWood public-statement verifier envelope; current theorems keep proof-system soundness explicit.",
@@ -776,7 +784,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 87,
+      "completion_percent": 88.5,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -804,7 +812,8 @@
         "node/src/native/mod.rs block_range_projects_decoded_materialized_wire_rows checks sync block_range publication rows and exact canonical rows against decoded/materialized/planned/wire projection rows",
         "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks canonical replay/rebuild can materialize committed sidecar bytes from the canonical archive after mined commit removes staged DA rows, while still validating ciphertext hash and declared size",
         "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks reopened nodes fail closed when committed sidecar archive bytes no longer match the action ciphertext hash",
-        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before the concrete DA-blob theorem"
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before the concrete DA-blob theorem",
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now binds the materialized DA/tx-leaf publication surface to the concrete SmallWood verifier export and native stablecoin policy certificate, keeping DA sidecar binding, tx-leaf statement binding, no-theft, per-asset conservation, and authorized mint exceptions on one materialized publication record"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
