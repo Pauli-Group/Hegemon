@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.1,
+  "overall_completion_percent": 88.12,
   "last_full_formal_core": {
     "date": "2026-06-17T12:39:17Z",
     "commit": "df71f3f0",
@@ -134,7 +134,24 @@
       "status": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml, JSON validation, claims, blueprint, inventory, diff whitespace, and full local bash scripts/check_formal_core.sh all passed. Full formal-core reported 118 claims, 1941 named Lean theorem declarations, 0 temporary axiom theorem dependencies, 527 falsification cases, 216 implementation bindings, 144/144 theorem-indexed order constraints, and 130/130 theorem-indexed dominance constraints."
     },
     "known_limitations": [
-      "This is a checker/metadata enforcement slice with zero shipped-runtime cost. It enforces that every production order gate has claim theorem evidence, but some constraints intentionally use the full node theorem set rather than a minimal per-gate theorem subset. The unified accepted-block theorem is still separate work."
+      "This is a checker/metadata enforcement slice with zero shipped-runtime cost. It enforces that every production order gate has claim theorem evidence, but some constraints intentionally use the full node theorem set rather than a minimal per-gate theorem subset. The accepted-block certificate now exists at the full-byte accepted-predicate layer; complete raw parser, proof/hash/crypto, storage, fork-choice, and native-node refinement remain separate work."
+    ]
+  },
+  "last_accepted_block_admission_safety_slice": {
+    "date": "2026-06-17",
+    "summary": "Added `Hegemon.Native.AcceptedBlockAdmissionSafety`, a zero-runtime-cost Lean theorem package that derives one accepted-block admission-safety certificate from the raw-ingress full-byte publication facts. The certificate carries exact pending-action and block-action decode preconditions, action-hash and wire projection facts, sidecar availability and size binding, candidate/proven/semantic DA-root matching, statement and recursive-root binding, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor, carried tree-state preconditions, final nullifier uniqueness, final bridge replay-key uniqueness, parsed tx-leaf artifact byte-shape assumptions, accepted tx-leaf projection, and full statement artifact facts.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/AcceptedBlockAdmissionSafety.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.AcceptedBlockAdmissionSafety.raw_ingress_full_byte_publication_facts_imply_accepted_block_admission_safety",
+      "Hegemon.Native.AcceptedBlockAdmissionSafety.accepted_raw_ingress_full_byte_publication_yields_accepted_block_admission_safety"
+    ],
+    "validation": {
+      "status": "Targeted Lean build, direct `bash scripts/check_lean_formal.sh`, JSON validation, claims, blueprint, inventory, checker tests, formatter/whitespace checks, and full local `bash scripts/check_formal_core.sh` passed. Full formal-core reported 118 claims, 1952 named Lean theorem declarations, 887 axiom-free theorem declarations, 1065 allowed kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 492 blueprint edges, 528 falsification cases, 216 implementation bindings, 169 result obligations, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, 129 full-claim order constraints, 2412 full-claim theorem refs, and 11 native backend vectors."
+    },
+    "known_limitations": [
+      "This closes the previous unified accepted-block theorem gap only at the accepted-predicate/full-byte publication layer. It still relies on explicit parser-to-canonical projection assumptions, deployed proof-system soundness assumptions, primitive hash/crypto assumptions, DA availability assumptions, storage assumptions below admitted predicates, and complete native-node refinement work."
     ]
   },
   "properties": [
@@ -708,7 +725,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 92.5,
+      "completion_percent": 93,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -725,10 +742,11 @@
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean and consensus/src/proof.rs now gate provided block tx-validity claims against verified backend artifact claims field-for-field before downstream proof-admission paths rely on them",
         "formal/lean/Hegemon/Consensus/ForkChoice.lean now proves selected-tip source/facts and no-lower-work monotonicity for selectBest; schema-v2 consensus vectors bind selected source, selected tip, and selected-work monotonicity to both consensus::fork_choice and native_meta_better_than production gates",
         "formal-security-blueprint now attaches the native announced-block fork-choice publication-order/dominance constraint to `Hegemon.Consensus.selectBest_selection_facts` and `Hegemon.Consensus.selectBest_work_not_lower`; the formal-core blueprint checker rejects theorem-indexed order constraints that point outside the claim's named Lean theorem evidence",
-        "formal-security-blueprint enables `require_theorem_indexed_order_constraints`; formal-core now reports 144/144 theorem-indexed order constraints and 130/130 theorem-indexed dominance constraints, and rejects any new unindexed production order gate"
+        "formal-security-blueprint enables `require_theorem_indexed_order_constraints`; formal-core now reports 144/144 theorem-indexed order constraints and 130/130 theorem-indexed dominance constraints, and rejects any new unindexed production order gate",
+        "formal/lean/Hegemon/Native/AcceptedBlockAdmissionSafety.lean derives one accepted-block admission-safety certificate from raw-ingress full-byte publication facts, carrying parser exactness, sidecar/DA binding, statement/root binding, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor, nullifier uniqueness, bridge replay uniqueness, and tx-leaf artifact/statement binding"
       ],
       "missing_work": [
-        "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",
+        "Extend the accepted-block admission-safety certificate from the full-byte accepted-predicate surface toward complete raw parser, proof/hash/crypto, fork-choice, storage, and native-node refinement.",
         "Refine broad claim-level theorem refs into minimal theorem subsets for each specific order/dominance gate, and preserve theorem-indexed coverage for future admission, replay, sidecar, proof, storage, and network gates."
       ],
       "performance_constraint": "Order checks are compile/CI evidence; runtime order should stay as current cheap prechecks before heavy work."

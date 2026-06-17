@@ -526,6 +526,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
         "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",
         "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+        "formal/lean/Hegemon/Native/AcceptedBlockAdmissionSafety.lean",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",

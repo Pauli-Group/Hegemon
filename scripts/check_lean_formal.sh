@@ -177,6 +177,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/DaSidecarReplayBinding.lean
   lake env lean Hegemon/Native/RawIngressSidecarReplayRecoverability.lean
   lake env lean Hegemon/Native/CanonicalPublicationRefinement.lean
+  lake env lean Hegemon/Native/AcceptedBlockAdmissionSafety.lean
   lake env lean Hegemon/Native/PendingActionByteParserRefinement.lean
   lake env lean Hegemon/Native/PendingActionBytePublicationRefinement.lean
   lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean

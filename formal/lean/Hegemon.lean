@@ -29,6 +29,7 @@ import Hegemon.Consensus.TreeTransition
 import Hegemon.Consensus.VersionPolicy
 import Hegemon.Native.ActionHashAdmission
 import Hegemon.Native.AcceptedChain
+import Hegemon.Native.AcceptedBlockAdmissionSafety
 import Hegemon.Native.AtomicCommitManifestAdmission
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ActionRequestProjectionAdmission

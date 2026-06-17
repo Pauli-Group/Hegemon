@@ -1,0 +1,411 @@
+import Hegemon.Native.RawIngressFullBytePublicationSurface
+
+namespace Hegemon
+namespace Native
+namespace AcceptedBlockAdmissionSafety
+
+open Hegemon.Native.AcceptedChain
+open Hegemon.Native.ActionHashAdmission
+open Hegemon.Native.AtomicCommitManifestAdmission
+open Hegemon.Native.BlockArtifactBindingAdmission
+open Hegemon.Native.BlockIndexReload
+open Hegemon.Native.BlockReplayInputProjection
+open Hegemon.Native.CanonicalReorgChainAdmission
+open Hegemon.Native.CanonicalStateReload
+open Hegemon.Native.CodecAdmission
+open Hegemon.Native.RawIngressFullBytePublicationSurface
+open Hegemon.Native.RawIngressSidecarReplayRecoverability
+open Hegemon.Native.StorageDurabilityAdmission
+open Hegemon.Native.TxLeafArtifact
+open Hegemon.Native.TxLeafArtifactProjectionRefinement
+open Hegemon.Native.TxLeafCanonicalSurface
+open Hegemon.Transaction.CanonicalVerifierBoundary
+open Hegemon.Transaction.ProofWrapperAdmission
+open Hegemon.Transaction.PublicInputs
+
+structure AcceptedBlockAdmissionSafetyFacts
+    (surface : RawIngressSidecarReplaySurface)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (actionHash : AdmissionInput)
+    (wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (txLeaf : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest) : Prop where
+  pendingDecodePreconditions :
+    exactDecodePreconditions pendingDecode = true
+  pendingDecodeExact :
+    pendingDecode.parserAccepts = true
+      ∧ pendingDecode.consumedAllBytes = true
+      ∧ pendingDecode.canonicalReencodeMatches = true
+  blockActionDecodePreconditions :
+    blockActionDecodePreconditions blockActionDecode = true
+  blockActionDecodeExact :
+    actionCountMatches blockActionDecode = true
+      ∧ blockActionDecode.everyActionDecodesExactly = true
+  actionHashPreconditions :
+    admissionPreconditions actionHash = true
+  acceptedWireProjection :
+    ActionWireReplayProjectionAdmission.evaluateActionWireReplayProjection
+      surface.daSidecarReplay.wireReplayProjection =
+        Except.ok wireOutput
+  projectedActionRowsMatchDecodedPayloads :
+    wireOutput.projectedActionCount =
+      blockActionDecode.actualActionPayloadCount
+  sidecarCiphertextsAvailable :
+    surface.transferState.sidecarCiphertextsAvailable = true
+  sidecarCiphertextSizesMatch :
+    surface.transferState.sidecarCiphertextSizesMatch = true
+  candidateDaRootMatches :
+    surface.daSidecarReplay.candidateBinding.daRootMatches = true
+  candidateTxStatementsCommitmentMatches :
+    surface.daSidecarReplay.candidateBinding.txStatementsCommitmentMatches =
+      true
+  candidateRecursiveStateRootMatches :
+    surface.daSidecarReplay.candidateBinding.recursiveStateRootMatches =
+      true
+  provenBatchDaRootMatches :
+    surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+  semanticDaRootBound :
+    semanticFields.daRoot =
+      surface.daSidecarReplay.recursiveSemanticSource.daRoot
+  acceptedLedgerTreeReplay :
+    validateNativeLedgerTreeReplayChain
+      initial
+      (rawTreeReplayInputs blocks) =
+      some final
+  commitmentRootPublication :
+    expectedCommitmentRootAfter
+      initial.commitmentRoot
+      (rawTreeReplayInputs blocks) =
+      some final.commitmentRoot
+  replayedSupply :
+    expectedNativeSupplyAfter
+      initial.ledger.supply
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.supply
+  replayedLeafCursor :
+    expectedNativeLeafCountAfter
+      initial.ledger.leafCount
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.leafCount
+  rawTreeCarriedStatePreconditions :
+    rawProjectedTreeCarriedStatePreconditions initial blocks = true
+  finalSpentNullifiersUnique :
+    final.ledger.spentNullifiers.Nodup
+  finalBridgeReplaysUnique :
+    final.ledger.consumedBridgeReplays.Nodup
+  artifactByteShapeFacts :
+    AcceptedNativeTxLeafArtifactByteShapeFacts
+      artifactBytes
+      summary
+  txLeafProjectionAssumptions :
+    NativeTxLeafArtifactCanonicalProjectionAssumptions
+      summary
+      txLeaf
+      shape
+      serializedFields
+      bound
+      statementFields
+      bindingFields
+  txLeafAccepted :
+    txLeafActionBindingAccepts txLeaf = true
+  txLeafFullStatementArtifactFacts :
+    NativeTxLeafFullStatementArtifactFacts
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+
+theorem raw_ingress_full_byte_publication_facts_imply_accepted_block_admission_safety
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (facts :
+      RawIngressFullBytePublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    AcceptedBlockAdmissionSafetyFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot := by
+  exact
+    {
+      pendingDecodePreconditions := facts.pendingDecodePreconditions
+      pendingDecodeExact := facts.pendingDecodeExact
+      blockActionDecodePreconditions := facts.blockActionDecodePreconditions
+      blockActionDecodeExact := facts.blockActionDecodeExact
+      actionHashPreconditions := facts.actionHashPreconditions
+      acceptedWireProjection := facts.acceptedWireProjection
+      projectedActionRowsMatchDecodedPayloads :=
+        facts.projectedActionRowsMatchDecodedPayloads
+      sidecarCiphertextsAvailable := facts.sidecarCiphertextsAvailable
+      sidecarCiphertextSizesMatch := facts.sidecarCiphertextSizesMatch
+      candidateDaRootMatches := facts.candidateDaRootMatches
+      candidateTxStatementsCommitmentMatches :=
+        facts.candidateTxStatementsCommitmentMatches
+      candidateRecursiveStateRootMatches :=
+        facts.candidateRecursiveStateRootMatches
+      provenBatchDaRootMatches := facts.provenBatchDaRootMatches
+      semanticDaRootBound := facts.semanticDaRootBound
+      acceptedLedgerTreeReplay := facts.acceptedLedgerTreeReplay
+      commitmentRootPublication := facts.commitmentRootPublication
+      replayedSupply := facts.replayedSupply
+      replayedLeafCursor := facts.replayedLeafCursor
+      rawTreeCarriedStatePreconditions :=
+        facts.rawTreeCarriedStatePreconditions
+      finalSpentNullifiersUnique := facts.finalSpentNullifiersUnique
+      finalBridgeReplaysUnique := facts.finalBridgeReplaysUnique
+      artifactByteShapeFacts := facts.artifactByteShapeFacts
+      txLeafProjectionAssumptions := facts.txLeafProjectionAssumptions
+      txLeafAccepted := facts.txLeafAccepted
+      txLeafFullStatementArtifactFacts :=
+        facts.txLeafFullStatementArtifactFacts
+    }
+
+theorem accepted_raw_ingress_full_byte_publication_yields_accepted_block_admission_safety
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    (rawIngressFacts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields)
+    (sidecarRoute : surface.transferState.sidecarRoute = true)
+    (pendingDecodeAccepted :
+      exactDecodeAccepts pendingDecode = true)
+    (blockActionDecodeAccepted :
+      blockActionDecodeAccepts blockActionDecode = true)
+    (actionHashAccepted :
+      admissionAccepts actionHash = true)
+    (wireActionCountMatchesDeclared :
+      surface.daSidecarReplay.wireReplayProjection.actionCount =
+        blockActionDecode.declaredTxCount)
+    (blockIndexAccepted : blockIndexReloadAccepts blockIndex = true)
+    (canonicalStateAccepted :
+      canonicalStateReloadAccepts canonicalState = true)
+    (canonicalReorgAccepted :
+      canonicalReorgChainAccepts reorgChain = true)
+    (atomicCommitAccepted :
+      atomicCommitManifestAccepts commitManifest = true)
+    (durabilityAccepted :
+      storageDurabilityAccepts durability = true)
+    (initialNullifiersNodup :
+      initial.ledger.spentNullifiers.Nodup)
+    (initialBridgeReplaysNodup :
+      initial.ledger.consumedBridgeReplays.Nodup)
+    (acceptedRaw :
+      rawProjectedLedgerTreeStateAfter initial blocks = some final)
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (projection :
+      NativeTxLeafArtifactCanonicalProjectionAssumptions
+        summary
+        txLeaf
+        shape
+        serializedFields
+        bound
+        statementFields
+        bindingFields)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    AcceptedBlockAdmissionSafetyFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot := by
+  exact
+    raw_ingress_full_byte_publication_facts_imply_accepted_block_admission_safety
+      (accepted_raw_ingress_full_byte_publication_surface
+        rawIngressFacts
+        sidecarRoute
+        pendingDecodeAccepted
+        blockActionDecodeAccepted
+        actionHashAccepted
+        wireActionCountMatchesDeclared
+        blockIndexAccepted
+        canonicalStateAccepted
+        canonicalReorgAccepted
+        atomicCommitAccepted
+        durabilityAccepted
+        initialNullifiersNodup
+        initialBridgeReplaysNodup
+        acceptedRaw
+        parsed
+        projection
+        canonicalSurface)
+
+end AcceptedBlockAdmissionSafety
+end Native
+end Hegemon
