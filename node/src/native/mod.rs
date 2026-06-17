@@ -1536,6 +1536,8 @@ impl NativeCoinbaseActionPayloadAdmissionRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCandidateArtifactAdmissionInput {
     state_deltas_absent: bool,
+    route_payload_decodes_exactly: bool,
+    route_payload_matches_artifact: bool,
     artifact_present: bool,
     schema_matches: bool,
     tx_count: u32,
@@ -1554,6 +1556,8 @@ struct NativeCandidateArtifactAdmissionInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeCandidateArtifactAdmissionRejection {
     StateDeltasPresent,
+    RoutePayloadDecodeFailed,
+    RoutePayloadArtifactMismatch,
     ArtifactMissing,
     SchemaMismatch,
     TxCountZero,
@@ -1574,6 +1578,8 @@ impl NativeCandidateArtifactAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
             Self::StateDeltasPresent => "state_deltas_present",
+            Self::RoutePayloadDecodeFailed => "route_payload_decode_failed",
+            Self::RoutePayloadArtifactMismatch => "route_payload_artifact_mismatch",
             Self::ArtifactMissing => "artifact_missing",
             Self::SchemaMismatch => "schema_mismatch",
             Self::TxCountZero => "tx_count_zero",
@@ -7811,7 +7817,7 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
 }
 
 fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
-    let input = native_candidate_artifact_admission_input(true, Some(artifact));
+    let input = native_candidate_artifact_admission_input(true, true, true, Some(artifact));
     evaluate_native_candidate_artifact_admission(input)
         .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))
 }
@@ -7820,8 +7826,22 @@ fn validate_candidate_action_payload(action: &PendingAction) -> Result<()> {
     if !is_candidate_artifact_action(action) {
         return Err(anyhow!("not a candidate artifact action"));
     }
+    let route_payload = decode_scale_exact::<SubmitCandidateArtifactArgs>(
+        &action.public_args,
+        "candidate artifact action args",
+    );
+    let route_payload_decodes_exactly = route_payload.is_ok();
+    let route_payload_matches_artifact = match (
+        route_payload.as_ref().ok(),
+        action.candidate_artifact.as_ref(),
+    ) {
+        (Some(args), Some(artifact)) => &args.payload == artifact,
+        _ => true,
+    };
     let input = native_candidate_artifact_admission_input(
         candidate_action_has_no_state_deltas(action),
+        route_payload_decodes_exactly,
+        route_payload_matches_artifact,
         action.candidate_artifact.as_ref(),
     );
     evaluate_native_candidate_artifact_admission(input)
@@ -7839,11 +7859,15 @@ fn candidate_action_has_no_state_deltas(action: &PendingAction) -> bool {
 
 fn native_candidate_artifact_admission_input(
     state_deltas_absent: bool,
+    route_payload_decodes_exactly: bool,
+    route_payload_matches_artifact: bool,
     artifact: Option<&CandidateArtifact>,
 ) -> NativeCandidateArtifactAdmissionInput {
     let Some(artifact) = artifact else {
         return NativeCandidateArtifactAdmissionInput {
             state_deltas_absent,
+            route_payload_decodes_exactly,
+            route_payload_matches_artifact,
             artifact_present: false,
             schema_matches: false,
             tx_count: 0,
@@ -7861,6 +7885,8 @@ fn native_candidate_artifact_admission_input(
     };
     NativeCandidateArtifactAdmissionInput {
         state_deltas_absent,
+        route_payload_decodes_exactly,
+        route_payload_matches_artifact,
         artifact_present: true,
         schema_matches: artifact.version == BLOCK_PROOF_BUNDLE_SCHEMA,
         tx_count: artifact.tx_count,
@@ -7887,6 +7913,10 @@ fn evaluate_native_candidate_artifact_admission(
 ) -> Result<(), NativeCandidateArtifactAdmissionRejection> {
     if !input.state_deltas_absent {
         Err(NativeCandidateArtifactAdmissionRejection::StateDeltasPresent)
+    } else if !input.route_payload_decodes_exactly {
+        Err(NativeCandidateArtifactAdmissionRejection::RoutePayloadDecodeFailed)
+    } else if !input.route_payload_matches_artifact {
+        Err(NativeCandidateArtifactAdmissionRejection::RoutePayloadArtifactMismatch)
     } else if !input.artifact_present {
         Err(NativeCandidateArtifactAdmissionRejection::ArtifactMissing)
     } else if !input.schema_matches {
@@ -7925,6 +7955,12 @@ fn native_candidate_artifact_admission_error(
     match rejection {
         NativeCandidateArtifactAdmissionRejection::StateDeltasPresent => {
             anyhow!("candidate artifact actions must not carry shielded state deltas")
+        }
+        NativeCandidateArtifactAdmissionRejection::RoutePayloadDecodeFailed => {
+            anyhow!("candidate artifact action args must decode exactly")
+        }
+        NativeCandidateArtifactAdmissionRejection::RoutePayloadArtifactMismatch => {
+            anyhow!("candidate artifact action args do not match candidate artifact payload")
         }
         NativeCandidateArtifactAdmissionRejection::ArtifactMissing => {
             anyhow!("candidate artifact action missing payload")
@@ -13535,6 +13571,7 @@ mod tests {
         ciphertext_size_count: usize,
         ciphertext_size_element_bytes: usize,
         public_args_bytes: usize,
+        public_args_compact_prefix_bytes: usize,
         compact_prefixes_canonical: bool,
         fee_bytes: usize,
         candidate_option_tag_bytes: usize,
@@ -13976,6 +14013,8 @@ mod tests {
     struct LeanCandidateArtifactAdmissionCase {
         name: String,
         state_deltas_absent: bool,
+        route_payload_decodes_exactly: bool,
+        route_payload_matches_artifact: bool,
         artifact_present: bool,
         schema_matches: bool,
         tx_count: u32,
@@ -14177,6 +14216,34 @@ mod tests {
         max_ciphertext_bytes: usize,
         ciphertext_hash_matches: bool,
         ciphertext_size_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseActionPayloadScaleWireVectorFile {
+        schema_version: u32,
+        coinbase_action_payload_scale_wire_cases: Vec<LeanCoinbaseActionPayloadScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCoinbaseActionPayloadScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        commitment_bytes: usize,
+        note_ciphertext_bytes: usize,
+        kem_ciphertext_compact_prefix_bytes: usize,
+        kem_ciphertext_bytes: usize,
+        kem_ciphertext_compact_prefix_canonical: bool,
+        recipient_address_bytes: usize,
+        amount_bytes: usize,
+        public_seed_bytes: usize,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -19082,7 +19149,7 @@ mod tests {
             + (1 + 48 * case.commitment_count)
             + (1 + 48 * case.ciphertext_hash_count)
             + (1 + 4 * case.ciphertext_size_count)
-            + (1 + case.public_args_bytes)
+            + (case.public_args_compact_prefix_bytes + case.public_args_bytes)
             + 8
             + 1
             + case.candidate_artifact_payload_bytes
@@ -19134,22 +19201,8 @@ mod tests {
                 candidate_artifact: None,
                 received_ms: 6,
             },
-            "valid_candidate_artifact_some" => PendingAction {
-                tx_hash: [13u8; 32],
-                binding: KernelVersionBinding {
-                    circuit: 0,
-                    crypto: 0,
-                },
-                family_id: FAMILY_SHIELDED_POOL,
-                action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
-                anchor: [0u8; 48],
-                nullifiers: Vec::new(),
-                commitments: Vec::new(),
-                ciphertext_hashes: Vec::new(),
-                ciphertext_sizes: Vec::new(),
-                public_args: Vec::new(),
-                fee: 0,
-                candidate_artifact: Some(CandidateArtifact {
+            "valid_candidate_artifact_some" => {
+                let artifact = CandidateArtifact {
                     version: BLOCK_PROOF_BUNDLE_SCHEMA,
                     tx_count: 1,
                     tx_statements_commitment: [5u8; 48],
@@ -19167,9 +19220,29 @@ mod tests {
                             },
                         },
                     ),
-                }),
-                received_ms: 9,
-            },
+                };
+                PendingAction {
+                    tx_hash: [13u8; 32],
+                    binding: KernelVersionBinding {
+                        circuit: 0,
+                        crypto: 0,
+                    },
+                    family_id: FAMILY_SHIELDED_POOL,
+                    action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+                    anchor: [0u8; 48],
+                    nullifiers: Vec::new(),
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    ciphertext_sizes: Vec::new(),
+                    public_args: SubmitCandidateArtifactArgs {
+                        payload: artifact.clone(),
+                    }
+                    .encode(),
+                    fee: 0,
+                    candidate_artifact: Some(artifact),
+                    received_ms: 9,
+                }
+            }
             other => panic!("no valid PendingAction fixture for {other}"),
         }
     }
@@ -19262,6 +19335,14 @@ mod tests {
                 case.candidate_artifact_none
             );
             if let Some(artifact) = action.candidate_artifact.as_ref() {
+                let args: SubmitCandidateArtifactArgs =
+                    decode_scale_exact(&action.public_args, "Lean candidate action args")
+                        .expect("valid Lean candidate action args must exact-decode");
+                assert_eq!(
+                    args.payload, *artifact,
+                    "{} candidate public_args must match candidate_artifact",
+                    case.name
+                );
                 assert_eq!(usize::from(artifact.version), 2);
                 assert_eq!(artifact.tx_count, 1);
                 assert_eq!(
@@ -20590,6 +20671,8 @@ mod tests {
     fn verify_lean_candidate_artifact_admission_case(case: &LeanCandidateArtifactAdmissionCase) {
         let input = NativeCandidateArtifactAdmissionInput {
             state_deltas_absent: case.state_deltas_absent,
+            route_payload_decodes_exactly: case.route_payload_decodes_exactly,
+            route_payload_matches_artifact: case.route_payload_matches_artifact,
             artifact_present: case.artifact_present,
             schema_matches: case.schema_matches,
             tx_count: case.tx_count,
@@ -21345,6 +21428,155 @@ mod tests {
             "{} native coinbase action payload admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_coinbase_action_payload_scale_wire_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean coinbase action payload SCALE wire vectors");
+        let vectors: LeanCoinbaseActionPayloadScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean coinbase action payload SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.coinbase_action_payload_scale_wire_cases.is_empty(),
+            "Lean coinbase action payload SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.coinbase_action_payload_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_coinbase_action_payload_scale_wire_case(case);
+        }
+    }
+
+    fn expected_coinbase_action_payload_scale_wire_fixture(
+        case: &LeanCoinbaseActionPayloadScaleWireCase,
+    ) -> MintCoinbaseArgs {
+        let (commitment, ciphertext, kem_ciphertext, recipient, amount, seed) =
+            match case.fixture.as_str() {
+                "valid_short_kem_payload" => (
+                    [1u8; 48],
+                    [2u8; ENCRYPTED_NOTE_SIZE],
+                    vec![0xaa, 0xbb, 0xcc],
+                    [3u8; DIVERSIFIED_ADDRESS_SIZE],
+                    4,
+                    [5u8; 32],
+                ),
+                "valid_zero_kem_payload" => (
+                    [6u8; 48],
+                    [7u8; ENCRYPTED_NOTE_SIZE],
+                    Vec::new(),
+                    [8u8; DIVERSIFIED_ADDRESS_SIZE],
+                    9,
+                    [10u8; 32],
+                ),
+                other => panic!("no valid MintCoinbaseArgs fixture for {other}"),
+            };
+        MintCoinbaseArgs {
+            reward_bundle: BlockRewardBundle {
+                miner_note: CoinbaseNoteData {
+                    commitment,
+                    encrypted_note: EncryptedNote {
+                        ciphertext,
+                        kem_ciphertext,
+                    },
+                    recipient_address: recipient,
+                    amount,
+                    public_seed: seed,
+                },
+            },
+        }
+    }
+
+    fn expected_coinbase_action_payload_encoded_len(
+        case: &LeanCoinbaseActionPayloadScaleWireCase,
+    ) -> usize {
+        case.commitment_bytes
+            + case.note_ciphertext_bytes
+            + case.kem_ciphertext_compact_prefix_bytes
+            + case.kem_ciphertext_bytes
+            + case.recipient_address_bytes
+            + case.amount_bytes
+            + case.public_seed_bytes
+    }
+
+    fn verify_lean_coinbase_action_payload_scale_wire_case(
+        case: &LeanCoinbaseActionPayloadScaleWireCase,
+    ) {
+        let fixed_fields_ok = case.commitment_bytes == 48
+            && case.note_ciphertext_bytes == ENCRYPTED_NOTE_SIZE
+            && case.recipient_address_bytes == DIVERSIFIED_ADDRESS_SIZE
+            && case.amount_bytes == 8
+            && case.public_seed_bytes == 32;
+        let expected_len = expected_coinbase_action_payload_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && case.kem_ciphertext_compact_prefix_canonical
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean coinbase SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_coinbase_action_payload_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production MintCoinbaseArgs::encode",
+                case.name
+            );
+        }
+
+        let actual =
+            decode_scale_exact::<MintCoinbaseArgs>(&raw, "Lean coinbase action payload SCALE wire");
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production MintCoinbaseArgs exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production MintCoinbaseArgs exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            let note = &args.reward_bundle.miner_note;
+            assert_eq!(note.commitment.len(), case.commitment_bytes);
+            assert_eq!(
+                note.encrypted_note.ciphertext.len(),
+                case.note_ciphertext_bytes
+            );
+            assert_eq!(
+                note.encrypted_note.kem_ciphertext.len(),
+                case.kem_ciphertext_bytes
+            );
+            assert_eq!(note.recipient_address.len(), case.recipient_address_bytes);
+            assert_eq!(note.public_seed.len(), case.public_seed_bytes);
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
     }
 
     #[test]
@@ -26012,11 +26244,49 @@ mod tests {
     fn candidate_artifact_action_requires_payload() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
-        let action = test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        let mut action =
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.public_args = SubmitCandidateArtifactArgs {
+            payload: test_candidate_artifact(1),
+        }
+        .encode();
+        action.tx_hash = pending_action_hash(&action);
 
         let err = validate_block_actions_locked(&state, &[action])
             .expect_err("candidate artifact action must carry a payload");
         assert!(err.to_string().contains("missing payload"));
+    }
+
+    #[test]
+    fn candidate_artifact_action_rejects_malformed_route_payload() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut action = test_candidate_artifact_action(1, 9);
+        action.public_args.push(0xaa);
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("candidate artifact route payload must exact-decode");
+        assert!(err.to_string().contains("args must decode exactly"));
+    }
+
+    #[test]
+    fn candidate_artifact_action_rejects_route_payload_artifact_mismatch() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let mut action = test_candidate_artifact_action(1, 10);
+        let mut mismatched = test_candidate_artifact(1);
+        mismatched.tx_statements_commitment = [11u8; 48];
+        mismatched.da_root = [12u8; 48];
+        action.public_args = SubmitCandidateArtifactArgs {
+            payload: mismatched,
+        }
+        .encode();
+        action.tx_hash = pending_action_hash(&action);
+
+        let err = validate_block_actions_locked(&state, &[action])
+            .expect_err("candidate artifact route payload must match action payload");
+        assert!(err.to_string().contains("do not match"));
     }
 
     #[test]
@@ -26070,10 +26340,7 @@ mod tests {
         let node =
             NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
-        let mut action =
-            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
-        action.candidate_artifact = Some(test_candidate_artifact(1));
-        action.tx_hash = pending_action_hash(&action);
+        let action = test_candidate_artifact_action(1, 12);
         validate_block_actions_locked(&state, &[action.clone()])
             .expect("candidate artifact payload is structurally valid");
 
@@ -28093,6 +28360,10 @@ mod tests {
         }
         let mut action =
             test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT, 0);
+        action.public_args = SubmitCandidateArtifactArgs {
+            payload: artifact.clone(),
+        }
+        .encode();
         action.candidate_artifact = Some(artifact);
         action.received_ms = u64::from(tag);
         action.tx_hash = pending_action_hash(&action);

@@ -17,6 +17,12 @@ def rejectJson : Option PendingActionScaleWireReject -> String
 def compactSmall (value : Nat) : List Byte :=
   [byte (value * 4)]
 
+def compactLen (value : Nat) : List Byte :=
+  if value < 64 then
+    [byte (value * 4)]
+  else
+    u16le (value * 4 + 1)
+
 def repeated (length value : Nat) : List Byte :=
   List.replicate length (byte value)
 
@@ -35,15 +41,15 @@ def noCandidatePendingActionBytes
     ++ u16le family
     ++ u16le action
     ++ repeated 48 anchorValue
-    ++ compactSmall nullifierValues.length
+    ++ compactLen nullifierValues.length
     ++ flattenBytes (nullifierValues.map (repeated 48))
-    ++ compactSmall commitmentValues.length
+    ++ compactLen commitmentValues.length
     ++ flattenBytes (commitmentValues.map (repeated 48))
-    ++ compactSmall ciphertextHashValues.length
+    ++ compactLen ciphertextHashValues.length
     ++ flattenBytes (ciphertextHashValues.map (repeated 48))
-    ++ compactSmall ciphertextSizes.length
+    ++ compactLen ciphertextSizes.length
     ++ flattenBytes (ciphertextSizes.map u32le)
-    ++ compactSmall publicArgs.length
+    ++ compactLen publicArgs.length
     ++ publicArgs.map byte
     ++ u64le fee
     ++ [0]
@@ -58,13 +64,13 @@ def candidateArtifactRecursiveBlockPayloadBytes
     ++ repeated 48 txStatementsCommitmentValue
     ++ repeated 48 daRootValue
     ++ u32le daChunkCount
-    ++ compactSmall 0
+    ++ compactLen 0
     ++ [2]
     ++ [4]
     ++ repeated 48 verifierProfileValue
     ++ [0]
     ++ [1]
-    ++ compactSmall recursiveProof.length
+    ++ compactLen recursiveProof.length
     ++ recursiveProof.map byte
 
 def someCandidatePendingActionBytes
@@ -79,15 +85,15 @@ def someCandidatePendingActionBytes
     ++ u16le family
     ++ u16le action
     ++ repeated 48 anchorValue
-    ++ compactSmall nullifierValues.length
+    ++ compactLen nullifierValues.length
     ++ flattenBytes (nullifierValues.map (repeated 48))
-    ++ compactSmall commitmentValues.length
+    ++ compactLen commitmentValues.length
     ++ flattenBytes (commitmentValues.map (repeated 48))
-    ++ compactSmall ciphertextHashValues.length
+    ++ compactLen ciphertextHashValues.length
     ++ flattenBytes (ciphertextHashValues.map (repeated 48))
-    ++ compactSmall ciphertextSizes.length
+    ++ compactLen ciphertextSizes.length
     ++ flattenBytes (ciphertextSizes.map u32le)
-    ++ compactSmall publicArgs.length
+    ++ compactLen publicArgs.length
     ++ publicArgs.map byte
     ++ u64le fee
     ++ [1]
@@ -111,7 +117,7 @@ def validCandidatePayloadBytes : List Byte :=
 def validCandidateSomeBytes : List Byte :=
   someCandidatePendingActionBytes
     13 0 0 1 5 0
-    [] [] [] [] [] 0 9
+    [] [] [] [] validCandidatePayloadBytes 0 9
     validCandidatePayloadBytes
 
 def replaceAt : Nat -> Byte -> List Byte -> List Byte
@@ -151,13 +157,13 @@ def trailingCandidateSomeBytes : List Byte :=
   validCandidateSomeBytes ++ [0xaa]
 
 def candidateSomeInvalidProofModeBytes : List Byte :=
-  replaceAt 208 7 validCandidateSomeBytes
+  replaceAt 400 7 validCandidateSomeBytes
 
 def candidateSomeInvalidProofKindBytes : List Byte :=
-  replaceAt 209 9 validCandidateSomeBytes
+  replaceAt 401 9 validCandidateSomeBytes
 
 def candidateSomeRecursiveProofOverrunBytes : List Byte :=
-  replaceAt 260 (byte (33 * 4)) validCandidateSomeBytes
+  replaceAt 452 (byte (33 * 4)) validCandidateSomeBytes
 
 def caseJson
     (name fixture : String)
@@ -189,6 +195,8 @@ def caseJson
     ++ toString input.ciphertextSizeElementBytes ++ ",\n"
     ++ "      \"public_args_bytes\": "
     ++ toString input.publicArgsBytes ++ ",\n"
+    ++ "      \"public_args_compact_prefix_bytes\": "
+    ++ toString input.publicArgsCompactPrefixBytes ++ ",\n"
     ++ "      \"compact_prefixes_canonical\": "
     ++ boolJson input.compactPrefixesCanonical ++ ",\n"
     ++ "      \"fee_bytes\": " ++ toString input.feeBytes ++ ",\n"

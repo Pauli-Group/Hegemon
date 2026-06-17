@@ -2644,7 +2644,7 @@
       "id": "native.coinbase-action-payload-admission",
       "component": "native coinbase action payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native coinbase action payload-admission kernel proves the executable table for decoded coinbase reward-note amount, commitment agreement/nonzero checks, ciphertext byte caps, and ciphertext hash/size metadata agreement; generated Lean vectors are checked against the production native helper used by mempool and block action validation, and the blueprint now requires production validation to recompute the note commitment from the public amount, compact recipient fields, and public seed before entering that table.",
+      "summary": "The Lean native coinbase action payload-admission kernel proves the executable table for decoded coinbase reward-note amount, commitment agreement/nonzero checks, ciphertext byte caps, and ciphertext hash/size metadata agreement; generated Lean vectors are checked against the production native helper used by mempool and block action validation, and the blueprint now requires production validation to recompute the note commitment from the public amount, compact recipient fields, and public seed before entering that table. A companion CoinbaseActionPayloadScaleWire slice models raw MintCoinbaseArgs SCALE route bytes and checks Lean-generated fixtures against production exact decode.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2660,16 +2660,27 @@
         "Hegemon.Native.CoinbaseActionPayloadAdmission.commitment_mismatch_rejects",
         "Hegemon.Native.CoinbaseActionPayloadAdmission.commitment_zero_rejects",
         "Hegemon.Native.CoinbaseActionPayloadAdmission.exact_ciphertext_limit_accepts",
-        "Hegemon.Native.CoinbaseActionPayloadAdmission.valid_coinbase_payload_accepts"
+        "Hegemon.Native.CoinbaseActionPayloadAdmission.valid_coinbase_payload_accepts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_exact_decode",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_total_length",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.coinbase_action_payload_scale_wire_acceptance_exposes_facts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.kem_ciphertext_length_overrun_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.noncanonical_kem_compact_prefix_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.trailing_byte_case_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.valid_short_kem_payload_accepts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.valid_zero_kem_payload_accepts"
       ],
       "assumptions": [
         "The Lean model represents decoded coinbase payload/public metadata admission after action route and scope admission; the production implementation first reduces the public amount, compact recipient fields, and public seed into the commitment-match Boolean checked by the Lean table.",
         "Generated Lean conformance vectors cover valid payloads, exact ciphertext-cap acceptance, zero amount, commitment mismatch, zero commitment, ciphertext oversize, ciphertext hash mismatch, ciphertext size mismatch, and rejection precedence.",
-        "The theorem covers executable decoded coinbase payload binding only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, wallet decryptability for every possible recipient, reward accounting, complete action decoding, or complete native-node equivalence."
+        "The CoinbaseActionPayloadScaleWire slice covers representative raw MintCoinbaseArgs SCALE bytes for valid short-KEM and zero-KEM payloads plus empty, short, trailing, KEM length overrun, and noncanonical compact-prefix rejection; it checks production exact decode and canonical re-encoding, not full parity-scale-codec correctness for all arbitrary byte strings.",
+        "The theorem covers executable decoded coinbase payload binding and the route-payload SCALE wire slice only. It does not prove encrypted note confidentiality, ciphertext hash cryptographic security or implementation equivalence, wallet decryptability for every possible recipient, reward accounting, complete action decoding, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CoinbaseActionPayloadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadScaleWireVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -2677,6 +2688,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node coinbase_action_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -3487,7 +3499,7 @@
       "id": "native.candidate-artifact-admission",
       "component": "native candidate artifact admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean candidate-artifact admission kernel proves the executable native action/artifact table for no state-delta smuggling, payload presence, schema, tx-count and DA-chunk bounds, shipped recursive_block_v2 route/profile, empty legacy proof fields, missing/empty recursive payload rejection, and recursive proof byte caps; generated Lean vectors are checked against the production helper used by native candidate action/artifact validation.",
+      "summary": "The Lean candidate-artifact admission kernel proves the executable native action/artifact table for no state-delta smuggling, exact route public_args decode, route payload/artifact equality, payload presence, schema, tx-count and DA-chunk bounds, shipped recursive_block_v2 route/profile, empty legacy proof fields, missing/empty recursive payload rejection, and recursive proof byte caps; generated Lean vectors are checked against the production helper used by native candidate action/artifact validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3499,6 +3511,8 @@
         "Hegemon.Native.CandidateArtifactAdmission.recursive_payload_missing_rejects",
         "Hegemon.Native.CandidateArtifactAdmission.recursive_proof_empty_rejects",
         "Hegemon.Native.CandidateArtifactAdmission.recursive_proof_too_large_rejects",
+        "Hegemon.Native.CandidateArtifactAdmission.route_payload_artifact_mismatch_rejects",
+        "Hegemon.Native.CandidateArtifactAdmission.route_payload_decode_failed_rejects",
         "Hegemon.Native.CandidateArtifactAdmission.schema_mismatch_rejects",
         "Hegemon.Native.CandidateArtifactAdmission.state_deltas_precede_artifact_validation",
         "Hegemon.Native.CandidateArtifactAdmission.state_deltas_present_rejects",
@@ -3510,8 +3524,8 @@
         "Hegemon.Native.CandidateArtifactAdmission.wrong_proof_mode_rejects"
       ],
       "assumptions": [
-        "The Lean model treats candidate-artifact route identity and deep artifact fields as already decoded production predicates; it does not prove SCALE decoding or verifier-profile digest construction.",
-        "Generated Lean conformance vectors cover valid candidate artifacts, exact recursive proof size limit acceptance, state-delta smuggling, missing payloads, schema mismatch, zero and oversized tx counts, zero DA chunks, wrong proof mode/kind/profile, legacy commitment-proof and receipt-root payload rejection, missing/empty recursive proof payload, proof oversize, and rejection precedence.",
+        "The Lean model treats candidate-artifact route identity, route-payload exact decode, route payload/artifact equality, and deep artifact fields as production-derived predicates; the concrete PendingAction SCALE wire slice separately vector-checks the shipped route payload bytes.",
+        "Generated Lean conformance vectors cover valid candidate artifacts, exact recursive proof size limit acceptance, state-delta smuggling, malformed route payload bytes, route payload/artifact mismatch, missing payloads, schema mismatch, zero and oversized tx counts, zero DA chunks, wrong proof mode/kind/profile, legacy commitment-proof and receipt-root payload rejection, missing/empty recursive proof payload, proof oversize, and rejection precedence.",
         "The theorem covers executable native candidate-artifact admission only. It does not prove recursive proof cryptographic soundness, native tx-leaf soundness, DA soundness, statement commitment correctness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -4626,7 +4640,7 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, native block action payload counts, pending/block action parser resource-cap composition, and a concrete PendingAction SCALE wire grammar covering no-candidate actions plus the shipped recursive-block CandidateArtifact::Some product lane; generated Lean vectors are checked against production decode helpers, block-action decoding, and PendingAction exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, and canonical publication facts.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, native block action payload counts, pending/block action parser resource-cap composition, a concrete PendingAction SCALE wire grammar covering no-candidate actions plus the shipped recursive-block CandidateArtifact::Some product lane with route public_args bytes, and a concrete shielded coinbase MintCoinbaseArgs SCALE wire grammar; generated Lean vectors are checked against production decode helpers, block-action decoding, PendingAction exact decode, and MintCoinbaseArgs exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, and canonical publication facts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4656,6 +4670,14 @@
         "Hegemon.Native.CodecAdmission.valid_block_actions_accept",
         "Hegemon.Native.CodecAdmission.valid_exact_decode_accepts",
         "Hegemon.Native.CodecAdmission.valid_sync_accepts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_exact_decode",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_total_length",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.coinbase_action_payload_scale_wire_acceptance_exposes_facts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.kem_ciphertext_length_overrun_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.noncanonical_kem_compact_prefix_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.trailing_byte_case_rejects",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.valid_short_kem_payload_accepts",
+        "Hegemon.Native.CoinbaseActionPayloadScaleWire.valid_zero_kem_payload_accepts",
         "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_refines_wire_replay_rows",
         "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication",
@@ -4674,7 +4696,8 @@
       "assumptions": [
         "The Lean model treats underlying wire, SCALE, and bincode parsers as parser-acceptance predicates and proves the executable exact-consumption, canonical re-encode, and count-admission table around those parsers.",
         "Generated Lean conformance vectors cover valid bounded sync messages, legacy bincode sync-message rejection, sync trailing-byte rejection, valid/trailing/non-canonical SCALE decode, valid/trailing/non-canonical bincode decode, block action count mismatch rejection, and trailing action payload rejection.",
-        "The PendingAction SCALE wire slice models the production field order for no-candidate actions and the shipped recursive-block CandidateArtifact::Some product lane, including fixed-width tx hash, kernel binding, family/action ids, anchor, compact vectors for nullifiers/commitments/ciphertext hashes/ciphertext sizes/public args, fee, candidate option tag, candidate artifact fixed fields, nested proof-vector bytes, option tags, and received timestamp. Generated Lean vectors cover valid empty and one-each no-candidate actions, a valid recursive-block candidate-artifact Some action, empty, short, trailing, invalid option tag, noncanonical compact-prefix, vector-count overrun, public-args overrun, truncated candidate-Some, candidate-Some trailing, invalid candidate proof-mode/kind tags, and recursive proof-length overrun.",
+        "The PendingAction SCALE wire slice models the production field order for no-candidate actions and the shipped recursive-block CandidateArtifact::Some product lane, including fixed-width tx hash, kernel binding, family/action ids, anchor, compact vectors for nullifiers/commitments/ciphertext hashes/ciphertext sizes/public args, fee, candidate option tag, candidate artifact fixed fields, nested proof-vector bytes, option tags, and received timestamp. The candidate Some fixture now models public_args as the exact SubmitCandidateArtifactArgs payload bytes and separately carries the duplicate candidate_artifact field. Generated Lean vectors cover valid empty and one-each no-candidate actions, a valid recursive-block candidate-artifact Some action, empty, short, trailing, invalid option tag, noncanonical compact-prefix, vector-count overrun, public-args overrun, truncated candidate-Some, candidate-Some trailing, invalid candidate proof-mode/kind tags, and recursive proof-length overrun.",
+        "The CoinbaseActionPayload SCALE wire slice models the production MintCoinbaseArgs field order for one BlockRewardBundle and CoinbaseNoteData: note commitment, note ciphertext, compact KEM ciphertext length, KEM ciphertext bytes, recipient, amount, and public seed. Generated Lean vectors cover valid short and zero-length KEM ciphertexts plus parser failure, trailing byte, KEM length overrun, and noncanonical compact prefix rejection.",
         "The theorem covers strict native codec admission at sync, metadata, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence.",
         "The byte parser refinement theorem reuses the exact-decode and block-action decode kernels as accepted parser predicates and derives projected replay row-count equality from declared action count plus accepted wire replay; the resource-bound refinement additionally carries generic raw/decoded/item/aggregate/work cap facts and binds resource item count to decoded payload rows and wire rows.",
         "Production `decode_block_actions` now calls a pre-decode byte-budget helper that rejects over-cap declared/payload action counts, over-cap per-action payload bytes, aggregate-byte overflow, and aggregate-byte over-cap before SCALE action decode; this is a cheap admission check and does not replace external parser implementation review.",
@@ -4685,6 +4708,8 @@
         "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/PendingActionScaleWire.lean",
         "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean",
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadScaleWireVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -4700,6 +4725,7 @@
         "cargo test -p hegemon-node decode_block_actions_rejects_action_count_mismatch --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture",
         "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [

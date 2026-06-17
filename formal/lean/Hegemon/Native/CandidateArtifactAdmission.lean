@@ -4,6 +4,8 @@ namespace CandidateArtifactAdmission
 
 inductive CandidateArtifactReject where
   | stateDeltasPresent
+  | routePayloadDecodeFailed
+  | routePayloadArtifactMismatch
   | artifactMissing
   | schemaMismatch
   | txCountZero
@@ -21,6 +23,8 @@ deriving DecidableEq, Repr
 
 structure CandidateArtifactInput where
   stateDeltasAbsent : Bool
+  routePayloadDecodesExactly : Bool
+  routePayloadMatchesArtifact : Bool
   artifactPresent : Bool
   schemaMatches : Bool
   txCount : Nat
@@ -40,6 +44,10 @@ def evaluateCandidateArtifact
     (input : CandidateArtifactInput) : Except CandidateArtifactReject Unit :=
   if input.stateDeltasAbsent = false then
     Except.error CandidateArtifactReject.stateDeltasPresent
+  else if input.routePayloadDecodesExactly = false then
+    Except.error CandidateArtifactReject.routePayloadDecodeFailed
+  else if input.routePayloadMatchesArtifact = false then
+    Except.error CandidateArtifactReject.routePayloadArtifactMismatch
   else if input.artifactPresent = false then
     Except.error CandidateArtifactReject.artifactMissing
   else if input.schemaMatches = false then
@@ -83,6 +91,8 @@ def candidateArtifactRejection
 def validCandidateArtifact : CandidateArtifactInput :=
   {
     stateDeltasAbsent := true,
+    routePayloadDecodesExactly := true,
+    routePayloadMatchesArtifact := true,
     artifactPresent := true,
     schemaMatches := true,
     txCount := 1,
@@ -113,36 +123,63 @@ theorem state_deltas_present_rejects
 theorem artifact_missing_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (missing : input.artifactPresent = false) :
     evaluateCandidateArtifact input =
       Except.error CandidateArtifactReject.artifactMissing := by
   unfold evaluateCandidateArtifact
-  simp [noDeltas, missing]
+  simp [noDeltas, routeDecode, routeMatches, missing]
+
+theorem route_payload_decode_failed_rejects
+    {input : CandidateArtifactInput}
+    (noDeltas : input.stateDeltasAbsent = true)
+    (decodeFailed : input.routePayloadDecodesExactly = false) :
+    evaluateCandidateArtifact input =
+      Except.error CandidateArtifactReject.routePayloadDecodeFailed := by
+  unfold evaluateCandidateArtifact
+  simp [noDeltas, decodeFailed]
+
+theorem route_payload_artifact_mismatch_rejects
+    {input : CandidateArtifactInput}
+    (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (mismatch : input.routePayloadMatchesArtifact = false) :
+    evaluateCandidateArtifact input =
+      Except.error CandidateArtifactReject.routePayloadArtifactMismatch := by
+  unfold evaluateCandidateArtifact
+  simp [noDeltas, routeDecode, mismatch]
 
 theorem schema_mismatch_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (mismatch : input.schemaMatches = false) :
     evaluateCandidateArtifact input =
       Except.error CandidateArtifactReject.schemaMismatch := by
   unfold evaluateCandidateArtifact
-  simp [noDeltas, present, mismatch]
+  simp [noDeltas, routeDecode, routeMatches, present, mismatch]
 
 theorem tx_count_zero_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (zeroTx : input.txCount = 0) :
     evaluateCandidateArtifact input =
       Except.error CandidateArtifactReject.txCountZero := by
   unfold evaluateCandidateArtifact
-  simp [noDeltas, present, schema, zeroTx]
+  simp [noDeltas, routeDecode, routeMatches, present, schema, zeroTx]
 
 theorem tx_count_too_large_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -150,11 +187,13 @@ theorem tx_count_too_large_rejects
     evaluateCandidateArtifact input =
       Except.error CandidateArtifactReject.txCountTooLarge := by
   unfold evaluateCandidateArtifact
-  simp [noDeltas, present, schema, nonzeroTx, tooLarge]
+  simp [noDeltas, routeDecode, routeMatches, present, schema, nonzeroTx, tooLarge]
 
 theorem da_chunk_count_zero_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -163,11 +202,22 @@ theorem da_chunk_count_zero_rejects
     evaluateCandidateArtifact input =
       Except.error CandidateArtifactReject.daChunkCountZero := by
   unfold evaluateCandidateArtifact
-  simp [noDeltas, present, schema, nonzeroTx, txInBounds, zeroChunks]
+  simp [
+    noDeltas,
+    routeDecode,
+    routeMatches,
+    present,
+    schema,
+    nonzeroTx,
+    txInBounds,
+    zeroChunks
+  ]
 
 theorem wrong_proof_mode_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -179,6 +229,8 @@ theorem wrong_proof_mode_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -190,6 +242,8 @@ theorem wrong_proof_mode_rejects
 theorem wrong_proof_kind_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -202,6 +256,8 @@ theorem wrong_proof_kind_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -214,6 +270,8 @@ theorem wrong_proof_kind_rejects
 theorem verifier_profile_mismatch_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -227,6 +285,8 @@ theorem verifier_profile_mismatch_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -240,6 +300,8 @@ theorem verifier_profile_mismatch_rejects
 theorem commitment_proof_present_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -254,6 +316,8 @@ theorem commitment_proof_present_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -268,6 +332,8 @@ theorem commitment_proof_present_rejects
 theorem receipt_root_present_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -283,6 +349,8 @@ theorem receipt_root_present_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -298,6 +366,8 @@ theorem receipt_root_present_rejects
 theorem recursive_payload_missing_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -314,6 +384,8 @@ theorem recursive_payload_missing_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -330,6 +402,8 @@ theorem recursive_payload_missing_rejects
 theorem recursive_proof_empty_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -347,6 +421,8 @@ theorem recursive_proof_empty_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,
@@ -364,6 +440,8 @@ theorem recursive_proof_empty_rejects
 theorem recursive_proof_too_large_rejects
     {input : CandidateArtifactInput}
     (noDeltas : input.stateDeltasAbsent = true)
+    (routeDecode : input.routePayloadDecodesExactly = true)
+    (routeMatches : input.routePayloadMatchesArtifact = true)
     (present : input.artifactPresent = true)
     (schema : input.schemaMatches = true)
     (nonzeroTx : input.txCount ≠ 0)
@@ -382,6 +460,8 @@ theorem recursive_proof_too_large_rejects
   unfold evaluateCandidateArtifact
   simp [
     noDeltas,
+    routeDecode,
+    routeMatches,
     present,
     schema,
     nonzeroTx,

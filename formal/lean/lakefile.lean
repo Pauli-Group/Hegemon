@@ -202,6 +202,9 @@ lean_exe gen_coinbase_accounting_admission_vectors where
 lean_exe gen_coinbase_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateCoinbaseActionPayloadAdmissionVectors
 
+lean_exe gen_coinbase_action_payload_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateCoinbaseActionPayloadScaleWireVectors
+
 lean_exe gen_mineable_action_admission_vectors where
   root := `Hegemon.Native.GenerateMineableActionAdmissionVectors
 

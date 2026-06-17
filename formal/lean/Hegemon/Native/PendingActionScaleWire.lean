@@ -27,6 +27,7 @@ structure PendingActionScaleWireInput where
   ciphertextSizeCount : Nat
   ciphertextSizeElementBytes : Nat
   publicArgsBytes : Nat
+  publicArgsCompactPrefixBytes : Nat
   compactPrefixesCanonical : Bool
   feeBytes : Nat
   candidateOptionTagBytes : Nat
@@ -75,13 +76,14 @@ def candidateArtifactPayloadBytesExpected
 
 def pendingActionEncodedLen
     (nullifierCount commitmentCount ciphertextHashCount ciphertextSizeCount
-      publicArgsBytes candidateArtifactPayloadBytes : Nat) : Nat :=
+      publicArgsCompactPrefixBytes publicArgsBytes
+      candidateArtifactPayloadBytes : Nat) : Nat :=
   32 + 4 + 2 + 2 + 48
     + (1 + 48 * nullifierCount)
     + (1 + 48 * commitmentCount)
     + (1 + 48 * ciphertextHashCount)
     + (1 + 4 * ciphertextSizeCount)
-    + (1 + publicArgsBytes)
+    + (publicArgsCompactPrefixBytes + publicArgsBytes)
     + 8 + 1 + candidateArtifactPayloadBytes + 8
 
 def pendingActionNoCandidateEncodedLen
@@ -92,6 +94,7 @@ def pendingActionNoCandidateEncodedLen
     commitmentCount
     ciphertextHashCount
     ciphertextSizeCount
+    1
     publicArgsBytes
     0
 
@@ -138,6 +141,7 @@ def expectedLengthMatches (input : PendingActionScaleWireInput) : Bool :=
       input.commitmentCount
       input.ciphertextHashCount
       input.ciphertextSizeCount
+      input.publicArgsCompactPrefixBytes
       input.publicArgsBytes
       input.candidateArtifactPayloadBytes
 
@@ -186,6 +190,7 @@ structure AcceptedPendingActionScaleWireFacts
         input.commitmentCount
         input.ciphertextHashCount
         input.ciphertextSizeCount
+        input.publicArgsCompactPrefixBytes
         input.publicArgsBytes
         input.candidateArtifactPayloadBytes
   consumedAllBytes :
@@ -235,6 +240,7 @@ theorem pending_action_scale_wire_acceptance_exposes_facts
                       input.commitmentCount
                       input.ciphertextHashCount
                       input.ciphertextSizeCount
+                      input.publicArgsCompactPrefixBytes
                       input.publicArgsBytes
                       input.candidateArtifactPayloadBytes := by
                 simpa [expectedLengthMatches] using hLengthBool
@@ -274,6 +280,7 @@ theorem accepted_pending_action_scale_wire_total_length
         input.commitmentCount
         input.ciphertextHashCount
         input.ciphertextSizeCount
+        input.publicArgsCompactPrefixBytes
         input.publicArgsBytes
         input.candidateArtifactPayloadBytes :=
   (pending_action_scale_wire_acceptance_exposes_facts accepted).totalLengthMatches
@@ -319,6 +326,7 @@ def validEmptyNoCandidate : PendingActionScaleWireInput :=
     ciphertextSizeCount := 0,
     ciphertextSizeElementBytes := 4,
     publicArgsBytes := 0,
+    publicArgsCompactPrefixBytes := 1,
     compactPrefixesCanonical := true,
     feeBytes := 8,
     candidateOptionTagBytes := 1,
@@ -352,6 +360,7 @@ def validOneEachNoCandidate : PendingActionScaleWireInput :=
     ciphertextHashCount := 1,
     ciphertextSizeCount := 1,
     publicArgsBytes := 3,
+    publicArgsCompactPrefixBytes := 1,
     totalBytes := pendingActionNoCandidateEncodedLen 1 1 1 1 3
   }
 
@@ -361,6 +370,8 @@ def validCandidateArtifactSome : PendingActionScaleWireInput :=
     validEmptyNoCandidate with
     familyIdBytes := 2,
     actionIdBytes := 2,
+    publicArgsBytes := payloadBytes,
+    publicArgsCompactPrefixBytes := 2,
     candidateArtifactNone := false,
     candidateArtifactPayloadBytes := payloadBytes,
     candidateArtifactVersionBytes := 1,
@@ -377,7 +388,7 @@ def validCandidateArtifactSome : PendingActionScaleWireInput :=
     candidateArtifactRecursiveBlockOptionTagBytes := 1,
     candidateArtifactRecursiveBlockPresent := true,
     candidateArtifactRecursiveProofBytes := 32,
-    totalBytes := pendingActionEncodedLen 0 0 0 0 0 payloadBytes
+    totalBytes := pendingActionEncodedLen 0 0 0 0 2 payloadBytes payloadBytes
   }
 
 theorem valid_empty_no_candidate_accepts :

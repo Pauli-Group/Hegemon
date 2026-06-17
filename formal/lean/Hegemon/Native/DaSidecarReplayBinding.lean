@@ -83,21 +83,27 @@ theorem accepted_candidate_artifact_implies_nonzero_tx_and_da
   by_cases hDeltas : input.stateDeltasAbsent = false
   · simp [hDeltas] at accepted
   · simp [hDeltas] at accepted
-    by_cases hPresent : input.artifactPresent = false
-    · simp [hPresent] at accepted
-    · simp [hPresent] at accepted
-      by_cases hSchema : input.schemaMatches = false
-      · simp [hSchema] at accepted
-      · simp [hSchema] at accepted
-        by_cases hTxZero : input.txCount = 0
-        · simp [hTxZero] at accepted
-        · simp [hTxZero] at accepted
-          by_cases hTxTooLarge : input.txCount > input.maxTxCount
-          · simp [hTxTooLarge] at accepted
-          · simp [hTxTooLarge] at accepted
-            by_cases hDaZero : input.daChunkCount = 0
-            · simp [hDaZero] at accepted
-            · exact ⟨hTxZero, hDaZero⟩
+    by_cases hRouteDecode : input.routePayloadDecodesExactly = false
+    · simp [hRouteDecode] at accepted
+    · simp [hRouteDecode] at accepted
+      by_cases hRouteMatches : input.routePayloadMatchesArtifact = false
+      · simp [hRouteMatches] at accepted
+      · simp [hRouteMatches] at accepted
+        by_cases hPresent : input.artifactPresent = false
+        · simp [hPresent] at accepted
+        · simp [hPresent] at accepted
+          by_cases hSchema : input.schemaMatches = false
+          · simp [hSchema] at accepted
+          · simp [hSchema] at accepted
+            by_cases hTxZero : input.txCount = 0
+            · simp [hTxZero] at accepted
+            · simp [hTxZero] at accepted
+              by_cases hTxTooLarge : input.txCount > input.maxTxCount
+              · simp [hTxTooLarge] at accepted
+              · simp [hTxTooLarge] at accepted
+                by_cases hDaZero : input.daChunkCount = 0
+                · simp [hDaZero] at accepted
+                · exact ⟨hTxZero, hDaZero⟩
 
 theorem accepted_candidate_artifact_binding_implies_root_matches
     {input : CandidateArtifactBindingInput}

@@ -8,6 +8,10 @@ def boolJson (value : Bool) : String :=
 def rejectionJson : Option CandidateArtifactReject -> String
   | none => "null"
   | some CandidateArtifactReject.stateDeltasPresent => "\"state_deltas_present\""
+  | some CandidateArtifactReject.routePayloadDecodeFailed =>
+      "\"route_payload_decode_failed\""
+  | some CandidateArtifactReject.routePayloadArtifactMismatch =>
+      "\"route_payload_artifact_mismatch\""
   | some CandidateArtifactReject.artifactMissing => "\"artifact_missing\""
   | some CandidateArtifactReject.schemaMismatch => "\"schema_mismatch\""
   | some CandidateArtifactReject.txCountZero => "\"tx_count_zero\""
@@ -32,6 +36,10 @@ def candidateArtifactAdmissionCaseJson
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"state_deltas_absent\": " ++ boolJson input.stateDeltasAbsent ++ ",\n"
+    ++ "      \"route_payload_decodes_exactly\": "
+      ++ boolJson input.routePayloadDecodesExactly ++ ",\n"
+    ++ "      \"route_payload_matches_artifact\": "
+      ++ boolJson input.routePayloadMatchesArtifact ++ ",\n"
     ++ "      \"artifact_present\": " ++ boolJson input.artifactPresent ++ ",\n"
     ++ "      \"schema_matches\": " ++ boolJson input.schemaMatches ++ ",\n"
     ++ "      \"tx_count\": " ++ toString input.txCount ++ ",\n"
@@ -71,6 +79,10 @@ def vectorJson : String :=
       } ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "state-deltas-present-rejected"
       { validCandidateArtifact with stateDeltasAbsent := false } ++ ",\n"
+    ++ candidateArtifactAdmissionCaseJson "route-payload-decode-failed-rejected"
+      { validCandidateArtifact with routePayloadDecodesExactly := false } ++ ",\n"
+    ++ candidateArtifactAdmissionCaseJson "route-payload-artifact-mismatch-rejected"
+      { validCandidateArtifact with routePayloadMatchesArtifact := false } ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "artifact-missing-rejected"
       { validCandidateArtifact with artifactPresent := false } ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "schema-mismatch-rejected"
@@ -104,6 +116,7 @@ def vectorJson : String :=
       {
         validCandidateArtifact with
         stateDeltasAbsent := false,
+        routePayloadDecodesExactly := false,
         schemaMatches := false
       } ++ "\n"
     ++ "  ]\n"

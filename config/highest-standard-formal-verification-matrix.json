@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.35,
+  "overall_completion_percent": 86.39,
   "last_full_formal_core": {
-    "date": "2026-06-17T01:10:56Z",
+    "date": "2026-06-17T02:04:27Z",
     "commit": "working-tree before commit",
-    "status": "passed locally after extending the PendingAction SCALE wire grammar and Lean-generated raw-byte vectors from no-candidate actions to the shipped recursive-block CandidateArtifact::Some wire shape, with production decode_scale_exact conformance",
+    "status": "passed locally after binding candidate-artifact route public_args to the duplicated candidate_artifact payload, extending PendingAction SCALE vectors to the live SubmitCandidateArtifactArgs route payload shape, and adding CoinbaseActionPayloadScaleWire/MintCoinbaseArgs raw SCALE conformance",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1792,
-    "axiom_free_theorems": 802,
-    "axiom_dependent_theorems": 990,
+    "named_lean_theorems": 1802,
+    "axiom_free_theorems": 807,
+    "axiom_dependent_theorems": 995,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 504,
+    "falsification_cases": 505,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -76,10 +76,14 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Bound concrete PendingAction SCALE wire grammar to production exact decode for no-candidate actions and the shipped recursive-block CandidateArtifact::Some product lane: the Lean module proves accepted PendingAction wire inputs expose fixed field widths, canonical compact prefixes, candidate payload shape, exact encoded length, full consumption, and canonical re-encoding, while Lean-generated raw-byte fixtures are checked against production PendingAction::encode and decode_scale_exact::<PendingAction>.",
+    "summary": "Closed a concrete candidate-artifact route-payload malleability gap and extended raw-byte implementation equivalence. CandidateArtifactAdmission now rejects malformed SubmitCandidateArtifactArgs public_args and public_args/candidate_artifact mismatch before accepting a recursive-block artifact; production block/mempool validation exact-decodes the route payload and requires equality with the duplicated artifact. PendingActionScaleWire now models the live candidate route public_args bytes plus candidate_artifact field, and CoinbaseActionPayloadScaleWire models raw MintCoinbaseArgs SCALE bytes for shielded coinbase route payloads.",
     "lean_modules": [
+      "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
       "formal/lean/Hegemon/Native/PendingActionScaleWire.lean",
       "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean",
+      "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean",
+      "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadScaleWireVectors.lean",
       "node/src/native/mod.rs",
       "scripts/check_formal_core.sh",
       "config/formal-security-claims.json",
@@ -90,24 +94,29 @@
       "formal/lean/README.md"
     ],
     "top_level_theorems": [
+      "Hegemon.Native.CandidateArtifactAdmission.route_payload_decode_failed_rejects",
+      "Hegemon.Native.CandidateArtifactAdmission.route_payload_artifact_mismatch_rejects",
       "Hegemon.Native.PendingActionScaleWire.pending_action_scale_wire_acceptance_exposes_facts",
       "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_total_length",
       "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_exact_decode",
-      "Hegemon.Native.PendingActionScaleWire.valid_candidate_artifact_some_accepts"
+      "Hegemon.Native.PendingActionScaleWire.valid_candidate_artifact_some_accepts",
+      "Hegemon.Native.CoinbaseActionPayloadScaleWire.coinbase_action_payload_scale_wire_acceptance_exposes_facts",
+      "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_total_length",
+      "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_exact_decode"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionScaleWire Hegemon.Native.GeneratePendingActionScaleWireVectors passed locally; bash scripts/check_lean_formal.sh passed with 118 theorem-backed claims, 1792 named Lean theorem declarations, 802 axiom-free theorem declarations, 990 allowed kernel-axiom-dependent theorem declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T01:10:56Z after adding the shipped recursive-block CandidateArtifact::Some wire fixture and metadata updates.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CandidateArtifactAdmission Hegemon.Native.GenerateCandidateArtifactAdmissionVectors Hegemon.Native.PendingActionScaleWire Hegemon.Native.GeneratePendingActionScaleWireVectors Hegemon.Native.CoinbaseActionPayloadScaleWire Hegemon.Native.GenerateCoinbaseActionPayloadScaleWireVectors Hegemon passed locally; bash scripts/check_formal_core.sh passed the Lean proof kernel with 118 theorem-backed claims, 1802 named Lean theorem declarations, 807 axiom-free theorem declarations, 995 allowed kernel-axiom-dependent theorem declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed; HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=/tmp/candidate_artifact_admission.json cargo test -p hegemon-node candidate_artifact --lib --no-default-features -- --nocapture passed; HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=/tmp/coinbase_action_payload_scale_wire.json cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T02:04:27Z after adding candidate route payload coherence, live candidate public_args PendingAction bytes, CoinbaseActionPayloadScaleWire/MintCoinbaseArgs raw-byte vectors, and metadata/inventory updates.",
       "claims": 118,
-      "named_lean_theorems": 1792,
-      "axiom_free_theorems": 802,
-      "axiom_dependent_theorems": 990,
+      "named_lean_theorems": 1802,
+      "axiom_free_theorems": 807,
+      "axiom_dependent_theorems": 995,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
       "residual_risks": 47,
       "blueprint_edges": 492,
-      "falsification_cases": 504,
+      "falsification_cases": 505,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -117,43 +126,43 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice models and vector-checks no-candidate PendingAction SCALE wires plus the shipped recursive-block CandidateArtifact::Some product lane, not arbitrary nested receipt-root/custom CandidateArtifact payload grammars.",
-      "The conformance gate checks representative Lean-generated raw bytes against production encode/decode behavior; it is not a full proof of parity-scale-codec implementation correctness for every arbitrary byte string.",
+      "This slice models and vector-checks no-candidate PendingAction SCALE wires, the shipped recursive-block CandidateArtifact::Some product lane, and representative MintCoinbaseArgs route payloads; it still does not prove arbitrary nested receipt-root/custom CandidateArtifact payload grammars if those paths are re-enabled.",
+      "The conformance gates check representative Lean-generated raw bytes against production encode/decode behavior; they are not full proofs of parity-scale-codec implementation correctness for every arbitrary byte string.",
       "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive mined/startup inbound bridge publication, and complete native-node refinement remain explicit residuals."
     ]
   },
   "last_production_binding_slice": {
-    "date": "2026-06-16",
-    "summary": "Closed a real SmallWood output ciphertext-hash statement-binding gap. The shipped inline-Merkle compact relation now allocates six ciphertext-hash witness rows per output and linearly binds them to public ciphertext-hash fields, so active output public hash drift and output ciphertext-row drift reject even with recomputed auxiliary Merkle rows.",
+    "date": "2026-06-17",
+    "summary": "Closed a candidate-artifact route-payload coherence gap in production validation. Native candidate actions now exact-decode public_args as SubmitCandidateArtifactArgs and require that route payload to equal the duplicated candidate_artifact field before accepting the recursive-block artifact, so a mined/reloaded action cannot validate one artifact while carrying different or malformed route bytes.",
     "changed_runtime_paths": [
-      "circuits/transaction/src/smallwood_frontend.rs inline-Merkle output ciphertext-hash rows and public binding constraints",
-      "circuits/transaction/src/smallwood_semantics.rs inline-Merkle packed row layout",
-      "circuits/transaction/src/smallwood_frontend.rs active/inactive output binding mutation regressions",
-      "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean output row-boundary theorems",
-      "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean output binding vectors",
-      "scripts/check_lean_formal.sh SmallWood output-boundary module gate",
-      "config/formal-security-claims.json SmallWood output-boundary theorem metadata",
-      "config/formal-security-blueprint.json SmallWood output-boundary falsification case"
+      "node/src/native/mod.rs validate_candidate_action_payload exact-decodes SubmitCandidateArtifactArgs from PendingAction.public_args",
+      "node/src/native/mod.rs validate_candidate_action_payload requires decoded route payload equality with PendingAction.candidate_artifact",
+      "node/src/native/mod.rs candidate-artifact malformed-route and mismatch regressions",
+      "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean route payload decode/mismatch rejection theorems",
+      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean route payload rejection vectors",
+      "formal/lean/Hegemon/Native/PendingActionScaleWire.lean live candidate public_args plus candidate_artifact wire shape",
+      "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean MintCoinbaseArgs raw SCALE wire conformance",
+      "scripts/check_formal_core.sh generated vector and Rust conformance gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Transaction.SmallWoodSpendAuthorization.*",
-      "Hegemon.Transaction.ProofSystemBoundary.*",
-      "Hegemon.Privacy.CiphertextPrivacy.*",
-      "Hegemon.Privacy.Observer.*"
+      "Hegemon.Native.CandidateArtifactAdmission.*",
+      "Hegemon.Native.PendingActionScaleWire.*",
+      "Hegemon.Native.CoinbaseActionPayloadScaleWire.*",
+      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.*",
+      "Hegemon.Native.DaSidecarReplayBinding.*"
     ],
     "validation": {
       "targeted_rust": [
-        "HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS=<generated-json> cargo test -p transaction-circuit smallwood_spend_authorization_matches_lean_vectors_when_present -- --nocapture",
-        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_active_output_binding_mutation --lib -- --nocapture",
-        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash --lib -- --nocapture",
-        "cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture"
+        "HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=/tmp/candidate_artifact_admission.json cargo test -p hegemon-node candidate_artifact --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=/tmp/coinbase_action_payload_scale_wire.json cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture"
       ],
-      "profile_projection": "cargo run -p transaction-circuit --bin tx_proof_smallwood_profile_sweep reports active projected bytes 91262 for DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 at the selected 32768/23/3 profile.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T16:54:33Z with the SmallWood active-output binding and inactive-output ciphertext-hash regressions enforced by the gate.",
+      "profile_projection": "The production runtime cost is a cheap exact decode and equality check on candidate-artifact actions before heavy recursive proof work; no transaction prover or proof-size change is introduced.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T02:04:27Z with candidate route payload coherence, PendingAction live route payload wire fixtures, and CoinbaseActionPayloadScaleWire vectors enforced by the gate.",
       "claims": 118,
-      "named_lean_theorems": 1761,
+      "named_lean_theorems": 1802,
       "production_eligible_claims": 108,
-      "falsification_cases": 497,
+      "falsification_cases": 505,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_dominance_constraints": 130,
@@ -162,9 +171,9 @@
       "implementation_order_edges": 374
     },
     "known_limitations": [
-      "The runtime cost is twelve scalar witness rows in the active inline-Merkle SmallWood statement; no extra node-side transaction replay work is added.",
-      "The gate proves active and inactive output ciphertext-hash drift is rejected at the deployed relation boundary; it does not by itself prove complete SmallWood/AIR/PCS soundness.",
-      "The full deployed proof-system soundness theorem, exact sampled proof-size refresh, and complete native-node equivalence remain open."
+      "The route-payload fix proves and checks candidate-artifact action byte/artifact coherence, not recursive proof cryptographic soundness.",
+      "The PendingAction and MintCoinbaseArgs wire gates check Lean-generated representative raw bytes against production encode/decode behavior; they do not prove parity-scale-codec correctness for every arbitrary byte string.",
+      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive inbound bridge publication, and complete native-node equivalence remain open."
     ]
   },
   "properties": [
@@ -603,7 +612,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 91.5,
+      "completion_percent": 92.2,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -626,8 +635,10 @@
         "node/src/native/mod.rs pending_action_raw_bytes_project_to_validated_materialized_replay_rows exercises NativeBlockMeta.action_bytes exact decode, full decoded field roundtrip, route payload projection, validation-step projection, materialized/planned payload equality, and wire projection",
         "node/src/native/mod.rs canonical_index_rebuild_rejects_malleable_action_bytes_before_projection_rows rejects trailing action bytes before canonical-index row projection and is in formal-core",
         "formal/lean/Hegemon/Native/PendingActionScaleWire.lean models the concrete PendingAction SCALE field order for no-candidate actions and the shipped recursive-block CandidateArtifact::Some product lane, proving accepted inputs expose fixed widths, canonical compact prefixes, candidate payload shape, total encoded length, full consumption, and canonical re-encoding",
-        "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean emits valid empty and one-each no-candidate PendingAction byte fixtures, a valid recursive-block candidate-artifact Some fixture, and empty, short, trailing, invalid option tag, noncanonical compact-prefix, vector-count overrun, public-args overrun, truncated candidate-Some, candidate-Some trailing, invalid candidate proof-mode/kind tag, and recursive proof-length overrun fixtures",
+        "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean emits valid empty and one-each no-candidate PendingAction byte fixtures, a valid recursive-block candidate-artifact Some fixture whose public_args are the exact SubmitCandidateArtifactArgs route payload bytes plus the duplicated candidate_artifact field, and empty, short, trailing, invalid option tag, noncanonical compact-prefix, vector-count overrun, public-args overrun, truncated candidate-Some, candidate-Some trailing, invalid candidate proof-mode/kind tag, and recursive proof-length overrun fixtures",
         "node/src/native/mod.rs lean_generated_pending_action_scale_wire_vectors_match_production checks those Lean-generated raw bytes through production PendingAction::encode and decode_scale_exact::<PendingAction>",
+        "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean models concrete MintCoinbaseArgs SCALE route bytes for shielded coinbase actions, proving fixed note/ciphertext/recipient/amount/seed widths, canonical KEM compact prefixes, exact length, full consumption, and canonical re-encoding",
+        "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadScaleWireVectors.lean emits valid short-KEM and zero-KEM payload fixtures plus parser failure, trailing-byte, KEM length overrun, and noncanonical compact-prefix rejection fixtures checked by node/src/native/mod.rs against production MintCoinbaseArgs::encode and decode_scale_exact::<MintCoinbaseArgs>",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean now proves `accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows`, carrying accepted bounded-request cap facts through exact pending/block-action decode, pending reload, and wire replay row-count binding",
         "node/src/native/mod.rs now calls `validate_block_action_byte_budget` before block-action SCALE decode, rejecting over-cap declared/payload counts, per-action payload bytes, aggregate-byte overflow, and aggregate-byte over-cap; `cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture` is in formal-core",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean now separates permissive parser backend-byte defaults from strict release verifier admission, proving strict explicit-backend acceptance and strict missing-backend rejection",
@@ -706,7 +717,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 91,
+      "completion_percent": 91.2,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -718,7 +729,8 @@
         "scripts/check_formal_core.sh runs the materialized sidecar transfer consensus DA-blob conformance test as a release gate",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast",
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean and gen_recursive_block_v2_verifier_surface_vectors prove/check recursive_block_v2 pre-proof surface admission before cryptographic child proof verification",
-        "config/formal-security-blueprint.json requires verify_block_recursive_v2_surface to propagate and dominate verify_tree_child_v2 in the shipped recursive_block_v2 verifier path"
+        "config/formal-security-blueprint.json requires verify_block_recursive_v2_surface to propagate and dominate verify_tree_child_v2 in the shipped recursive_block_v2 verifier path",
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean now rejects malformed candidate route public_args and public_args/candidate_artifact mismatch before accepting candidate artifacts; node/src/native/mod.rs revalidates those predicates on mempool staging, block validation, reload/reorg semantic admission, and mined action recovery paths"
       ],
       "missing_work": [
         "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",

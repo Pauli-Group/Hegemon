@@ -325,6 +325,10 @@ structure AcceptedCandidateArtifactPreHeavyBounds
     evaluateCandidateArtifact input = Except.ok ()
   stateDeltasAbsent :
     input.stateDeltasAbsent = true
+  routePayloadDecodesExactly :
+    input.routePayloadDecodesExactly = true
+  routePayloadMatchesArtifact :
+    input.routePayloadMatchesArtifact = true
   artifactPresent :
     input.artifactPresent = true
   schemaMatches :
@@ -359,18 +363,45 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
   have stateDeltasAbsent : input.stateDeltasAbsent = true := by
     cases h : input.stateDeltasAbsent <;>
       simp [evaluateCandidateArtifact, h] at accepted ⊢
+  have routePayloadDecodesExactly :
+      input.routePayloadDecodesExactly = true := by
+    cases h : input.routePayloadDecodesExactly <;>
+      simp [evaluateCandidateArtifact, stateDeltasAbsent, h] at accepted ⊢
+  have routePayloadMatchesArtifact :
+      input.routePayloadMatchesArtifact = true := by
+    cases h : input.routePayloadMatchesArtifact <;>
+      simp [
+        evaluateCandidateArtifact,
+        stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        h
+      ] at accepted ⊢
   have artifactPresent : input.artifactPresent = true := by
     cases h : input.artifactPresent <;>
-      simp [evaluateCandidateArtifact, stateDeltasAbsent, h] at accepted ⊢
+      simp [
+        evaluateCandidateArtifact,
+        stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
+        h
+      ] at accepted ⊢
   have schemaMatches : input.schemaMatches = true := by
     cases h : input.schemaMatches <;>
-      simp [evaluateCandidateArtifact, stateDeltasAbsent, artifactPresent, h]
-        at accepted ⊢
+      simp [
+        evaluateCandidateArtifact,
+        stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
+        artifactPresent,
+        h
+      ] at accepted ⊢
   have txCountNonzero : input.txCount ≠ 0 := by
     intro h
     simp [
       evaluateCandidateArtifact,
       stateDeltasAbsent,
+      routePayloadDecodesExactly,
+      routePayloadMatchesArtifact,
       artifactPresent,
       schemaMatches,
       h
@@ -380,6 +411,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
     simp [
       evaluateCandidateArtifact,
       stateDeltasAbsent,
+      routePayloadDecodesExactly,
+      routePayloadMatchesArtifact,
       artifactPresent,
       schemaMatches,
       txCountNonzero,
@@ -390,6 +423,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
     simp [
       evaluateCandidateArtifact,
       stateDeltasAbsent,
+      routePayloadDecodesExactly,
+      routePayloadMatchesArtifact,
       artifactPresent,
       schemaMatches,
       txCountNonzero,
@@ -401,6 +436,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -414,6 +451,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -427,6 +466,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -441,6 +482,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -456,6 +499,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -473,6 +518,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
       simp [
         evaluateCandidateArtifact,
         stateDeltasAbsent,
+        routePayloadDecodesExactly,
+        routePayloadMatchesArtifact,
         artifactPresent,
         schemaMatches,
         txCountNonzero,
@@ -490,6 +537,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
     simp [
       evaluateCandidateArtifact,
       stateDeltasAbsent,
+      routePayloadDecodesExactly,
+      routePayloadMatchesArtifact,
       artifactPresent,
       schemaMatches,
       txCountNonzero,
@@ -509,6 +558,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
     simp [
       evaluateCandidateArtifact,
       stateDeltasAbsent,
+      routePayloadDecodesExactly,
+      routePayloadMatchesArtifact,
       artifactPresent,
       schemaMatches,
       txCountNonzero,
@@ -526,6 +577,8 @@ theorem candidate_artifact_accepts_implies_preheavy_bounds
   exact {
     candidateArtifactAccepted := accepted,
     stateDeltasAbsent := stateDeltasAbsent,
+    routePayloadDecodesExactly := routePayloadDecodesExactly,
+    routePayloadMatchesArtifact := routePayloadMatchesArtifact,
     artifactPresent := artifactPresent,
     schemaMatches := schemaMatches,
     txCountNonzero := txCountNonzero,
