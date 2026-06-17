@@ -118,6 +118,7 @@ import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
 import Hegemon.Privacy.NativeObserverSurface
 import Hegemon.Privacy.NativeSidecarObserverSurface
+import Hegemon.Privacy.WalletOutputBatch
 import Hegemon.Resource.BoundedRequestAdmission
 import Hegemon.Release.CiReleaseGate
 import Hegemon.Release.DependencyAuditPolicy

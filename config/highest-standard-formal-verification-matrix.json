@@ -4,23 +4,23 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.02,
+  "overall_completion_percent": 88.05,
   "last_full_formal_core": {
-    "date": "2026-06-17T10:11:33Z",
+    "date": "2026-06-17T10:45:23Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after adding mineable candidate-selection theorem coverage, schema-v2 mineable action vectors, and production select_mineable_actions conformance",
+    "status": "passed locally after adding inline transfer ciphertext resource-admission theorem coverage, schema-v2 transfer payload/resource vectors, wallet output-batch public-shape theorem coverage, schema-v1 wallet output-batch vectors, production native resource conformance, and production wallet planner conformance",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1911,
-    "axiom_free_theorems": 864,
-    "axiom_dependent_theorems": 1047,
+    "named_lean_theorems": 1933,
+    "axiom_free_theorems": 883,
+    "axiom_dependent_theorems": 1050,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 523,
-    "implementation_bindings": 214,
-    "implementation_result_obligations": 167,
+    "falsification_cases": 525,
+    "implementation_bindings": 216,
+    "implementation_result_obligations": 169,
     "implementation_order_constraints": 144,
     "implementation_order_edges": 374,
     "implementation_dominance_constraints": 130,
@@ -75,44 +75,55 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the mineable candidate-selection theorem package. The executable Lean model now counts only mineable transfer actions, rejects candidate selection for zero-transfer batches, accepts transfers exactly when they are mineable, accepts non-candidate plain actions, and selects only the first canonical-order candidate artifact whose tx_count matches the mineable transfer count.",
+    "summary": "Added the inline transfer ciphertext resource-admission theorem package and the wallet output-batch public-shape theorem package. The executable Lean models project inline transfer route/proof/ciphertext resources into the reusable bounded-request table before per-ciphertext hashing/materialization, and prove wallet transfer/stablecoin/burn/consolidation output counts are determined by public shape rather than private witness or local metadata seeds.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean"
+      "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean",
+      "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean",
+      "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.MineableActionAdmission.selected_candidate_none_when_no_mineable_transfers",
-      "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
-      "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
-      "Hegemon.Native.MineableActionAdmission.selection_accepts_candidate_iff_selected",
-      "Hegemon.Native.MineableActionAdmission.selection_accepts_transfer_iff_mineable",
-      "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action"
+      "Hegemon.Native.TransferActionPayloadAdmission.accepted_inline_transfer_ciphertext_resource_exposes_bounds",
+      "Hegemon.Native.TransferActionPayloadAdmission.valid_inline_transfer_ciphertext_resource_accepts",
+      "Hegemon.Native.TransferActionPayloadAdmission.exact_inline_transfer_ciphertext_resource_limits_accept",
+      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_count_over_cap_rejects",
+      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_item_over_cap_rejects",
+      "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_aggregate_over_cap_rejects",
+      "Hegemon.Privacy.WalletOutputBatch.output_count_eq_public_shape",
+      "Hegemon.Privacy.WalletOutputBatch.accepted_output_count_le_max",
+      "Hegemon.Privacy.WalletOutputBatch.native_change_has_two_outputs",
+      "Hegemon.Privacy.WalletOutputBatch.stablecoin_native_change_has_two_outputs",
+      "Hegemon.Privacy.WalletOutputBatch.burn_asset_and_native_change_has_two_outputs",
+      "Hegemon.Privacy.WalletOutputBatch.consolidation_has_one_output"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.MineableActionAdmission Hegemon.Native.GenerateMineableActionAdmissionVectors Hegemon passed locally; schema-v2 mineable action vectors generated with admission and ordered-selection cases.",
-      "targeted_rust": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally, covering production evaluate_native_mineable_action_admission and select_mineable_actions.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the mineable candidate-selection theorem names, schema-v2 generated-vector conformance gate, and falsification cases for zero-transfer rejection, matching tx_count selection, unmineable sidecar exclusion, and first matching candidate selection."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.TransferActionPayloadAdmission Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors Hegemon.Privacy.WalletOutputBatch Hegemon.Privacy.GenerateWalletOutputBatchVectors passed locally; schema-v2 transfer payload vectors and schema-v1 wallet output-batch vectors generated.",
+      "targeted_rust": "HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture and HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS=<generated-json> cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture passed locally, covering production evaluate_native_transfer_payload_admission, inline_transfer_ciphertext_resource_bounded_request, transfer_output_batch_count, and burn_output_batch_count.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the inline resource theorem names, schema-v2 generated-vector conformance gate, submit-action resource regression, and production call graph requiring admitted_inline_ciphertext_metadata and validate_inline_transfer_ciphertext_resource."
     },
     "known_limitations": [
-      "This slice proves and vector-binds the ordered mineable candidate policy used by block-template construction; it does not prove global miner fairness, remote network timing/topology privacy, full wallet output-batch privacy policy, or complete native-node refinement."
+      "This slice gates after the existing bounded submit-action public_args decode path; it does not prove SCALE decoder allocation internals below that cap, ciphertext hash cryptographic correctness, proof soundness, full proof artifact construction for every wallet vector, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound the mineable candidate-selection model to executable Lean-generated vectors and production Rust. The formal-vector gate now constructs real pending native actions, stages sidecar ciphertext metadata when needed, runs production preselection to count mineable transfers, drives select_mineable_actions, and compares the selected candidate plus accepted action labels against Lean's ordered-selection table.",
+    "summary": "Bound inline transfer ciphertext resource projection and wallet output-batch public-shape projection to executable Lean-generated vectors and production Rust. The runtime now calls admitted_inline_ciphertext_metadata at submit-action construction and transfer payload validation before per-ciphertext hash/materialization, and wallet tx construction exposes theorem-backed transfer/burn output-count helpers checked by generated vectors.",
     "changed_runtime_paths": [
-      "No shipped runtime behavior changed; node/src/native/mod.rs cfg(test) formal vector conformance now checks production select_mineable_actions against Lean's ordered candidate-selection table.",
-      "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean schema-v2 vectors add zero-transfer, one-transfer, two-transfer, unmineable-sidecar, and first-matching-candidate selection cases.",
-      "scripts/check_formal_core.sh regenerates mineable action-admission vectors and runs the hegemon-node production conformance gate, so the new selection cases are release-gated with zero runtime cost."
+      "node/src/native/mod.rs now maps inline transfer route payload bytes, proof bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into NativeBoundedRequestAdmissionInput before hashing ciphertexts or staging the action.",
+      "formal/lean/Hegemon/Native/GenerateTransferActionPayloadAdmissionVectors.lean schema-v2 vectors add valid, exact-limit, raw-byte, decoded-byte, item-count, item-byte, aggregate-byte, and precedence cases for inline transfer ciphertext resources.",
+      "wallet/src/tx_builder.rs maps native, stablecoin, burn, and consolidation planning into transfer_output_batch_count and burn_output_batch_count helpers checked by formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean schema-v1 cases.",
+      "scripts/check_formal_core.sh regenerates transfer action payload and wallet output-batch vectors, then runs the hegemon-node and wallet production conformance gates, so the resource and public-shape cases are release-gated with cheap runtime checks."
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.MineableActionAdmission"
+      "Hegemon.Native.TransferActionPayloadAdmission",
+      "Hegemon.Resource.BoundedRequestAdmission",
+      "Hegemon.Privacy.WalletOutputBatch"
     ],
     "validation": {
-      "status": "targeted Lean build, generated-vector JSON validation, hegemon-node mineable action-admission/selection Rust conformance, axiom audit, metadata gates, and full local formal-core passed."
+      "status": "targeted Lean build, generated-vector JSON validation, transfer payload/resource Rust conformance, wallet output-batch Rust conformance, submit-action resource regression, cargo fmt, metadata gates, axiom audit, and full formal-core passed locally."
     },
     "known_limitations": [
-      "This slice changes only Lean, formal metadata/docs, and cfg(test) native conformance code, so hegemon-dev should fast-forward without a live binary rebuild/restart, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes shipped native runtime admission, so hegemon-dev must rebuild/restart after fast-forward, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
@@ -457,7 +468,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 73.7,
+      "completion_percent": 74,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -501,6 +512,8 @@
         "node/src/native/mod.rs materialized_sidecar_observer_projection_ignores_received_time regression proves arrival-time-only pending-action hash changes do not alter the sidecar semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection",
         "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
         "wallet/src/store.rs local_address_metadata_does_not_change_public_ciphertext_projection regression proves next_address_index advancement and persistence through address reservation/reopen do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
+        "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean proves wallet transfer, stablecoin, burn, and consolidation output-batch counts are determined by public shape, ignore private witness and local metadata seeds, and stay within MAX_OUTPUTS for accepted cases",
+        "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean emits native/stablecoin/burn/consolidation output-batch cases, and wallet/src/tx_builder.rs checks them against production transfer_output_batch_count and burn_output_batch_count through lean_generated_wallet_output_batch_vectors_match_production",
         "Proof-wrapper metadata projection is now explicitly bounded: accepted wrappers cannot change the public statement projection or extend public nullifier/ciphertext/asset rows outside the bound statement, reducing proof-wrapper metadata leakage surface.",
         "formal/lean/Hegemon/Privacy/Observer.lean now models local network metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed PQ peer/connection/relay counters",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local network metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and remote network assumptions explicit",
@@ -520,7 +533,7 @@
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into wallet output-batch policy, remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet output-batch public-shape policy, wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
@@ -820,7 +833,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 85,
+      "completion_percent": 85.5,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -842,10 +855,11 @@
         "node/src/native/mod.rs now checks Lean-generated bounded-request vectors against production `evaluate_native_bounded_request_admission` and routes inbound sync response-count admission through `native_sync_response_count_bounded_request` before block sorting/import; formal-core runs both `lean_generated_bounded_request_admission_vectors_match_production` and `native_sync_response_count_uses_bounded_request_item_gate`.",
         "formal/lean/Hegemon/Native/SyncAdmission.lean now proves `accepted_response_range_exposes_bounded_request_facts`, carrying the outbound sync response-range cap into reusable bounded-request item-count facts before block_range publication; node/src/native/mod.rs regression `native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts` checks an overwide response-range request is capped to MAX_NATIVE_SYNC_RESPONSE_BLOCKS before block_range can allocate or serve peer response rows, and formal-core runs that focused regression.",
         "formal/lean/Hegemon/Network/QueueResourceAdmission.lean proves peer-send and event-channel byte-budget reserve/send accounting, including exact-limit acceptance, message-over-cap rejection, usize overflow rejection, aggregate queue-budget rejection, accepted-send queued-byte increments, full/closed rollback, and reserve-before-channel-state precedence; `network/src/network_backend.rs` checks Lean-generated queue-resource vectors against the production queue accounting helpers.",
-        "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean proves accepted candidate artifacts project declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunks into reusable bounded-request caps; node/src/native/mod.rs checks that projection before accepting candidate artifacts."
+        "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean proves accepted candidate artifacts project declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunks into reusable bounded-request caps; node/src/native/mod.rs checks that projection before accepting candidate artifacts.",
+        "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean proves inline transfer ciphertext resources project route payload bytes, proof-plus-ciphertext decoded bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into reusable bounded-request caps; node/src/native/mod.rs calls validate_inline_transfer_ciphertext_resource before per-ciphertext hash/materialization at submit-action construction and decoded transfer validation."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

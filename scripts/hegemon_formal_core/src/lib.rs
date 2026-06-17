@@ -338,6 +338,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean",
+        "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean",
+        "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",

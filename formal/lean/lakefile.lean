@@ -262,6 +262,9 @@ lean_exe gen_queue_resource_admission_vectors where
 lean_exe gen_note_ciphertext_wire_vectors where
   root := `Hegemon.Wallet.GenerateNoteCiphertextWireVectors
 
+lean_exe gen_wallet_output_batch_vectors where
+  root := `Hegemon.Privacy.GenerateWalletOutputBatchVectors
+
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
 

@@ -1,6 +1,8 @@
 import Hegemon.Native.TransferActionPayloadAdmission
+import Hegemon.Resource.BoundedRequestAdmission
 
 open Hegemon.Native.TransferActionPayloadAdmission
+open Hegemon.Resource.BoundedRequestAdmission
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -21,6 +23,16 @@ def rejectionJson : Option TransferPayloadReject -> String
   | some TransferPayloadReject.proofBindingHashMismatch =>
       "\"proof_binding_hash_mismatch\""
   | some TransferPayloadReject.feeMismatch => "\"fee_mismatch\""
+
+def resourceRejectionJson : Option ResourceReject -> String
+  | none => "null"
+  | some ResourceReject.rawBytesExceeded => "\"raw_bytes_exceeded\""
+  | some ResourceReject.decodedBytesExceeded => "\"decoded_bytes_exceeded\""
+  | some ResourceReject.itemCountExceeded => "\"item_count_exceeded\""
+  | some ResourceReject.itemBytesExceeded => "\"item_bytes_exceeded\""
+  | some ResourceReject.aggregateBytesExceeded =>
+      "\"aggregate_bytes_exceeded\""
+  | some ResourceReject.workUnitsExceeded => "\"work_units_exceeded\""
 
 def transferPayloadCaseJson (name : String) (input : TransferPayloadInput) : String :=
   "    {\n"
@@ -44,9 +56,34 @@ def transferPayloadCaseJson (name : String) (input : TransferPayloadInput) : Str
       ++ rejectionJson (transferPayloadRejection input) ++ "\n"
     ++ "    }"
 
+def inlineCiphertextResourceCaseJson
+    (name : String)
+    (policy : ResourcePolicy)
+    (input : InlineTransferCiphertextResourceInput) : String :=
+  let request := inlineTransferCiphertextResourceRequest input
+  let rejection := evaluateBoundedRequest policy request
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"route_payload_bytes\": " ++ toString input.routePayloadBytes ++ ",\n"
+    ++ "      \"proof_bytes\": " ++ toString input.proofBytes ++ ",\n"
+    ++ "      \"ciphertext_count\": " ++ toString input.ciphertextCount ++ ",\n"
+    ++ "      \"max_ciphertext_bytes_observed\": "
+      ++ toString input.maxCiphertextBytesObserved ++ ",\n"
+    ++ "      \"aggregate_ciphertext_bytes\": "
+      ++ toString input.aggregateCiphertextBytes ++ ",\n"
+    ++ "      \"raw_byte_cap\": " ++ toString policy.rawByteCap ++ ",\n"
+    ++ "      \"decoded_byte_cap\": " ++ toString policy.decodedByteCap ++ ",\n"
+    ++ "      \"item_count_cap\": " ++ toString policy.itemCountCap ++ ",\n"
+    ++ "      \"item_byte_cap\": " ++ toString policy.itemByteCap ++ ",\n"
+    ++ "      \"aggregate_byte_cap\": " ++ toString policy.aggregateByteCap ++ ",\n"
+    ++ "      \"work_unit_cap\": " ++ toString policy.workUnitCap ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
+    ++ "      \"expected_rejection\": " ++ resourceRejectionJson rejection ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"transfer_action_payload_admission_cases\": [\n"
     ++ transferPayloadCaseJson "valid-transfer-payload"
       validTransferPayload ++ ",\n"
@@ -80,6 +117,65 @@ def vectorJson : String :=
         feeMatches := false } ++ ",\n"
     ++ transferPayloadCaseJson "proof-missing-precedes-anchor"
       { validTransferPayload with proofBytes := 0, anchorMatches := false } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"inline_transfer_ciphertext_resource_cases\": [\n"
+    ++ inlineCiphertextResourceCaseJson
+      "valid-inline-transfer-ciphertext-resource"
+      productionInlineTransferCiphertextResourcePolicy
+      validInlineTransferCiphertextResourceInput ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "exact-inline-transfer-ciphertext-resource-limits"
+      productionInlineTransferCiphertextResourcePolicy
+      {
+        routePayloadBytes :=
+          productionInlineTransferCiphertextResourcePolicy.rawByteCap,
+        proofBytes := 0,
+        ciphertextCount :=
+          productionInlineTransferCiphertextResourcePolicy.itemCountCap,
+        maxCiphertextBytesObserved :=
+          productionInlineTransferCiphertextResourcePolicy.itemByteCap,
+        aggregateCiphertextBytes :=
+          productionInlineTransferCiphertextResourcePolicy.aggregateByteCap
+      } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "route-payload-bytes-over-cap"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        routePayloadBytes :=
+          productionInlineTransferCiphertextResourcePolicy.rawByteCap + 1 } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "decoded-proof-plus-ciphertext-bytes-over-cap"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        proofBytes :=
+          productionInlineTransferCiphertextResourcePolicy.decodedByteCap,
+        aggregateCiphertextBytes := 1 } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "ciphertext-count-over-cap"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        ciphertextCount :=
+          productionInlineTransferCiphertextResourcePolicy.itemCountCap + 1 } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "ciphertext-item-bytes-over-cap"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        maxCiphertextBytesObserved :=
+          productionInlineTransferCiphertextResourcePolicy.itemByteCap + 1 } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "ciphertext-aggregate-bytes-over-cap"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        aggregateCiphertextBytes :=
+          productionInlineTransferCiphertextResourcePolicy.aggregateByteCap + 1 } ++ ",\n"
+    ++ inlineCiphertextResourceCaseJson
+      "ciphertext-count-precedes-item-bytes"
+      productionInlineTransferCiphertextResourcePolicy
+      { validInlineTransferCiphertextResourceInput with
+        ciphertextCount :=
+          productionInlineTransferCiphertextResourcePolicy.itemCountCap + 1,
+        maxCiphertextBytesObserved :=
+          productionInlineTransferCiphertextResourcePolicy.itemByteCap + 1 } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

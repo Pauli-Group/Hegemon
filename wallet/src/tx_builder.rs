@@ -435,7 +435,7 @@ pub fn build_stablecoin_burn(
         });
     }
 
-    let outputs_needed = usize::from(asset_change > 0) + usize::from(native_change > 0);
+    let outputs_needed = burn_output_batch_count(asset_change, native_change);
     if outputs_needed > MAX_OUTPUTS {
         return Err(WalletError::InvalidArgument(
             "burn outputs exceed output limit",
@@ -831,6 +831,18 @@ impl SelectionPlan {
     }
 }
 
+fn transfer_output_batch_count(
+    recipient_count: usize,
+    output_change: u64,
+    native_change: u64,
+) -> usize {
+    recipient_count + usize::from(output_change > 0) + usize::from(native_change > 0)
+}
+
+fn burn_output_batch_count(asset_change: u64, native_change: u64) -> usize {
+    usize::from(asset_change > 0) + usize::from(native_change > 0)
+}
+
 fn select_notes(notes: &mut [SpendableNote], target: u64) -> Result<Selection, WalletError> {
     // Sort by value descending - prefer larger notes to minimize input count
     notes.sort_by_key(|n| std::cmp::Reverse(n.value()));
@@ -957,7 +969,7 @@ fn plan_selections(
             });
         }
         let output_change = selection.total.saturating_sub(required);
-        let outputs_needed = recipients.len() + usize::from(output_change > 0);
+        let outputs_needed = transfer_output_batch_count(recipients.len(), output_change, 0);
         if outputs_needed > MAX_OUTPUTS {
             return Err(WalletError::InvalidArgument(
                 "change would exceed output limit",
@@ -1021,7 +1033,7 @@ fn plan_selections(
     }
 
     let outputs_needed =
-        recipients.len() + usize::from(output_change > 0) + usize::from(native_change > 0);
+        transfer_output_batch_count(recipients.len(), output_change, native_change);
     if outputs_needed > MAX_OUTPUTS {
         return Err(WalletError::InvalidArgument(
             "multi-asset transfer exceeds output limit",
@@ -1060,15 +1072,51 @@ fn build_output(
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
+    use serde::Deserialize;
     use superneo_hegemon::{
         decode_native_tx_leaf_artifact_bytes, verify_native_tx_leaf_artifact_bytes,
     };
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
     use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
     use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
 
     use super::*;
+
+    const LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET: u64 = 7;
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletOutputBatchVectorFile {
+        schema_version: u32,
+        max_outputs: usize,
+        wallet_output_batch_cases: Vec<LeanWalletOutputBatchCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletOutputBatchCase {
+        name: String,
+        kind: String,
+        recipient_count: usize,
+        recipient_total: u64,
+        fee: u64,
+        selected_asset_total: u64,
+        selected_native_total: u64,
+        issuance_delta: i128,
+        burn_amount: u64,
+        private_witness_seed: u64,
+        local_metadata_seed: u64,
+        alternate_private_witness_seed: u64,
+        alternate_local_metadata_seed: u64,
+        expected_output_count: usize,
+        expected_valid: bool,
+        expected_within_max_outputs: bool,
+    }
+
+    struct WalletOutputBatchFixture {
+        _dir: TempDir,
+        sender: WalletStore,
+        recipient: WalletStore,
+    }
 
     fn seeded_sender_and_recipient(seed: u64) -> (WalletStore, WalletStore, rand::rngs::StdRng) {
         let dir = tempdir().unwrap();
@@ -1096,6 +1144,242 @@ mod tests {
         }
 
         (sender, recipient_store, rng)
+    }
+
+    fn stablecoin_binding(issuance_delta: i128) -> StablecoinPolicyBinding {
+        StablecoinPolicyBinding {
+            enabled: true,
+            asset_id: LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET,
+            policy_hash: [1u8; 48],
+            oracle_commitment: [2u8; 48],
+            attestation_commitment: [3u8; 48],
+            issuance_delta,
+            policy_version: 1,
+        }
+    }
+
+    fn seed_recovered_note(
+        store: &WalletStore,
+        asset_id: u64,
+        value: u64,
+        position: u64,
+        rng: &mut StdRng,
+    ) {
+        if value == 0 {
+            return;
+        }
+        let fvk = store.full_viewing_key().unwrap().unwrap();
+        let address = fvk.incoming().shielded_address(position as u32).unwrap();
+        let note = NotePlaintext::random(value, asset_id, MemoPlaintext::default(), rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, rng).unwrap();
+        let recovered = fvk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        store.append_commitments(&[(position, commitment)]).unwrap();
+        store.register_ciphertext_index(position).unwrap();
+        store
+            .record_recovered_note(recovered, position, position)
+            .unwrap();
+    }
+
+    fn wallet_output_batch_fixture(
+        case: &LeanWalletOutputBatchCase,
+        private_witness_seed: u64,
+        local_metadata_seed: u64,
+    ) -> WalletOutputBatchFixture {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let recipient = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
+        let mut rng = StdRng::seed_from_u64(private_witness_seed);
+        let mut position = 0u64;
+
+        match case.kind.as_str() {
+            "native" => {
+                seed_recovered_note(
+                    &sender,
+                    NATIVE_ASSET_ID,
+                    case.selected_asset_total,
+                    position,
+                    &mut rng,
+                );
+            }
+            "stablecoin" => {
+                seed_recovered_note(
+                    &sender,
+                    LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET,
+                    case.selected_asset_total,
+                    position,
+                    &mut rng,
+                );
+                position += usize::from(case.selected_asset_total > 0) as u64;
+                seed_recovered_note(
+                    &sender,
+                    NATIVE_ASSET_ID,
+                    case.selected_native_total,
+                    position,
+                    &mut rng,
+                );
+            }
+            "burn" => {
+                seed_recovered_note(
+                    &sender,
+                    LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET,
+                    case.selected_asset_total,
+                    position,
+                    &mut rng,
+                );
+                position += usize::from(case.selected_asset_total > 0) as u64;
+                seed_recovered_note(
+                    &sender,
+                    NATIVE_ASSET_ID,
+                    case.selected_native_total,
+                    position,
+                    &mut rng,
+                );
+            }
+            "consolidation" => {
+                let first = case.selected_asset_total / 2 + (case.selected_asset_total % 2);
+                let second = case.selected_asset_total.saturating_sub(first);
+                seed_recovered_note(&sender, NATIVE_ASSET_ID, first, 0, &mut rng);
+                seed_recovered_note(&sender, NATIVE_ASSET_ID, second, 1, &mut rng);
+            }
+            other => panic!("unknown Lean wallet output-batch kind {other}"),
+        }
+
+        for _ in 0..(local_metadata_seed % 3) {
+            sender.reserve_internal_address().unwrap();
+        }
+
+        WalletOutputBatchFixture {
+            _dir: dir,
+            sender,
+            recipient,
+        }
+    }
+
+    fn split_recipient_values(total: u64, count: usize) -> Vec<u64> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let base = total / count as u64;
+        let mut remainder = total % count as u64;
+        (0..count)
+            .map(|_| {
+                let extra = u64::from(remainder > 0);
+                remainder = remainder.saturating_sub(1);
+                base + extra
+            })
+            .collect()
+    }
+
+    fn recipients_for_case(
+        fixture: &WalletOutputBatchFixture,
+        case: &LeanWalletOutputBatchCase,
+        private_witness_seed: u64,
+    ) -> Vec<Recipient> {
+        let asset_id = match case.kind.as_str() {
+            "native" => NATIVE_ASSET_ID,
+            "stablecoin" => LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET,
+            other => panic!("case {other} does not use explicit recipients"),
+        };
+        split_recipient_values(case.recipient_total, case.recipient_count)
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| Recipient {
+                address: fixture.recipient.primary_address().unwrap(),
+                value,
+                asset_id,
+                memo: MemoPlaintext::new(
+                    format!(
+                        "lean-output-batch:{}:{}:{}",
+                        case.name, private_witness_seed, index
+                    )
+                    .into_bytes(),
+                ),
+            })
+            .collect()
+    }
+
+    fn planned_wallet_output_batch_case_count(
+        case: &LeanWalletOutputBatchCase,
+        private_witness_seed: u64,
+        local_metadata_seed: u64,
+    ) -> Result<usize, WalletError> {
+        let fixture = wallet_output_batch_fixture(case, private_witness_seed, local_metadata_seed);
+        match case.kind.as_str() {
+            "native" => {
+                let recipients = recipients_for_case(&fixture, case, private_witness_seed);
+                let stablecoin = StablecoinPolicyBinding::default();
+                let plan = plan_selections(&fixture.sender, &recipients, case.fee, &stablecoin)?;
+                Ok(transfer_output_batch_count(
+                    recipients.len(),
+                    plan.output_change,
+                    0,
+                ))
+            }
+            "stablecoin" => {
+                let recipients = recipients_for_case(&fixture, case, private_witness_seed);
+                let binding = stablecoin_binding(case.issuance_delta);
+                let plan = plan_selections(&fixture.sender, &recipients, case.fee, &binding)?;
+                Ok(transfer_output_batch_count(
+                    recipients.len(),
+                    plan.output_change,
+                    plan.native_change,
+                ))
+            }
+            "burn" => {
+                assert_eq!(
+                    case.issuance_delta,
+                    i128::from(case.burn_amount),
+                    "burn vectors bind issuance_delta to burn_amount"
+                );
+                let mut spendable_asset = fixture
+                    .sender
+                    .spendable_notes(LEAN_WALLET_OUTPUT_BATCH_STABLE_ASSET)?;
+                let asset_selection = select_notes(&mut spendable_asset, case.burn_amount)?;
+                let asset_change = asset_selection.total.saturating_sub(case.burn_amount);
+
+                let mut native_selection = Selection::empty();
+                let mut native_change = 0;
+                if case.fee > 0 {
+                    let mut spendable_native = fixture.sender.spendable_notes(NATIVE_ASSET_ID)?;
+                    native_selection = select_notes(&mut spendable_native, case.fee)?;
+                    native_change = native_selection.total.saturating_sub(case.fee);
+                }
+
+                let total_inputs = asset_selection.spent.len() + native_selection.spent.len();
+                if total_inputs > MAX_INPUTS {
+                    return Err(WalletError::TooManyInputs {
+                        needed: total_inputs,
+                        max: MAX_INPUTS,
+                    });
+                }
+                let outputs_needed = burn_output_batch_count(asset_change, native_change);
+                if outputs_needed > MAX_OUTPUTS {
+                    return Err(WalletError::InvalidArgument(
+                        "burn outputs exceed output limit",
+                    ));
+                }
+                Ok(outputs_needed)
+            }
+            "consolidation" => {
+                let notes = fixture.sender.spendable_notes(NATIVE_ASSET_ID)?;
+                assert!(
+                    notes.len() >= 2,
+                    "consolidation vector must seed two spendable notes"
+                );
+                let total = notes[0].value().saturating_add(notes[1].value());
+                if total <= case.fee {
+                    return Err(WalletError::InsufficientFunds {
+                        needed: case.fee,
+                        available: total,
+                    });
+                }
+                Ok(1)
+            }
+            other => panic!("unknown Lean wallet output-batch kind {other}"),
+        }
     }
 
     #[test]
@@ -1293,5 +1577,81 @@ mod tests {
             superneo_hegemon::experimental_native_tx_leaf_verifier_profile()
         );
         assert_eq!(built.bundle.nullifiers.len(), built.nullifiers.len());
+    }
+
+    #[test]
+    fn lean_generated_wallet_output_batch_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean wallet output-batch vectors");
+        let vectors: LeanWalletOutputBatchVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean wallet output-batch vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.max_outputs, MAX_OUTPUTS);
+        assert!(
+            vectors.wallet_output_batch_cases.len() >= 10,
+            "expected native/stablecoin/burn/consolidation output-batch coverage"
+        );
+
+        for case in &vectors.wallet_output_batch_cases {
+            assert_eq!(
+                case.expected_within_max_outputs,
+                case.expected_output_count <= MAX_OUTPUTS,
+                "Lean case {} has inconsistent MAX_OUTPUTS flag",
+                case.name
+            );
+
+            let first = planned_wallet_output_batch_case_count(
+                case,
+                case.private_witness_seed,
+                case.local_metadata_seed,
+            );
+            if case.expected_valid {
+                let first_count = first.unwrap_or_else(|err| {
+                    panic!(
+                        "Lean wallet output-batch case {} rejected: {err}",
+                        case.name
+                    )
+                });
+                assert_eq!(
+                    first_count, case.expected_output_count,
+                    "production output count drifted from Lean case {}",
+                    case.name
+                );
+                assert!(
+                    first_count <= MAX_OUTPUTS,
+                    "production accepted over-MAX_OUTPUTS output batch for {}",
+                    case.name
+                );
+
+                let second = planned_wallet_output_batch_case_count(
+                    case,
+                    case.alternate_private_witness_seed,
+                    case.alternate_local_metadata_seed,
+                )
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "Lean wallet output-batch alternate metadata case {} rejected: {err}",
+                        case.name
+                    )
+                });
+                assert_eq!(
+                    second, first_count,
+                    "private witness/local metadata changed output count for {}",
+                    case.name
+                );
+            } else {
+                assert!(
+                    first.is_err(),
+                    "Lean wallet output-batch case {} expected rejection but production accepted",
+                    case.name
+                );
+            }
+        }
     }
 }

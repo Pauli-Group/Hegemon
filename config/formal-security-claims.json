@@ -1215,7 +1215,23 @@
         "Hegemon.Native.MineableActionAdmission.selected_candidate_none_when_no_mineable_transfers",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_candidate_iff_selected",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_transfer_iff_mineable",
-        "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action"
+        "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action",
+        "Hegemon.Privacy.WalletOutputBatch.output_count_eq_public_shape",
+        "Hegemon.Privacy.WalletOutputBatch.output_count_ignores_private_witness_seed",
+        "Hegemon.Privacy.WalletOutputBatch.output_count_ignores_local_metadata_seed",
+        "Hegemon.Privacy.WalletOutputBatch.acceptance_ignores_private_witness_seed",
+        "Hegemon.Privacy.WalletOutputBatch.acceptance_ignores_local_metadata_seed",
+        "Hegemon.Privacy.WalletOutputBatch.accepted_output_count_le_max",
+        "Hegemon.Privacy.WalletOutputBatch.native_exact_no_change_has_one_output",
+        "Hegemon.Privacy.WalletOutputBatch.native_change_has_two_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.stablecoin_issuance_no_input_has_one_output",
+        "Hegemon.Privacy.WalletOutputBatch.stablecoin_asset_change_has_two_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.stablecoin_native_change_has_two_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.stablecoin_asset_change_rejects_inexact_native_fee",
+        "Hegemon.Privacy.WalletOutputBatch.native_two_recipient_overflow_rejected_by_max_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.burn_exact_has_zero_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.burn_asset_and_native_change_has_two_outputs",
+        "Hegemon.Privacy.WalletOutputBatch.consolidation_has_one_output"
       ],
       "assumptions": [
         "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability` gives the no-new-assumptions deterministic reduction: modeled unlinkability consists of equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise. `ciphertext_privacy_game_boundary_facts`, `ciphertext_privacy_game_secret_resampling_boundary_facts`, `ciphertext_privacy_game_open_assumption_boundary_facts`, and the local action/address metadata boundary theorems additionally carry first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game; the resampling theorems prove public metadata and batch/timing leakage remain stable when left and right private witnesses, prover randomness, local action metadata, local address metadata, and local network metadata are independently replaced, while the open-assumption theorem packages the deterministic public boundary, the resampling boundary, the raw-wire-excluded public-leakage package, the same-wire leakage theorem, and the exact remaining assumption fields in one review surface. When the game is composed with active native tx-leaf output slots, every active public output rank carries the parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates across both worlds; the active-output secret/local resampling theorems prove that this public metadata boundary is preserved for selected and all active rows after independent private-witness/prover-randomness/local-action metadata resampling. The all-active wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The materialized sidecar theorem composes that all-active boundary with accepted sidecar materialization, wire replay DA-row binding, tx-leaf ciphertext publication, and statement/proof ciphertext-vector publication; the native sidecar regression proves arrival-time metadata changes only the raw pending-action hash, not the semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection. The action-ordering proof and regressions prove accepted transfer order-key preimages, mineable transfer relative order, and non-transfer order-key preimages/pending relative order ignore `received_ms`; raw pending-action identity can still record local arrival metadata, but ordering uses the semantic hash for non-transfers instead of that raw identity. The mineable-selection table now proves candidate artifact selection depends on the canonical ordered mineable-transfer count and first matching candidate, while generated vectors check production `select_mineable_actions` for zero-transfer rejection, one/two-transfer matching, unmineable sidecar exclusion, and canonical first-match selection. The wallet regression proves address-cursor advancement does not alter public chain ciphertext bytes, DA bytes, or ciphertext hashes for an already-created output. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate, and the open-assumption decrypt/DA theorem packages that selected-row decrypt/hash evidence together with the public privacy-boundary assumption object.",
@@ -1232,7 +1248,10 @@
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
+        "formal/lean/Hegemon/Privacy/WalletOutputBatch.lean",
+        "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean",
         "node/src/native/mod.rs",
+        "wallet/src/tx_builder.rs",
         "wallet/src/notes.rs",
         "wallet/src/store.rs",
         "network/src/p2p.rs",
@@ -1250,6 +1269,7 @@
         "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture",
         "cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture",
         "cargo test -p wallet local_address_metadata_does_not_change_public_ciphertext_projection --lib -- --nocapture",
+        "HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS=<generated-json> cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture",
         "cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node transfer_action_order_key_preimage_ignores_received_ms_for_inline_and_sidecar --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node mineable_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture",
@@ -1269,7 +1289,7 @@
         },
         {
           "id": "remaining-metadata-and-timing-privacy-not-covered",
-          "description": "The boundary now exposes batch/timing leakage as a first-class projection, and wallet/node/network regressions cover local bookkeeping, address-cursor metadata, sidecar arrival time, accepted transfer ordering independence from local arrival metadata, and PQ connection/relay metadata exclusion from consensus-carrying wire payloads, but it does not hide remaining wallet metadata, remote peer topology, network timing, non-transfer ordering/fairness, batching patterns beyond accepted transfer ordering, or amount-pattern privacy.",
+          "description": "The boundary now exposes batch/timing leakage as a first-class projection, and wallet/node/network regressions cover wallet output-batch public shape, local bookkeeping, address-cursor metadata, sidecar arrival time, accepted transfer ordering independence from local arrival metadata, and PQ connection/relay metadata exclusion from consensus-carrying wire payloads, but it does not hide remaining wallet metadata beyond output-count shape, remote peer topology, network timing, non-transfer ordering/fairness, batching patterns beyond accepted transfer ordering, or amount-pattern privacy.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -5211,7 +5231,7 @@
       "id": "native.transfer-action-payload-admission",
       "component": "native decoded shielded transfer payload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean transfer-payload admission kernel proves the executable decoded shielded-transfer table for proof presence and size caps, anchor agreement, commitment agreement, inline ciphertext byte caps, ciphertext hash/size metadata agreement, binding-hash agreement, decoded proof binding-hash equality, and fee agreement; accepted payloads now expose binding-hash, proof-binding-hash, and fee facts for downstream composition, and generated Lean vectors are checked against the production native helper used by mempool and block validation.",
+      "summary": "The Lean transfer-payload admission kernel proves the executable decoded shielded-transfer table for proof presence and size caps, anchor agreement, commitment agreement, inline ciphertext byte caps, ciphertext hash/size metadata agreement, binding-hash agreement, decoded proof binding-hash equality, and fee agreement; it now also projects inline transfer ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, proof-plus-ciphertext decoded bytes, and work units into the reusable bounded-request table before per-ciphertext hash/materialization. Accepted payloads expose binding-hash, proof-binding-hash, fee, and inline resource facts for downstream composition, and generated Lean vectors are checked against the production native helper used by submit-action, mempool, and block validation.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5224,19 +5244,25 @@
         "Hegemon.Native.TransferActionPayloadAdmission.commitments_mismatch_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.exact_proof_limit_accepts",
         "Hegemon.Native.TransferActionPayloadAdmission.fee_mismatch_rejects",
+        "Hegemon.Native.TransferActionPayloadAdmission.accepted_inline_transfer_ciphertext_resource_exposes_bounds",
+        "Hegemon.Native.TransferActionPayloadAdmission.exact_inline_transfer_ciphertext_resource_limits_accept",
         "Hegemon.Native.TransferActionPayloadAdmission.inline_ciphertext_too_large_rejects",
+        "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_aggregate_over_cap_rejects",
+        "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_count_over_cap_rejects",
+        "Hegemon.Native.TransferActionPayloadAdmission.inline_transfer_ciphertext_item_over_cap_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_binding_hash_mismatch_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_missing_precedes_anchor_validation",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_missing_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.proof_too_large_rejects",
         "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_binding_facts",
         "Hegemon.Native.TransferActionPayloadAdmission.transfer_payload_accepts_implies_preconditions",
+        "Hegemon.Native.TransferActionPayloadAdmission.valid_inline_transfer_ciphertext_resource_accepts",
         "Hegemon.Native.TransferActionPayloadAdmission.valid_transfer_payload_accepts"
       ],
       "assumptions": [
         "The Lean model treats SCALE decoding, ciphertext hash derivation, and binding-hash computation as production-derived predicates; it proves the decoded admission table and rejection precedence.",
-        "Generated Lean conformance vectors cover valid payloads, exact proof-limit acceptance, missing and oversized proofs, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash and size mismatches, binding-hash mismatch, proof binding-hash mismatch, fee mismatch, proof-binding-hash-before-fee precedence, and proof-missing-before-anchor precedence. Focused regressions also cover proof-binding alias attempts for inline and sidecar payloads, including sidecar value-balance aliasing.",
-        "The theorem covers executable decoded native transfer payload admission only. It does not prove SCALE decoder correctness, ciphertext hash cryptographic security or implementation equivalence, StarkVerifier binding-hash cryptographic assumptions, nullifier replay, DA sidecar availability, tx leaf proof soundness, or complete native-node equivalence."
+        "Generated Lean conformance vectors cover valid payloads, exact proof-limit acceptance, missing and oversized proofs, anchor mismatch, commitment mismatch, inline ciphertext oversize, ciphertext hash and size mismatches, binding-hash mismatch, proof binding-hash mismatch, fee mismatch, proof-binding-hash-before-fee precedence, proof-missing-before-anchor precedence, inline ciphertext resource exact-limit acceptance, route-payload raw-byte over-cap, proof-plus-ciphertext decoded-byte over-cap, ciphertext-count over-cap, max-ciphertext-item over-cap, aggregate-ciphertext over-cap, and count-before-item rejection precedence. Focused regressions also cover proof-binding alias attempts for inline and sidecar payloads, including sidecar value-balance aliasing.",
+        "The theorem covers executable decoded native transfer payload admission and inline ciphertext bounded-resource projection after the submit-action public_args cap and exact SCALE decode. It does not prove SCALE decoder allocation behavior below the existing 2 MiB public_args cap, ciphertext hash cryptographic security or implementation equivalence, StarkVerifier binding-hash cryptographic assumptions, nullifier replay, DA sidecar availability, tx leaf proof soundness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
@@ -5248,6 +5274,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_transfer_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node submit_action_rejects_inline_ciphertext_resource_before_binding_hashing --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node transfer_action_rejects_ --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node transfer_action_rejects_sidecar_value_balance_binding_alias --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node transfer_action_rejects_inline_stablecoin_proof_binding_alias --lib --no-default-features -- --nocapture",

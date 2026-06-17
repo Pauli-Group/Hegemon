@@ -1221,6 +1221,21 @@ struct NativeTransferPayloadAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeInlineTransferCiphertextResourceInput {
+    raw_byte_cap: usize,
+    decoded_byte_cap: usize,
+    item_count_cap: usize,
+    item_byte_cap: usize,
+    aggregate_byte_cap: usize,
+    work_unit_cap: usize,
+    route_payload_bytes: usize,
+    proof_bytes: usize,
+    ciphertext_count: usize,
+    max_ciphertext_bytes_observed: usize,
+    aggregate_ciphertext_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeTransferPayloadRoute {
     Inline,
     Sidecar,
@@ -4098,25 +4113,11 @@ impl NativeNode {
             (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
                 let args: ShieldedTransferInlineArgs =
                     decode_scale_exact(&public_args, "shielded inline action args")?;
-                let ciphertext_hashes = args
-                    .ciphertexts
-                    .iter()
-                    .map(|note| {
-                        let mut bytes =
-                            Vec::with_capacity(note.ciphertext.len() + note.kem_ciphertext.len());
-                        bytes.extend_from_slice(&note.ciphertext);
-                        bytes.extend_from_slice(&note.kem_ciphertext);
-                        ciphertext_hash_bytes(&bytes)
-                    })
-                    .collect::<Vec<_>>();
-                let ciphertext_sizes = args
-                    .ciphertexts
-                    .iter()
-                    .map(|note| {
-                        u32::try_from(note.ciphertext.len() + note.kem_ciphertext.len())
-                            .unwrap_or(u32::MAX)
-                    })
-                    .collect::<Vec<_>>();
+                let (_, ciphertext_hashes, ciphertext_sizes) = admitted_inline_ciphertext_metadata(
+                    public_args.len(),
+                    args.proof.len(),
+                    &args.ciphertexts,
+                )?;
                 validate_binding_hash(
                     args.anchor,
                     &nullifiers,
@@ -7661,6 +7662,107 @@ fn native_transfer_state_admission_input_for_block(
     }
 }
 
+fn inline_transfer_ciphertext_resource_input(
+    route_payload_bytes: usize,
+    proof_bytes: usize,
+    ciphertexts: &[protocol_shielded_pool::types::EncryptedNote],
+) -> NativeInlineTransferCiphertextResourceInput {
+    let mut max_ciphertext_bytes_observed = 0usize;
+    let mut aggregate_ciphertext_bytes = 0usize;
+    for note in ciphertexts {
+        let ciphertext_bytes = note
+            .ciphertext
+            .len()
+            .saturating_add(note.kem_ciphertext.len());
+        max_ciphertext_bytes_observed = max_ciphertext_bytes_observed.max(ciphertext_bytes);
+        aggregate_ciphertext_bytes = aggregate_ciphertext_bytes.saturating_add(ciphertext_bytes);
+    }
+    let output_count_cap = transaction_core::constants::MAX_OUTPUTS;
+    NativeInlineTransferCiphertextResourceInput {
+        raw_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        decoded_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        item_count_cap: output_count_cap,
+        item_byte_cap: MAX_CIPHERTEXT_BYTES,
+        aggregate_byte_cap: output_count_cap.saturating_mul(MAX_CIPHERTEXT_BYTES),
+        work_unit_cap: output_count_cap,
+        route_payload_bytes,
+        proof_bytes,
+        ciphertext_count: ciphertexts.len(),
+        max_ciphertext_bytes_observed,
+        aggregate_ciphertext_bytes,
+    }
+}
+
+fn inline_transfer_ciphertext_resource_bounded_request(
+    input: NativeInlineTransferCiphertextResourceInput,
+) -> NativeBoundedRequestAdmissionInput {
+    NativeBoundedRequestAdmissionInput {
+        raw_byte_cap: input.raw_byte_cap,
+        decoded_byte_cap: input.decoded_byte_cap,
+        item_count_cap: input.item_count_cap,
+        item_byte_cap: input.item_byte_cap,
+        aggregate_byte_cap: input.aggregate_byte_cap,
+        work_unit_cap: input.work_unit_cap,
+        raw_bytes: input.route_payload_bytes,
+        decoded_bytes: input
+            .proof_bytes
+            .saturating_add(input.aggregate_ciphertext_bytes),
+        item_count: input.ciphertext_count,
+        max_item_bytes: input.max_ciphertext_bytes_observed,
+        aggregate_bytes: input.aggregate_ciphertext_bytes,
+        work_units: input.ciphertext_count,
+    }
+}
+
+fn validate_inline_transfer_ciphertext_resource(
+    input: NativeInlineTransferCiphertextResourceInput,
+) -> Result<NativeBoundedRequestAdmissionInput> {
+    let bounded = inline_transfer_ciphertext_resource_bounded_request(input);
+    evaluate_native_bounded_request_admission(bounded)
+        .map(|_| bounded)
+        .map_err(|rejection| {
+            inline_transfer_ciphertext_resource_admission_error(bounded, rejection)
+        })
+}
+
+fn inline_transfer_ciphertext_resource_admission_error(
+    input: NativeBoundedRequestAdmissionInput,
+    rejection: NativeBoundedRequestAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+            "inline transfer route payload bytes {} exceeds cap {}",
+            input.raw_bytes,
+            input.raw_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+            "inline transfer decoded proof+ciphertext bytes {} exceeds cap {}",
+            input.decoded_bytes,
+            input.decoded_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+            "inline ciphertext count {} exceeds limit {}",
+            input.item_count,
+            input.item_count_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+            "inline ciphertext size {} exceeds limit {}",
+            input.max_item_bytes,
+            input.item_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+            "inline ciphertext aggregate bytes {} exceeds cap {}",
+            input.aggregate_bytes,
+            input.aggregate_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+            "inline ciphertext work units {} exceeds cap {}",
+            input.work_units,
+            input.work_unit_cap
+        ),
+    }
+}
+
 fn inline_ciphertext_metadata(
     ciphertexts: &[protocol_shielded_pool::types::EncryptedNote],
 ) -> (usize, Option<(Vec<[u8; 48]>, Vec<u32>)>) {
@@ -7706,6 +7808,28 @@ fn inline_ciphertext_metadata(
     )
 }
 
+fn admitted_inline_ciphertext_metadata(
+    route_payload_bytes: usize,
+    proof_bytes: usize,
+    ciphertexts: &[protocol_shielded_pool::types::EncryptedNote],
+) -> Result<(usize, Vec<[u8; 48]>, Vec<u32>)> {
+    let input =
+        inline_transfer_ciphertext_resource_input(route_payload_bytes, proof_bytes, ciphertexts);
+    validate_inline_transfer_ciphertext_resource(input)?;
+    let (max_inline_ciphertext_bytes, metadata) = inline_ciphertext_metadata(ciphertexts);
+    let (ciphertext_hashes, ciphertext_sizes) = metadata.ok_or_else(|| {
+        inline_transfer_ciphertext_resource_admission_error(
+            inline_transfer_ciphertext_resource_bounded_request(input),
+            NativeBoundedRequestAdmissionRejection::ItemBytesExceeded,
+        )
+    })?;
+    Ok((
+        max_inline_ciphertext_bytes,
+        ciphertext_hashes,
+        ciphertext_sizes,
+    ))
+}
+
 fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
     if !is_shielded_transfer_action(action) {
         return Err(anyhow!("action is not a shielded transfer"));
@@ -7746,11 +7870,12 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
         ACTION_SHIELDED_TRANSFER_INLINE => {
             let args: ShieldedTransferInlineArgs =
                 decode_scale_exact(&action.public_args, "shielded inline action args")?;
-            let (inline_ciphertext_bytes, inline_metadata) =
-                inline_ciphertext_metadata(&args.ciphertexts);
-            let (ciphertext_hashes, ciphertext_sizes) = inline_metadata
-                .clone()
-                .unwrap_or_else(|| (Vec::new(), Vec::new()));
+            let (inline_ciphertext_bytes, ciphertext_hashes, ciphertext_sizes) =
+                admitted_inline_ciphertext_metadata(
+                    action.public_args.len(),
+                    args.proof.len(),
+                    &args.ciphertexts,
+                )?;
             let input = NativeTransferPayloadAdmissionInput {
                 proof_bytes: args.proof.len(),
                 max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
@@ -7758,23 +7883,17 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
                 commitments_match: args.commitments == action.commitments,
                 inline_ciphertext_bytes,
                 max_ciphertext_bytes: MAX_CIPHERTEXT_BYTES,
-                ciphertext_hashes_match: inline_metadata.is_some()
-                    && ciphertext_hashes == action.ciphertext_hashes,
-                ciphertext_sizes_match: inline_metadata.is_some()
-                    && ciphertext_sizes == action.ciphertext_sizes,
-                binding_hash_matches: inline_metadata.as_ref().is_some_and(
-                    |(ciphertext_hashes, _)| {
-                        binding_hash_matches(
-                            args.anchor,
-                            &action.nullifiers,
-                            &args.commitments,
-                            ciphertext_hashes,
-                            args.balance_slot_asset_ids,
-                            args.fee,
-                            args.binding_hash,
-                            args.stablecoin,
-                        )
-                    },
+                ciphertext_hashes_match: ciphertext_hashes == action.ciphertext_hashes,
+                ciphertext_sizes_match: ciphertext_sizes == action.ciphertext_sizes,
+                binding_hash_matches: binding_hash_matches(
+                    args.anchor,
+                    &action.nullifiers,
+                    &args.commitments,
+                    &ciphertext_hashes,
+                    args.balance_slot_asset_ids,
+                    args.fee,
+                    args.binding_hash,
+                    args.stablecoin,
                 ),
                 proof_binding_hash_matches_key: native_tx_leaf_artifact_binding_hash_matches_key(
                     args.binding_hash,
@@ -13941,6 +14060,7 @@ mod tests {
     struct LeanTransferActionPayloadAdmissionVectorFile {
         schema_version: u32,
         transfer_action_payload_admission_cases: Vec<LeanTransferActionPayloadAdmissionCase>,
+        inline_transfer_ciphertext_resource_cases: Vec<LeanInlineTransferCiphertextResourceCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -13959,6 +14079,25 @@ mod tests {
         #[serde(default = "default_true")]
         proof_binding_hash_matches_key: bool,
         fee_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanInlineTransferCiphertextResourceCase {
+        name: String,
+        route_payload_bytes: usize,
+        proof_bytes: usize,
+        ciphertext_count: usize,
+        max_ciphertext_bytes_observed: usize,
+        aggregate_ciphertext_bytes: usize,
+        raw_byte_cap: usize,
+        decoded_byte_cap: usize,
+        item_count_cap: usize,
+        item_byte_cap: usize,
+        aggregate_byte_cap: usize,
+        work_unit_cap: usize,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -14268,6 +14407,8 @@ mod tests {
     struct LeanMineableActionAdmissionVectorFile {
         schema_version: u32,
         mineable_action_admission_cases: Vec<LeanMineableActionAdmissionCase>,
+        #[serde(default)]
+        mineable_selection_cases: Vec<LeanMineableSelectionCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14282,6 +14423,29 @@ mod tests {
         sidecar_ciphertext_sizes_match: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMineableSelectionCase {
+        name: String,
+        transfer_count: usize,
+        selected_candidate_action_id: Option<usize>,
+        actions: Vec<LeanMineableSelectionAction>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMineableSelectionAction {
+        label: String,
+        fixture: String,
+        action_id: usize,
+        transfer_route: bool,
+        transfer_mineable: bool,
+        candidate_artifact_route: bool,
+        candidate_tx_count: usize,
+        expected_selected: bool,
+        expected_accepted: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14423,8 +14587,6 @@ mod tests {
         name: String,
         amount_nonzero: bool,
         commitment_matches: bool,
-        #[serde(default)]
-        mineable_selection_cases: Vec<LeanMineableSelectionCase>,
         commitment_nonzero: bool,
         ciphertext_bytes: usize,
         max_ciphertext_bytes: usize,
@@ -14439,29 +14601,6 @@ mod tests {
     struct LeanCoinbaseActionPayloadScaleWireVectorFile {
         schema_version: u32,
         coinbase_action_payload_scale_wire_cases: Vec<LeanCoinbaseActionPayloadScaleWireCase>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct LeanMineableSelectionCase {
-        name: String,
-        transfer_count: usize,
-        selected_candidate_action_id: Option<usize>,
-        actions: Vec<LeanMineableSelectionAction>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct LeanMineableSelectionAction {
-        label: String,
-        fixture: String,
-        action_id: usize,
-        transfer_route: bool,
-        transfer_mineable: bool,
-        candidate_artifact_route: bool,
-        candidate_tx_count: usize,
-        expected_selected: bool,
-        expected_accepted: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14869,6 +15008,43 @@ mod tests {
         assert_eq!(node.state.read().pending_actions.len(), 2);
         assert!(!node.state.read().nullifiers.contains(&action.nullifiers[0]));
         assert_eq!(node.state.read().commitment_tree.leaf_count(), 0);
+    }
+
+    #[test]
+    fn submit_action_rejects_inline_ciphertext_resource_before_binding_hashing() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [19u8; 48], [20u8; 48], 0);
+        let mut args: ShieldedTransferInlineArgs =
+            decode_scale_exact(&action.public_args, "test inline transfer args")
+                .expect("decode inline args");
+        args.ciphertexts = (0..=transaction_core::constants::MAX_OUTPUTS)
+            .map(|idx| {
+                let mut note = test_transfer_encrypted_note();
+                note.kem_ciphertext[0] = idx as u8;
+                note
+            })
+            .collect();
+        args.binding_hash = [0x99u8; 64];
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
+                "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
+                "family_id": FAMILY_SHIELDED_POOL,
+                "action_id": ACTION_SHIELDED_TRANSFER_INLINE,
+                "new_nullifiers": [hex48(&action.nullifiers[0])],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect_err("inline ciphertext resource overflow must reject before staging");
+        assert!(
+            err.to_string().contains("inline ciphertext count"),
+            "unexpected inline resource error: {err}"
+        );
+        assert_eq!(node.state.read().pending_actions.len(), 0);
     }
 
     #[test]
@@ -20431,16 +20607,24 @@ mod tests {
             .expect("read generated Lean transfer action payload admission vectors");
         let vectors: LeanTransferActionPayloadAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean transfer action payload admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.transfer_action_payload_admission_cases.is_empty(),
             "Lean transfer action payload admission cases must not be empty"
+        );
+        assert!(
+            !vectors.inline_transfer_ciphertext_resource_cases.is_empty(),
+            "Lean inline transfer ciphertext resource cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
         for case in &vectors.transfer_action_payload_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_transfer_action_payload_admission_case(case);
+        }
+        for case in &vectors.inline_transfer_ciphertext_resource_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_inline_transfer_ciphertext_resource_case(case);
         }
     }
 
@@ -20482,6 +20666,72 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native transfer payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_inline_transfer_ciphertext_resource_case(
+        case: &LeanInlineTransferCiphertextResourceCase,
+    ) {
+        assert_eq!(
+            case.raw_byte_cap, MAX_NATIVE_RPC_ACTION_BYTES,
+            "{} Lean raw byte cap must match production submit-action public_args cap",
+            case.name
+        );
+        assert_eq!(
+            case.decoded_byte_cap, MAX_NATIVE_RPC_ACTION_BYTES,
+            "{} Lean decoded byte cap must match production submit-action public_args cap",
+            case.name
+        );
+        assert_eq!(
+            case.item_count_cap,
+            transaction_core::constants::MAX_OUTPUTS,
+            "{} Lean item count cap must match production MAX_OUTPUTS",
+            case.name
+        );
+        assert_eq!(
+            case.item_byte_cap, MAX_CIPHERTEXT_BYTES,
+            "{} Lean item byte cap must match production ciphertext cap",
+            case.name
+        );
+        assert_eq!(
+            case.aggregate_byte_cap,
+            transaction_core::constants::MAX_OUTPUTS.saturating_mul(MAX_CIPHERTEXT_BYTES),
+            "{} Lean aggregate byte cap must match production output-count ciphertext cap",
+            case.name
+        );
+        assert_eq!(
+            case.work_unit_cap,
+            transaction_core::constants::MAX_OUTPUTS,
+            "{} Lean work unit cap must match production MAX_OUTPUTS",
+            case.name
+        );
+        let input = NativeInlineTransferCiphertextResourceInput {
+            raw_byte_cap: case.raw_byte_cap,
+            decoded_byte_cap: case.decoded_byte_cap,
+            item_count_cap: case.item_count_cap,
+            item_byte_cap: case.item_byte_cap,
+            aggregate_byte_cap: case.aggregate_byte_cap,
+            work_unit_cap: case.work_unit_cap,
+            route_payload_bytes: case.route_payload_bytes,
+            proof_bytes: case.proof_bytes,
+            ciphertext_count: case.ciphertext_count,
+            max_ciphertext_bytes_observed: case.max_ciphertext_bytes_observed,
+            aggregate_ciphertext_bytes: case.aggregate_ciphertext_bytes,
+        };
+        let actual = evaluate_native_bounded_request_admission(
+            inline_transfer_ciphertext_resource_bounded_request(input),
+        );
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native inline transfer ciphertext resource validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native inline transfer ciphertext resource rejection drifted from Lean spec",
             case.name
         );
     }
@@ -21431,16 +21681,24 @@ mod tests {
             .expect("read generated Lean mineable action admission vectors");
         let vectors: LeanMineableActionAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean mineable action admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.mineable_action_admission_cases.is_empty(),
             "Lean mineable action admission cases must not be empty"
+        );
+        assert!(
+            !vectors.mineable_selection_cases.is_empty(),
+            "Lean mineable selection cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
         for case in &vectors.mineable_action_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_mineable_action_admission_case(case);
+        }
+        for case in &vectors.mineable_selection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mineable_selection_case(case);
         }
     }
 
@@ -21467,6 +21725,173 @@ mod tests {
             "{} native mineable action admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut label_by_hash = BTreeMap::<[u8; 32], String>::new();
+        let mut label_by_action_id = BTreeMap::<usize, String>::new();
+
+        for action_case in &case.actions {
+            let action = lean_mineable_selection_fixture_action(action_case, anchor);
+            assert_eq!(
+                is_shielded_transfer_action(&action),
+                action_case.transfer_route,
+                "{} {} transfer-route fixture drifted from Lean spec",
+                case.name,
+                action_case.label
+            );
+            assert_eq!(
+                is_candidate_artifact_action(&action),
+                action_case.candidate_artifact_route,
+                "{} {} candidate-route fixture drifted from Lean spec",
+                case.name,
+                action_case.label
+            );
+            if let Some(candidate) = action.candidate_artifact.as_ref() {
+                assert_eq!(
+                    usize::try_from(candidate.tx_count).expect("tx_count fits usize"),
+                    action_case.candidate_tx_count,
+                    "{} {} candidate tx_count fixture drifted from Lean spec",
+                    case.name,
+                    action_case.label
+                );
+            }
+            if action_case.transfer_route && action_case.transfer_mineable {
+                stage_ciphertext_metadata_for_action(&mut state, &action);
+            }
+
+            let preselection_input = native_mineable_action_admission_input(&state, &action, None);
+            if action_case.transfer_route {
+                assert_eq!(
+                    evaluate_native_mineable_action_admission(preselection_input).is_ok(),
+                    action_case.transfer_mineable,
+                    "{} {} transfer preselection mineability drifted from Lean spec",
+                    case.name,
+                    action_case.label
+                );
+            }
+
+            assert!(
+                label_by_hash
+                    .insert(action.tx_hash, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate fixture tx_hash for {}",
+                case.name,
+                action_case.label
+            );
+            assert!(
+                label_by_action_id
+                    .insert(action_case.action_id, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate Lean action_id {}",
+                case.name,
+                action_case.action_id
+            );
+            state.pending_actions.insert(action.tx_hash, action);
+        }
+
+        let transfer_count = ordered_pending_actions(&state)
+            .iter()
+            .filter(|action| is_shielded_transfer_action(action))
+            .filter(|action| {
+                let input = native_mineable_action_admission_input(&state, action, None);
+                evaluate_native_mineable_action_admission(input).is_ok()
+            })
+            .count();
+        assert_eq!(
+            transfer_count, case.transfer_count,
+            "{} mineable transfer count drifted from Lean spec",
+            case.name
+        );
+
+        let selected = select_mineable_actions(&state);
+        let actual_labels = selected
+            .iter()
+            .map(|action| {
+                label_by_hash
+                    .get(&action.tx_hash)
+                    .unwrap_or_else(|| panic!("{} selected unknown action", case.name))
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        let expected_labels = case
+            .actions
+            .iter()
+            .filter(|action| action.expected_accepted)
+            .map(|action| action.label.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_labels, expected_labels,
+            "{} selected mineable action order drifted from Lean spec",
+            case.name
+        );
+
+        let actual_selected_candidate = selected
+            .iter()
+            .find(|action| is_candidate_artifact_action(action))
+            .map(|action| {
+                case.actions
+                    .iter()
+                    .find(|candidate| {
+                        label_by_hash
+                            .get(&action.tx_hash)
+                            .is_some_and(|label| label == &candidate.label)
+                    })
+                    .expect("selected candidate has Lean case")
+                    .action_id
+            });
+        assert_eq!(
+            actual_selected_candidate, case.selected_candidate_action_id,
+            "{} selected candidate action id drifted from Lean spec",
+            case.name
+        );
+
+        for action_case in &case.actions {
+            let actual_accepted = actual_labels
+                .iter()
+                .any(|label| label == &action_case.label);
+            assert_eq!(
+                actual_accepted, action_case.expected_accepted,
+                "{} {} accepted flag drifted from Lean spec",
+                case.name, action_case.label
+            );
+            let actual_selected = actual_selected_candidate
+                .is_some_and(|selected_id| selected_id == action_case.action_id);
+            assert_eq!(
+                actual_selected, action_case.expected_selected,
+                "{} {} selected-candidate flag drifted from Lean spec",
+                case.name, action_case.label
+            );
+        }
+    }
+
+    fn lean_mineable_selection_fixture_action(
+        action_case: &LeanMineableSelectionAction,
+        anchor: [u8; 48],
+    ) -> PendingAction {
+        match action_case.fixture.as_str() {
+            "inline-a" => test_inline_transfer_action(anchor, [161u8; 48], [162u8; 48], 0),
+            "sidecar-a" => test_sidecar_transfer_action(anchor, [163u8; 48], [164u8; 48], 0),
+            "sidecar-missing" => test_sidecar_transfer_action(anchor, [165u8; 48], [166u8; 48], 0),
+            "candidate-one-a" => test_candidate_artifact_action(1, 171),
+            "candidate-one-b" => test_candidate_artifact_action(1, 172),
+            "candidate-two" => test_candidate_artifact_action(2, 173),
+            "bridge-a" => test_outbound_bridge_action(b"lean mineable selection bridge-a"),
+            other => panic!("unknown Lean mineable selection fixture {other}"),
+        }
+    }
+
+    fn stage_ciphertext_metadata_for_action(state: &mut NativeState, action: &PendingAction) {
+        for (hash, size) in action
+            .ciphertext_hashes
+            .iter()
+            .zip(action.ciphertext_sizes.iter())
+        {
+            state.staged_ciphertexts.insert(hex48(hash), *size);
+        }
     }
 
     #[test]
@@ -21666,20 +22091,12 @@ mod tests {
             .label(),
             "input_count_mismatch"
         );
-        assert!(
-            !vectors.mineable_selection_cases.is_empty(),
-            "Lean mineable selection cases must not be empty"
-        );
         assert_eq!(
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     output_count_matches: false,
                     version_matches: false,
                     ..valid
-        for case in &vectors.mineable_selection_cases {
-            assert!(names.insert(case.name.clone()));
-            verify_lean_mineable_selection_case(case);
-        }
                 }
             )
             .expect_err("output count mismatch must reject before version")
@@ -21707,173 +22124,6 @@ mod tests {
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     balance_tag_matches: false,
-    fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
-        let pow_bits = 0x207f_ffff;
-        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
-        let anchor = state.commitment_tree.root();
-        let mut label_by_hash = BTreeMap::<[u8; 32], String>::new();
-        let mut label_by_action_id = BTreeMap::<usize, String>::new();
-
-        for action_case in &case.actions {
-            let action = lean_mineable_selection_fixture_action(action_case, anchor);
-            assert_eq!(
-                is_shielded_transfer_action(&action),
-                action_case.transfer_route,
-                "{} {} transfer-route fixture drifted from Lean spec",
-                case.name,
-                action_case.label
-            );
-            assert_eq!(
-                is_candidate_artifact_action(&action),
-                action_case.candidate_artifact_route,
-                "{} {} candidate-route fixture drifted from Lean spec",
-                case.name,
-                action_case.label
-            );
-            if let Some(candidate) = action.candidate_artifact.as_ref() {
-                assert_eq!(
-                    usize::try_from(candidate.tx_count).expect("tx_count fits usize"),
-                    action_case.candidate_tx_count,
-                    "{} {} candidate tx_count fixture drifted from Lean spec",
-                    case.name,
-                    action_case.label
-                );
-            }
-            if action_case.transfer_route && action_case.transfer_mineable {
-                stage_ciphertext_metadata_for_action(&mut state, &action);
-            }
-
-            let preselection_input = native_mineable_action_admission_input(&state, &action, None);
-            if action_case.transfer_route {
-                assert_eq!(
-                    evaluate_native_mineable_action_admission(preselection_input).is_ok(),
-                    action_case.transfer_mineable,
-                    "{} {} transfer preselection mineability drifted from Lean spec",
-                    case.name,
-                    action_case.label
-                );
-            }
-
-            assert!(
-                label_by_hash
-                    .insert(action.tx_hash, action_case.label.clone())
-                    .is_none(),
-                "{} duplicate fixture tx_hash for {}",
-                case.name,
-                action_case.label
-            );
-            assert!(
-                label_by_action_id
-                    .insert(action_case.action_id, action_case.label.clone())
-                    .is_none(),
-                "{} duplicate Lean action_id {}",
-                case.name,
-                action_case.action_id
-            );
-            state.pending_actions.insert(action.tx_hash, action);
-        }
-
-        let transfer_count = ordered_pending_actions(&state)
-            .iter()
-            .filter(|action| is_shielded_transfer_action(action))
-            .filter(|action| {
-                let input = native_mineable_action_admission_input(&state, action, None);
-                evaluate_native_mineable_action_admission(input).is_ok()
-            })
-            .count();
-        assert_eq!(
-            transfer_count, case.transfer_count,
-            "{} mineable transfer count drifted from Lean spec",
-            case.name
-        );
-
-        let selected = select_mineable_actions(&state);
-        let actual_labels = selected
-            .iter()
-            .map(|action| {
-                label_by_hash
-                    .get(&action.tx_hash)
-                    .unwrap_or_else(|| panic!("{} selected unknown action", case.name))
-                    .clone()
-            })
-            .collect::<Vec<_>>();
-        let expected_labels = case
-            .actions
-            .iter()
-            .filter(|action| action.expected_accepted)
-            .map(|action| action.label.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            actual_labels, expected_labels,
-            "{} selected mineable action order drifted from Lean spec",
-            case.name
-        );
-
-        let actual_selected_candidate = selected
-            .iter()
-            .find(|action| is_candidate_artifact_action(action))
-            .map(|action| {
-                case.actions
-                    .iter()
-                    .find(|candidate| {
-                        label_by_hash
-                            .get(&action.tx_hash)
-                            .is_some_and(|label| label == &candidate.label)
-                    })
-                    .expect("selected candidate has Lean case")
-                    .action_id
-            });
-        assert_eq!(
-            actual_selected_candidate, case.selected_candidate_action_id,
-            "{} selected candidate action id drifted from Lean spec",
-            case.name
-        );
-
-        for action_case in &case.actions {
-            let actual_accepted = actual_labels
-                .iter()
-                .any(|label| label == &action_case.label);
-            assert_eq!(
-                actual_accepted, action_case.expected_accepted,
-                "{} {} accepted flag drifted from Lean spec",
-                case.name, action_case.label
-            );
-            let actual_selected = actual_selected_candidate
-                .is_some_and(|selected_id| selected_id == action_case.action_id);
-            assert_eq!(
-                actual_selected, action_case.expected_selected,
-                "{} {} selected-candidate flag drifted from Lean spec",
-                case.name, action_case.label
-            );
-        }
-    }
-
-    fn lean_mineable_selection_fixture_action(
-        action_case: &LeanMineableSelectionAction,
-        anchor: [u8; 48],
-    ) -> PendingAction {
-        match action_case.fixture.as_str() {
-            "inline-a" => test_inline_transfer_action(anchor, [161u8; 48], [162u8; 48], 0),
-            "sidecar-a" => test_sidecar_transfer_action(anchor, [163u8; 48], [164u8; 48], 0),
-            "sidecar-missing" => test_sidecar_transfer_action(anchor, [165u8; 48], [166u8; 48], 0),
-            "candidate-one-a" => test_candidate_artifact_action(1, 171),
-            "candidate-one-b" => test_candidate_artifact_action(1, 172),
-            "candidate-two" => test_candidate_artifact_action(2, 173),
-            "bridge-a" => test_outbound_bridge_action(b"lean mineable selection bridge-a"),
-            other => panic!("unknown Lean mineable selection fixture {other}"),
-        }
-    }
-
-    fn stage_ciphertext_metadata_for_action(state: &mut NativeState, action: &PendingAction) {
-        for (hash, size) in action
-            .ciphertext_hashes
-            .iter()
-            .zip(action.ciphertext_sizes.iter())
-        {
-            state.staged_ciphertexts.insert(hex48(hash), *size);
-        }
-    }
-
                     receipt_statement_hash_matches: false,
                     public_inputs_digest_matches: false,
                     proof_digest_matches: false,
