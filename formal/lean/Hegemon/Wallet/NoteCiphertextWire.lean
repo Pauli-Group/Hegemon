@@ -249,6 +249,9 @@ def sampleMemoPayload : List Byte :=
 def sampleKemCiphertext : List Byte :=
   patternedBytes mlKemCiphertextLen 0x40
 
+def alternateKemCiphertext : List Byte :=
+  patternedBytes mlKemCiphertextLen 0x41
+
 def cryptoWire (notePayload memoPayload : List Byte) : List Byte :=
   [3]
     ++ u16le cryptoSuiteGamma
@@ -283,8 +286,24 @@ def validChainContainer : List Byte :=
 def validChainWire : List Byte :=
   validChainContainer ++ chainCompactKemLen ++ sampleKemCiphertext
 
+def alternateValidChainWire : List Byte :=
+  validChainContainer ++ chainCompactKemLen ++ alternateKemCiphertext
+
 def validChainDaBytes : List Byte :=
   validChainContainer ++ sampleKemCiphertext
+
+def alternateValidChainDaBytes : List Byte :=
+  validChainContainer ++ alternateKemCiphertext
+
+def sampleChainCiphertextSummary : NoteCiphertextSummary :=
+  {
+    version := 3,
+    cryptoSuite := cryptoSuiteGamma,
+    diversifierIndex := 7,
+    kemLen := mlKemCiphertextLen,
+    notePayloadLen := sampleNotePayload.length,
+    memoPayloadLen := sampleMemoPayload.length
+  }
 
 def daTruncatedWire : List Byte :=
   validChainDaBytes.take (chainCiphertextSize + mlKemCiphertextLen - 1)
@@ -355,23 +374,44 @@ theorem crypto_trailing_byte_rejects :
 
 theorem chain_valid_accepts :
     parseChainNoteCiphertext validChainWire =
-      some {
-        version := 3,
-        cryptoSuite := cryptoSuiteGamma,
-        diversifierIndex := 7,
-        kemLen := mlKemCiphertextLen,
-        notePayloadLen := sampleNotePayload.length,
-        memoPayloadLen := sampleMemoPayload.length
-      } := by
+      some sampleChainCiphertextSummary := by
+  decide
+
+theorem alternate_chain_valid_accepts :
+    parseChainNoteCiphertext alternateValidChainWire =
+      some sampleChainCiphertextSummary := by
   decide
 
 theorem valid_chain_da_projection :
     projectChainDaBytes validChainWire = some validChainDaBytes := by
   decide
 
+theorem alternate_chain_da_projection :
+    projectChainDaBytes alternateValidChainWire =
+      some alternateValidChainDaBytes := by
+  decide
+
 theorem valid_chain_da_projection_length :
     validChainDaBytes.length =
       chainCiphertextSize + mlKemCiphertextLen := by
+  decide
+
+theorem alternate_chain_da_projection_length :
+    alternateValidChainDaBytes.length =
+      chainCiphertextSize + mlKemCiphertextLen := by
+  decide
+
+theorem alternate_chain_preserves_public_summary :
+    parseChainNoteCiphertext validChainWire =
+      parseChainNoteCiphertext alternateValidChainWire := by
+  rw [chain_valid_accepts, alternate_chain_valid_accepts]
+
+theorem valid_and_alternate_chain_wires_differ :
+    validChainWire ≠ alternateValidChainWire := by
+  decide
+
+theorem valid_and_alternate_da_bytes_differ :
+    validChainDaBytes ≠ alternateValidChainDaBytes := by
   decide
 
 theorem chain_memo_overrun_rejects :

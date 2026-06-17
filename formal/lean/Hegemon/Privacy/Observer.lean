@@ -1,6 +1,8 @@
 import Hegemon.Transaction.PublicInputs
 import Hegemon.Wallet.NoteCiphertextWire
 
+set_option maxRecDepth 10000
+
 namespace Hegemon
 namespace Privacy
 namespace Observer
@@ -263,6 +265,70 @@ def samePlacement
     (left right : ShieldedTransactionWorld) : Prop :=
   left.blockHeight = right.blockHeight
     ∧ left.actionIndex = right.actionIndex
+
+def sampleLocalActionMetadata : LocalActionMetadata :=
+  {
+    receivedMs := 0,
+    mempoolOrdinal := 0,
+    peerTag := 0,
+    storageGeneration := 0
+  }
+
+def sampleLocalAddressMetadata : LocalAddressMetadata :=
+  {
+    nextAddressIndex := 0,
+    reservedInternalAddressCount := 0,
+    addressBookGeneration := 0
+  }
+
+def sampleLocalNetworkMetadata : LocalNetworkMetadata :=
+  {
+    remotePeerTag := 0,
+    connectionEpoch := 0,
+    bytesSent := 0,
+    bytesReceived := 0,
+    gossipHopCount := 0
+  }
+
+def samplePrivateWitness : PrivateWitness :=
+  {
+    spendSecretSeeds := [],
+    inputNoteValues := [],
+    inputAssetIds := [],
+    outputNoteValues := [],
+    outputAssetIds := [],
+    noteRandomnessSeeds := [],
+    notePlaintextSeeds := [],
+    memoPlaintextSeeds := []
+  }
+
+def publicRawWireSplitLeftWorld : ShieldedTransactionWorld :=
+  {
+    publicInputs := validShape,
+    ciphertextBytes := [validChainWire],
+    ciphertextSummaries := [sampleChainCiphertextSummary],
+    blockHeight := 42,
+    actionIndex := 7,
+    localActionMetadata := sampleLocalActionMetadata,
+    localAddressMetadata := sampleLocalAddressMetadata,
+    localNetworkMetadata := sampleLocalNetworkMetadata,
+    privateWitness := samplePrivateWitness,
+    proverRandomnessSeed := 0
+  }
+
+def publicRawWireSplitRightWorld : ShieldedTransactionWorld :=
+  {
+    publicInputs := validShape,
+    ciphertextBytes := [alternateValidChainWire],
+    ciphertextSummaries := [sampleChainCiphertextSummary],
+    blockHeight := 42,
+    actionIndex := 7,
+    localActionMetadata := sampleLocalActionMetadata,
+    localAddressMetadata := sampleLocalAddressMetadata,
+    localNetworkMetadata := sampleLocalNetworkMetadata,
+    privateWitness := samplePrivateWitness,
+    proverRandomnessSeed := 1
+  }
 
 theorem observer_view_ignores_private_witness
     (world : ShieldedTransactionWorld)
@@ -1003,6 +1069,80 @@ theorem valid_observer_chain_surface_stable_under_all_local_metadata
         localAddressMetadata := localAddressMetadata
         localNetworkMetadata := localNetworkMetadata } := by
   simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
+theorem public_raw_wire_split_left_world_valid :
+    validObserverChainSurface publicRawWireSplitLeftWorld := by
+  constructor
+  · exact validPublicInputShape_accepts_valid
+  · constructor
+    · unfold summariesMatchChainWire publicRawWireSplitLeftWorld
+        parsedChainCiphertextSummaries
+      simp [chain_valid_accepts, parsedChainCiphertextSummaries]
+    · simp [publicRawWireSplitLeftWorld, activeOutputCount,
+        activeFlagCount, validShape]
+
+theorem public_raw_wire_split_right_world_valid :
+    validObserverChainSurface publicRawWireSplitRightWorld := by
+  constructor
+  · exact validPublicInputShape_accepts_valid
+  · constructor
+    · unfold summariesMatchChainWire publicRawWireSplitRightWorld
+        parsedChainCiphertextSummaries
+      simp [alternate_chain_valid_accepts, parsedChainCiphertextSummaries]
+    · simp [publicRawWireSplitRightWorld, activeOutputCount,
+        activeFlagCount, validShape]
+
+theorem public_raw_wire_split_worlds_same_public_metadata :
+    samePublicMetadataLeakage
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld := by
+  rfl
+
+theorem public_raw_wire_split_worlds_same_batch_timing :
+    sameBatchTimingLeakage
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld := by
+  rfl
+
+theorem public_raw_wire_split_worlds_different_raw_ciphertext_bytes :
+    publicRawWireSplitLeftWorld.ciphertextBytes ≠
+      publicRawWireSplitRightWorld.ciphertextBytes := by
+  intro same
+  apply valid_and_alternate_chain_wires_differ
+  simpa [publicRawWireSplitLeftWorld, publicRawWireSplitRightWorld] using same
+
+theorem public_raw_wire_split_worlds_not_same_allowed_leakage :
+    ¬ sameAllowedLeakage
+        publicRawWireSplitLeftWorld
+        publicRawWireSplitRightWorld := by
+  intro same
+  have bytesEq :
+      publicRawWireSplitLeftWorld.ciphertextBytes =
+        publicRawWireSplitRightWorld.ciphertextBytes := by
+    exact congrArg ObserverView.ciphertextBytes same
+  exact public_raw_wire_split_worlds_different_raw_ciphertext_bytes bytesEq
+
+theorem public_metadata_equal_with_different_raw_chain_wire :
+    validObserverChainSurface publicRawWireSplitLeftWorld
+      ∧ validObserverChainSurface publicRawWireSplitRightWorld
+      ∧ samePublicMetadataLeakage
+          publicRawWireSplitLeftWorld
+          publicRawWireSplitRightWorld
+      ∧ sameBatchTimingLeakage
+          publicRawWireSplitLeftWorld
+          publicRawWireSplitRightWorld
+      ∧ publicRawWireSplitLeftWorld.ciphertextBytes ≠
+          publicRawWireSplitRightWorld.ciphertextBytes
+      ∧ ¬ sameAllowedLeakage
+          publicRawWireSplitLeftWorld
+          publicRawWireSplitRightWorld := by
+  exact
+    ⟨public_raw_wire_split_left_world_valid,
+      public_raw_wire_split_right_world_valid,
+      public_raw_wire_split_worlds_same_public_metadata,
+      public_raw_wire_split_worlds_same_batch_timing,
+      public_raw_wire_split_worlds_different_raw_ciphertext_bytes,
+      public_raw_wire_split_worlds_not_same_allowed_leakage⟩
 
 end Observer
 end Privacy

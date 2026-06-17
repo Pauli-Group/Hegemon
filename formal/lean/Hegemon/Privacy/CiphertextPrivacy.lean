@@ -1110,6 +1110,74 @@ theorem ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_fact
         rightNetwork)
       assumptionProofs
 
+def rawWireSplitCiphertextPrivacyGame :
+    CiphertextPrivacyGame
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld :=
+  buildCiphertextPrivacyGame
+    public_raw_wire_split_left_world_valid
+    public_raw_wire_split_right_world_valid
+    rfl
+    rfl
+    ⟨rfl, rfl⟩
+    True
+    True.intro
+
+def samplePrivacyBoundaryAssumptions : PrivacyBoundaryAssumptions :=
+  {
+    proofSystemZeroKnowledge := True,
+    walletMetadataHygiene := True,
+    timingAndBatchingPolicy := True,
+    networkMetadataPolicy := True
+  }
+
+theorem sample_privacy_boundary_assumptions_hold :
+    PrivacyBoundaryAssumptionProofs samplePrivacyBoundaryAssumptions := by
+  exact
+    {
+      proofSystemZeroKnowledge := True.intro
+      walletMetadataHygiene := True.intro
+      timingAndBatchingPolicy := True.intro
+      networkMetadataPolicy := True.intro
+    }
+
+theorem ciphertext_privacy_game_public_metadata_can_hold_with_different_raw_wires :
+    samePublicMetadataLeakage
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld
+      ∧ sameBatchTimingLeakage
+        publicRawWireSplitLeftWorld
+        publicRawWireSplitRightWorld
+      ∧ rawWireSplitCiphertextPrivacyGame.wireIndistinguishable
+      ∧ publicRawWireSplitLeftWorld.ciphertextBytes ≠
+        publicRawWireSplitRightWorld.ciphertextBytes
+      ∧ ¬ sameAllowedLeakage
+        publicRawWireSplitLeftWorld
+        publicRawWireSplitRightWorld
+      ∧ RawWireExcludedPublicLeakageFacts
+        publicRawWireSplitLeftWorld
+        publicRawWireSplitRightWorld
+        rawWireSplitCiphertextPrivacyGame.wireIndistinguishable := by
+  exact
+    ⟨public_raw_wire_split_worlds_same_public_metadata,
+      public_raw_wire_split_worlds_same_batch_timing,
+      True.intro,
+      public_raw_wire_split_worlds_different_raw_ciphertext_bytes,
+      public_raw_wire_split_worlds_not_same_allowed_leakage,
+      ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts
+        rawWireSplitCiphertextPrivacyGame⟩
+
+theorem raw_wire_split_ciphertext_privacy_game_open_assumption_boundary :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld
+      rawWireSplitCiphertextPrivacyGame.wireIndistinguishable
+      samplePrivacyBoundaryAssumptions := by
+  exact
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      rawWireSplitCiphertextPrivacyGame
+      sample_privacy_boundary_assumptions_hold
+
 end CiphertextPrivacy
 end Privacy
 end Hegemon

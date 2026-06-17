@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 90.2,
+  "overall_completion_percent": 91.2,
   "last_full_formal_core": {
-    "date": "2026-06-17T21:05:48Z",
-    "commit": "d9fe6d68+worktree",
-    "status": "passed locally for the 90.2% theorem milestone: commitment append-index equality from accepted row-start plans, combined local metadata privacy resampling, and SmallWood public-statement verifier export",
+    "date": "2026-06-17T22:03:02Z",
+    "commit": "cfe6de15+worktree",
+    "status": "passed locally for the 91.2% theorem milestone: raw-wire split privacy witness, accepted-chain decrypt parser boundary, all-active decrypt/projected-DA open-assumption sidecar boundary, and bridge authorized asset plus final replay package",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 2005,
-    "axiom_free_theorems": 905,
-    "axiom_dependent_theorems": 1100,
+    "named_lean_theorems": 2025,
+    "axiom_free_theorems": 910,
+    "axiom_dependent_theorems": 1115,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
@@ -29,8 +29,8 @@
     "implementation_theorem_indexed_order_edges": 373,
     "implementation_theorem_indexed_dominance_constraints": 130,
     "implementation_theorem_indexed_dominance_edges": 341,
-    "full_claim_order_constraints": 129,
-    "full_claim_order_constraint_theorem_refs": 2412,
+    "full_claim_order_constraints": 126,
+    "full_claim_order_constraint_theorem_refs": 2274,
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
@@ -70,26 +70,34 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added a three-part proof milestone: accepted row-start plans now derive flattened append-summary/decoded/canonical commitment-index equality; ciphertext privacy games now carry combined local action/address/network metadata resampling through the open-assumption boundary; and SmallWood public-statement binding is exported together with the verifier envelope, no-theft, public-conservation, and non-native stablecoin exception consequences.",
+    "summary": "Added a privacy/ciphertext/bridge proof milestone: concrete raw-wire split worlds preserve public metadata and batch/timing while differing in raw ciphertext bytes; accepted chain ciphertext decrypt now packages parser metadata, fixed wire length, projected DA bytes, decrypt metadata agreement, and crypto-authentication; all active native tx-leaf output rows that decrypt under matching recipient material reconstruct the statement/proof-bound commitment and projected-DA hash predicate; materialized sidecar publication carries that all-active open-assumption decrypt/projected-DA boundary; and raw-ingress bridge publication packages authorized non-native bridge asset delta with final replay-key membership and duplicate-replay rejection.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
+      "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
+      "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
       "formal/lean/Hegemon/Privacy/Observer.lean",
       "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
-      "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean"
+      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
+      "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean",
+      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CommitmentTreeContentRefinement.rawIngressAppendSummaries_indexes_eq_orderedDecodedCommitmentIndexes_of_action_plan",
-      "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_commitment_tree_content_binds_append_publication_surface",
-      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_facts",
-      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export"
+      "Hegemon.Wallet.NoteCiphertextWire.alternate_chain_preserves_public_summary",
+      "Hegemon.Wallet.NoteCiphertextWire.valid_and_alternate_chain_wires_differ",
+      "Hegemon.Wallet.NoteCiphertextWire.valid_and_alternate_da_bytes_differ",
+      "Hegemon.Wallet.NoteCiphertextDecrypt.accepted_chain_ciphertext_decrypt_binds_wire_parser_metadata",
+      "Hegemon.Privacy.CiphertextPrivacy.raw_wire_split_ciphertext_privacy_game_open_assumption_boundary",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_decrypt_to_statement_commitment_and_projected_da_hash",
+      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary",
+      "Hegemon.Privacy.NativeSidecarObserverSurface.materialized_sidecar_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary",
+      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_authorized_asset_final_replay_safe"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon.Privacy.CiphertextPrivacy Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope Hegemon passed locally.",
-      "targeted_rust": "No shipped runtime code changed in this theorem-only milestone.",
-      "claims_blueprint": "formal-security-claims.json, formal-security-blueprint.json, METHODS.md, formal/lean/README.md, and this matrix bind the new theorem names and residual limits."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Privacy.NativeObserverSurface Hegemon.Privacy.NativeSidecarObserverSurface Hegemon.Privacy.CiphertextPrivacy Hegemon.Wallet.NoteCiphertextWire Hegemon.Wallet.NoteCiphertextDecrypt Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon passed locally.",
+      "targeted_rust": "No shipped runtime code changed in this theorem-only milestone; the full formal-core conformance suite passed locally.",
+      "claims_blueprint": "formal-security-claims.json, formal-security-blueprint.json, METHODS.md, DESIGN.md, formal/lean/README.md, and this matrix bind the new theorem names and residual limits."
     },
     "known_limitations": [
-      "The milestone does not prove arbitrary raw-byte parser internals, complete Merkle/hash implementation equivalence, simulator zero knowledge, ML-KEM/AEAD security, STARK/FRI/PCS soundness, witness extraction, storage assumptions, or complete native-node refinement."
+      "The milestone does not prove ML-KEM/AEAD security, simulator zero knowledge, ciphertext indistinguishability itself, arbitrary raw-byte parser internals, complete hash implementation equivalence, STARK/FRI/PCS soundness, witness extraction, storage assumptions, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
@@ -501,7 +509,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 80.5,
+      "completion_percent": 87.5,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -540,6 +548,10 @@
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability`, a no-new-assumptions reduction from modeled unlinkability to equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise",
         "wallet/src/notes.rs `reencryption_preserves_public_ciphertext_summary_shape` regression checks same-plaintext same-recipient re-encryption changes raw chain/DA wires while preserving the Lean-modeled public ciphertext summary shape after chain and DA parsing",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected decrypt-to-commitment/projected-DA hash boundary with that open-assumption privacy boundary so deterministic observer leakage, secret-resampling stability, same-wire discharge, and the explicit privacy assumptions travel with the native selected-output implementation evidence",
+        "formal/lean/Hegemon/Privacy/Observer.lean now provides a concrete raw-wire split witness where valid observer-chain worlds preserve public metadata and explicit batch/timing leakage while raw ciphertext bytes differ and full allowed leakage does not hold",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean lifts that raw-wire split witness into an open-assumption ciphertext privacy-game boundary, making raw-wire indistinguishability the explicit remaining crypto premise rather than an implicit leak",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves all active native tx-leaf output rows that successfully decrypt under matching recipient material reconstruct the statement/proof-bound commitment and projected-DA hash predicate while carrying the open privacy assumption object",
+        "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean now carries the all-active open-assumption decrypt-to-commitment/projected-DA boundary through materialized sidecar publication, alongside sidecar availability, wire replay DA rows, tx-leaf ciphertext publication, and statement/proof ciphertext-vector publication",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves selected and all-active native public metadata output-row packages survive independent left/right private-witness and prover-randomness resampling while carrying explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, and network metadata assumptions",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output-row metadata packages survive independent private-witness, prover-randomness, and local wallet/action metadata resampling for selected and all active rows",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean composes materialized sidecar DA publication, wire replay DA-row binding, tx-leaf ciphertext publication, statement/proof ciphertext-vector binding, and the all-active projected-DA privacy-game boundary over one accepted materialized sidecar surface",
@@ -575,7 +587,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 84,
+      "completion_percent": 92,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -608,6 +620,10 @@
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean proves decrypted plaintext plus recipient material exports the same abstract note commitment relation used by spend authorization and active public output slots",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes selected native tx-leaf observer rows, same-shape ciphertext privacy games, wallet decrypt success, and plaintext-to-commitment binding so recipient-decrypted selected output rows reconstruct the exact statement/proof-bound output commitment",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now composes recipient decrypt-to-commitment with the selected same-shape privacy-game projected-DA boundary so both worlds' selected DA preimages satisfy the explicit public ciphertext-hash predicate while the selected output reconstructs the statement/proof-bound commitment",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean now proves an alternate valid chain ciphertext preserves the public parser summary while the raw chain wire and projected DA bytes differ, giving a concrete same-shape/different-wire fixture",
+        "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean now packages accepted chain-wire parser metadata, fixed chain wire length, projected DA bytes, decrypt metadata agreement, and crypto-authentication into one accepted-chain decrypt boundary",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now lifts decrypt-to-commitment plus projected-DA hash predicates from the selected row to every active native tx-leaf output row under matching recipient material",
+        "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean now carries that all-active decrypt/projected-DA package through materialized sidecar publication without adding runtime checks",
         "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean and generated Rust conformance vectors bind that abstract note commitment relation to the deployed input order and byte-limb grammar",
         "wallet/src/viewing.rs full-view decrypt regression proves recovered NoteData, input witness, output witness, and plaintext-derived commitment agree",
         "wallet/src/tx_builder.rs native tx-leaf regression proves recipient-decrypted note commitment equals outgoing disclosure, bundle, decoded native tx-leaf commitments, decoded native tx-leaf ciphertext hashes recomputed from decoded note DA bytes, and a verifying native tx-leaf artifact",
@@ -800,7 +816,7 @@
     {
       "id": "bridge.mint-replay-safety",
       "weight": 4,
-      "completion_percent": 77,
+      "completion_percent": 78,
       "top_level_theorem_target": "Inbound bridge minting is accepted at most once, only for a valid external proof/checkpoint, and only for the authorized message amount and destination.",
       "current_evidence": [
         "bridge message-root/replay gates",
@@ -814,6 +830,7 @@
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean composes inbound bridge payload authorization, decoded amount authorization, fresh replay import, duplicate replay rejection, raw pending-action byte publication, parser row-count agreement, commitment-root publication, replayed supply, final nullifier uniqueness, and final bridge replay-key uniqueness over the same raw replay witness",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now packages canonical publication, accepted inbound receipt admission, native backend review preconditions, and explicit external receipt/PQ verifier soundness on the same bridge raw-ingress replay surface",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now proves the freshly imported replay key remains present in the final canonical replay set and final-state reimport rejects with `bridgeReplayDuplicate` when the imported replay set is bound to the canonical replay witness",
+        "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now packages authorized non-native bridge asset delta, decoded/external amount and asset equality, zero direct native mint, final canonical replay-key membership, and final-state duplicate rejection in one raw-ingress canonical publication theorem",
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean proves source-chain, rules-hash, nonce, message-hash, tip/checkpoint, confirmation-overstatement, and underconfirmation admission plus rejection precedence for decoded receipt outputs",
         "formal-core blueprint requires native block validation to call bridge payload admission before deriving inbound bridge replay keys and requires `verify_inbound_bridge_receipt` to propagate the post-verifier receipt-output admission result",
         "live `hegemon_submitAction` bridge staging constructs zero-delta pending actions and runs the same `validate_action_state`/`validate_bridge_action_payload` chain before action hashing, sled insertion, durability flushing, or pending-map publication",

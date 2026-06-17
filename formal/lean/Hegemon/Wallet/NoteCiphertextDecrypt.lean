@@ -18,6 +18,30 @@ structure DecryptAttempt where
   cryptoAuthenticates : Bool
 deriving DecidableEq, Repr
 
+structure ChainCiphertextDecryptBoundaryFacts
+    (wire : List Byte)
+    (summary : NoteCiphertextSummary)
+    (material : DecryptMaterialSummary)
+    (cryptoAuthenticates : Bool) : Prop where
+  parsedChainWire :
+    parseChainNoteCiphertext wire = some summary
+  chainFormat :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen
+  fixedChainWireLength :
+    wire.length =
+      chainCiphertextSize + chainCompactKemLen.length + mlKemCiphertextLen
+  projectedDaBytes :
+    ∃ daBytes,
+      projectChainDaBytes wire = some daBytes
+        ∧ daBytes.length = chainCiphertextSize + mlKemCiphertextLen
+  metadataMatches :
+    summary.version = material.version
+      ∧ summary.cryptoSuite = material.cryptoSuite
+      ∧ summary.diversifierIndex = material.diversifierIndex
+  cryptoAuthenticatesAccepted :
+    cryptoAuthenticates = true
+
 inductive DecryptRejection where
   | versionMismatch
   | cryptoSuiteMismatch
@@ -168,6 +192,47 @@ theorem decrypt_success_implies_metadata_matches
       · simp [versionMatches, suiteMatches, diversifierMatches] at accepted
     · simp [versionMatches, suiteMatches] at accepted
   · simp [versionMatches] at accepted
+
+theorem accepted_chain_ciphertext_decrypt_binds_wire_parser_metadata
+    {wire : List Byte}
+    {summary : NoteCiphertextSummary}
+    {material : DecryptMaterialSummary}
+    {cryptoAuthenticates : Bool}
+    (bounded : bytesBounded wire)
+    (parsed : parseChainNoteCiphertext wire = some summary)
+    (accepted :
+      evaluateDecrypt
+        {
+          ciphertext := summary,
+          material := material,
+          cryptoAuthenticates := cryptoAuthenticates
+        } = none) :
+    ChainCiphertextDecryptBoundaryFacts
+      wire
+      summary
+      material
+      cryptoAuthenticates := by
+  have decryptFacts :=
+    decrypt_success_implies_metadata_matches accepted
+  exact {
+    parsedChainWire := parsed
+    chainFormat :=
+      parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem parsed
+    fixedChainWireLength :=
+      parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+        bounded
+        parsed
+    projectedDaBytes :=
+      parsed_chain_ciphertext_has_projected_da_bytes_of_bounded
+        bounded
+        parsed
+    metadataMatches :=
+      ⟨decryptFacts.left,
+        decryptFacts.right.left,
+        decryptFacts.right.right.left⟩
+    cryptoAuthenticatesAccepted :=
+      decryptFacts.right.right.right
+  }
 
 end NoteCiphertextDecrypt
 end Wallet
