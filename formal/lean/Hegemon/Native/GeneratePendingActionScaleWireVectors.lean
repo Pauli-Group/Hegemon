@@ -49,6 +49,51 @@ def noCandidatePendingActionBytes
     ++ [0]
     ++ u64le receivedMs
 
+def candidateArtifactRecursiveBlockPayloadBytes
+    (version txCount txStatementsCommitmentValue daRootValue daChunkCount
+      verifierProfileValue : Nat)
+    (recursiveProof : List Nat) : List Byte :=
+  [byte version]
+    ++ u32le txCount
+    ++ repeated 48 txStatementsCommitmentValue
+    ++ repeated 48 daRootValue
+    ++ u32le daChunkCount
+    ++ compactSmall 0
+    ++ [2]
+    ++ [4]
+    ++ repeated 48 verifierProfileValue
+    ++ [0]
+    ++ [1]
+    ++ compactSmall recursiveProof.length
+    ++ recursiveProof.map byte
+
+def someCandidatePendingActionBytes
+    (txValue circuit crypto family action anchorValue : Nat)
+    (nullifierValues commitmentValues ciphertextHashValues : List Nat)
+    (ciphertextSizes publicArgs : List Nat)
+    (fee receivedMs : Nat)
+    (candidatePayload : List Byte) : List Byte :=
+  repeated 32 txValue
+    ++ u16le circuit
+    ++ u16le crypto
+    ++ u16le family
+    ++ u16le action
+    ++ repeated 48 anchorValue
+    ++ compactSmall nullifierValues.length
+    ++ flattenBytes (nullifierValues.map (repeated 48))
+    ++ compactSmall commitmentValues.length
+    ++ flattenBytes (commitmentValues.map (repeated 48))
+    ++ compactSmall ciphertextHashValues.length
+    ++ flattenBytes (ciphertextHashValues.map (repeated 48))
+    ++ compactSmall ciphertextSizes.length
+    ++ flattenBytes (ciphertextSizes.map u32le)
+    ++ compactSmall publicArgs.length
+    ++ publicArgs.map byte
+    ++ u64le fee
+    ++ [1]
+    ++ candidatePayload
+    ++ u64le receivedMs
+
 def validEmptyBytes : List Byte :=
   noCandidatePendingActionBytes
     0 0 0 0 0 0
@@ -58,6 +103,16 @@ def validOneEachBytes : List Byte :=
   noCandidatePendingActionBytes
     9 7 8 10 11 12
     [1] [2] [3] [4] [0xaa, 0xbb, 0xcc] 5 6
+
+def validCandidatePayloadBytes : List Byte :=
+  candidateArtifactRecursiveBlockPayloadBytes
+    2 1 5 6 1 7 (List.replicate 32 8)
+
+def validCandidateSomeBytes : List Byte :=
+  someCandidatePendingActionBytes
+    13 0 0 1 5 0
+    [] [] [] [] [] 0 9
+    validCandidatePayloadBytes
 
 def replaceAt : Nat -> Byte -> List Byte -> List Byte
   | _idx, _value, [] => []
@@ -91,6 +146,18 @@ def publicArgsMissingBytes : List Byte :=
 
 def candidateSomeTruncatedBytes : List Byte :=
   replaceAt 101 1 validEmptyBytes
+
+def trailingCandidateSomeBytes : List Byte :=
+  validCandidateSomeBytes ++ [0xaa]
+
+def candidateSomeInvalidProofModeBytes : List Byte :=
+  replaceAt 208 7 validCandidateSomeBytes
+
+def candidateSomeInvalidProofKindBytes : List Byte :=
+  replaceAt 209 9 validCandidateSomeBytes
+
+def candidateSomeRecursiveProofOverrunBytes : List Byte :=
+  replaceAt 260 (byte (33 * 4)) validCandidateSomeBytes
 
 def caseJson
     (name fixture : String)
@@ -129,6 +196,36 @@ def caseJson
     ++ toString input.candidateOptionTagBytes ++ ",\n"
     ++ "      \"candidate_artifact_none\": "
     ++ boolJson input.candidateArtifactNone ++ ",\n"
+    ++ "      \"candidate_artifact_payload_bytes\": "
+    ++ toString input.candidateArtifactPayloadBytes ++ ",\n"
+    ++ "      \"candidate_artifact_version_bytes\": "
+    ++ toString input.candidateArtifactVersionBytes ++ ",\n"
+    ++ "      \"candidate_artifact_tx_count_bytes\": "
+    ++ toString input.candidateArtifactTxCountBytes ++ ",\n"
+    ++ "      \"candidate_artifact_tx_statements_commitment_bytes\": "
+    ++ toString input.candidateArtifactTxStatementsCommitmentBytes ++ ",\n"
+    ++ "      \"candidate_artifact_da_root_bytes\": "
+    ++ toString input.candidateArtifactDaRootBytes ++ ",\n"
+    ++ "      \"candidate_artifact_da_chunk_count_bytes\": "
+    ++ toString input.candidateArtifactDaChunkCountBytes ++ ",\n"
+    ++ "      \"candidate_artifact_commitment_proof_bytes\": "
+    ++ toString input.candidateArtifactCommitmentProofBytes ++ ",\n"
+    ++ "      \"candidate_artifact_proof_mode_bytes\": "
+    ++ toString input.candidateArtifactProofModeBytes ++ ",\n"
+    ++ "      \"candidate_artifact_proof_kind_bytes\": "
+    ++ toString input.candidateArtifactProofKindBytes ++ ",\n"
+    ++ "      \"candidate_artifact_verifier_profile_bytes\": "
+    ++ toString input.candidateArtifactVerifierProfileBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_option_tag_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootOptionTagBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_none\": "
+    ++ boolJson input.candidateArtifactReceiptRootNone ++ ",\n"
+    ++ "      \"candidate_artifact_recursive_block_option_tag_bytes\": "
+    ++ toString input.candidateArtifactRecursiveBlockOptionTagBytes ++ ",\n"
+    ++ "      \"candidate_artifact_recursive_block_present\": "
+    ++ boolJson input.candidateArtifactRecursiveBlockPresent ++ ",\n"
+    ++ "      \"candidate_artifact_recursive_proof_bytes\": "
+    ++ toString input.candidateArtifactRecursiveProofBytes ++ ",\n"
     ++ "      \"received_ms_bytes\": "
     ++ toString input.receivedMsBytes ++ ",\n"
     ++ "      \"total_bytes\": " ++ toString input.totalBytes ++ ",\n"
@@ -148,6 +245,8 @@ def vectorJson : String :=
       validEmptyNoCandidate validEmptyBytes ++ ",\n"
     ++ caseJson "valid-one-each-no-candidate" "valid_one_each_no_candidate"
       validOneEachNoCandidate validOneEachBytes ++ ",\n"
+    ++ caseJson "valid-candidate-artifact-some" "valid_candidate_artifact_some"
+      validCandidateArtifactSome validCandidateSomeBytes ++ ",\n"
     ++ caseJson "empty-bytes-rejected" "empty_bytes"
       { validEmptyNoCandidate with
         totalBytes := 0,
@@ -183,7 +282,29 @@ def vectorJson : String :=
     ++ caseJson "candidate-some-truncated-rejected"
       "candidate_some_truncated"
       candidateSomeMissingPayload
-      candidateSomeTruncatedBytes ++ "\n"
+      candidateSomeTruncatedBytes ++ ",\n"
+    ++ caseJson "trailing-candidate-some-rejected"
+      "trailing_candidate_some"
+      { validCandidateArtifactSome with consumedAllBytes := false }
+      trailingCandidateSomeBytes ++ ",\n"
+    ++ caseJson "candidate-some-invalid-proof-mode-rejected"
+      "candidate_some_invalid_proof_mode"
+      { validCandidateArtifactSome with
+        candidateArtifactProofModeBytes := 0,
+        canonicalReencodeMatches := false }
+      candidateSomeInvalidProofModeBytes ++ ",\n"
+    ++ caseJson "candidate-some-invalid-proof-kind-rejected"
+      "candidate_some_invalid_proof_kind"
+      { validCandidateArtifactSome with
+        candidateArtifactProofKindBytes := 0,
+        canonicalReencodeMatches := false }
+      candidateSomeInvalidProofKindBytes ++ ",\n"
+    ++ caseJson "candidate-some-recursive-proof-overrun-rejected"
+      "candidate_some_recursive_proof_overrun"
+      { validCandidateArtifactSome with
+        candidateArtifactRecursiveProofBytes := 33,
+        canonicalReencodeMatches := false }
+      candidateSomeRecursiveProofOverrunBytes ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

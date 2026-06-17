@@ -31,22 +31,69 @@ structure PendingActionScaleWireInput where
   feeBytes : Nat
   candidateOptionTagBytes : Nat
   candidateArtifactNone : Bool
+  candidateArtifactPayloadBytes : Nat
+  candidateArtifactVersionBytes : Nat
+  candidateArtifactTxCountBytes : Nat
+  candidateArtifactTxStatementsCommitmentBytes : Nat
+  candidateArtifactDaRootBytes : Nat
+  candidateArtifactDaChunkCountBytes : Nat
+  candidateArtifactCommitmentProofBytes : Nat
+  candidateArtifactProofModeBytes : Nat
+  candidateArtifactProofKindBytes : Nat
+  candidateArtifactVerifierProfileBytes : Nat
+  candidateArtifactReceiptRootOptionTagBytes : Nat
+  candidateArtifactReceiptRootNone : Bool
+  candidateArtifactRecursiveBlockOptionTagBytes : Nat
+  candidateArtifactRecursiveBlockPresent : Bool
+  candidateArtifactRecursiveProofBytes : Nat
   receivedMsBytes : Nat
   totalBytes : Nat
   consumedAllBytes : Bool
   canonicalReencodeMatches : Bool
 deriving DecidableEq, Repr
 
-def pendingActionNoCandidateEncodedLen
+def recursiveBlockCandidateArtifactEncodedLen
+    (commitmentProofBytes recursiveProofBytes : Nat) : Nat :=
+  1 + 4 + 48 + 48 + 4
+    + (1 + commitmentProofBytes)
+    + 1 + 1 + 48
+    + 1
+    + 1 + (1 + recursiveProofBytes)
+
+def candidateArtifactSomePayloadBytesExpected
+    (input : PendingActionScaleWireInput) : Nat :=
+  recursiveBlockCandidateArtifactEncodedLen
+    input.candidateArtifactCommitmentProofBytes
+    input.candidateArtifactRecursiveProofBytes
+
+def candidateArtifactPayloadBytesExpected
+    (input : PendingActionScaleWireInput) : Nat :=
+  if input.candidateArtifactNone then
+    0
+  else
+    candidateArtifactSomePayloadBytesExpected input
+
+def pendingActionEncodedLen
     (nullifierCount commitmentCount ciphertextHashCount ciphertextSizeCount
-      publicArgsBytes : Nat) : Nat :=
+      publicArgsBytes candidateArtifactPayloadBytes : Nat) : Nat :=
   32 + 4 + 2 + 2 + 48
     + (1 + 48 * nullifierCount)
     + (1 + 48 * commitmentCount)
     + (1 + 48 * ciphertextHashCount)
     + (1 + 4 * ciphertextSizeCount)
     + (1 + publicArgsBytes)
-    + 8 + 1 + 8
+    + 8 + 1 + candidateArtifactPayloadBytes + 8
+
+def pendingActionNoCandidateEncodedLen
+    (nullifierCount commitmentCount ciphertextHashCount ciphertextSizeCount
+      publicArgsBytes : Nat) : Nat :=
+  pendingActionEncodedLen
+    nullifierCount
+    commitmentCount
+    ciphertextHashCount
+    ciphertextSizeCount
+    publicArgsBytes
+    0
 
 def fixedFieldWidthsOk (input : PendingActionScaleWireInput) : Bool :=
   input.txHashBytes == 32
@@ -64,14 +111,35 @@ def vectorElementWidthsOk (input : PendingActionScaleWireInput) : Bool :=
     && input.ciphertextHashElementBytes == 48
     && input.ciphertextSizeElementBytes == 4
 
+def candidateArtifactSomeFixedWidthsOk
+    (input : PendingActionScaleWireInput) : Bool :=
+  input.candidateArtifactVersionBytes == 1
+    && input.candidateArtifactTxCountBytes == 4
+    && input.candidateArtifactTxStatementsCommitmentBytes == 48
+    && input.candidateArtifactDaRootBytes == 48
+    && input.candidateArtifactDaChunkCountBytes == 4
+    && input.candidateArtifactProofModeBytes == 1
+    && input.candidateArtifactProofKindBytes == 1
+    && input.candidateArtifactVerifierProfileBytes == 48
+    && input.candidateArtifactReceiptRootOptionTagBytes == 1
+    && input.candidateArtifactRecursiveBlockOptionTagBytes == 1
+
+def candidateArtifactPayloadOk (input : PendingActionScaleWireInput) : Bool :=
+  input.candidateArtifactPayloadBytes == candidateArtifactPayloadBytesExpected input
+    && (input.candidateArtifactNone
+      || (candidateArtifactSomeFixedWidthsOk input
+        && input.candidateArtifactReceiptRootNone
+        && input.candidateArtifactRecursiveBlockPresent))
+
 def expectedLengthMatches (input : PendingActionScaleWireInput) : Bool :=
   input.totalBytes ==
-    pendingActionNoCandidateEncodedLen
+    pendingActionEncodedLen
       input.nullifierCount
       input.commitmentCount
       input.ciphertextHashCount
       input.ciphertextSizeCount
       input.publicArgsBytes
+      input.candidateArtifactPayloadBytes
 
 def evaluatePendingActionScaleWireRejection
     (input : PendingActionScaleWireInput) :
@@ -82,7 +150,7 @@ def evaluatePendingActionScaleWireRejection
     some PendingActionScaleWireReject.parserRejected
   else if (input.candidateOptionTagBytes == 1) = false then
     some PendingActionScaleWireReject.parserRejected
-  else if input.candidateArtifactNone = false then
+  else if candidateArtifactPayloadOk input = false then
     some PendingActionScaleWireReject.parserRejected
   else if input.compactPrefixesCanonical = false then
     some PendingActionScaleWireReject.parserRejected
@@ -109,16 +177,17 @@ structure AcceptedPendingActionScaleWireFacts
     input.compactPrefixesCanonical = true
   candidateOptionTagWidth :
     input.candidateOptionTagBytes = 1
-  candidateArtifactNone :
-    input.candidateArtifactNone = true
+  candidateArtifactPayload :
+    candidateArtifactPayloadOk input = true
   totalLengthMatches :
     input.totalBytes =
-      pendingActionNoCandidateEncodedLen
+      pendingActionEncodedLen
         input.nullifierCount
         input.commitmentCount
         input.ciphertextHashCount
         input.ciphertextSizeCount
         input.publicArgsBytes
+        input.candidateArtifactPayloadBytes
   consumedAllBytes :
     input.consumedAllBytes = true
   canonicalReencodeMatches :
@@ -142,10 +211,10 @@ theorem pending_action_scale_wire_acceptance_exposes_facts
       simp [hVector] at accepted
       by_cases hTag : input.candidateOptionTagBytes = 1
       · rw [if_pos hTag] at accepted
-        by_cases hCandidateFalse : input.candidateArtifactNone = false
+        by_cases hCandidateFalse : candidateArtifactPayloadOk input = false
         · simp [hCandidateFalse] at accepted
-        · have hCandidate : input.candidateArtifactNone = true := by
-            cases h : input.candidateArtifactNone <;>
+        · have hCandidate : candidateArtifactPayloadOk input = true := by
+            cases h : candidateArtifactPayloadOk input <;>
               simp [h] at hCandidateFalse ⊢
           simp [hCandidate] at accepted
           by_cases hCompactFalse : input.compactPrefixesCanonical = false
@@ -161,12 +230,13 @@ theorem pending_action_scale_wire_acceptance_exposes_facts
                   simp [h] at hLengthFalse ⊢
               have hLength :
                   input.totalBytes =
-                    pendingActionNoCandidateEncodedLen
+                    pendingActionEncodedLen
                       input.nullifierCount
                       input.commitmentCount
                       input.ciphertextHashCount
                       input.ciphertextSizeCount
-                      input.publicArgsBytes := by
+                      input.publicArgsBytes
+                      input.candidateArtifactPayloadBytes := by
                 simpa [expectedLengthMatches] using hLengthBool
               simp [hLengthBool] at accepted
               by_cases hConsumedFalse : input.consumedAllBytes = false
@@ -187,7 +257,7 @@ theorem pending_action_scale_wire_acceptance_exposes_facts
                       vectorElementWidths := hVector,
                       compactPrefixesCanonical := hCompact,
                       candidateOptionTagWidth := hTag,
-                      candidateArtifactNone := hCandidate,
+                      candidateArtifactPayload := hCandidate,
                       totalLengthMatches := hLength,
                       consumedAllBytes := hConsumed,
                       canonicalReencodeMatches := hCanonical
@@ -199,12 +269,13 @@ theorem accepted_pending_action_scale_wire_total_length
     {input : PendingActionScaleWireInput}
     (accepted : pendingActionScaleWireAccepts input = true) :
     input.totalBytes =
-      pendingActionNoCandidateEncodedLen
+      pendingActionEncodedLen
         input.nullifierCount
         input.commitmentCount
         input.ciphertextHashCount
         input.ciphertextSizeCount
-        input.publicArgsBytes :=
+        input.publicArgsBytes
+        input.candidateArtifactPayloadBytes :=
   (pending_action_scale_wire_acceptance_exposes_facts accepted).totalLengthMatches
 
 def exactDecodeInputOfScaleWire
@@ -252,6 +323,21 @@ def validEmptyNoCandidate : PendingActionScaleWireInput :=
     feeBytes := 8,
     candidateOptionTagBytes := 1,
     candidateArtifactNone := true,
+    candidateArtifactPayloadBytes := 0,
+    candidateArtifactVersionBytes := 0,
+    candidateArtifactTxCountBytes := 0,
+    candidateArtifactTxStatementsCommitmentBytes := 0,
+    candidateArtifactDaRootBytes := 0,
+    candidateArtifactDaChunkCountBytes := 0,
+    candidateArtifactCommitmentProofBytes := 0,
+    candidateArtifactProofModeBytes := 0,
+    candidateArtifactProofKindBytes := 0,
+    candidateArtifactVerifierProfileBytes := 0,
+    candidateArtifactReceiptRootOptionTagBytes := 0,
+    candidateArtifactReceiptRootNone := false,
+    candidateArtifactRecursiveBlockOptionTagBytes := 0,
+    candidateArtifactRecursiveBlockPresent := false,
+    candidateArtifactRecursiveProofBytes := 0,
     receivedMsBytes := 8,
     totalBytes := pendingActionNoCandidateEncodedLen 0 0 0 0 0,
     consumedAllBytes := true,
@@ -269,12 +355,41 @@ def validOneEachNoCandidate : PendingActionScaleWireInput :=
     totalBytes := pendingActionNoCandidateEncodedLen 1 1 1 1 3
   }
 
+def validCandidateArtifactSome : PendingActionScaleWireInput :=
+  let payloadBytes := recursiveBlockCandidateArtifactEncodedLen 0 32
+  {
+    validEmptyNoCandidate with
+    familyIdBytes := 2,
+    actionIdBytes := 2,
+    candidateArtifactNone := false,
+    candidateArtifactPayloadBytes := payloadBytes,
+    candidateArtifactVersionBytes := 1,
+    candidateArtifactTxCountBytes := 4,
+    candidateArtifactTxStatementsCommitmentBytes := 48,
+    candidateArtifactDaRootBytes := 48,
+    candidateArtifactDaChunkCountBytes := 4,
+    candidateArtifactCommitmentProofBytes := 0,
+    candidateArtifactProofModeBytes := 1,
+    candidateArtifactProofKindBytes := 1,
+    candidateArtifactVerifierProfileBytes := 48,
+    candidateArtifactReceiptRootOptionTagBytes := 1,
+    candidateArtifactReceiptRootNone := true,
+    candidateArtifactRecursiveBlockOptionTagBytes := 1,
+    candidateArtifactRecursiveBlockPresent := true,
+    candidateArtifactRecursiveProofBytes := 32,
+    totalBytes := pendingActionEncodedLen 0 0 0 0 0 payloadBytes
+  }
+
 theorem valid_empty_no_candidate_accepts :
     pendingActionScaleWireAccepts validEmptyNoCandidate = true := by
   rfl
 
 theorem valid_one_each_no_candidate_accepts :
     pendingActionScaleWireAccepts validOneEachNoCandidate = true := by
+  rfl
+
+theorem valid_candidate_artifact_some_accepts :
+    pendingActionScaleWireAccepts validCandidateArtifactSome = true := by
   rfl
 
 def malformedNullifierCountOverrun : PendingActionScaleWireInput :=

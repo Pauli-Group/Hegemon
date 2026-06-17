@@ -13539,6 +13539,21 @@ mod tests {
         fee_bytes: usize,
         candidate_option_tag_bytes: usize,
         candidate_artifact_none: bool,
+        candidate_artifact_payload_bytes: usize,
+        candidate_artifact_version_bytes: usize,
+        candidate_artifact_tx_count_bytes: usize,
+        candidate_artifact_tx_statements_commitment_bytes: usize,
+        candidate_artifact_da_root_bytes: usize,
+        candidate_artifact_da_chunk_count_bytes: usize,
+        candidate_artifact_commitment_proof_bytes: usize,
+        candidate_artifact_proof_mode_bytes: usize,
+        candidate_artifact_proof_kind_bytes: usize,
+        candidate_artifact_verifier_profile_bytes: usize,
+        candidate_artifact_receipt_root_option_tag_bytes: usize,
+        candidate_artifact_receipt_root_none: bool,
+        candidate_artifact_recursive_block_option_tag_bytes: usize,
+        candidate_artifact_recursive_block_present: bool,
+        candidate_artifact_recursive_proof_bytes: usize,
         received_ms_bytes: usize,
         total_bytes: usize,
         consumed_all_bytes: bool,
@@ -19040,7 +19055,25 @@ mod tests {
         }
     }
 
-    fn expected_pending_action_no_candidate_len(case: &LeanPendingActionScaleWireCase) -> usize {
+    fn expected_candidate_artifact_payload_len(case: &LeanPendingActionScaleWireCase) -> usize {
+        if case.candidate_artifact_none {
+            0
+        } else {
+            1 + 4
+                + case.candidate_artifact_tx_statements_commitment_bytes
+                + case.candidate_artifact_da_root_bytes
+                + 4
+                + (1 + case.candidate_artifact_commitment_proof_bytes)
+                + case.candidate_artifact_proof_mode_bytes
+                + case.candidate_artifact_proof_kind_bytes
+                + case.candidate_artifact_verifier_profile_bytes
+                + case.candidate_artifact_receipt_root_option_tag_bytes
+                + case.candidate_artifact_recursive_block_option_tag_bytes
+                + (1 + case.candidate_artifact_recursive_proof_bytes)
+        }
+    }
+
+    fn expected_pending_action_encoded_len(case: &LeanPendingActionScaleWireCase) -> usize {
         32 + 4
             + 2
             + 2
@@ -19052,6 +19085,7 @@ mod tests {
             + (1 + case.public_args_bytes)
             + 8
             + 1
+            + case.candidate_artifact_payload_bytes
             + 8
     }
 
@@ -19100,6 +19134,42 @@ mod tests {
                 candidate_artifact: None,
                 received_ms: 6,
             },
+            "valid_candidate_artifact_some" => PendingAction {
+                tx_hash: [13u8; 32],
+                binding: KernelVersionBinding {
+                    circuit: 0,
+                    crypto: 0,
+                },
+                family_id: FAMILY_SHIELDED_POOL,
+                action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+                anchor: [0u8; 48],
+                nullifiers: Vec::new(),
+                commitments: Vec::new(),
+                ciphertext_hashes: Vec::new(),
+                ciphertext_sizes: Vec::new(),
+                public_args: Vec::new(),
+                fee: 0,
+                candidate_artifact: Some(CandidateArtifact {
+                    version: BLOCK_PROOF_BUNDLE_SCHEMA,
+                    tx_count: 1,
+                    tx_statements_commitment: [5u8; 48],
+                    da_root: [6u8; 48],
+                    da_chunk_count: 1,
+                    commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+                    proof_mode: BlockProofMode::RecursiveBlock,
+                    proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
+                    verifier_profile: [7u8; 48],
+                    receipt_root: None,
+                    recursive_block: Some(
+                        protocol_shielded_pool::types::RecursiveBlockProofPayload {
+                            proof: protocol_shielded_pool::types::StarkProof {
+                                data: vec![8u8; 32],
+                            },
+                        },
+                    ),
+                }),
+                received_ms: 9,
+            },
             other => panic!("no valid PendingAction fixture for {other}"),
         }
     }
@@ -19117,10 +19187,26 @@ mod tests {
             && case.commitment_element_bytes == 48
             && case.ciphertext_hash_element_bytes == 48
             && case.ciphertext_size_element_bytes == 4;
-        let expected_len = expected_pending_action_no_candidate_len(case);
+        let candidate_artifact_some_fields_ok = case.candidate_artifact_version_bytes == 1
+            && case.candidate_artifact_tx_count_bytes == 4
+            && case.candidate_artifact_tx_statements_commitment_bytes == 48
+            && case.candidate_artifact_da_root_bytes == 48
+            && case.candidate_artifact_da_chunk_count_bytes == 4
+            && case.candidate_artifact_proof_mode_bytes == 1
+            && case.candidate_artifact_proof_kind_bytes == 1
+            && case.candidate_artifact_verifier_profile_bytes == 48
+            && case.candidate_artifact_receipt_root_option_tag_bytes == 1
+            && case.candidate_artifact_recursive_block_option_tag_bytes == 1
+            && case.candidate_artifact_receipt_root_none
+            && case.candidate_artifact_recursive_block_present;
+        let expected_candidate_payload_len = expected_candidate_artifact_payload_len(case);
+        let candidate_payload_ok = case.candidate_artifact_payload_bytes
+            == expected_candidate_payload_len
+            && (case.candidate_artifact_none || candidate_artifact_some_fields_ok);
+        let expected_len = expected_pending_action_encoded_len(case);
         let lean_predicate_accepts = fixed_fields_ok
             && vector_elements_ok
-            && case.candidate_artifact_none
+            && candidate_payload_ok
             && case.total_bytes == expected_len
             && case.consumed_all_bytes
             && case.compact_prefixes_canonical
@@ -19175,6 +19261,29 @@ mod tests {
                 action.candidate_artifact.is_none(),
                 case.candidate_artifact_none
             );
+            if let Some(artifact) = action.candidate_artifact.as_ref() {
+                assert_eq!(usize::from(artifact.version), 2);
+                assert_eq!(artifact.tx_count, 1);
+                assert_eq!(
+                    artifact.commitment_proof.data.len(),
+                    case.candidate_artifact_commitment_proof_bytes
+                );
+                assert_eq!(
+                    artifact.receipt_root.is_none(),
+                    case.candidate_artifact_receipt_root_none
+                );
+                assert_eq!(
+                    artifact.recursive_block.is_some(),
+                    case.candidate_artifact_recursive_block_present
+                );
+                assert_eq!(
+                    artifact
+                        .recursive_block
+                        .as_ref()
+                        .map_or(0, |recursive| recursive.proof.data.len()),
+                    case.candidate_artifact_recursive_proof_bytes
+                );
+            }
             assert_eq!(action.encode().len(), case.total_bytes);
         }
     }
