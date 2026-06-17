@@ -9745,7 +9745,7 @@
             "load_pending_actions",
             "NativeNode::validate_and_stage_action",
             "validate_transfer_action_payload",
-            "validate_bridge_action_payload",
+            "validate_bridge_action_payload_with_replay_state",
             "validate_coinbase_action_payload",
             "coinbase_action_amount",
             "verify_inbound_bridge_receipt"
@@ -10478,7 +10478,7 @@
       "claim_id": "native.bridge-action-payload-admission",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean decoded bridge-payload admission transition, native bridge action validation and live submit-action staging accept bridge actions only when the action is in the bridge family, carries no shielded state deltas or candidate artifact payload, uses a supported bridge action kind, carries a nonempty outbound payload for outbound messages, and for inbound messages carries a nonempty proof receipt, binds the replay key to the embedded message source/nonce, targets the Hegemon chain id, and binds the embedded payload to its payload hash; rejection precedence is fixed by the executable table. The bridge mint-safety lift proves that an accepted inbound payload plus a fresh replay import consumes the replay key once and makes immediate reimport reject, that accepted block/ledger/projected/raw-projected replay couples consumed bridge replay-key uniqueness with the claimed native supply digest and carried replay state, that replay-key membership persists through accepted ledger replay, that a freshly imported inbound replay key remains present after accepted raw-projected replay tails, that accepted inbound bridge actions have zero direct native mint delta in the current state-delta-free production surface, that first-class decoded bridge mint amount and asset surfaces can be authorized only when payload-hash binding, decoded/external amount equality, decoded/external asset equality, and non-native bridge asset identity all hold, and that these amount, asset, authorization, fresh replay, raw-ingress sidecar materialization, wire-replay row count, raw-ingress ledger/tree publication, commitment-root publication, projected replay, raw-decoded projected replay, supply, nullifier, and final replay-key uniqueness facts compose into accepted inbound bridge safety packages. The abstract bridge mint/replay policy additionally proves receipt verification and payload binding precede replay import, replay freshness precedes mint authorization, amount equality/bounds precede acceptance, and accepted mint inputs immediately reject duplicate replay.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded bridge payload-admission predicate, with companion theorems for valid outbound/inbound/register payloads, non-bridge action rejection, state-delta smuggling rejection, unsupported action rejection, outbound empty-payload rejection, inbound empty-proof rejection, inbound replay-key mismatch rejection, inbound destination mismatch rejection, and inbound payload-hash mismatch rejection. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe` packages the accepted inbound authorization facts with fresh replay import so the key is consumed once and cannot be reimported; `Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply` and `Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling` lift that replay/supply coupling through accepted block and ledger replay. `Hegemon.Native.BridgeMintSafety.imported_bridge_replay_state_preserves_prior_membership` and `accepted_native_ledger_bridge_replay_preserves_prior_membership` prove that replay keys already present in carried replay state remain present through modeled action-stream and accepted ledger replay, while `accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail` composes fresh inbound replay import, decoded amount authorization, and raw-projected replay equivalence so the freshly imported key remains present in the accepted final replay state. The amount-boundary theorems `bridge_mint_amount_authorized_facts`, `accepted_inbound_payload_direct_mint_delta_zero`, and `accepted_inbound_decoded_mint_amount_bound` make the current production bridge-mint posture explicit: accepted inbound actions are state-delta-free and therefore cannot directly mint native supply, while any future decoded bridge mint amount must be bound to the payload hash and equal the authorized external-message amount before it can be treated as authorized. The composed theorems `accepted_inbound_payload_authorized_amount_fresh_replay_safe`, `accepted_inbound_payload_authorized_amount_ledger_replay_safe`, `accepted_inbound_payload_authorized_amount_projected_replay_safe`, and `accepted_inbound_payload_authorized_amount_raw_projected_replay_safe` package those amount facts with one-shot fresh replay import, ledger/projected/raw-projected replay supply equality, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe` composes the same inbound amount/replay package with `Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows` and the raw-ingress precondition surface, so accepted raw ingress also exposes action-request/pending/staged reload preconditions, sidecar ciphertext availability, sidecar size presence/agreement, DA-root binding, semantic DA-root sourcing, wire-replay preconditions, and wire action-count equality before the bridge mint/replay package is used. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe` composes the same inbound amount/replay package with `RawIngressLedgerTreePublicationFacts`, so accepted raw ingress also carries accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, canonical commitment-plan preconditions, raw tree carried-state preconditions, and final replay-set uniqueness. `Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions`, `consumed_replay_key_precedes_mint_authorization`, `accepted_imports_replay_key`, and `accepted_prevents_replay_again` add the reusable abstract receipt-mint policy target. `gen_bridge_action_payload_admission_vectors` emits Lean-derived accept/reject examples, while `gen_bridge_mint_replay_policy_vectors` emits schema-v2 examples now checked against the production Rust `evaluate_native_bridge_mint_replay_policy` helper for rejection precedence, pending replay-key import clearing, unrelated pending-key preservation, exact next consumed/pending sets, and accepted replay-key consumption. The formal-core gate checks the production bridge payload vectors against `evaluate_native_bridge_action_payload_admission` and the abstract bridge mint/replay vectors against `evaluate_native_bridge_mint_replay_policy` before the disabled RISC Zero receipt verifier path; live `NativeNode::validate_and_stage_action` now constructs zero-delta bridge pending actions and relies on `self.validate_action_state`, which reaches `validate_pending_action_against_mempool_state` and `validate_bridge_action_payload`, before action hashing, sled insertion, durability flush, or pending-map publication. The blueprint also binds the production state-delta scan helper `bridge_action_has_no_state_deltas` and requires block validation to run bridge payload admission before deriving inbound bridge replay keys. Native regressions reject empty outbound payloads, state-delta smuggling, and inbound proof/replay/destination/payload-hash mismatches before receipt verification; live submit-action regressions check that bridge payload admission rejects empty outbound payloads and empty inbound receipts before staging.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BridgeActionPayloadAdmission.accepts_iff_payload_preconditions` proves the complete executable decoded bridge payload-admission predicate, with companion theorems for valid outbound/inbound/register payloads, non-bridge action rejection, state-delta smuggling rejection, unsupported action rejection, outbound empty-payload rejection, inbound empty-proof rejection, inbound replay-key mismatch rejection, inbound destination mismatch rejection, and inbound payload-hash mismatch rejection. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_fresh_replay_mint_safe` packages the accepted inbound authorization facts with fresh replay import so the key is consumed once and cannot be reimported; `Hegemon.Native.BridgeMintSafety.accepted_block_replay_couples_bridge_replay_and_supply` and `Hegemon.Native.BridgeMintSafety.accepted_native_ledger_bridge_replay_supply_coupling` lift that replay/supply coupling through accepted block and ledger replay. `Hegemon.Native.BridgeMintSafety.imported_bridge_replay_state_preserves_prior_membership` and `accepted_native_ledger_bridge_replay_preserves_prior_membership` prove that replay keys already present in carried replay state remain present through modeled action-stream and accepted ledger replay, while `accepted_inbound_payload_authorized_amount_fresh_replay_survives_raw_projected_tail` composes fresh inbound replay import, decoded amount authorization, and raw-projected replay equivalence so the freshly imported key remains present in the accepted final replay state. The amount-boundary theorems `bridge_mint_amount_authorized_facts`, `accepted_inbound_payload_direct_mint_delta_zero`, and `accepted_inbound_decoded_mint_amount_bound` make the current production bridge-mint posture explicit: accepted inbound actions are state-delta-free and therefore cannot directly mint native supply, while any future decoded bridge mint amount must be bound to the payload hash and equal the authorized external-message amount before it can be treated as authorized. The composed theorems `accepted_inbound_payload_authorized_amount_fresh_replay_safe`, `accepted_inbound_payload_authorized_amount_ledger_replay_safe`, `accepted_inbound_payload_authorized_amount_projected_replay_safe`, and `accepted_inbound_payload_authorized_amount_raw_projected_replay_safe` package those amount facts with one-shot fresh replay import, ledger/projected/raw-projected replay supply equality, carried-state preconditions, final nullifier uniqueness, and final bridge replay-key uniqueness. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_sidecar_replay_safe` composes the same inbound amount/replay package with `Hegemon.Native.RawIngressSidecarReplayRecoverability.accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows` and the raw-ingress precondition surface, so accepted raw ingress also exposes action-request/pending/staged reload preconditions, sidecar ciphertext availability, sidecar size presence/agreement, DA-root binding, semantic DA-root sourcing, wire-replay preconditions, and wire action-count equality before the bridge mint/replay package is used. `Hegemon.Native.BridgeMintSafety.accepted_inbound_payload_authorized_amount_raw_ingress_tree_replay_safe` composes the same inbound amount/replay package with `RawIngressLedgerTreePublicationFacts`, so accepted raw ingress also carries accepted ledger/tree replay, commitment-root publication, replayed supply, replayed leaf cursor, canonical commitment-plan preconditions, raw tree carried-state preconditions, and final replay-set uniqueness. `Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions`, `consumed_replay_key_precedes_mint_authorization`, `accepted_imports_replay_key`, and `accepted_prevents_replay_again` add the reusable abstract receipt-mint policy target. `gen_bridge_action_payload_admission_vectors` emits Lean-derived accept/reject examples, while `gen_bridge_mint_replay_policy_vectors` emits schema-v2 examples now checked against the production Rust `evaluate_native_bridge_mint_replay_policy` helper for rejection precedence, pending replay-key import clearing, unrelated pending-key preservation, exact next consumed/pending sets, and accepted replay-key consumption. The formal-core gate checks the production bridge payload vectors against `evaluate_native_bridge_action_payload_admission` and the abstract bridge mint/replay vectors against `evaluate_native_bridge_mint_replay_policy`; the verified inbound-receipt handoff now also calls `evaluate_native_bridge_mint_replay_policy` through `enforce_verified_inbound_bridge_mint_replay_policy` with mempool or block-validation replay state and explicit disabled mint authorization, so enabling a verifier alone cannot accept a bridge mint. Live `NativeNode::validate_and_stage_action` now constructs zero-delta bridge pending actions and relies on `self.validate_action_state`, which reaches `validate_pending_action_against_mempool_state` and `validate_bridge_action_payload`, before action hashing, sled insertion, durability flush, or pending-map publication. The blueprint also binds the production state-delta scan helper `bridge_action_has_no_state_deltas` and requires block validation to run bridge payload admission before deriving inbound bridge replay keys. Native regressions reject empty outbound payloads, state-delta smuggling, and inbound proof/replay/destination/payload-hash mismatches before receipt verification; live submit-action regressions check that bridge payload admission rejects empty outbound payloads and empty inbound receipts before staging, and the verified-receipt policy regression checks missing replay state, consumed replay, payload mismatch, and disabled mint authorization.",
       "depends_on": [
         "native.action-scope-admission",
         "bridge.message-root-replay",
@@ -10501,7 +10501,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_bridge_action_payload_admission",
           "required_callers": [
-            "validate_bridge_action_payload"
+            "validate_bridge_action_payload_with_replay_state"
           ],
           "result_obligation": "must_propagate_result"
         },
@@ -10509,12 +10509,27 @@
           "path": "node/src/native/mod.rs",
           "callee": "bridge_action_has_no_state_deltas",
           "required_callers": [
-            "validate_bridge_action_payload"
+            "validate_bridge_action_payload_with_replay_state"
           ]
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "validate_bridge_action_payload",
+          "callee": "validate_bridge_action_payload_with_replay_state",
+          "required_callers": [
+            "validate_pending_action_against_mempool_state",
+            "validate_block_actions_locked"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_bridge_mint_replay_policy",
+          "required_callers": [
+            "enforce_verified_inbound_bridge_mint_replay_policy"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_bridge_action_payload_with_replay_state",
           "required_callers": [
             "validate_pending_action_against_mempool_state"
           ],
@@ -10523,8 +10538,7 @@
             {
               "caller": "validate_pending_action_against_mempool_state",
               "callee_must_precede": [
-                "bridge_inbound_replay_key_from_action",
-                "inbound_replay_state_for_mempool"
+                "bridge_inbound_replay_key_from_action"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -10580,7 +10594,7 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "validate_bridge_action_payload",
+          "callee": "validate_bridge_action_payload_with_replay_state",
           "required_callers": [
             "validate_block_actions_locked"
           ],
@@ -10746,6 +10760,11 @@
           "gate": "HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-verified-inbound-bridge-policy-regression",
+          "description": "A syntactically verified inbound bridge receipt must still reject without replay state, with a consumed replay key, with receipt/message mismatch, or without explicit bridge mint authorization.",
+          "gate": "cargo test -p hegemon-node verified_inbound_bridge_receipt_requires_mint_replay_policy_state_and_authorization --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "native-bridge-outbound-empty-payload-regression",
           "description": "Native bridge action validation must reject outbound bridge actions with empty payloads.",
           "gate": "cargo test -p hegemon-node bridge_outbound_payload_must_be_non_empty --lib --no-default-features"
@@ -10795,7 +10814,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "verify_inbound_bridge_receipt",
           "required_callers": [
-            "validate_bridge_action_payload"
+            "validate_bridge_action_payload_with_replay_state"
           ],
           "result_obligation": "must_propagate_result"
         }

@@ -1116,7 +1116,6 @@ enum NativeBridgeMintReplayPolicyRejection {
 }
 
 impl NativeBridgeMintReplayPolicyRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::NotInboundBridgeMint => "not_inbound_bridge_mint",
@@ -6530,18 +6529,22 @@ fn validate_pending_action_against_mempool_state(
         .map_err(native_action_scope_admission_error)?
     {
         NativeActionScopeAdmissionRoute::Bridge => {
-            validate_bridge_action_payload(action)?;
-            if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+            if action.family_id == FAMILY_BRIDGE && action.action_id == ACTION_BRIDGE_INBOUND {
                 let mut replay_state = inbound_replay_state_for_mempool(state)?;
-                match replay_state.stage(replay_key) {
-                    Ok(()) => {}
-                    Err(InboundReplayReject::AlreadyConsumed) => {
-                        return Err(anyhow!("inbound bridge message already consumed"));
-                    }
-                    Err(InboundReplayReject::AlreadyPending) => {
-                        return Err(anyhow!("inbound bridge message already pending"));
+                validate_bridge_action_payload_with_replay_state(action, Some(&replay_state))?;
+                if let Some(replay_key) = bridge_inbound_replay_key_from_action(action)? {
+                    match replay_state.stage(replay_key) {
+                        Ok(()) => {}
+                        Err(InboundReplayReject::AlreadyConsumed) => {
+                            return Err(anyhow!("inbound bridge message already consumed"));
+                        }
+                        Err(InboundReplayReject::AlreadyPending) => {
+                            return Err(anyhow!("inbound bridge message already pending"));
+                        }
                     }
                 }
+            } else {
+                validate_bridge_action_payload(action)?;
             }
             Ok(())
         }
@@ -8927,6 +8930,13 @@ fn transfer_key_extends_canonical_order(
 }
 
 fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
+    validate_bridge_action_payload_with_replay_state(action, None)
+}
+
+fn validate_bridge_action_payload_with_replay_state(
+    action: &PendingAction,
+    replay_state: Option<&InboundReplayState>,
+) -> Result<()> {
     let bridge_route = action.family_id == FAMILY_BRIDGE;
     let state_deltas_absent = bridge_action_has_no_state_deltas(action);
     let action_kind = native_bridge_action_payload_kind(action.action_id);
@@ -8999,7 +9009,7 @@ fn validate_bridge_action_payload(action: &PendingAction) -> Result<()> {
             evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
                 native_bridge_action_payload_admission_error(action.action_id, rejection)
             })?;
-            verify_inbound_bridge_receipt(&args)?;
+            verify_inbound_bridge_receipt(action, &args, replay_state.cloned())?;
             Ok(())
         }
         NativeBridgeActionPayloadKind::Register => {
@@ -9295,6 +9305,43 @@ fn native_bridge_action_payload_admission_error(
     }
 }
 
+fn native_bridge_mint_replay_policy_error(
+    rejection: NativeBridgeMintReplayPolicyRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeMintReplayPolicyRejection::NotInboundBridgeMint => {
+            anyhow!("not an inbound bridge mint action ({})", rejection.label())
+        }
+        NativeBridgeMintReplayPolicyRejection::StateDeltaMintPresent => anyhow!(
+            "inbound bridge mint action carries shielded state deltas ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintReplayPolicyRejection::ReceiptEnvelopeMissing => {
+            anyhow!("inbound bridge receipt envelope missing ({})", rejection.label())
+        }
+        NativeBridgeMintReplayPolicyRejection::ReceiptNotVerified => {
+            anyhow!("inbound bridge receipt is not verified ({})", rejection.label())
+        }
+        NativeBridgeMintReplayPolicyRejection::ReceiptPayloadMismatch => {
+            anyhow!("inbound bridge receipt payload mismatch ({})", rejection.label())
+        }
+        NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed => {
+            anyhow!("inbound bridge message already consumed ({})", rejection.label())
+        }
+        NativeBridgeMintReplayPolicyRejection::MintNotAuthorized => anyhow!(
+            "inbound bridge mint authorization is disabled until a PQ-clean bridge mint decoder and verifier are production-bound ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintReplayPolicyRejection::AmountDoesNotMatchReceipt => anyhow!(
+            "inbound bridge mint amount does not match receipt ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintReplayPolicyRejection::AmountOutOfBounds => {
+            anyhow!("inbound bridge mint amount out of bounds ({})", rejection.label())
+        }
+    }
+}
+
 fn native_bridge_witness_confirmations_checked(
     best_height: u64,
     message_height: u64,
@@ -9473,7 +9520,11 @@ fn native_risc0_release_verifier_error(
     }
 }
 
-fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
+fn verify_inbound_bridge_receipt(
+    action: &PendingAction,
+    args: &InboundBridgeArgsV1,
+    replay_state: Option<InboundReplayState>,
+) -> Result<()> {
     if args.source_chain_id != HEGEMON_CHAIN_ID_V1 {
         return Err(anyhow!(
             "Hegemon RISC Zero bridge verifier only accepts Hegemon source chain"
@@ -9498,7 +9549,44 @@ fn verify_inbound_bridge_receipt(args: &InboundBridgeArgsV1) -> Result<()> {
     evaluate_native_inbound_bridge_receipt_admission(admission_input).map_err(|rejection| {
         native_inbound_bridge_receipt_admission_error(admission_input, rejection)
     })?;
+    enforce_verified_inbound_bridge_mint_replay_policy(action, args, &output, replay_state)?;
     Ok(())
+}
+
+fn enforce_verified_inbound_bridge_mint_replay_policy(
+    action: &PendingAction,
+    args: &InboundBridgeArgsV1,
+    output: &BridgeCheckpointOutputV1,
+    replay_state: Option<InboundReplayState>,
+) -> Result<()> {
+    let Some(replay_state) = replay_state else {
+        return Err(anyhow!(
+            "inbound bridge mint replay state is required before accepting verified bridge receipts"
+        ));
+    };
+    let replay_key = inbound_replay_key(args.source_chain_id, args.source_message_nonce);
+    let policy_input = NativeBridgeMintReplayPolicyInput {
+        inbound_bridge_mint: action.family_id == FAMILY_BRIDGE
+            && action.action_id == ACTION_BRIDGE_INBOUND,
+        state_deltas_absent: bridge_action_has_no_state_deltas(action),
+        receipt_envelope_present: !args.proof_receipt.is_empty(),
+        receipt_verified: true,
+        receipt_payload_matches: output.source_chain_id == args.source_chain_id
+            && output.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+            && output.message_nonce == args.source_message_nonce
+            && output.message_hash == args.message.message_hash(),
+        replay_state,
+        replay_key,
+        mint_authorized: false,
+        amount_matches_receipt: false,
+        amount_within_bound: false,
+    };
+    match evaluate_native_bridge_mint_replay_policy(policy_input) {
+        Ok(_) => Err(anyhow!(
+            "inbound bridge mint policy unexpectedly accepted without production mint authorization"
+        )),
+        Err(rejection) => Err(native_bridge_mint_replay_policy_error(rejection)),
+    }
 }
 
 fn verify_risc0_bridge_receipt(
@@ -10866,7 +10954,11 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
         if let Ok(route) = route_preview {
             match route {
                 NativeActionScopeAdmissionRoute::Bridge => {
-                    if let Err(err) = validate_bridge_action_payload(action) {
+                    let replay_state_before = validation_state.bridge_replay_state.clone();
+                    if let Err(err) = validate_bridge_action_payload_with_replay_state(
+                        action,
+                        Some(&replay_state_before),
+                    ) {
                         payload_error = Some(err);
                     } else {
                         bridge_replay_key = bridge_inbound_replay_key_from_action(action)?;
@@ -28584,6 +28676,54 @@ mod tests {
     }
 
     #[test]
+    fn verified_inbound_bridge_receipt_requires_mint_replay_policy_state_and_authorization() {
+        let action = test_disabled_risc0_inbound_bridge_action(b"verified policy bridge payload");
+        let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge args");
+        let output = test_bridge_checkpoint_output_for_message(&args.message);
+
+        let err = enforce_verified_inbound_bridge_mint_replay_policy(&action, &args, &output, None)
+            .expect_err("verified bridge receipt must require replay state");
+        assert!(err.to_string().contains("replay state is required"));
+
+        let replay_state = InboundReplayState::default();
+        let err = enforce_verified_inbound_bridge_mint_replay_policy(
+            &action,
+            &args,
+            &output,
+            Some(replay_state),
+        )
+        .expect_err("verified bridge receipt must still require explicit mint authorization");
+        assert!(err.to_string().contains("mint authorization is disabled"));
+        assert!(err.to_string().contains("mint_not_authorized"));
+
+        let replay_key = inbound_replay_key(args.source_chain_id, args.source_message_nonce);
+        let consumed_replay_state =
+            InboundReplayState::new(BTreeSet::from([replay_key]), BTreeSet::new());
+        let err = enforce_verified_inbound_bridge_mint_replay_policy(
+            &action,
+            &args,
+            &output,
+            Some(consumed_replay_state),
+        )
+        .expect_err("consumed bridge replay key must reject before mint authorization");
+        assert!(err.to_string().contains("already consumed"));
+        assert!(err.to_string().contains("replay_already_consumed"));
+
+        let mut mismatched_output = output;
+        mismatched_output.message_hash = [0x5au8; 48];
+        let err = enforce_verified_inbound_bridge_mint_replay_policy(
+            &action,
+            &args,
+            &mismatched_output,
+            Some(InboundReplayState::default()),
+        )
+        .expect_err("receipt/message mismatch must reject through mint policy");
+        assert!(err.to_string().contains("payload mismatch"));
+        assert!(err.to_string().contains("receipt_payload_mismatch"));
+    }
+
+    #[test]
     fn submit_action_routes_bridge_payload_admission_before_staging() {
         use base64::Engine;
 
@@ -29242,24 +29382,7 @@ mod tests {
             payload_hash: bridge_payload_hash(payload),
             payload: payload.to_vec(),
         };
-        let output = BridgeCheckpointOutputV1 {
-            source_chain_id: HEGEMON_CHAIN_ID_V1,
-            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
-            checkpoint_height: message.source_height,
-            checkpoint_header_hash: [0x11u8; 32],
-            checkpoint_cumulative_work: [0x22u8; 48],
-            canonical_tip_height: message
-                .source_height
-                .saturating_add(u64::from(MIN_INBOUND_BRIDGE_CONFIRMATIONS))
-                .saturating_sub(1),
-            canonical_tip_header_hash: [0x33u8; 32],
-            canonical_tip_cumulative_work: [0x44u8; 48],
-            message_root: bridge_message_root(std::slice::from_ref(&message)),
-            message_hash: message.message_hash(),
-            message_nonce: message.message_nonce,
-            confirmations_checked: MIN_INBOUND_BRIDGE_CONFIRMATIONS,
-            min_work_checked: [0u8; 48],
-        };
+        let output = test_bridge_checkpoint_output_for_message(&message);
         let receipt = RiscZeroBridgeReceiptV1 {
             proof_system_id: consensus_light_client::RISC0_STARK_BRIDGE_PROOF_SYSTEM_ID_V1,
             image_id: HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
@@ -29272,6 +29395,29 @@ mod tests {
             verifier_program_hash: HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
             proof_receipt: receipt.encode(),
             message,
+        }
+    }
+
+    fn test_bridge_checkpoint_output_for_message(
+        message: &BridgeMessageV1,
+    ) -> BridgeCheckpointOutputV1 {
+        BridgeCheckpointOutputV1 {
+            source_chain_id: HEGEMON_CHAIN_ID_V1,
+            rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            checkpoint_height: message.source_height,
+            checkpoint_header_hash: [0x11u8; 32],
+            checkpoint_cumulative_work: [0x22u8; 48],
+            canonical_tip_height: message
+                .source_height
+                .saturating_add(u64::from(MIN_INBOUND_BRIDGE_CONFIRMATIONS))
+                .saturating_sub(1),
+            canonical_tip_header_hash: [0x33u8; 32],
+            canonical_tip_cumulative_work: [0x44u8; 48],
+            message_root: bridge_message_root(std::slice::from_ref(message)),
+            message_hash: message.message_hash(),
+            message_nonce: message.message_nonce,
+            confirmations_checked: MIN_INBOUND_BRIDGE_CONFIRMATIONS,
+            min_work_checked: [0u8; 48],
         }
     }
 
