@@ -7,7 +7,7 @@
   "overall_completion_percent": 86.82,
   "last_full_formal_core": {
     "date": "2026-06-17T03:39:59Z",
-    "commit": "working-tree-pre-commit",
+    "commit": "2f13004f",
     "status": "passed locally after integrating stale dependency-waiver rejection, proof-statement partition-length binding, proof-wrapper metadata row-boundary admission, wallet address-metadata privacy projection, and native sync response-range bounded-request facts",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
