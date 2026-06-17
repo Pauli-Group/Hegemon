@@ -1907,77 +1907,101 @@ fn build_compact_aux_merkle_material_from_context(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SmallwoodCandidateWrapperKind {
+    Current,
+    Legacy,
+}
+
+impl SmallwoodCandidateWrapperKind {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+fn decode_exact_current_smallwood_candidate_proof(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+    let mut cursor = Cursor::new(proof_bytes);
+    let candidate: SmallwoodCandidateProof =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to decode smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper has trailing bytes",
+        ));
+    }
+    let canonical = bincode::serialize(&candidate).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize smallwood candidate proof wrapper: {err}"
+        ))
+    })?;
+    if canonical != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must use canonical serialization",
+        ));
+    }
+    Ok(candidate)
+}
+
+fn decode_exact_legacy_smallwood_candidate_proof(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+    let mut cursor = Cursor::new(proof_bytes);
+    let legacy: LegacySmallwoodCandidateProof =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to decode legacy smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "legacy smallwood candidate proof wrapper has trailing bytes",
+        ));
+    }
+    let canonical = bincode::serialize(&legacy).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize legacy smallwood candidate proof wrapper: {err}"
+        ))
+    })?;
+    if canonical != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "legacy smallwood candidate proof wrapper must use canonical serialization",
+        ));
+    }
+    Ok(SmallwoodCandidateProof {
+        arithmetization: legacy.arithmetization,
+        ark_proof: legacy.ark_proof,
+        auxiliary_witness_words: Vec::new(),
+    })
+}
+
+fn decode_smallwood_candidate_proof_with_kind(
+    proof_bytes: &[u8],
+) -> Result<(SmallwoodCandidateProof, SmallwoodCandidateWrapperKind), TransactionCircuitError> {
+    match decode_exact_current_smallwood_candidate_proof(proof_bytes) {
+        Ok(candidate) => Ok((candidate, SmallwoodCandidateWrapperKind::Current)),
+        Err(err) => decode_exact_legacy_smallwood_candidate_proof(proof_bytes)
+            .map(|candidate| (candidate, SmallwoodCandidateWrapperKind::Legacy))
+            .map_err(|legacy_err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "{err}; legacy decode also failed: {legacy_err}"
+                ))
+            }),
+    }
+}
+
 pub(crate) fn decode_smallwood_candidate_proof(
     proof_bytes: &[u8],
 ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
-    fn decode_exact_current(
-        proof_bytes: &[u8],
-    ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
-        let mut cursor = Cursor::new(proof_bytes);
-        let candidate: SmallwoodCandidateProof =
-            bincode::deserialize_from(&mut cursor).map_err(|err| {
-                TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "failed to decode smallwood candidate proof wrapper: {err}"
-                ))
-            })?;
-        if cursor.position() as usize != proof_bytes.len() {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "smallwood candidate proof wrapper has trailing bytes",
-            ));
-        }
-        let canonical = bincode::serialize(&candidate).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to reserialize smallwood candidate proof wrapper: {err}"
-            ))
-        })?;
-        if canonical != proof_bytes {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "smallwood candidate proof wrapper must use canonical serialization",
-            ));
-        }
-        Ok(candidate)
-    }
-
-    fn decode_exact_legacy(
-        proof_bytes: &[u8],
-    ) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
-        let mut cursor = Cursor::new(proof_bytes);
-        let legacy: LegacySmallwoodCandidateProof = bincode::deserialize_from(&mut cursor)
-            .map_err(|err| {
-                TransactionCircuitError::ConstraintViolationOwned(format!(
-                    "failed to decode legacy smallwood candidate proof wrapper: {err}"
-                ))
-            })?;
-        if cursor.position() as usize != proof_bytes.len() {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "legacy smallwood candidate proof wrapper has trailing bytes",
-            ));
-        }
-        let canonical = bincode::serialize(&legacy).map_err(|err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "failed to reserialize legacy smallwood candidate proof wrapper: {err}"
-            ))
-        })?;
-        if canonical != proof_bytes {
-            return Err(TransactionCircuitError::ConstraintViolation(
-                "legacy smallwood candidate proof wrapper must use canonical serialization",
-            ));
-        }
-        Ok(SmallwoodCandidateProof {
-            arithmetization: legacy.arithmetization,
-            ark_proof: legacy.ark_proof,
-            auxiliary_witness_words: Vec::new(),
-        })
-    }
-
-    match decode_exact_current(proof_bytes) {
-        Ok(candidate) => Ok(candidate),
-        Err(err) => decode_exact_legacy(proof_bytes).map_err(|legacy_err| {
-            TransactionCircuitError::ConstraintViolationOwned(format!(
-                "{err}; legacy decode also failed: {legacy_err}"
-            ))
-        }),
-    }
+    decode_smallwood_candidate_proof_with_kind(proof_bytes).map(|(candidate, _)| candidate)
 }
 
 pub fn report_smallwood_candidate_proof_size(
@@ -3690,6 +3714,30 @@ mod tests {
         expected_aligned_to_eight: bool,
     }
 
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodCandidateWrapperAdmissionVectors {
+        schema_version: u32,
+        smallwood_candidate_wrapper_admission_cases:
+            Vec<LeanSmallwoodCandidateWrapperAdmissionCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodCandidateWrapperAdmissionCase {
+        name: String,
+        fixture: String,
+        current_decode_ok: bool,
+        current_exact_consumption: bool,
+        current_canonical_reencode: bool,
+        current_ark_proof_bytes_present: bool,
+        legacy_decode_ok: bool,
+        legacy_exact_consumption: bool,
+        legacy_canonical_reencode: bool,
+        legacy_ark_proof_bytes_present: bool,
+        expected_valid: bool,
+        expected_kind: Option<String>,
+        expected_rejection: Option<String>,
+    }
+
     fn smallwood_active_auth_link_case_accepts(case: &LeanSmallwoodSpendAuthorizationCase) -> bool {
         if !case.active {
             return true;
@@ -3804,6 +3852,43 @@ mod tests {
         );
         serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
             panic!("failed to parse generated Lean SmallWood transcript vectors: {err}")
+        })
+    }
+
+    fn load_smallwood_candidate_wrapper_admission_vectors(
+    ) -> LeanSmallwoodCandidateWrapperAdmissionVectors {
+        if let Ok(path) =
+            std::env::var("HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS")
+        {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!("failed to read Lean SmallWood wrapper vectors {path}: {err}")
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood wrapper vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_candidate_wrapper_admission_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!("failed to run Lean SmallWood wrapper vector generator: {err}")
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood wrapper vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!("failed to parse generated Lean SmallWood wrapper vectors: {err}")
         })
     }
 
@@ -3967,6 +4052,164 @@ mod tests {
                 "Lean SmallWood output binding vector case {} disagreed with Rust row-boundary check",
                 case.name
             );
+        }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production() {
+        let vectors = load_smallwood_candidate_wrapper_admission_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .smallwood_candidate_wrapper_admission_cases
+                .is_empty(),
+            "Lean SmallWood wrapper admission bundle must contain at least one case"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.smallwood_candidate_wrapper_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            let modeled = modeled_smallwood_candidate_wrapper_outcome(case);
+            assert_eq!(
+                modeled.0, case.expected_valid,
+                "Lean SmallWood wrapper case {} has inconsistent expected_valid",
+                case.name
+            );
+            assert_eq!(
+                modeled.1.as_deref(),
+                case.expected_kind.as_deref(),
+                "Lean SmallWood wrapper case {} has inconsistent expected_kind",
+                case.name
+            );
+            assert_eq!(
+                modeled.2.as_deref(),
+                case.expected_rejection.as_deref(),
+                "Lean SmallWood wrapper case {} has inconsistent expected_rejection",
+                case.name
+            );
+
+            let actual = production_smallwood_candidate_wrapper_outcome(&case.fixture);
+            assert_eq!(
+                actual.0, case.expected_valid,
+                "production SmallWood wrapper fixture {} disagreed with Lean validity for {}",
+                case.fixture, case.name
+            );
+            assert_eq!(
+                actual.1.as_deref(),
+                case.expected_kind.as_deref(),
+                "production SmallWood wrapper fixture {} disagreed with Lean selected kind for {}",
+                case.fixture,
+                case.name
+            );
+            assert_eq!(
+                actual.2.as_deref(),
+                case.expected_rejection.as_deref(),
+                "production SmallWood wrapper fixture {} disagreed with Lean rejection for {}",
+                case.fixture,
+                case.name
+            );
+        }
+    }
+
+    fn modeled_smallwood_candidate_wrapper_outcome(
+        case: &LeanSmallwoodCandidateWrapperAdmissionCase,
+    ) -> (bool, Option<String>, Option<String>) {
+        let current_accepts = case.current_decode_ok
+            && case.current_exact_consumption
+            && case.current_canonical_reencode;
+        let legacy_accepts = case.legacy_decode_ok
+            && case.legacy_exact_consumption
+            && case.legacy_canonical_reencode;
+        if current_accepts {
+            if case.current_ark_proof_bytes_present {
+                (true, Some("current".to_string()), None)
+            } else {
+                (
+                    false,
+                    Some("current".to_string()),
+                    Some("missing_ark_proof_bytes".to_string()),
+                )
+            }
+        } else if legacy_accepts {
+            if case.legacy_ark_proof_bytes_present {
+                (true, Some("legacy".to_string()), None)
+            } else {
+                (
+                    false,
+                    Some("legacy".to_string()),
+                    Some("missing_ark_proof_bytes".to_string()),
+                )
+            }
+        } else {
+            (false, None, Some("no_canonical_wrapper".to_string()))
+        }
+    }
+
+    fn production_smallwood_candidate_wrapper_outcome(
+        fixture: &str,
+    ) -> (bool, Option<String>, Option<String>) {
+        let bytes = smallwood_candidate_wrapper_fixture_bytes(fixture);
+        match decode_smallwood_candidate_proof_with_kind(&bytes) {
+            Ok((candidate, kind)) => {
+                let kind = Some(kind.label().to_string());
+                if candidate.ark_proof.is_empty() {
+                    (false, kind, Some("missing_ark_proof_bytes".to_string()))
+                } else {
+                    (true, kind, None)
+                }
+            }
+            Err(_) => (false, None, Some("no_canonical_wrapper".to_string())),
+        }
+    }
+
+    fn smallwood_candidate_wrapper_fixture_bytes(fixture: &str) -> Vec<u8> {
+        let current_arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        match fixture {
+            "current_nonempty" => encode_smallwood_candidate_proof(
+                current_arithmetization,
+                vec![1, 2, 3, 4],
+                &[9, 10],
+            )
+            .expect("encode current SmallWood wrapper fixture"),
+            "legacy_nonempty" => encode_smallwood_candidate_proof(
+                SmallwoodArithmetization::Bridge64V1,
+                vec![1, 2, 3, 4],
+                &[],
+            )
+            .expect("encode legacy SmallWood wrapper fixture"),
+            "current_empty_ark" => {
+                encode_smallwood_candidate_proof(current_arithmetization, Vec::new(), &[9])
+                    .expect("encode empty current SmallWood wrapper fixture")
+            }
+            "legacy_empty_ark" => encode_smallwood_candidate_proof(
+                SmallwoodArithmetization::Bridge64V1,
+                Vec::new(),
+                &[],
+            )
+            .expect("encode empty legacy SmallWood wrapper fixture"),
+            "malformed" => vec![0xff, 0x00, 0x01],
+            "current_trailing" => {
+                let mut bytes = encode_smallwood_candidate_proof(
+                    current_arithmetization,
+                    vec![1, 2, 3, 4],
+                    &[9],
+                )
+                .expect("encode current trailing SmallWood wrapper fixture");
+                bytes.push(0);
+                bytes
+            }
+            "legacy_trailing" => {
+                let mut bytes = encode_smallwood_candidate_proof(
+                    SmallwoodArithmetization::Bridge64V1,
+                    vec![1, 2, 3, 4],
+                    &[],
+                )
+                .expect("encode legacy trailing SmallWood wrapper fixture");
+                bytes.push(0);
+                bytes
+            }
+            other => panic!("unknown Lean SmallWood wrapper fixture {other}"),
         }
     }
 

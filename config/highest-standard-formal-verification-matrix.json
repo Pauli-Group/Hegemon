@@ -4,23 +4,23 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 87.24,
+  "overall_completion_percent": 87.28,
   "last_full_formal_core": {
-    "date": "2026-06-17T06:25:42Z",
-    "commit": "working-tree-on-53f5d1be",
-    "status": "passed locally after adding transfer action-order local-arrival invariance, candidate-artifact resource projection admission, TxValidityClaim exact matching, generated vectors, production conformance, and formal claims/blueprint/docs bindings",
+    "date": "2026-06-17T07:12:56Z",
+    "commit": "working-tree-on-f141e96a",
+    "status": "passed locally after adding SmallWood candidate wrapper admission theorems, generated vectors, production decoder conformance, and formal claims/blueprint/docs bindings",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1887,
-    "axiom_free_theorems": 857,
-    "axiom_dependent_theorems": 1030,
+    "named_lean_theorems": 1897,
+    "axiom_free_theorems": 862,
+    "axiom_dependent_theorems": 1035,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 516,
-    "implementation_bindings": 212,
-    "implementation_result_obligations": 166,
+    "falsification_cases": 517,
+    "implementation_bindings": 213,
+    "implementation_result_obligations": 167,
     "implementation_order_constraints": 144,
     "implementation_order_edges": 374,
     "implementation_dominance_constraints": 130,
@@ -80,56 +80,48 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the transfer action-order local-arrival invariance, candidate-artifact resource projection, and TxValidityClaim exact matching theorem packages. Transfer ordering now proves the public preimage/action key and relative transfer ordering ignore local received_ms while remaining fixed by public fields. Candidate artifacts now project declared/proof/receipt/recursive byte counts plus tx/DA counts into bounded-request admission before acceptance. TxValidityClaim matching now proves accepted proof claims exactly match verified artifact counts, statement hashes, proof/public-input digests, verifier profile, binding statement hash, anchor, fee, and circuit version.",
+    "summary": "Added the SmallWood candidate wrapper admission theorem package. The executable Lean selector proves accepted candidate wrappers are exact/canonical current or legacy encodings, current wrappers take precedence over legacy when accepted, legacy is selected only after current rejection, selected wrappers expose nonempty inner ARK proof bytes, and malformed/trailing/empty-inner-proof cases fail closed before verifier profile routing.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/ActionOrder.lean",
-      "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
-      "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
-      "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
-      "formal/lean/Hegemon/Transaction/GenerateTxValidityClaimMatchingVectors.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.ActionOrder.transfer_order_preimage_ignores_local_received_ms",
-      "Hegemon.Native.ActionOrder.transfer_order_action_ignores_local_received_ms",
-      "Hegemon.Native.ActionOrder.transfer_order_preimage_eq_of_public_fields",
-      "Hegemon.Native.ActionOrder.transfer_relative_order_ignores_local_received_ms",
-      "Hegemon.Native.ActionOrder.canonical_transfer_pair_order_ignores_local_received_ms",
-      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_resource_exposes_byte_caps",
-      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_after_resource_exposes_byte_caps",
-      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_after_resource_exposes_candidate_acceptance",
-      "Hegemon.Transaction.TxValidityClaimMatching.accepts_iff_claim_match_preconditions",
-      "Hegemon.Transaction.TxValidityClaimMatching.claimMatchAccepts_implies_exact_surface",
-      "Hegemon.Transaction.TxValidityClaimMatching.accepted_tx_validity_claim_fields_match_verified_artifact"
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.wrapper_accepts_iff_selected_canonical_nonempty",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.current_wrapper_selected_precedes_legacy",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.legacy_wrapper_selected_requires_current_rejected",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.accepted_current_wrapper_exposes_surface",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.accepted_legacy_wrapper_exposes_surface",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.valid_current_wrapper_accepts",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.valid_legacy_wrapper_accepts",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.current_empty_ark_rejects_before_legacy",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.legacy_empty_ark_rejects",
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.no_canonical_wrapper_rejects"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.ActionOrder Hegemon.Native.GenerateActionOrderVectors Hegemon.Native.CandidateArtifactResourceAdmission Hegemon.Native.GenerateCandidateArtifactAdmissionVectors Hegemon.Transaction.TxValidityClaimMatching Hegemon.Transaction.GenerateTxValidityClaimMatchingVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1887 named Lean theorem declarations, 857 axiom-free theorem declarations, 1030 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture, transfer action-order local-arrival regressions, HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_admission_vectors_match_production --lib --no-default-features -- --nocapture, candidate-artifact resource projection regressions, HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS=<generated-json> cargo test -p consensus lean_generated_tx_validity_claim_matching_vectors_match_production --lib -- --nocapture, and TxValidityClaim exact-match regressions passed locally and inside scripts/check_formal_core.sh.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the ActionOrder, CandidateArtifactResourceAdmission, and TxValidityClaimMatching theorem names, evidence paths, implementation bindings, result obligations, and generated-vector conformance gates under privacy/action-order, native candidate-artifact admission, consensus self-contained proof policy, and consensus admission safety; full formal-core passed with 118 claims, 516 falsification cases, 212 implementation bindings, and 108 production nodes."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodCandidateWrapperAdmission Hegemon.Transaction.GenerateSmallWoodCandidateWrapperAdmissionVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1897 named Lean theorem declarations, 862 axiom-free theorem declarations, 1035 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production --lib -- --nocapture passed locally and inside scripts/check_formal_core.sh.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the SmallWoodCandidateWrapperAdmission theorem names, evidence paths, generated-vector conformance gate, and a production implementation binding requiring verify_smallwood_candidate_proof_bytes to propagate decode_smallwood_candidate_proof; full formal-core passed with 118 claims, 517 falsification cases, 213 implementation bindings, 167 result obligations, and 108 production nodes."
     },
     "known_limitations": [
-      "This slice does not prove BLAKE2/BLAKE3 cryptographic security or implementation equivalence, full proof-system soundness, simulator zero knowledge, arbitrary parser implementation correctness, scheduler/network liveness, or complete native-node refinement."
+      "This slice does not prove bincode parser implementation correctness, BLAKE2/BLAKE3 cryptographic security or implementation equivalence, full proof-system soundness, SmallWood PCS/AIR soundness, simulator zero knowledge, arbitrary parser implementation correctness, scheduler/network liveness, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound transfer action-order preimage construction, candidate-artifact resource projection, and TxValidityClaim exact matching to executable Lean-generated vectors and production Rust helpers. The node uses the same action-order preimage helper for transfer ordering, rejects candidate artifacts whose projected byte/count request violates bounded-resource admission before artifact acceptance, and consensus rejects proof claims that drift from verified artifact metadata.",
+    "summary": "Bound SmallWood candidate proof wrapper selection to executable Lean-generated vectors and production Rust decoding. The transaction circuit now exposes current/legacy wrapper kind internally, reuses exact/canonical current and legacy decoders, checks Lean-generated current/legacy/malformed/trailing/empty-inner-proof fixtures against production behavior, and the blueprint requires the product verifier path to propagate decode_smallwood_candidate_proof before profile routing.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs factors action_order_key_preimage into the production transfer ordering path and checks local received_ms invariance against Lean-generated vectors",
-      "node/src/native/mod.rs projects CandidateArtifact declared/proof/receipt/recursive bytes and tx/DA counts through native_candidate_artifact_resource_bounded_request before validate_candidate_artifact and validate_candidate_action_payload accept",
-      "consensus/src/proof.rs evaluates TxValidityClaim exact field matching before accepting verified transaction artifact claims into block proof verification",
-      "scripts/check_formal_core.sh generates action-order, candidate-artifact admission, and TxValidityClaim matching vectors and runs the production conformance regressions"
+      "circuits/transaction/src/smallwood_frontend.rs factors SmallWood candidate wrapper decoding into exact current and exact legacy helpers plus decode_smallwood_candidate_proof_with_kind while preserving the public decode_smallwood_candidate_proof product path",
+      "circuits/transaction/src/smallwood_frontend.rs checks Lean-generated SmallWood candidate wrapper admission vectors against production current/legacy selection, trailing-byte rejection, malformed-byte rejection, and empty inner ARK proof rejection",
+      "scripts/check_formal_core.sh generates SmallWood candidate wrapper admission vectors and runs the production conformance regression"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.ActionOrder",
-      "Hegemon.Native.CandidateArtifactResourceAdmission",
-      "Hegemon.Transaction.TxValidityClaimMatching"
+      "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission"
     ],
     "validation": {
-      "status": "targeted Lean builds, generated-vector JSON validation, action-order/candidate-artifact/TxValidityClaim Rust conformance tests, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1887 named Lean theorem declarations, 857 axiom-free theorem declarations, 1030 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 516 falsification cases, 212 implementation bindings, 166 result obligations, and 11 native backend reference vectors"
+      "status": "targeted Lean build, generated-vector JSON validation, SmallWood candidate wrapper Rust conformance test, metadata gates, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1897 named Lean theorem declarations, 862 axiom-free theorem declarations, 1035 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 517 falsification cases, 213 implementation bindings, 167 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "This slice changes production validation helpers in node/src/native and consensus/src/proof, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes production transaction-circuit decoding helpers, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
@@ -407,7 +399,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 87.7,
+      "completion_percent": 88.0,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -460,13 +452,14 @@
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, includes serialized statement bytes, pads to eight-byte alignment, and changes when version or arithmetization profile material changes",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests.",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate wrapper selection, current-first precedence, legacy fallback only after current rejection, and empty inner ARK proof rejection; generated vectors are checked against circuits/transaction/src/smallwood_frontend.rs before profile routing.",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims."
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
-        "Continue extending proof-wrapper metadata and proof-artifact admission coverage until every production entry point is bound to the canonical statement surface."
+        "Continue extending remaining proof-wrapper metadata and proof-artifact admission coverage until every production entry point is bound to the canonical statement surface."
       ],
       "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
     },
@@ -586,7 +579,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 92.2,
+      "completion_percent": 92.4,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -619,7 +612,8 @@
         "circuits/superneo-hegemon/src/lib.rs verify_native_tx_leaf_artifact_bytes_with_params now rejects noncanonical native tx-leaf artifacts whose decoded canonical encoding differs from the supplied bytes",
         "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression",
         "circuits/superneo-hegemon/src/lib.rs native_tx_leaf_artifact regressions reject active-flag/vector-count aliases and stablecoin payload projection drift while preserving canonical statement vector projection",
-        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors."
+        "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors.",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean and lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production bind current and legacy SmallWood candidate proof wrappers to exact/canonical decode, no trailing bytes, and nonempty inner proof bytes before verifier profile routing."
       ],
       "missing_work": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates and the concrete PendingAction SCALE vector grammar.",

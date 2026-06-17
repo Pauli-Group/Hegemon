@@ -600,8 +600,8 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "claim_id": "formal.transaction-proof-wrapper-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean transaction proof-wrapper admission predicate, accepted wrappers must pass exact/canonical byte admission, supported backend routing, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance in that order. Accepted wrappers expose those statement-surface facts as a theorem-level conjunction for downstream proof-artifact lifts.",
-      "informal_argument": "The Lean theorem `Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions` proves the executable predicate, and `Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface` packages accepted exact/canonical byte admission, backend support, proof/public-input presence, verifier-facing public-input validity, nullifier/commitment vector agreement, balance-slot agreement, and verifier acceptance as theorem-level facts. Companion theorems pin valid acceptance, every rejection label, and the codec/backend/public-input/nullifier-vector/commitment-vector/balance/verifier precedence. `gen_proof_wrapper_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_transaction_proof_wrapper_admission`. Production Plonky3 and default SmallWood wrapper verification call the shared admission helper after decoded-field admission and around verifier acceptance, while the tx-proof manifest production summarizer exact-decodes nested proofs, reconstructs verifier public inputs, checks wrapper summary-vector agreement, and routes verifier rejection through the same admission helper.",
+      "formal_statement": "For the executable Lean transaction proof-wrapper admission predicate, accepted wrappers must pass exact/canonical byte admission, supported backend routing, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance in that order. Accepted wrappers expose those statement-surface facts as a theorem-level conjunction for downstream proof-artifact lifts. For the SmallWood candidate proof wrapper selector, accepted candidate wrappers must be exact/canonical current or legacy encodings, must expose nonempty inner ARK proof bytes, must select current before legacy when both modeled decoders could accept, and must fail closed on malformed/trailing-byte or empty-inner-proof cases before profile routing.",
+      "informal_argument": "The Lean theorem `Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions` proves the executable predicate, and `Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface` packages accepted exact/canonical byte admission, backend support, proof/public-input presence, verifier-facing public-input validity, nullifier/commitment vector agreement, balance-slot agreement, and verifier acceptance as theorem-level facts. Companion theorems pin valid acceptance, every rejection label, and the codec/backend/public-input/nullifier-vector/commitment-vector/balance/verifier precedence. `gen_proof_wrapper_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against `evaluate_transaction_proof_wrapper_admission`. `Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.wrapper_accepts_iff_selected_canonical_nonempty`, `current_wrapper_selected_precedes_legacy`, `legacy_wrapper_selected_requires_current_rejected`, and companion rejection theorems prove the SmallWood candidate wrapper selector surface, while `gen_smallwood_candidate_wrapper_admission_vectors` checks current, legacy, empty-inner-proof, malformed, and trailing-byte fixtures against production `decode_smallwood_candidate_proof`. Production Plonky3 and default SmallWood wrapper verification call the shared admission helper after decoded-field admission and around verifier acceptance, the SmallWood candidate verifier exact/canonical-decodes candidate wrappers before profile routing and rejects empty inner proof bytes, and the tx-proof manifest production summarizer exact-decodes nested proofs, reconstructs verifier public inputs, checks wrapper summary-vector agreement, and routes verifier rejection through the same admission helper.",
       "depends_on": [
         "formal.transaction-public-input-shape",
         "formal.transaction-public-input-binding",
@@ -610,6 +610,8 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean",
         "circuits/transaction/src/proof.rs",
         "circuits/transaction/src/smallwood_frontend.rs",
         "circuits/tx-proof-manifest/src/lib.rs",
@@ -642,6 +644,14 @@
           "result_obligation": "must_propagate_result"
         },
         {
+          "path": "circuits/transaction/src/smallwood_frontend.rs",
+          "callee": "decode_smallwood_candidate_proof",
+          "required_callers": [
+            "verify_smallwood_candidate_proof_bytes"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
           "path": "circuits/tx-proof-manifest/src/lib.rs",
           "callee": "admit_manifest_transaction_proof_wrapper",
           "required_callers": [
@@ -662,6 +672,8 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean",
         "circuits/transaction/src/proof.rs",
         "circuits/transaction/src/smallwood_frontend.rs",
         "circuits/tx-proof-manifest/src/lib.rs",
@@ -687,6 +699,11 @@
           "gate": "HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_proof_wrapper_admission_vectors_match_production -- --nocapture"
         },
         {
+          "id": "lean-generated-smallwood-candidate-wrapper-conformance",
+          "description": "Changing production SmallWood candidate wrapper decoding, current/legacy selection, trailing-byte rejection, or empty inner proof rejection away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production --lib -- --nocapture"
+        },
+        {
           "id": "tx-proof-manifest-wrapper-regressions",
           "description": "The tx-proof manifest must reject nested transaction wrappers with trailing bytes, unsupported backend, missing proof bytes, missing serialized public inputs, invalid serialized public inputs, nullifier/commitment vector drift, or balance-slot drift.",
           "gate": "cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture"
@@ -697,7 +714,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates, wrapper summary-vector agreement, and verifier results. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
+      "scope_boundary": "This node proves and vector-checks proof-wrapper admission ordering over production-derived decoded predicates, wrapper summary-vector agreement, verifier results, and the SmallWood candidate wrapper current/legacy selector surface. It does not prove bincode implementation correctness, STARK/SmallWood cryptographic soundness, verifier implementation correctness, statement-hash binding, or complete Rust refinement. Exact/canonical byte consumption remains enforced by production decoders and regressions."
     },
     {
       "id": "formal.transaction-spend-authorization-boundary",
