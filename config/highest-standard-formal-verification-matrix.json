@@ -6,19 +6,19 @@
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
   "overall_completion_percent": 86.32,
   "last_full_formal_core": {
-    "date": "2026-06-16T23:35:42Z",
-    "commit": "c0d8b546",
-    "status": "passed locally after binding pending-action production row projection packages to accepted exact canonical decode and adding the malleable action-byte rejection gate",
+    "date": "2026-06-17T00:31:14Z",
+    "commit": "7dcce1c1",
+    "status": "passed locally after adding the no-candidate PendingAction SCALE wire grammar, Lean-generated raw-byte vectors, and production decode_scale_exact conformance gate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1782,
-    "axiom_free_theorems": 795,
-    "axiom_dependent_theorems": 987,
+    "named_lean_theorems": 1791,
+    "axiom_free_theorems": 801,
+    "axiom_dependent_theorems": 990,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
-    "residual_risks": 45,
+    "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 503,
+    "falsification_cases": 504,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -75,10 +75,11 @@
     ]
   },
   "last_theorem_slice": {
-    "date": "2026-06-16",
-    "summary": "Bound pending-action production row-projection packages to canonical decode: the new Lean theorem proves any accepted raw-byte production field-row package necessarily carried accepted exact pending-action decode and accepted exact block-action decode, and the native regression rejects trailing action bytes before canonical-index row projection.",
+    "date": "2026-06-17",
+    "summary": "Bound a concrete no-candidate PendingAction SCALE wire grammar to production exact decode: the new Lean module proves accepted no-candidate PendingAction wire inputs expose fixed field widths, canonical compact prefixes, no candidate artifact, exact encoded length, full consumption, and canonical re-encoding, while Lean-generated raw-byte fixtures are checked against production PendingAction::encode and decode_scale_exact::<PendingAction>.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+      "formal/lean/Hegemon/Native/PendingActionScaleWire.lean",
+      "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean",
       "node/src/native/mod.rs",
       "scripts/check_formal_core.sh",
       "config/formal-security-claims.json",
@@ -89,21 +90,23 @@
       "formal/lean/README.md"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_raw_byte_projection_requires_canonical_decode"
+      "Hegemon.Native.PendingActionScaleWire.pending_action_scale_wire_acceptance_exposes_facts",
+      "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_total_length",
+      "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_exact_decode"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionByteReplayRowCountBinding passed locally with 56 jobs; full formal-core built Hegemon with 146 jobs.",
-      "targeted_rust": "cargo test -p hegemon-node canonical_index_rebuild_rejects_malleable_action_bytes_before_projection_rows --lib --no-default-features -- --nocapture passed locally, and full formal-core also passed the projection/rebuild/block_range/mined/startup native gates.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-16T23:35:42Z after adding the canonical-decode theorem, citing it in claims/blueprint, and adding the malleable action-byte projection falsification gate.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.PendingActionScaleWire Hegemon.Native.GeneratePendingActionScaleWireVectors Hegemon passed locally with 148 jobs; bash scripts/check_lean_formal.sh passed with 1791 theorems, 801 axiom-free theorem declarations, zero temporary axiom theorem dependencies, and zero unwaived axiom dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
+      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T00:31:14Z after adding the PendingAction SCALE wire theorem, generator, production conformance gate, claims, blueprint falsification case, inventory, and matrix update.",
       "claims": 118,
-      "named_lean_theorems": 1782,
-      "axiom_free_theorems": 795,
-      "axiom_dependent_theorems": 987,
+      "named_lean_theorems": 1791,
+      "axiom_free_theorems": 801,
+      "axiom_dependent_theorems": 990,
       "temporary_axiom_theorems": 0,
       "production_eligible_claims": 108,
-      "residual_risks": 45,
+      "residual_risks": 47,
       "blueprint_edges": 492,
-      "falsification_cases": 503,
+      "falsification_cases": 504,
       "implementation_bindings": 209,
       "implementation_result_obligations": 163,
       "implementation_order_constraints": 144,
@@ -113,8 +116,8 @@
       "native_backend_vectors": 11
     },
     "known_limitations": [
-      "This slice proves canonical exact-decode acceptance for the existing production field-row package, not a full arbitrary-byte SCALE parser mechanization.",
-      "The larger next parser target is a dedicated PendingAction SCALE wire grammar/vector gate over bounded raw bytes.",
+      "This slice models and vector-checks no-candidate PendingAction SCALE wires, not CandidateArtifact::Some payload grammar.",
+      "The conformance gate checks representative Lean-generated raw bytes against production encode/decode behavior; it is not a full proof of parity-scale-codec implementation correctness for every arbitrary byte string.",
       "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive mined/startup inbound bridge publication, and complete native-node refinement remain explicit residuals."
     ]
   },
