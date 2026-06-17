@@ -141,6 +141,7 @@ import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
+import Hegemon.Transaction.SmallWoodPublicStatementBinding
 import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SmallWoodTranscriptBinding
 import Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope

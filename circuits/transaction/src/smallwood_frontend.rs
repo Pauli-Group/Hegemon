@@ -2206,15 +2206,8 @@ fn build_smallwood_witness_context(
     let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
     let public_inputs_p3 =
         transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
-    let public_values: Vec<u64> = public_inputs_p3
-        .to_vec()
-        .into_iter()
-        .map(|felt| felt.as_canonical_u64())
-        .chain([
-            u64::from(witness.version.circuit),
-            u64::from(witness.version.crypto),
-        ])
-        .collect();
+    let public_values =
+        smallwood_public_statement_values_for_p3(&public_inputs_p3, witness.version);
     let bridge_poseidon_rows = poseidon_subtrace_rows(witness)?;
     Ok(SmallwoodWitnessContext {
         witness: witness.clone(),
@@ -2224,6 +2217,18 @@ fn build_smallwood_witness_context(
         public_values,
         bridge_poseidon_rows,
     })
+}
+
+pub fn smallwood_public_statement_values_for_p3(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Vec<u64> {
+    public_inputs
+        .to_vec()
+        .into_iter()
+        .map(|felt| felt.as_canonical_u64())
+        .chain([u64::from(version.circuit), u64::from(version.crypto)])
+        .collect()
 }
 
 #[allow(dead_code)]
@@ -2246,12 +2251,7 @@ fn build_packed_smallwood_bridge_public_statement_with_shape(
 ) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
     ensure_supported_smallwood_frontend_shape(&shape)?;
     let layout = SmallwoodBridgeRowLayout::for_shape(shape);
-    let public_values: Vec<u64> = public_inputs
-        .to_vec()
-        .into_iter()
-        .map(|felt| felt.as_canonical_u64())
-        .chain([u64::from(version.circuit), u64::from(version.crypto)])
-        .collect();
+    let public_values = smallwood_public_statement_values_for_p3(public_inputs, version);
     if public_values.len() != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "unexpected smallwood bridge public value count {}, expected {}",
@@ -2289,15 +2289,7 @@ fn build_smallwood_public_statement(
     version: VersionBinding,
 ) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
     let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
-    let mut public_values = Vec::with_capacity(public_inputs.to_vec().len() + 2);
-    public_values.extend(
-        public_inputs
-            .to_vec()
-            .into_iter()
-            .map(|felt| felt.as_canonical_u64()),
-    );
-    public_values.push(u64::from(version.circuit));
-    public_values.push(u64::from(version.crypto));
+    let public_values = smallwood_public_statement_values_for_p3(public_inputs, version);
 
     let raw_witness_len = layout.secret_witness_rows();
     let poseidon_permutation_count = smallwood_poseidon_permutation_count();

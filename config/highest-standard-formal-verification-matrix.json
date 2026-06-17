@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.28,
+  "overall_completion_percent": 88.33,
   "last_full_formal_core": {
     "date": "2026-06-17T13:41:51Z",
     "commit": "362dbecf",
@@ -73,25 +73,28 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the SmallWood verifier soundness-envelope theorem slice. The generic proof-system boundary now packages split spend-only and balance/public-field soundness into `CanonicalProofSystemNoTheftBoundaryFacts`, carrying canonical deployed-verifier facts, spend boundary facts, balance/public-field boundary facts, witness-authorized deltas, public-authorized deltas, and non-native nonzero stablecoin exception surfaces. `SmallWoodVerifierSoundnessEnvelope` composes that package with accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input/output row facts, SmallWood balance facts, and P3 AIR final-row facts without claiming STARK/FRI/PCS soundness.",
+    "summary": "Added the SmallWood public-statement implementation-equivalence slice. Lean now models the verifier public statement as exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, proves exact length/no-extension and transcript-surface feed facts, and generates vectors checked against the production SmallWood helper and live candidate profile surfaces for normal and stablecoin witnesses.",
     "lean_modules": [
-      "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
-      "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodPublicStatementBindingVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Transaction.ProofSystemBoundary.deployed_soundness_parts_canonical_surface_implies_no_theft_boundary_facts",
-      "Hegemon.Transaction.ProofSystemBoundary.balance_public_soundness_canonical_surface_authorized_stablecoin_mint_exception",
-      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_candidate_wrapper_exposes_admission_facts",
-      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope",
-      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_verifier_envelope_exposes_no_theft_and_public_conservation"
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.base_p3_public_vector_length",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_append_version_binding",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_length",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_exposes_p3_prefix",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_exposes_version_suffix",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_forbids_public_value_extension",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_feeds_transcript_surface",
+      "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.ProofSystemBoundary Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope passed locally.",
-      "targeted_rust": "No runtime Rust was changed in this theorem slice. Existing candidate-wrapper, transcript/profile, balance/public-field, and P3 AIR mutation gates remain in formal-core.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the new generic no-theft boundary theorem, the live-policy authorized stablecoin exception theorem, and the SmallWood verifier-envelope theorems to the canonical verifier boundary claim."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Transaction.SmallWoodPublicStatementBinding gen_smallwood_public_statement_binding_vectors && lake build Hegemon passed locally.",
+      "targeted_rust": "HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture passed locally.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the new SmallWood public-statement theorem names, generator, production helper, integration test, and formal-core gate to the canonical verifier boundary claim."
     },
     "known_limitations": [
-      "This slice narrows and composes the proof-system obligation. It still does not prove deployed STARK/FRI/PCS soundness, full AIR completeness, witness extraction, hash/security equivalence, bincode/postcard correctness, or complete Rust verifier/native-node refinement."
+      "This slice proves and gates public-value vector shape and version-suffix binding. It still treats bincode serialization of the statement bytes, hash security, STARK/FRI/PCS soundness, witness extraction, and complete native-node/verifier refinement as explicit residual work."
     ]
   },
   "last_production_binding_slice": {
@@ -382,7 +385,7 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 97.3,
+      "completion_percent": 97.9,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
@@ -415,10 +418,12 @@
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now projects materialized transfer publication records to selected output-slot statement/proof artifact facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table",
-        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production."
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production.",
+        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean proves SmallWood public statement values are exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, with exact length/no-extension and transcript-surface feed facts",
+        "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values_for_p3`"
       ],
       "missing_work": [
-        "Discharge remaining proof artifact entry points and the explicit native tx-leaf proof-system soundness assumptions.",
+        "Prove bincode/postcard serialization correctness for the statement bytes and proof wrapper bytes, beyond the now-gated public-value vector and transcript/profile byte boundaries.",
         "State hash collision resistance and transcript assumptions explicitly, including BLAKE3/BLAKE2 transcript collision resistance and implementation equivalence."
       ],
       "performance_constraint": "Keep shared helper reuse; no extra hashing beyond already-required statement construction."
@@ -426,7 +431,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 89,
+      "completion_percent": 89.2,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -482,10 +487,11 @@
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate wrapper selection, current-first precedence, legacy fallback only after current rejection, and empty inner ARK proof rejection; generated vectors are checked against circuits/transaction/src/smallwood_frontend.rs before profile routing.",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims.",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now defines `CanonicalProofSystemNoTheftBoundaryFacts` and proves split deployed soundness assumptions imply the packaged no-theft/public-conservation boundary plus live-policy-authorized stablecoin exception surface",
-        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, SmallWood balance facts, P3 AIR final-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope"
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, SmallWood balance facts, P3 AIR final-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
+        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean and its generated-vector Rust gate narrow the SmallWood verifier implementation-equivalence target by binding the public statement vector used before transcript/profile and backend verification"
       ],
       "missing_work": [
-        "Mechanize the transaction AIR relation or discharge the auditable abstraction captured by the SmallWood verifier envelope; current theorems keep proof-system soundness explicit.",
+        "Mechanize the transaction AIR relation or discharge the auditable abstraction captured by the SmallWood verifier envelope and public-statement binding; current theorems keep proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
         "Continue extending remaining proof-wrapper metadata and proof-artifact admission coverage until every production entry point is bound to the canonical statement surface."

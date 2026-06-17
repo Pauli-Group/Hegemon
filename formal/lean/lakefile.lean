@@ -289,6 +289,9 @@ lean_exe gen_smallwood_candidate_wrapper_admission_vectors where
 lean_exe gen_smallwood_transcript_binding_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodTranscriptBindingVectors
 
+lean_exe gen_smallwood_public_statement_binding_vectors where
+  root := `Hegemon.Transaction.GenerateSmallWoodPublicStatementBindingVectors
+
 lean_exe gen_merkle_vectors where
   root := `Hegemon.Transaction.GenerateMerkleVectors
 
