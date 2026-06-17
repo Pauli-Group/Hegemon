@@ -21,6 +21,16 @@ def blockActionRejectionJson : Option BlockActionDecodeReject -> String
   | some BlockActionDecodeReject.actionCountMismatch => "\"action_count_mismatch\""
   | some BlockActionDecodeReject.actionDecodeNotExact => "\"action_decode_not_exact\""
 
+def nativeMetadataSourceJson : Option NativeMetadataDecodeSource -> String
+  | none => "null"
+  | some .current => "\"current\""
+  | some .legacy => "\"legacy\""
+
+def nativeMetadataRejectionJson : Except NativeMetadataDecodeReject NativeMetadataDecodeSource -> String
+  | Except.ok _ => "null"
+  | Except.error .currentAndLegacyRejected =>
+      "\"current_and_legacy_rejected\""
+
 def syncCaseJson (name fixture : String) (input : SyncDecodeInput) : String :=
   let result := evaluateSyncDecodeRejection input
   "    {\n"
@@ -58,9 +68,35 @@ def blockActionCaseJson (name fixture : String) (input : BlockActionDecodeInput)
     ++ "      \"expected_rejection\": " ++ blockActionRejectionJson result ++ "\n"
     ++ "    }"
 
+def nativeMetadataCaseJson
+    (name fixture : String) (input : NativeMetadataDecodeInput) : String :=
+  let result := evaluateNativeMetadataDecode input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"fixture\": \"" ++ fixture ++ "\",\n"
+    ++ "      \"current_parser_accepts\": "
+      ++ boolJson input.currentExact.parserAccepts ++ ",\n"
+    ++ "      \"current_consumed_all_bytes\": "
+      ++ boolJson input.currentExact.consumedAllBytes ++ ",\n"
+    ++ "      \"current_canonical_reencode_matches\": "
+      ++ boolJson input.currentExact.canonicalReencodeMatches ++ ",\n"
+    ++ "      \"legacy_parser_accepts\": "
+      ++ boolJson input.legacyExact.parserAccepts ++ ",\n"
+    ++ "      \"legacy_consumed_all_bytes\": "
+      ++ boolJson input.legacyExact.consumedAllBytes ++ ",\n"
+    ++ "      \"legacy_canonical_reencode_matches\": "
+      ++ boolJson input.legacyExact.canonicalReencodeMatches ++ ",\n"
+    ++ "      \"expected_valid\": "
+      ++ boolJson (nativeMetadataDecodeAccepts input) ++ ",\n"
+    ++ "      \"expected_source\": "
+      ++ nativeMetadataSourceJson (nativeMetadataDecodeSource input) ++ ",\n"
+    ++ "      \"expected_rejection\": "
+      ++ nativeMetadataRejectionJson result ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"sync_codec_cases\": [\n"
     ++ syncCaseJson "sync-valid-bounded-wire" "valid_request" validSync ++ ",\n"
     ++ syncCaseJson "sync-legacy-bincode-rejected" "legacy_bincode_request"
@@ -88,6 +124,24 @@ def vectorJson : String :=
       { validBlockActions with actualActionPayloadCount := 0 } ++ ",\n"
     ++ blockActionCaseJson "block-actions-trailing-action-rejected" "trailing_action_payload"
       { validBlockActions with everyActionDecodesExactly := false } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"native_metadata_decode_cases\": [\n"
+    ++ nativeMetadataCaseJson
+      "native-metadata-current-selects-current"
+      "current_signed_meta"
+      validNativeMetadataCurrent ++ ",\n"
+    ++ nativeMetadataCaseJson
+      "native-metadata-legacy-fallback-selects-legacy"
+      "legacy_unsigned_meta"
+      validNativeMetadataLegacy ++ ",\n"
+    ++ nativeMetadataCaseJson
+      "native-metadata-current-trailing-rejects"
+      "current_signed_meta_trailing"
+      trailingNativeMetadataCurrent ++ ",\n"
+    ++ nativeMetadataCaseJson
+      "native-metadata-legacy-trailing-rejects"
+      "legacy_unsigned_meta_trailing"
+      trailingNativeMetadataLegacy ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

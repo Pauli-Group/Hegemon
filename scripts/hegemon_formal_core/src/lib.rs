@@ -59,6 +59,8 @@ pub struct BlueprintReport {
     pub implementation_order_edges: usize,
     pub implementation_theorem_indexed_order_constraints: usize,
     pub implementation_theorem_indexed_order_edges: usize,
+    pub full_claim_order_constraints: usize,
+    pub full_claim_order_constraint_theorem_refs: usize,
     pub implementation_dominance_constraints: usize,
     pub implementation_dominance_edges: usize,
     pub implementation_theorem_indexed_dominance_constraints: usize,
@@ -131,6 +133,10 @@ struct FormalBlueprint {
 struct BlueprintPolicy {
     #[serde(default)]
     require_theorem_indexed_order_constraints: bool,
+    #[serde(default)]
+    max_full_claim_order_constraints: Option<usize>,
+    #[serde(default)]
+    max_full_claim_order_constraint_theorem_refs: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -944,6 +950,8 @@ fn validate_blueprint(
     let mut implementation_order_edges = 0usize;
     let mut implementation_theorem_indexed_order_constraints = 0usize;
     let mut implementation_theorem_indexed_order_edges = 0usize;
+    let mut full_claim_order_constraints = 0usize;
+    let mut full_claim_order_constraint_theorem_refs = 0usize;
     let mut implementation_dominance_constraints = 0usize;
     let mut implementation_dominance_edges = 0usize;
     let mut implementation_theorem_indexed_dominance_constraints = 0usize;
@@ -999,6 +1007,10 @@ fn validate_blueprint(
                     implementation_theorem_indexed_order_edges +=
                         constraint.callee_must_precede.len();
                 }
+                if claim.production_eligible && is_full_claim_order_constraint(claim, constraint) {
+                    full_claim_order_constraints += 1;
+                    full_claim_order_constraint_theorem_refs += constraint.lean_theorems.len();
+                }
                 if constraint.result_obligation.is_some() {
                     implementation_result_obligations += 1;
                 }
@@ -1026,6 +1038,11 @@ fn validate_blueprint(
         }
     }
     detect_blueprint_cycles(&blueprint.nodes)?;
+    enforce_blueprint_policy_budgets(
+        &blueprint.policy,
+        full_claim_order_constraints,
+        full_claim_order_constraint_theorem_refs,
+    )?;
 
     Ok(BlueprintReport {
         nodes: blueprint.nodes.len(),
@@ -1037,6 +1054,8 @@ fn validate_blueprint(
         implementation_order_edges,
         implementation_theorem_indexed_order_constraints,
         implementation_theorem_indexed_order_edges,
+        full_claim_order_constraints,
+        full_claim_order_constraint_theorem_refs,
         implementation_dominance_constraints,
         implementation_dominance_edges,
         implementation_theorem_indexed_dominance_constraints,
@@ -1044,6 +1063,48 @@ fn validate_blueprint(
         falsification_cases,
         passed: true,
     })
+}
+
+fn is_full_claim_order_constraint(
+    claim: &ClaimProjection,
+    constraint: &ImplementationCallOrderConstraint,
+) -> bool {
+    if constraint.lean_theorems.is_empty() {
+        return false;
+    }
+    let theorem_refs = constraint
+        .lean_theorems
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    theorem_refs.len() == claim.lean_theorems.len()
+        && theorem_refs
+            .iter()
+            .all(|theorem| claim.lean_theorems.contains(*theorem))
+}
+
+fn enforce_blueprint_policy_budgets(
+    policy: &BlueprintPolicy,
+    full_claim_order_constraints: usize,
+    full_claim_order_constraint_theorem_refs: usize,
+) -> Result<()> {
+    if let Some(max) = policy.max_full_claim_order_constraints {
+        ensure!(
+            full_claim_order_constraints <= max,
+            "blueprint full-claim order constraints {} exceeds max_full_claim_order_constraints {}",
+            full_claim_order_constraints,
+            max
+        );
+    }
+    if let Some(max) = policy.max_full_claim_order_constraint_theorem_refs {
+        ensure!(
+            full_claim_order_constraint_theorem_refs <= max,
+            "blueprint full-claim order constraint theorem refs {} exceeds max_full_claim_order_constraint_theorem_refs {}",
+            full_claim_order_constraint_theorem_refs,
+            max
+        );
+    }
+    Ok(())
 }
 
 fn validate_methodology(methodology: &BlueprintMethodology) -> Result<()> {
@@ -4513,6 +4574,8 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const TARGET_ORDER_THEOREM: &str = "Hegemon.Native.ActionOrder.order_gate_precedes_mutation";
+    const TARGET_ORDER_THEOREM_TWO: &str =
+        "Hegemon.Native.ActionOrder.order_gate_precedes_publication";
     const TARGET_ORDER_THEOREM_PATH: &str = "formal/lean/Hegemon/Native/ActionOrder.lean";
 
     #[test]
@@ -7749,6 +7812,80 @@ mod tests {
         assert_eq!(report.implementation_order_edges, 1);
         assert_eq!(report.implementation_theorem_indexed_order_constraints, 1);
         assert_eq!(report.implementation_theorem_indexed_order_edges, 1);
+        assert_eq!(report.full_claim_order_constraints, 1);
+        assert_eq!(report.full_claim_order_constraint_theorem_refs, 1);
+    }
+
+    #[test]
+    fn blueprint_policy_rejects_full_claim_order_constraint_count_over_budget() {
+        let root = test_root("policy-rejects-full-claim-order-constraint-count");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_target_order_theorem(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        let mut claims = claims_fixture();
+        make_target_lean_theorem_claim(&mut claims, &[TARGET_ORDER_THEOREM]);
+        write_json(&claims_path, claims);
+        let mut blueprint = blueprint_fixture_with_theorem_ordered_binding(
+            "verified_helper",
+            &["import_mined_block"],
+            "import_mined_block",
+            &["apply_actions"],
+            &[TARGET_ORDER_THEOREM],
+        );
+        blueprint["policy"]["max_full_claim_order_constraints"] = json!(0);
+        write_json(&blueprint_path, blueprint);
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("full-claim order constraint count must respect budget");
+        assert!(err.to_string().contains("max_full_claim_order_constraints"));
+    }
+
+    #[test]
+    fn blueprint_policy_rejects_full_claim_order_theorem_refs_over_budget() {
+        let root = test_root("policy-rejects-full-claim-order-theorem-refs");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_target_order_theorem(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        let mut claims = claims_fixture();
+        make_target_lean_theorem_claim(
+            &mut claims,
+            &[TARGET_ORDER_THEOREM, TARGET_ORDER_THEOREM_TWO],
+        );
+        write_json(&claims_path, claims);
+        let mut blueprint = blueprint_fixture_with_theorem_ordered_binding(
+            "verified_helper",
+            &["import_mined_block"],
+            "import_mined_block",
+            &["apply_actions"],
+            &[TARGET_ORDER_THEOREM_TWO, TARGET_ORDER_THEOREM],
+        );
+        blueprint["policy"]["max_full_claim_order_constraints"] = json!(1);
+        blueprint["policy"]["max_full_claim_order_constraint_theorem_refs"] = json!(1);
+        write_json(&blueprint_path, blueprint);
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("full-claim order theorem ref count must respect budget");
+        assert!(err
+            .to_string()
+            .contains("max_full_claim_order_constraint_theorem_refs"));
     }
 
     #[test]
@@ -8455,6 +8592,8 @@ mod tests {
             TARGET_ORDER_THEOREM_PATH,
             "namespace Hegemon.Native.ActionOrder\n\
              theorem order_gate_precedes_mutation : True := by\n\
+               trivial\n\
+             theorem order_gate_precedes_publication : True := by\n\
                trivial\n\
              end Hegemon.Native.ActionOrder\n",
         );

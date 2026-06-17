@@ -4,16 +4,16 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.09,
+  "overall_completion_percent": 88.1,
   "last_full_formal_core": {
-    "date": "2026-06-17T12:03:38Z",
+    "date": "2026-06-17T12:39:17Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after enabling the blueprint policy requiring theorem-indexed production order constraints and indexing all current production order/dominance gates to named Lean theorem evidence",
+    "status": "passed locally after proving native metadata current-first/legacy-fallback codec admission, binding schema-v2 generated vectors to production, and adding the full-claim theorem-index ratchet budget",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1941,
-    "axiom_free_theorems": 883,
-    "axiom_dependent_theorems": 1058,
+    "named_lean_theorems": 1950,
+    "axiom_free_theorems": 887,
+    "axiom_dependent_theorems": 1063,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
@@ -29,6 +29,8 @@
     "implementation_theorem_indexed_order_edges": 374,
     "implementation_theorem_indexed_dominance_constraints": 130,
     "implementation_theorem_indexed_dominance_edges": 342,
+    "full_claim_order_constraints": 129,
+    "full_claim_order_constraint_theorem_refs": 2412,
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
@@ -411,7 +413,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 88.0,
+      "completion_percent": 88,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -600,7 +602,7 @@
     {
       "id": "codec.canonical-encoding-non-malleability",
       "weight": 5,
-      "completion_percent": 92.4,
+      "completion_percent": 92.6,
       "top_level_theorem_target": "Consensus and proof-admission byte objects have exact canonical encodings; trailing bytes, alternate encodings, nested wrappers, and parser differentials reject.",
       "current_evidence": [
         "native codec admission Lean gate",
@@ -634,7 +636,8 @@
         "cargo test -p superneo-hegemon native_tx_leaf_artifact_canonical_admission_rejects_missing_backend -- --nocapture gates the missing-backend malleability regression",
         "circuits/superneo-hegemon/src/lib.rs native_tx_leaf_artifact regressions reject active-flag/vector-count aliases and stablecoin payload projection drift while preserving canonical statement vector projection",
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves frame decode acceptance iff size, marker, postcard decode, and no-trailing-byte preconditions, plus encode marker/body bounds; network/src/wire.rs and pq-noise/src/codec.rs consume generated vectors.",
-        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean and lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production bind current and legacy SmallWood candidate proof wrappers to exact/canonical decode, no trailing bytes, and nonempty inner proof bytes before verifier profile routing."
+        "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean and lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production bind current and legacy SmallWood candidate proof wrappers to exact/canonical decode, no trailing bytes, and nonempty inner proof bytes before verifier profile routing.",
+        "formal/lean/Hegemon/Native/CodecAdmission.lean now proves current-first/legacy-fallback native metadata decode facts, and schema-v2 generated vectors check current metadata selection, legacy fallback only after current rejection, and trailing-byte rejection for both formats against production bincode_deserialize_native_block_meta_exact."
       ],
       "missing_work": [
         "Complete arbitrary-byte parser-internal equivalence for every consensus object beyond accepted exact-decode/full-byte publication predicates and the concrete PendingAction SCALE vector grammar.",
@@ -901,5 +904,29 @@
       ],
       "performance_constraint": "Release-time only; no production runtime overhead."
     }
-  ]
+  ],
+  "last_codec_metadata_decode_slice": {
+    "date": "2026-06-17",
+    "summary": "Added Lean theorem and generated-vector coverage for native metadata current-first/legacy-fallback bincode exact decode and bound it to production helper behavior. Added a formal-core policy ratchet that caps broad full-claim theorem-indexed order constraints at the current 129 constraints / 2412 theorem refs, forcing future per-gate theorem references to get narrower rather than broader.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/CodecAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateCodecAdmissionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.CodecAdmission.native_metadata_decode_accepts_iff_preconditions",
+      "Hegemon.Native.CodecAdmission.native_metadata_current_exact_decode_precedes_legacy",
+      "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_requires_current_rejection",
+      "Hegemon.Native.CodecAdmission.native_metadata_decode_rejects_when_current_and_legacy_reject",
+      "Hegemon.Native.CodecAdmission.native_metadata_decode_facts"
+    ],
+    "validation": {
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CodecAdmission passed locally; lake exe gen_codec_admission_vectors emitted schema-v2 JSON with native_metadata_decode_cases.",
+      "targeted_rust": "HEGEMON_LEAN_CODEC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally.",
+      "checker_ratchet": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml blueprint_policy_rejects_full_claim_order -- --nocapture passed locally; blueprint budget set to 129 full-claim order constraints and 2412 theorem refs.",
+      "full_formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T12:39:17Z with 118 claims, 1950 named Lean theorem declarations, 887 axiom-free declarations, zero temporary axiom dependencies, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, and full-claim theorem-list budgets of 129 constraints / 2412 theorem refs."
+    },
+    "known_limitations": [
+      "This proves fallback source selection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
+    ]
+  }
 }

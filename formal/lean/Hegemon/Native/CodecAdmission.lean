@@ -245,6 +245,126 @@ theorem block_action_decode_acceptance_binds_declared_count
       accepted).left
   simpa [actionCountMatches] using countMatches
 
+inductive NativeMetadataDecodeSource where
+  | current
+  | legacy
+deriving DecidableEq, Repr
+
+inductive NativeMetadataDecodeReject where
+  | currentAndLegacyRejected
+deriving DecidableEq, Repr
+
+structure NativeMetadataDecodeInput where
+  currentExact : ExactDecodeInput
+  legacyExact : ExactDecodeInput
+deriving DecidableEq, Repr
+
+def evaluateNativeMetadataDecode
+    (input : NativeMetadataDecodeInput) :
+    Except NativeMetadataDecodeReject NativeMetadataDecodeSource :=
+  if exactDecodeAccepts input.currentExact then
+    Except.ok NativeMetadataDecodeSource.current
+  else if exactDecodeAccepts input.legacyExact then
+    Except.ok NativeMetadataDecodeSource.legacy
+  else
+    Except.error NativeMetadataDecodeReject.currentAndLegacyRejected
+
+def nativeMetadataDecodeAccepts
+    (input : NativeMetadataDecodeInput) : Bool :=
+  match evaluateNativeMetadataDecode input with
+  | Except.ok _ => true
+  | Except.error _ => false
+
+def nativeMetadataDecodeSource
+    (input : NativeMetadataDecodeInput) :
+    Option NativeMetadataDecodeSource :=
+  match evaluateNativeMetadataDecode input with
+  | Except.ok source => some source
+  | Except.error _ => none
+
+def nativeMetadataDecodePreconditions
+    (input : NativeMetadataDecodeInput) : Bool :=
+  exactDecodeAccepts input.currentExact
+    || exactDecodeAccepts input.legacyExact
+
+theorem native_metadata_decode_accepts_iff_preconditions
+    (input : NativeMetadataDecodeInput) :
+    nativeMetadataDecodeAccepts input =
+      nativeMetadataDecodePreconditions input := by
+  unfold nativeMetadataDecodeAccepts
+    nativeMetadataDecodePreconditions
+    evaluateNativeMetadataDecode
+  cases hCurrent : exactDecodeAccepts input.currentExact <;>
+    cases hLegacy : exactDecodeAccepts input.legacyExact <;>
+    simp
+
+theorem native_metadata_current_exact_decode_precedes_legacy
+    {input : NativeMetadataDecodeInput}
+    (currentAccepted : exactDecodeAccepts input.currentExact = true) :
+    evaluateNativeMetadataDecode input =
+      Except.ok NativeMetadataDecodeSource.current := by
+  unfold evaluateNativeMetadataDecode
+  simp [currentAccepted]
+
+theorem native_metadata_legacy_decode_requires_current_rejection
+    {input : NativeMetadataDecodeInput}
+    (currentRejected : exactDecodeAccepts input.currentExact = false)
+    (legacyAccepted : exactDecodeAccepts input.legacyExact = true) :
+    evaluateNativeMetadataDecode input =
+      Except.ok NativeMetadataDecodeSource.legacy := by
+  unfold evaluateNativeMetadataDecode
+  simp [currentRejected, legacyAccepted]
+
+theorem native_metadata_decode_rejects_when_current_and_legacy_reject
+    {input : NativeMetadataDecodeInput}
+    (currentRejected : exactDecodeAccepts input.currentExact = false)
+    (legacyRejected : exactDecodeAccepts input.legacyExact = false) :
+    evaluateNativeMetadataDecode input =
+      Except.error NativeMetadataDecodeReject.currentAndLegacyRejected := by
+  unfold evaluateNativeMetadataDecode
+  simp [currentRejected, legacyRejected]
+
+structure NativeMetadataDecodeFacts
+    (input : NativeMetadataDecodeInput) : Prop where
+  acceptsIff :
+    nativeMetadataDecodeAccepts input =
+      nativeMetadataDecodePreconditions input
+  currentExactPrecedesLegacy :
+    exactDecodeAccepts input.currentExact = true ->
+      evaluateNativeMetadataDecode input =
+        Except.ok NativeMetadataDecodeSource.current
+  legacyRequiresCurrentRejected :
+    exactDecodeAccepts input.currentExact = false ->
+      exactDecodeAccepts input.legacyExact = true ->
+        evaluateNativeMetadataDecode input =
+          Except.ok NativeMetadataDecodeSource.legacy
+  bothRejectedFailClosed :
+    exactDecodeAccepts input.currentExact = false ->
+      exactDecodeAccepts input.legacyExact = false ->
+        evaluateNativeMetadataDecode input =
+          Except.error NativeMetadataDecodeReject.currentAndLegacyRejected
+
+theorem native_metadata_decode_facts
+    {input : NativeMetadataDecodeInput} :
+    NativeMetadataDecodeFacts input := by
+  exact {
+    acceptsIff := native_metadata_decode_accepts_iff_preconditions input
+    currentExactPrecedesLegacy :=
+      fun currentAccepted =>
+        native_metadata_current_exact_decode_precedes_legacy
+          currentAccepted
+    legacyRequiresCurrentRejected :=
+      fun currentRejected legacyAccepted =>
+        native_metadata_legacy_decode_requires_current_rejection
+          currentRejected
+          legacyAccepted
+    bothRejectedFailClosed :=
+      fun currentRejected legacyRejected =>
+        native_metadata_decode_rejects_when_current_and_legacy_reject
+          currentRejected
+          legacyRejected
+  }
+
 structure CanonicalDecodeNonMalleabilityFacts
     (syncInput : SyncDecodeInput)
     (exactInput : ExactDecodeInput)
@@ -375,6 +495,30 @@ def validBlockActions : BlockActionDecodeInput :=
     everyActionDecodesExactly := true
   }
 
+def validNativeMetadataCurrent : NativeMetadataDecodeInput :=
+  {
+    currentExact := validExactDecode,
+    legacyExact := { validExactDecode with parserAccepts := false }
+  }
+
+def validNativeMetadataLegacy : NativeMetadataDecodeInput :=
+  {
+    currentExact := { validExactDecode with parserAccepts := false },
+    legacyExact := validExactDecode
+  }
+
+def trailingNativeMetadataCurrent : NativeMetadataDecodeInput :=
+  {
+    currentExact := { validExactDecode with consumedAllBytes := false },
+    legacyExact := { validExactDecode with parserAccepts := false }
+  }
+
+def trailingNativeMetadataLegacy : NativeMetadataDecodeInput :=
+  {
+    currentExact := { validExactDecode with parserAccepts := false },
+    legacyExact := { validExactDecode with consumedAllBytes := false }
+  }
+
 theorem valid_sync_accepts :
     evaluateSyncDecodeRejection validSync = none := by
   rfl
@@ -429,6 +573,26 @@ theorem nonexact_action_payload_rejects :
     evaluateBlockActionDecodeRejection
       { validBlockActions with everyActionDecodesExactly := false } =
       some BlockActionDecodeReject.actionDecodeNotExact := by
+  rfl
+
+theorem valid_native_metadata_current_selects_current :
+    evaluateNativeMetadataDecode validNativeMetadataCurrent =
+      Except.ok NativeMetadataDecodeSource.current := by
+  rfl
+
+theorem valid_native_metadata_legacy_selects_legacy :
+    evaluateNativeMetadataDecode validNativeMetadataLegacy =
+      Except.ok NativeMetadataDecodeSource.legacy := by
+  rfl
+
+theorem trailing_native_metadata_current_rejects :
+    evaluateNativeMetadataDecode trailingNativeMetadataCurrent =
+      Except.error NativeMetadataDecodeReject.currentAndLegacyRejected := by
+  rfl
+
+theorem trailing_native_metadata_legacy_rejects :
+    evaluateNativeMetadataDecode trailingNativeMetadataLegacy =
+      Except.error NativeMetadataDecodeReject.currentAndLegacyRejected := by
   rfl
 
 end CodecAdmission

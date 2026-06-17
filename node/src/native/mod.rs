@@ -13807,6 +13807,7 @@ mod tests {
         sync_codec_cases: Vec<LeanSyncCodecCase>,
         exact_decode_cases: Vec<LeanExactDecodeCase>,
         block_action_decode_cases: Vec<LeanBlockActionDecodeCase>,
+        native_metadata_decode_cases: Vec<LeanNativeMetadataDecodeCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -13869,6 +13870,22 @@ mod tests {
         actual_action_payload_count: usize,
         every_action_decodes_exactly: bool,
         expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeMetadataDecodeCase {
+        name: String,
+        fixture: String,
+        current_parser_accepts: bool,
+        current_consumed_all_bytes: bool,
+        current_canonical_reencode_matches: bool,
+        legacy_parser_accepts: bool,
+        legacy_consumed_all_bytes: bool,
+        legacy_canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_source: Option<String>,
         expected_rejection: Option<String>,
     }
 
@@ -19823,11 +19840,12 @@ mod tests {
             std::fs::read_to_string(&path).expect("read generated Lean codec admission vectors");
         let vectors: LeanCodecAdmissionVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean codec admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.sync_codec_cases.is_empty()
                 && !vectors.exact_decode_cases.is_empty()
-                && !vectors.block_action_decode_cases.is_empty(),
+                && !vectors.block_action_decode_cases.is_empty()
+                && !vectors.native_metadata_decode_cases.is_empty(),
             "Lean codec admission cases must not be empty"
         );
 
@@ -19843,6 +19861,10 @@ mod tests {
         for case in &vectors.block_action_decode_cases {
             assert!(names.insert(format!("block-action:{}", case.name)));
             verify_lean_block_action_decode_case(case);
+        }
+        for case in &vectors.native_metadata_decode_cases {
+            assert!(names.insert(format!("native-metadata:{}", case.name)));
+            verify_lean_native_metadata_decode_case(case);
         }
     }
 
@@ -19966,6 +19988,88 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native exact-decode rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_native_metadata_decode_case(case: &LeanNativeMetadataDecodeCase) {
+        let current_exact_accepts = case.current_parser_accepts
+            && case.current_consumed_all_bytes
+            && case.current_canonical_reencode_matches;
+        let legacy_exact_accepts = case.legacy_parser_accepts
+            && case.legacy_consumed_all_bytes
+            && case.legacy_canonical_reencode_matches;
+        let expected_source = if current_exact_accepts {
+            Some("current".to_owned())
+        } else if legacy_exact_accepts {
+            Some("legacy".to_owned())
+        } else {
+            None
+        };
+        assert_eq!(
+            expected_source.is_some(),
+            case.expected_valid,
+            "{} Lean native metadata decode fields disagree with expected validity",
+            case.name
+        );
+        assert_eq!(
+            expected_source, case.expected_source,
+            "{} Lean native metadata source drifted from current-first/legacy-fallback spec",
+            case.name
+        );
+
+        let parent = genesis_meta(0x207f_ffff).expect("genesis");
+        let current = mined_empty_child(&parent, 1, 0x207f_ffff, 0);
+        let legacy = legacy_meta_from_current(&current);
+        let payload = match case.fixture.as_str() {
+            "current_signed_meta" => bincode::serialize(&current).expect("serialize current meta"),
+            "legacy_unsigned_meta" => bincode::serialize(&legacy).expect("serialize legacy meta"),
+            "current_signed_meta_trailing" => {
+                let mut encoded = bincode::serialize(&current).expect("serialize current meta");
+                encoded.push(0xcc);
+                encoded
+            }
+            "legacy_unsigned_meta_trailing" => {
+                let mut encoded = bincode::serialize(&legacy).expect("serialize legacy meta");
+                encoded.push(0xdd);
+                encoded
+            }
+            other => panic!("unknown Lean native metadata fixture {other}"),
+        };
+        let current_exact =
+            bincode_deserialize_exact::<NativeBlockMeta>(&payload, "Lean current native metadata")
+                .is_ok();
+        let legacy_exact = bincode_deserialize_exact::<LegacyNativeBlockMetaV1>(
+            &payload,
+            "Lean legacy native metadata",
+        )
+        .is_ok();
+        let actual_source = if current_exact {
+            Some("current".to_owned())
+        } else if legacy_exact {
+            Some("legacy".to_owned())
+        } else {
+            None
+        };
+        let actual = bincode_deserialize_native_block_meta_exact(&payload, "Lean native metadata");
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|_| "current_and_legacy_rejected".to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native metadata decode validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_source, case.expected_source,
+            "{} native metadata decode source drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native metadata decode rejection drifted from Lean spec",
             case.name
         );
     }
