@@ -51,7 +51,7 @@
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote checkout is at bbc6e811; pre-existing untracked .hegemon-dev-deploy-status was left untouched"
+      "validation target was bbc6e811 before the evidence-only follow-up commit; pre-existing untracked .hegemon-dev-deploy-status was left untouched"
     ],
     "runtime_note": "The release node was not rebuilt or restarted because the shipped binary is unchanged by this slice. Remote formal metadata, targeted PendingAction SCALE wire Lean/Rust, smoke, wallet-send, isolated single-node mining, service, mining status, and NTP checks passed. Optional two-node sync was inconclusive because the script hung past its timeout and was interrupted; disposable processes were cleaned up.",
     "known_limitations": [
