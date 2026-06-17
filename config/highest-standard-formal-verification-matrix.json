@@ -7,7 +7,7 @@
   "overall_completion_percent": 86.98,
   "last_full_formal_core": {
     "date": "2026-06-17T04:19:39Z",
-    "commit": "552afd05",
+    "commit": "d307ffda",
     "status": "passed locally after adding LocalNetworkMetadata privacy theorems, PQ connection/relay metadata projection regressions, and formal claims/blueprint/docs bindings",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
