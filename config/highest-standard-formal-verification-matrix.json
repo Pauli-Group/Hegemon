@@ -4,11 +4,11 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.07,
+  "overall_completion_percent": 88.09,
   "last_full_formal_core": {
-    "date": "2026-06-17T11:43:19Z",
+    "date": "2026-06-17T12:03:38Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after adding theorem-indexed blueprint call-order/dominance validation and binding the native fork-choice publication-order constraint to named Lean theorem evidence",
+    "status": "passed locally after enabling the blueprint policy requiring theorem-indexed production order constraints and indexing all current production order/dominance gates to named Lean theorem evidence",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
     "named_lean_theorems": 1941,
@@ -25,6 +25,10 @@
     "implementation_order_edges": 374,
     "implementation_dominance_constraints": 130,
     "implementation_dominance_edges": 342,
+    "implementation_theorem_indexed_order_constraints": 144,
+    "implementation_theorem_indexed_order_edges": 374,
+    "implementation_theorem_indexed_dominance_constraints": 130,
+    "implementation_theorem_indexed_dominance_edges": 342,
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
@@ -118,17 +122,17 @@
   },
   "last_implementation_equivalence_checker_slice": {
     "date": "2026-06-17",
-    "summary": "Formal-core blueprint call-order constraints can now carry `lean_theorems` references that are checked against the node claim's named Lean theorem evidence. The native announced-block fork-choice publication/dominance constraint is indexed to `Hegemon.Consensus.selectBest_selection_facts` and `Hegemon.Consensus.selectBest_work_not_lower`, so bad or unclaimed theorem refs fail the blueprint gate.",
+    "summary": "Formal-core blueprint call-order constraints carry checked `lean_theorems` references, and the source-of-record blueprint now requires theorem-indexed production order constraints. All current production order and dominance constraints are indexed to named Lean theorem evidence, so adding an unindexed production order gate fails the blueprint gate.",
     "changed_paths": [
-      "scripts/hegemon_formal_core/src/lib.rs adds optional/default `lean_theorems` on call-order constraints, validates syntax, duplicate refs, missing claim theorem evidence, and refs outside the claim theorem set, and adds focused accept/reject tests.",
-      "config/formal-security-blueprint.json adds theorem refs and a falsification case to the native fork-choice publication constraint.",
-      "DESIGN.md, METHODS.md, and this matrix record the theorem-indexed order/dominance pilot and the remaining rollout gap."
+      "scripts/hegemon_formal_core/src/lib.rs adds optional/default `lean_theorems` on call-order constraints, validates syntax, duplicate refs, missing claim theorem evidence, and refs outside the claim theorem set, reports theorem-indexed order/dominance counters, and rejects unindexed production order gates when the blueprint policy is enabled.",
+      "config/formal-security-blueprint.json enables `require_theorem_indexed_order_constraints` and indexes all 144 current order constraints / 130 dominance constraints to their node claim theorem evidence.",
+      "DESIGN.md, METHODS.md, and this matrix record full theorem-indexed order/dominance coverage and the remaining semantic-specificity gap."
     ],
     "validation": {
-      "status": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml, JSON validation, claims, blueprint, inventory, diff whitespace, and full local bash scripts/check_formal_core.sh all passed. Full formal-core reported 118 claims, 1941 named Lean theorem declarations, 0 temporary axiom theorem dependencies, 527 falsification cases, 216 implementation bindings, 144 order constraints, and 130 dominance constraints."
+      "status": "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml, JSON validation, claims, blueprint, inventory, diff whitespace, and full local bash scripts/check_formal_core.sh all passed. Full formal-core reported 118 claims, 1941 named Lean theorem declarations, 0 temporary axiom theorem dependencies, 527 falsification cases, 216 implementation bindings, 144/144 theorem-indexed order constraints, and 130/130 theorem-indexed dominance constraints."
     },
     "known_limitations": [
-      "This is a checker/metadata enforcement slice with zero shipped-runtime cost. It theorem-indexes the native fork-choice publication pilot only; every other admission, replay, sidecar, proof, storage, and network order/dominance gate still needs explicit theorem refs."
+      "This is a checker/metadata enforcement slice with zero shipped-runtime cost. It enforces that every production order gate has claim theorem evidence, but some constraints intentionally use the full node theorem set rather than a minimal per-gate theorem subset. The unified accepted-block theorem is still separate work."
     ]
   },
   "properties": [
@@ -701,7 +705,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 92,
+      "completion_percent": 92.5,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -717,11 +721,12 @@
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean now rejects malformed candidate route public_args and public_args/candidate_artifact mismatch before accepting candidate artifacts; node/src/native/mod.rs revalidates those predicates on mempool staging, block validation, reload/reorg semantic admission, and mined action recovery paths",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean and consensus/src/proof.rs now gate provided block tx-validity claims against verified backend artifact claims field-for-field before downstream proof-admission paths rely on them",
         "formal/lean/Hegemon/Consensus/ForkChoice.lean now proves selected-tip source/facts and no-lower-work monotonicity for selectBest; schema-v2 consensus vectors bind selected source, selected tip, and selected-work monotonicity to both consensus::fork_choice and native_meta_better_than production gates",
-        "formal-security-blueprint now attaches the native announced-block fork-choice publication-order/dominance constraint to `Hegemon.Consensus.selectBest_selection_facts` and `Hegemon.Consensus.selectBest_work_not_lower`; the formal-core blueprint checker rejects theorem-indexed order constraints that point outside the claim's named Lean theorem evidence"
+        "formal-security-blueprint now attaches the native announced-block fork-choice publication-order/dominance constraint to `Hegemon.Consensus.selectBest_selection_facts` and `Hegemon.Consensus.selectBest_work_not_lower`; the formal-core blueprint checker rejects theorem-indexed order constraints that point outside the claim's named Lean theorem evidence",
+        "formal-security-blueprint enables `require_theorem_indexed_order_constraints`; formal-core now reports 144/144 theorem-indexed order constraints and 130/130 theorem-indexed dominance constraints, and rejects any new unindexed production order gate"
       ],
       "missing_work": [
         "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",
-        "Extend theorem-indexed order/dominance constraints from the native fork-choice publication pilot to every admission, replay, sidecar, proof, storage, and network publication order gate."
+        "Refine broad claim-level theorem refs into minimal theorem subsets for each specific order/dominance gate, and preserve theorem-indexed coverage for future admission, replay, sidecar, proof, storage, and network gates."
       ],
       "performance_constraint": "Order checks are compile/CI evidence; runtime order should stay as current cheap prechecks before heavy work."
     },

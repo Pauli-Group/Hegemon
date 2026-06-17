@@ -57,8 +57,12 @@ pub struct BlueprintReport {
     pub implementation_result_obligations: usize,
     pub implementation_order_constraints: usize,
     pub implementation_order_edges: usize,
+    pub implementation_theorem_indexed_order_constraints: usize,
+    pub implementation_theorem_indexed_order_edges: usize,
     pub implementation_dominance_constraints: usize,
     pub implementation_dominance_edges: usize,
+    pub implementation_theorem_indexed_dominance_constraints: usize,
+    pub implementation_theorem_indexed_dominance_edges: usize,
     pub falsification_cases: usize,
     pub passed: bool,
 }
@@ -117,7 +121,16 @@ struct FormalBlueprint {
     schema_version: u32,
     generated_for_branch: String,
     methodology: BlueprintMethodology,
+    #[serde(default)]
+    policy: BlueprintPolicy,
     nodes: Vec<BlueprintNode>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BlueprintPolicy {
+    #[serde(default)]
+    require_theorem_indexed_order_constraints: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -929,8 +942,12 @@ fn validate_blueprint(
     let mut implementation_result_obligations = 0usize;
     let mut implementation_order_constraints = 0usize;
     let mut implementation_order_edges = 0usize;
+    let mut implementation_theorem_indexed_order_constraints = 0usize;
+    let mut implementation_theorem_indexed_order_edges = 0usize;
     let mut implementation_dominance_constraints = 0usize;
     let mut implementation_dominance_edges = 0usize;
+    let mut implementation_theorem_indexed_dominance_constraints = 0usize;
+    let mut implementation_theorem_indexed_dominance_edges = 0usize;
     let mut falsification_cases = 0usize;
     let mut dependents: BTreeMap<String, usize> =
         node_ids.iter().map(|id| (id.clone(), 0usize)).collect();
@@ -940,7 +957,7 @@ fn validate_blueprint(
             .claims
             .get(&node.claim_id)
             .expect("claim existence checked before node validation");
-        validate_blueprint_node(root, node, claim)?;
+        validate_blueprint_node(root, &blueprint.policy, node, claim)?;
         let mut deps = BTreeSet::new();
         for dep in &node.depends_on {
             validate_id(&format!("{} dependency id", node.id), dep)?;
@@ -977,12 +994,22 @@ fn validate_blueprint(
                 .map(|constraint| constraint.callee_must_precede.len())
                 .sum::<usize>();
             for constraint in &binding.call_order_constraints {
+                if !constraint.lean_theorems.is_empty() {
+                    implementation_theorem_indexed_order_constraints += 1;
+                    implementation_theorem_indexed_order_edges +=
+                        constraint.callee_must_precede.len();
+                }
                 if constraint.result_obligation.is_some() {
                     implementation_result_obligations += 1;
                 }
                 if constraint.must_dominate_successors {
                     implementation_dominance_constraints += 1;
                     implementation_dominance_edges += constraint.callee_must_precede.len();
+                    if !constraint.lean_theorems.is_empty() {
+                        implementation_theorem_indexed_dominance_constraints += 1;
+                        implementation_theorem_indexed_dominance_edges +=
+                            constraint.callee_must_precede.len();
+                    }
                 }
             }
         }
@@ -1008,8 +1035,12 @@ fn validate_blueprint(
         implementation_result_obligations,
         implementation_order_constraints,
         implementation_order_edges,
+        implementation_theorem_indexed_order_constraints,
+        implementation_theorem_indexed_order_edges,
         implementation_dominance_constraints,
         implementation_dominance_edges,
+        implementation_theorem_indexed_dominance_constraints,
+        implementation_theorem_indexed_dominance_edges,
         falsification_cases,
         passed: true,
     })
@@ -1037,6 +1068,7 @@ fn validate_methodology(methodology: &BlueprintMethodology) -> Result<()> {
 
 fn validate_blueprint_node(
     root: &Path,
+    policy: &BlueprintPolicy,
     node: &BlueprintNode,
     claim: &ClaimProjection,
 ) -> Result<()> {
@@ -1089,7 +1121,7 @@ fn validate_blueprint_node(
             claim_evidence
         );
     }
-    validate_implementation_bindings(root, node, claim)?;
+    validate_implementation_bindings(root, policy, node, claim)?;
     validate_falsification_cases(node)?;
     if claim.production_eligible {
         ensure!(
@@ -1113,6 +1145,7 @@ fn validate_blueprint_node(
 
 fn validate_implementation_bindings(
     root: &Path,
+    policy: &BlueprintPolicy,
     node: &BlueprintNode,
     claim: &ClaimProjection,
 ) -> Result<()> {
@@ -1189,7 +1222,7 @@ fn validate_implementation_bindings(
                 &binding.callee,
                 constraint.result_obligation.as_deref(),
             )?;
-            validate_implementation_call_order_theorems(&node.id, claim, constraint)?;
+            validate_implementation_call_order_theorems(&node.id, policy, claim, constraint)?;
         }
         validate_rust_implementation_binding(root, &node.id, binding)?;
     }
@@ -1198,10 +1231,17 @@ fn validate_implementation_bindings(
 
 fn validate_implementation_call_order_theorems(
     node_id: &str,
+    policy: &BlueprintPolicy,
     claim: &ClaimProjection,
     constraint: &ImplementationCallOrderConstraint,
 ) -> Result<()> {
     if constraint.lean_theorems.is_empty() {
+        ensure!(
+            !(policy.require_theorem_indexed_order_constraints && claim.production_eligible),
+            "{} implementation binding order constraint for {} must list lean_theorems because blueprint policy requires theorem-indexed production order constraints",
+            node_id,
+            constraint.caller
+        );
         return Ok(());
     }
 
@@ -7707,6 +7747,8 @@ mod tests {
             .expect("theorem-indexed order constraint");
         assert_eq!(report.implementation_order_constraints, 1);
         assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_theorem_indexed_order_constraints, 1);
+        assert_eq!(report.implementation_theorem_indexed_order_edges, 1);
     }
 
     #[test]
@@ -7741,6 +7783,46 @@ mod tests {
         let err = check_blueprint_file(&blueprint_path, &claims_path)
             .expect_err("unknown theorem ref must reject");
         assert!(err.to_string().contains("not listed by claim target.prod"));
+    }
+
+    #[test]
+    fn blueprint_policy_rejects_unindexed_production_order_constraint() {
+        let root = test_root("policy-rejects-unindexed-order-constraint");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_target_order_theorem(&root);
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); apply_actions(); }\n\
+             fn apply_actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        let mut claims = claims_fixture();
+        make_target_lean_theorem_claim(&mut claims, &[TARGET_ORDER_THEOREM]);
+        write_json(&claims_path, claims);
+        let mut blueprint = blueprint_fixture_with_ordered_binding(
+            "verified_helper",
+            &["import_mined_block"],
+            "import_mined_block",
+            &["apply_actions"],
+        );
+        enable_theorem_index_policy(&mut blueprint);
+        let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
+        let target = nodes[1].as_object_mut().expect("target object");
+        target.insert(
+            "evidence_paths".to_owned(),
+            json!(["evidence/target.txt", TARGET_ORDER_THEOREM_PATH]),
+        );
+        write_json(&blueprint_path, blueprint);
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("unindexed order constraint must reject under policy");
+        assert!(err
+            .to_string()
+            .contains("requires theorem-indexed production order constraints"));
     }
 
     #[test]
@@ -8489,6 +8571,7 @@ mod tests {
     ) -> Value {
         let mut blueprint =
             blueprint_fixture_with_ordered_binding(callee, callers, ordered_caller, successors);
+        enable_theorem_index_policy(&mut blueprint);
         let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
         let target = nodes[1].as_object_mut().expect("target object");
         target.insert(
@@ -8498,6 +8581,12 @@ mod tests {
         let constraint = &mut target["implementation_bindings"][0]["call_order_constraints"][0];
         constraint["lean_theorems"] = json!(lean_theorems);
         blueprint
+    }
+
+    fn enable_theorem_index_policy(blueprint: &mut Value) {
+        blueprint["policy"] = json!({
+            "require_theorem_indexed_order_constraints": true
+        });
     }
 
     fn blueprint_fixture_with_result_binding(
