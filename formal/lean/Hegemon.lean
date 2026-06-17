@@ -143,6 +143,7 @@ import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
 import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SmallWoodTranscriptBinding
+import Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash
 import Hegemon.Transaction.TxValidityClaimMatching
