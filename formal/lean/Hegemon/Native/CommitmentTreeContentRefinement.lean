@@ -9,6 +9,7 @@ namespace Native
 namespace CommitmentTreeContentRefinement
 
 open Hegemon.Native.AcceptedChain
+open Hegemon.Native.ActionStateEffect
 open Hegemon.Native.ActionPlanApplicationAdmission
 open Hegemon.Native.ActionWireReplayProjectionAdmission
 open Hegemon.Native.BlockActionValidation
@@ -84,6 +85,15 @@ def rowActionPlanInput
     plannedStarts := rowCommitmentStarts rows
   }
 
+def decodedRowsFollowLeafCursor :
+    Nat -> List PendingActionFieldProjectionRow -> Prop
+  | _, [] => True
+  | leaf, row :: rest =>
+      row.commitmentStart = leaf ∧
+      decodedRowsFollowLeafCursor
+        (leaf + row.commitments.length)
+        rest
+
 theorem rowsWithOffsets_values
     (start : Nat)
     (values : List Nat) :
@@ -105,6 +115,195 @@ theorem rowsWithOffsets_indexes
       rfl
   | cons value rest ih =>
       simp [rowsWithOffsets, commitmentIndexesFrom, ih]
+
+theorem checkedAddU64_eq_some_value
+    {leaf count next : Nat}
+    (checked :
+      checkedAddU64 leaf count =
+        some next) :
+    next = leaf + count := by
+  unfold checkedAddU64 at checked
+  split at checked
+  · cases checked
+    rfl
+  · contradiction
+
+def rowActionPlanFromAccepts
+    (leaf : Nat)
+    (rows : List PendingActionFieldProjectionRow)
+    (applied : Nat) : Bool :=
+  match
+    evaluateActionPlanApplicationFrom
+      leaf
+      (rowCommitmentCounts rows)
+      (rowCommitmentStarts rows)
+      applied with
+  | Except.ok _ => true
+  | Except.error _ => false
+
+theorem decodedRowsFollowLeafCursor_of_row_action_plan_from_accepts
+    (leaf : Nat)
+    (rows : List PendingActionFieldProjectionRow)
+    (applied : Nat)
+    (accepted :
+      rowActionPlanFromAccepts leaf rows applied =
+        true) :
+    decodedRowsFollowLeafCursor leaf rows := by
+  induction rows generalizing leaf applied with
+  | nil =>
+      trivial
+  | cons row rest ih =>
+      unfold rowActionPlanFromAccepts at accepted
+      simp [rowCommitmentCounts, rowCommitmentStarts] at accepted
+      by_cases startMatches : row.commitmentStart = leaf
+      · cases addChecked :
+          checkedAddU64 leaf row.commitments.length with
+        | none =>
+            simp [
+              evaluateActionPlanApplicationFrom,
+              startMatches,
+              addChecked
+            ] at accepted
+        | some nextLeaf =>
+            have nextLeaf_eq :
+                nextLeaf =
+                  leaf + row.commitments.length :=
+              checkedAddU64_eq_some_value addChecked
+            have restAccepted :
+                rowActionPlanFromAccepts nextLeaf rest (applied + 1) =
+                  true := by
+              simpa [
+                rowActionPlanFromAccepts,
+                evaluateActionPlanApplicationFrom,
+                startMatches,
+                addChecked
+              ] using accepted
+            constructor
+            · exact startMatches
+            · rw [nextLeaf_eq] at restAccepted
+              exact ih (leaf + row.commitments.length) (applied + 1) restAccepted
+      · simp [
+          evaluateActionPlanApplicationFrom,
+          startMatches
+        ] at accepted
+
+theorem decodedRowsFollowLeafCursor_of_action_plan_accepts
+    (leaf : Nat)
+    (rows : List PendingActionFieldProjectionRow)
+    (accepted :
+      actionPlanApplicationAccepts
+        (rowActionPlanInput leaf rows) =
+        true) :
+    decodedRowsFollowLeafCursor leaf rows := by
+  apply
+    decodedRowsFollowLeafCursor_of_row_action_plan_from_accepts
+      leaf rows 0
+  simpa [
+    rowActionPlanFromAccepts,
+    rowActionPlanInput,
+    actionPlanApplicationAccepts,
+    evaluateActionPlanApplication
+  ] using accepted
+
+theorem commitmentIndexesFrom_eq_rangePrime
+    (start : Nat)
+    (values : List Nat) :
+    commitmentIndexesFrom start values =
+      List.range' start values.length := by
+  induction values generalizing start with
+  | nil =>
+      rfl
+  | cons value rest ih =>
+      simp [commitmentIndexesFrom, List.range'_succ, ih]
+
+theorem range_map_add_eq_rangePrime
+    (start count : Nat) :
+    (List.range count).map (fun offset => start + offset) =
+      List.range' start count := by
+  induction count with
+  | zero =>
+      rfl
+  | succ count ih =>
+      rw [List.range_succ]
+      simp [List.map_append, ih]
+      have concatRange :=
+        List.range'_concat (s := start) (n := count) (step := 1)
+      simpa using concatRange.symm
+
+theorem orderedDecodedCommitmentIndexes_eq_rangePrime_of_cursor
+    (leaf : Nat)
+    (rows : List PendingActionFieldProjectionRow)
+    (cursor :
+      decodedRowsFollowLeafCursor leaf rows) :
+    orderedDecodedCommitmentIndexes rows =
+      List.range' leaf (orderedDecodedCommitments rows).length := by
+  induction rows generalizing leaf with
+  | nil =>
+      rfl
+  | cons row rest ih =>
+      rcases cursor with ⟨startMatches, restCursor⟩
+      have restIndexes :=
+        ih (leaf + row.commitments.length) restCursor
+      simp [
+        orderedDecodedCommitmentIndexes,
+        orderedDecodedCommitments,
+        commitmentIndexesFrom_eq_rangePrime
+      ] at restIndexes
+      simp [
+        orderedDecodedCommitmentIndexes,
+        orderedDecodedCommitments,
+        flattenRows,
+        commitmentIndexesFrom_eq_rangePrime,
+        startMatches
+      ]
+      rw [restIndexes]
+      have appendRange :=
+        List.range'_append
+          (s := leaf)
+          (m := row.commitments.length)
+          (n := (orderedDecodedCommitments rest).length)
+          (step := 1)
+      simpa [orderedDecodedCommitments] using appendRange
+
+theorem rawIngressAppendSummaries_indexes_eq_rangePrime
+    (depth historyLimit : Nat)
+    (initial : NativeLedgerTreeReplayState)
+    (decodedRows : List PendingActionFieldProjectionRow) :
+    (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
+        (fun summary => summary.leafIndex) =
+      List.range'
+        initial.ledger.leafCount
+        (orderedDecodedCommitments decodedRows).length := by
+  simpa [
+    rawIngressAppendSummaries,
+    Consensus.CommitmentTreeAppend.appendSummaries,
+    Consensus.CommitmentTreeAppend.appendSummary,
+    List.map_map
+  ] using
+    range_map_add_eq_rangePrime
+      initial.ledger.leafCount
+      (orderedDecodedCommitments decodedRows).length
+
+theorem rawIngressAppendSummaries_indexes_eq_orderedDecodedCommitmentIndexes_of_action_plan
+    (depth historyLimit : Nat)
+    (initial : NativeLedgerTreeReplayState)
+    (decodedRows : List PendingActionFieldProjectionRow)
+    (accepted :
+      actionPlanApplicationAccepts
+        (rowActionPlanInput initial.ledger.leafCount decodedRows) =
+        true) :
+    (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
+        (fun summary => summary.leafIndex) =
+      orderedDecodedCommitmentIndexes decodedRows := by
+  rw [rawIngressAppendSummaries_indexes_eq_rangePrime]
+  exact
+    (orderedDecodedCommitmentIndexes_eq_rangePrime_of_cursor
+      initial.ledger.leafCount
+      decodedRows
+      (decodedRowsFollowLeafCursor_of_action_plan_accepts
+        initial.ledger.leafCount
+        decodedRows
+        accepted)).symm
 
 theorem projectedCommitmentRows_values
     (rows : List PendingActionFieldProjectionRow) :
@@ -438,6 +637,14 @@ structure RawIngressCommitmentAppendPublicationFacts
     actionPlanApplicationAccepts
       (rowActionPlanInput initial.ledger.leafCount decodedRows) =
       true
+  appendMutationIndexesMatchDecoded :
+    (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
+        (fun summary => summary.leafIndex) =
+      orderedDecodedCommitmentIndexes decodedRows
+  appendMutationIndexesMatchCanonicalRows :
+    (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
+        (fun summary => summary.leafIndex) =
+      canonicalRows.commitmentRows.map (fun entry => entry.1)
   canonicalCommitmentRowsDriveAppendCount :
     (rawIngressAppendSummaries depth historyLimit initial decodedRows).length =
       canonicalRows.commitmentRows.length
@@ -1127,11 +1334,26 @@ theorem raw_ingress_commitment_tree_content_binds_append_publication_surface
       (rawIngressAppendSummaries depth historyLimit initial decodedRows).length =
         (orderedDecodedCommitments decodedRows).length := by
     simp [rawIngressAppendSummaries, Consensus.CommitmentTreeAppend.appendSummaries]
+  have appendMutationIndexesMatchDecoded :
+      (rawIngressAppendSummaries depth historyLimit initial decodedRows).map
+          (fun summary => summary.leafIndex) =
+        orderedDecodedCommitmentIndexes decodedRows :=
+    rawIngressAppendSummaries_indexes_eq_orderedDecodedCommitmentIndexes_of_action_plan
+      depth
+      historyLimit
+      initial
+      decodedRows
+      decodedRowsAcceptedByRowStartPlan
   exact
     {
       contentFacts := facts,
       appendMutationSummaryCount := appendMutationSummaryCount,
       decodedRowsAcceptedByRowStartPlan := decodedRowsAcceptedByRowStartPlan,
+      appendMutationIndexesMatchDecoded :=
+        appendMutationIndexesMatchDecoded,
+      appendMutationIndexesMatchCanonicalRows := by
+        rw [appendMutationIndexesMatchDecoded]
+        exact facts.orderedCanonicalCommitmentIndexes.symm,
       canonicalCommitmentRowsDriveAppendCount := by
         rw [appendMutationSummaryCount]
         exact facts.canonicalCommitmentRowCount.symm,

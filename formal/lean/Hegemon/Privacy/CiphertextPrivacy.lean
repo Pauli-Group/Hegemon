@@ -831,6 +831,43 @@ def ciphertext_privacy_game_resample_local_network_metadata
       wireIndistinguishable := game.wireIndistinguishable
       wireIndistinguishableProof := game.wireIndistinguishableProof }
 
+def ciphertext_privacy_game_resample_all_local_metadata
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyGame
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localNetworkMetadata := rightNetwork } := by
+  exact
+    { leftValid :=
+        valid_observer_chain_surface_stable_under_all_local_metadata
+          game.leftValid
+          leftLocal
+          leftAddress
+          leftNetwork
+      rightValid :=
+        valid_observer_chain_surface_stable_under_all_local_metadata
+          game.rightValid
+          rightLocal
+          rightAddress
+          rightNetwork
+      publicInputs := by
+        simpa [samePublicInputs] using game.publicInputs
+      summaries := by
+        simpa using game.summaries
+      placement := by
+        simpa [samePlacement] using game.placement
+      wireIndistinguishable := game.wireIndistinguishable
+      wireIndistinguishableProof := game.wireIndistinguishableProof }
+
 theorem ciphertext_privacy_game_local_network_metadata_boundary_facts
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -855,6 +892,60 @@ theorem ciphertext_privacy_game_local_network_metadata_boundary_facts
         rightNetwork,
       same_batch_timing_leakage_stable_under_local_network_metadata
         (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftNetwork
+        rightNetwork,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      assumptionProofs.proofSystemZeroKnowledge,
+      assumptionProofs.walletMetadataHygiene,
+      assumptionProofs.timingAndBatchingPolicy,
+      assumptionProofs.networkMetadataPolicy⟩
+
+theorem ciphertext_privacy_game_all_local_metadata_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localNetworkMetadata := rightNetwork }
+      ∧ sameBatchTimingLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localNetworkMetadata := rightNetwork }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨same_public_metadata_leakage_stable_under_all_local_metadata
+        (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftNetwork
+        rightNetwork,
+      same_batch_timing_leakage_stable_under_all_local_metadata
+        (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
         leftNetwork
         rightNetwork,
       ciphertext_privacy_game_only_open_crypto_obligation game,
@@ -984,6 +1075,37 @@ theorem ciphertext_privacy_game_local_network_metadata_open_assumption_boundary_
     ciphertext_privacy_game_open_assumption_boundary_facts
       (ciphertext_privacy_game_resample_local_network_metadata
         game
+        leftNetwork
+        rightNetwork)
+      assumptionProofs
+
+theorem ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localNetworkMetadata := rightNetwork }
+      game.wireIndistinguishable
+      assumptions := by
+  simpa [ciphertext_privacy_game_resample_all_local_metadata] using
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      (ciphertext_privacy_game_resample_all_local_metadata
+        game
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
         leftNetwork
         rightNetwork)
       assumptionProofs

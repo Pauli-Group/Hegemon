@@ -663,7 +663,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, proves that an authorized stablecoin exception preserves the exact public/bound/statement/proof-binding policy metadata and rejects unauthorized or mismatched payload surfaces, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, adds a SmallWood public balance-boundary target that exposes native and stablecoin delta facts while rejecting noncanonical signed zero, adds a P3 AIR final-row balance target with public-field verifier mutation regressions, adds a SmallWood public-statement binding target that proves the public statement is exactly the P3 public-input vector plus circuit/crypto version suffix, adds a SmallWood transcript/profile binding target that proves the modeled transcript bytes include the domain, verifier profile material, serialized statement bytes, and eight-byte padding, and packages accepted SmallWood wrapper/public-statement/transcript/auth/input/output/balance/AIR surfaces with the split deployed-verifier assumptions into one explicit no-theft and public-conservation verifier envelope. It provides a compatibility theorem back to the monolithic assumption while keeping real STARK/FRI proof-system soundness explicit.",
+      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, proves that an authorized stablecoin exception preserves the exact public/bound/statement/proof-binding policy metadata and rejects unauthorized or mismatched payload surfaces, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, adds a SmallWood public balance-boundary target that exposes native and stablecoin delta facts while rejecting noncanonical signed zero, adds a P3 AIR final-row balance target with public-field verifier mutation regressions, adds a SmallWood public-statement binding target that proves the public statement is exactly the P3 public-input vector plus circuit/crypto version suffix, adds a SmallWood transcript/profile binding target that proves the modeled transcript bytes include the domain, verifier profile material, serialized statement bytes, and eight-byte padding, packages accepted SmallWood wrapper/public-statement/transcript/auth/input/output/balance/AIR surfaces with the split deployed-verifier assumptions into one explicit no-theft and public-conservation verifier envelope, and now exports the public-statement binding and verifier envelope in one theorem carrying statement-byte equality, no-theft, public conservation, and non-native stablecoin exception consequences. It provides a compatibility theorem back to the monolithic assumption while keeping real STARK/FRI proof-system soundness explicit.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -762,7 +762,8 @@
         "Hegemon.Transaction.SmallWoodTranscriptBinding.accepted_smallwood_transcript_binding_implies_statement_boundary_facts",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_candidate_wrapper_exposes_admission_facts",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope",
-        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_verifier_envelope_exposes_no_theft_and_public_conservation"
+        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_verifier_envelope_exposes_no_theft_and_public_conservation",
+        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
@@ -778,7 +779,7 @@
         "`Hegemon.Transaction.AirBalanceBoundary` narrows the deployed P3 AIR target by modeling the final-row value-balance and stablecoin equations directly; `p3_air_balance_public_field_mutations_rejected` proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof.",
         "`Hegemon.Transaction.SmallWoodPublicStatementBinding` narrows the SmallWood verifier implementation-equivalence target by proving the modeled public statement values are exactly the P3 public-input vector followed by the circuit-version and crypto-suite suffix, and by carrying the serialized-statement boundary into the transcript surface. The generated-vector gate checks the production `smallwood_public_statement_values_for_p3` helper and the live SmallWood candidate profile surface for normal and stablecoin witnesses. This does not prove bincode serialization correctness, hash security, or SmallWood cryptographic soundness.",
         "`Hegemon.Transaction.SmallWoodTranscriptBinding` narrows the SmallWood verifier target by modeling the transcript/profile bytes over already serialized public statement bytes; the generated-vector gate checks the production transcript helper, version/profile material, arithmetization label, statement byte inclusion, and eight-byte padding. This does not prove bincode serialization correctness or SmallWood cryptographic soundness.",
-        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope` packages accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input row-boundary facts, active output row-boundary facts, SmallWood public balance facts, P3 AIR final-row balance facts, canonical deployed-verifier boundary facts, split spend-only boundary facts, split balance/public-field boundary facts, public authorized deltas, native delta authorization, and the exact remaining split deployed-verifier soundness assumptions into one reviewable verifier envelope. This narrows the AIR/FRI/Rust-refinement target but still does not prove STARK/FRI soundness or witness extraction."
+        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope` packages accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input row-boundary facts, active output row-boundary facts, SmallWood public balance facts, P3 AIR final-row balance facts, canonical deployed-verifier boundary facts, split spend-only boundary facts, split balance/public-field boundary facts, public authorized deltas, native delta authorization, and the exact remaining split deployed-verifier soundness assumptions into one reviewable verifier envelope. `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export` joins that envelope to the accepted public-statement binding surface and statement-byte equality, exposing no-theft, public conservation, and non-native stablecoin exception consequences at the same export boundary. This narrows the AIR/FRI/Rust-refinement target but still does not prove STARK/FRI soundness or witness extraction."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
@@ -1114,6 +1115,9 @@
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_randomness_and_local_network_metadata",
         "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_randomness_and_local_network_metadata",
         "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_randomness_and_local_network_metadata",
+        "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_randomness_and_all_local_metadata",
+        "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_randomness_and_all_local_metadata",
+        "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_randomness_and_all_local_metadata",
         "Hegemon.Privacy.Observer.same_allowed_leakage_stable_under_local_action_metadata",
         "Hegemon.Privacy.Observer.same_public_metadata_leakage_stable_under_local_action_metadata",
         "Hegemon.Privacy.Observer.same_batch_timing_leakage_stable_under_local_action_metadata",
@@ -1123,6 +1127,9 @@
         "Hegemon.Privacy.Observer.same_allowed_leakage_stable_under_local_network_metadata",
         "Hegemon.Privacy.Observer.same_public_metadata_leakage_stable_under_local_network_metadata",
         "Hegemon.Privacy.Observer.same_batch_timing_leakage_stable_under_local_network_metadata",
+        "Hegemon.Privacy.Observer.same_allowed_leakage_stable_under_all_local_metadata",
+        "Hegemon.Privacy.Observer.same_public_metadata_leakage_stable_under_all_local_metadata",
+        "Hegemon.Privacy.Observer.same_batch_timing_leakage_stable_under_all_local_metadata",
         "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
         "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
@@ -1143,6 +1150,7 @@
         "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq",
         "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_address_metadata",
         "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_network_metadata",
+        "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_all_local_metadata",
         "Hegemon.Privacy.NativeObserverSurface.valid_observer_chain_surface_bound_to_shape",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_bound_to_observer_surface",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts",
@@ -1226,6 +1234,8 @@
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_network_metadata_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_network_metadata_open_assumption_boundary_facts",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_all_local_metadata_boundary_facts",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_facts",
         "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary",
@@ -6062,12 +6072,20 @@
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_commitment_rows_bind_ordered_decoded_length",
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_content",
         "Hegemon.Native.CommitmentTreeContentRefinement.canonical_nullifier_rows_bind_ordered_decoded_length",
+        "Hegemon.Native.CommitmentTreeContentRefinement.checkedAddU64_eq_some_value",
+        "Hegemon.Native.CommitmentTreeContentRefinement.decodedRowsFollowLeafCursor_of_action_plan_accepts",
+        "Hegemon.Native.CommitmentTreeContentRefinement.decodedRowsFollowLeafCursor_of_row_action_plan_from_accepts",
+        "Hegemon.Native.CommitmentTreeContentRefinement.commitmentIndexesFrom_eq_rangePrime",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_eq_planned_replay_keys",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedBridgeReplayRows_length",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedCommitmentRows_indexes",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedCommitmentRows_values",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_length",
         "Hegemon.Native.CommitmentTreeContentRefinement.projectedNullifierRows_values",
+        "Hegemon.Native.CommitmentTreeContentRefinement.range_map_add_eq_rangePrime",
+        "Hegemon.Native.CommitmentTreeContentRefinement.orderedDecodedCommitmentIndexes_eq_rangePrime_of_cursor",
+        "Hegemon.Native.CommitmentTreeContentRefinement.rawIngressAppendSummaries_indexes_eq_rangePrime",
+        "Hegemon.Native.CommitmentTreeContentRefinement.rawIngressAppendSummaries_indexes_eq_orderedDecodedCommitmentIndexes_of_action_plan",
         "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_commitment_tree_content_binds_append_publication_surface",
         "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_commitment_tree_content",
         "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_replay_set_content",
@@ -6090,8 +6108,8 @@
         "The commitment-tree content refinement consumes the accepted raw-ingress field-projection evidence already checked by production regressions; its replay-set package now carries exact ordered nullifier rows and exact ordered planned bridge replay rows through the same raw witness. It does not prove arbitrary parser internals, replay-key hash security, nullifier cryptographic security, or Merkle hash implementation equivalence.",
         "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
         "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; the replay-set content slice is production-bound by a focused canonical-index rebuild regression that compares decoded nullifier rows, materialized/planned replay keys, rebuild-plan rows, and persisted sled markers.",
-        "The production append-transition certificate records the exact sibling orientation/default choices, parents, prior/result root-history tails, leaf index/value, and result root/count while sharing the same mutation body as the hot append path; Lean-generated append mutation vectors now check the modeled leaf-index/count, sibling-orientation, default-sibling, and history-retention rules against that production certificate and its real Merkle replay. The accepted raw-ingress append-publication theorem carries that append-summary/count surface with commitment-root and leaf-cursor publication over the same raw witness and now requires the executable action-plan row-start gate over decoded commitment starts/counts instead of a raw append-index equality hypothesis.",
-        "This slice does not prove commitment-tree hash security, complete Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, full production tree mutation equivalence, the pure flattened append-index equality theorem from accepted row-start plans, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
+        "The production append-transition certificate records the exact sibling orientation/default choices, parents, prior/result root-history tails, leaf index/value, and result root/count while sharing the same mutation body as the hot append path; Lean-generated append mutation vectors now check the modeled leaf-index/count, sibling-orientation, default-sibling, and history-retention rules against that production certificate and its real Merkle replay. The accepted raw-ingress append-publication theorem carries that append-summary/count surface with commitment-root and leaf-cursor publication over the same raw witness, derives the pure flattened append-index equality from the executable action-plan row-start gate over decoded commitment starts/counts, and exposes equality between append-summary leaf indexes, ordered decoded commitment indexes, and canonical commitment-row indexes.",
+        "This slice does not prove commitment-tree hash security, complete Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, full production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon.lean",
@@ -6120,7 +6138,7 @@
       "residual_risks": [
         {
           "id": "chain-level-commitment-tree-refinement-missing",
-          "description": "The theorem connects native action-stream planned starts, action-plan replay, accepted tree-transition publication, raw-ingress commitment rows, raw-ingress replay-set rows, and the accepted raw-ingress append-publication surface with action-plan row-start gating, but the pure flattened append-index equality theorem, full chain-level Merkle membership, cryptographic hash/security, arbitrary parser internals, storage durability below sled, and complete Rust/native-node refinement remain open.",
+          "description": "The theorem connects native action-stream planned starts, action-plan replay, accepted tree-transition publication, raw-ingress commitment rows, raw-ingress replay-set rows, and the accepted raw-ingress append-publication surface with derived append-summary/decoded/canonical index equality, but full chain-level Merkle membership, cryptographic hash/security, arbitrary parser internals, storage durability below sled, and complete Rust/native-node refinement remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

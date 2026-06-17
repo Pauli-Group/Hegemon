@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 89.1,
+  "overall_completion_percent": 90.2,
   "last_full_formal_core": {
-    "date": "2026-06-17T19:12:29Z",
-    "commit": "01d4fdb8",
-    "status": "passed locally after binding verified inbound bridge receipt handoff to the production bridge mint/replay policy with replay-state propagation and disabled mint authorization",
+    "date": "2026-06-17T21:05:48Z",
+    "commit": "d9fe6d68+worktree",
+    "status": "passed locally for the 90.2% theorem milestone: commitment append-index equality from accepted row-start plans, combined local metadata privacy resampling, and SmallWood public-statement verifier export",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1978,
-    "axiom_free_theorems": 892,
-    "axiom_dependent_theorems": 1086,
+    "named_lean_theorems": 2005,
+    "axiom_free_theorems": 905,
+    "axiom_dependent_theorems": 1100,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 493,
-    "falsification_cases": 532,
+    "falsification_cases": 536,
     "implementation_bindings": 218,
     "implementation_result_obligations": 169,
     "implementation_order_constraints": 144,
@@ -70,27 +70,26 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the commitment-tree append mutation theorem/vector slice. Lean now proves append-summary facts for leaf-index/count progression, trace length, sibling orientation/default selection, bounded history retention, and zero-limit unbounded history; generated vectors check those facts against production CommitmentTreeState::append_with_certificate and real Merkle replay.",
+    "summary": "Added a three-part proof milestone: accepted row-start plans now derive flattened append-summary/decoded/canonical commitment-index equality; ciphertext privacy games now carry combined local action/address/network metadata resampling through the open-assumption boundary; and SmallWood public-statement binding is exported together with the verifier envelope, no-theft, public-conservation, and non-native stablecoin exception consequences.",
     "lean_modules": [
-      "formal/lean/Hegemon/Consensus/CommitmentTreeAppend.lean",
-      "formal/lean/Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean"
+      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean",
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Consensus.CommitmentTreeAppend.append_summary_leaf_index_eq_prior",
-      "Hegemon.Consensus.CommitmentTreeAppend.append_summary_result_count_eq_prior_plus_one",
-      "Hegemon.Consensus.CommitmentTreeAppend.append_trace_length",
-      "Hegemon.Consensus.CommitmentTreeAppend.first_append_all_right_default_depth4",
-      "Hegemon.Consensus.CommitmentTreeAppend.second_append_starts_left_depth4",
-      "Hegemon.Consensus.CommitmentTreeAppend.bounded_history_len_after_four_appends",
-      "Hegemon.Consensus.CommitmentTreeAppend.zero_history_limit_is_unbounded_after_one_append"
+      "Hegemon.Native.CommitmentTreeContentRefinement.rawIngressAppendSummaries_indexes_eq_orderedDecodedCommitmentIndexes_of_action_plan",
+      "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_commitment_tree_content_binds_append_publication_surface",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_facts",
+      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Consensus.CommitmentTreeAppend passed locally; lake exe gen_commitment_tree_append_vectors emitted valid JSON.",
-      "targeted_rust": "HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=<generated-json> cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture passed locally.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the new commitment-tree append theorem names, generated vector producer, production certificate gate, and formal-core gate."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon.Privacy.CiphertextPrivacy Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope Hegemon passed locally.",
+      "targeted_rust": "No shipped runtime code changed in this theorem-only milestone.",
+      "claims_blueprint": "formal-security-claims.json, formal-security-blueprint.json, METHODS.md, formal/lean/README.md, and this matrix bind the new theorem names and residual limits."
     },
     "known_limitations": [
-      "The append slice proves and vector-checks mutation control flow and production certificate replay, but the certificate facts are not yet fed into accepted raw-ingress commitment-root publication facts. Arbitrary parser internals, complete Merkle/hash implementation equivalence, storage assumptions, and complete native-node refinement remain explicit."
+      "The milestone does not prove arbitrary raw-byte parser internals, complete Merkle/hash implementation equivalence, simulator zero knowledge, ML-KEM/AEAD security, STARK/FRI/PCS soundness, witness extraction, storage assumptions, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
@@ -270,7 +269,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 87,
+      "completion_percent": 92,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -296,12 +295,12 @@
         "formal/lean/Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean emits append mutation vectors checked by `lean_generated_commitment_tree_append_vectors_match_production` against the production append certificate and real Merkle combiner replay",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now derives an accepted raw-ingress append-publication fact package that carries append mutation summary counts, accepted action-plan row-start gating over decoded commitment starts/counts, commitment-root publication, and replayed leaf-cursor publication over the same raw witness",
+        "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves accepted action-plan row-start gating forces a leaf cursor over decoded rows, proves flattened decoded commitment indexes equal the corresponding contiguous range, proves append-summary leaf indexes equal that range, and exposes append-summary/decoded/canonical commitment-row index equality through the accepted raw-ingress append-publication facts",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered commitment values and planned indexes through the full native publication path-family theorem",
         "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness",
         "SmallWood spend row-boundary gates now reject active Merkle sibling/root drift while Lean exposes active Merkle-root, position, and path-acceptance facts for the deployed inline-Merkle verifier surface"
       ],
       "missing_work": [
-        "Prove the pure flattened append-index equality theorem from accepted action-plan row-start gating and lift it into consumers that require literal index-list equality.",
         "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
         "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],
@@ -431,7 +430,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 89.2,
+      "completion_percent": 94,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -488,10 +487,11 @@
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims.",
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now defines `CanonicalProofSystemNoTheftBoundaryFacts` and proves split deployed soundness assumptions imply the packaged no-theft/public-conservation boundary plus live-policy-authorized stablecoin exception surface",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now composes accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link, input/output row boundaries, SmallWood balance facts, P3 AIR final-row facts, canonical deployed-verifier facts, and `CanonicalProofSystemNoTheftBoundaryFacts` into one verifier-surface envelope",
-        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean and its generated-vector Rust gate narrow the SmallWood verifier implementation-equivalence target by binding the public statement vector used before transcript/profile and backend verification"
+        "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean and its generated-vector Rust gate narrow the SmallWood verifier implementation-equivalence target by binding the public statement vector used before transcript/profile and backend verification",
+        "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean now exports `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export`, joining accepted public-statement binding and statement-byte equality with the SmallWood verifier envelope while carrying no-theft, public conservation, and non-native stablecoin exception consequences"
       ],
       "missing_work": [
-        "Mechanize the transaction AIR relation or discharge the auditable abstraction captured by the SmallWood verifier envelope and public-statement binding; current theorems keep proof-system soundness explicit.",
+        "Mechanize the transaction AIR relation behind the exported SmallWood public-statement verifier envelope; current theorems keep proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
         "Continue extending remaining proof-wrapper metadata and proof-artifact admission coverage until every production entry point is bound to the canonical statement surface."
@@ -501,7 +501,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 76.5,
+      "completion_percent": 80.5,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -535,6 +535,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now models local address metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed wallet address-cursor fields",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now carries local action metadata through the secret-resampling boundary so public metadata and explicit batch/timing leakage remain stable under independent private-witness, prover-randomness, and local-metadata resampling",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local action and local address metadata resampling preserve the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and network assumptions explicit",
+        "formal/lean/Hegemon/Privacy/Observer.lean and CiphertextPrivacy.lean now prove combined private-witness/prover-randomness/local action/address/network metadata resampling preserves observer, public metadata, batch/timing, valid observer-chain, and open-assumption privacy-game boundaries in one theorem family",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability`, a no-new-assumptions reduction from modeled unlinkability to equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise",
         "wallet/src/notes.rs `reencryption_preserves_public_ciphertext_summary_shape` regression checks same-plaintext same-recipient re-encryption changes raw chain/DA wires while preserving the Lean-modeled public ciphertext summary shape after chain and DA parsing",
@@ -566,7 +567,7 @@
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet output-batch public-shape/change-diversifier policy, wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered combined local action/address/network metadata projection, wallet output-batch public-shape/change-diversifier policy, wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
