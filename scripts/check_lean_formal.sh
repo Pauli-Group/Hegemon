@@ -169,6 +169,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateResourceBudgetAdmissionVectors.lean
   lake env lean Hegemon/Resource/BoundedRequestAdmission.lean
   lake env lean Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean
+  lake env lean Hegemon/Network/QueueResourceAdmission.lean
+  lake env lean Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean
   lake env lean Hegemon/Native/RpcAdmission.lean
   lake env lean Hegemon/Native/GenerateRpcAdmissionVectors.lean
   lake env lean Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean

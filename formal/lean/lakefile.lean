@@ -256,6 +256,9 @@ lean_exe gen_pq_noise_vectors where
 lean_exe gen_frame_resource_admission_vectors where
   root := `Hegemon.Network.GenerateFrameResourceAdmissionVectors
 
+lean_exe gen_queue_resource_admission_vectors where
+  root := `Hegemon.Network.GenerateQueueResourceAdmissionVectors
+
 lean_exe gen_note_ciphertext_wire_vectors where
   root := `Hegemon.Wallet.GenerateNoteCiphertextWireVectors
 

@@ -519,6 +519,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean",
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
         "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+        "formal/lean/Hegemon/Network/QueueResourceAdmission.lean",
+        "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean",
         "formal/lean/Hegemon/Release/GenerateCiReleaseGateVectors.lean",
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",

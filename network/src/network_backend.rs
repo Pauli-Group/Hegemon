@@ -1829,4 +1829,237 @@ mod tests {
         assert!(matches!(second, PqNetworkEvent::MessageReceived { .. }));
         assert_eq!(queued_event_bytes.load(Ordering::Acquire), 0);
     }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueResourceVectorFile {
+        schema_version: u32,
+        constants: Vec<LeanQueueResourceConstant>,
+        reserve_cases: Vec<LeanQueueReserveCase>,
+        send_cases: Vec<LeanQueueSendCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueResourceConstant {
+        kind: String,
+        max_queued_bytes: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueReserveCase {
+        name: String,
+        current_queued_bytes: usize,
+        max_queued_bytes: usize,
+        message_bytes: usize,
+        usize_max: usize,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_queued_after: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueSendCase {
+        name: String,
+        current_queued_bytes: usize,
+        max_queued_bytes: usize,
+        message_bytes: usize,
+        usize_max: usize,
+        send_outcome: String,
+        expected_valid: bool,
+        expected_reject: serde_json::Value,
+        expected_queued_after: usize,
+    }
+
+    fn lean_queue_kind_max(kind: &str) -> Option<usize> {
+        match kind {
+            "peer_send" => Some(PEER_SEND_QUEUE_MAX_QUEUED_BYTES),
+            "message_event" => Some(EVENT_CHANNEL_MAX_QUEUED_BYTES),
+            _ => None,
+        }
+    }
+
+    fn lean_reserve_reject_to_error(reject: Option<&str>) -> Option<&'static str> {
+        match reject {
+            None => None,
+            Some("message_exceeds_byte_budget") => Some("message exceeds byte budget"),
+            Some("queue_byte_counter_overflow") => Some("queue byte counter overflow"),
+            Some("queue_byte_budget_exceeded") => Some("queue byte budget exceeded"),
+            Some(other) => panic!("unknown Lean queue reserve rejection {other}"),
+        }
+    }
+
+    fn lean_send_reject_to_error(reject: &serde_json::Value) -> Option<&'static str> {
+        if reject.is_null() {
+            return None;
+        }
+        if let Some(label) = reject.as_str() {
+            return match label {
+                "queue_full" => Some("queue is full"),
+                "queue_closed" => Some("queue is closed"),
+                other => panic!("unknown Lean queue send rejection {other}"),
+            };
+        }
+        if let Some(inner) = reject
+            .as_object()
+            .and_then(|object| object.get("reserve_rejected"))
+            .and_then(|value| value.as_str())
+        {
+            return lean_reserve_reject_to_error(Some(inner));
+        }
+        panic!("malformed Lean queue send rejection {reject}");
+    }
+
+    fn assert_lean_reserve_case_matches_production(case: &LeanQueueReserveCase) {
+        assert_eq!(
+            case.usize_max,
+            usize::MAX,
+            "{} must be generated for this target width",
+            case.name
+        );
+        let queued = AtomicUsize::new(case.current_queued_bytes);
+        let result = try_reserve_queue_bytes(&queued, case.max_queued_bytes, case.message_bytes);
+        let expected_error = lean_reserve_reject_to_error(case.expected_reject.as_deref());
+        assert_eq!(result.is_ok(), case.expected_valid, "{}", case.name);
+        match (result, expected_error) {
+            (Ok(()), None) => {}
+            (Err(actual), Some(expected)) => assert_eq!(actual, expected, "{}", case.name),
+            (Ok(()), Some(expected)) => {
+                panic!("{} accepted but Lean expected {expected}", case.name)
+            }
+            (Err(actual), None) => {
+                panic!(
+                    "{} rejected with {actual} but Lean expected accept",
+                    case.name
+                )
+            }
+        }
+        assert_eq!(
+            queued.load(Ordering::Acquire),
+            case.expected_queued_after,
+            "{}",
+            case.name
+        );
+    }
+
+    fn assert_lean_send_case_matches_production(case: &LeanQueueSendCase) {
+        assert_eq!(
+            case.usize_max,
+            usize::MAX,
+            "{} must be generated for this target width",
+            case.name
+        );
+        let queued = AtomicUsize::new(case.current_queued_bytes);
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
+        match case.send_outcome.as_str() {
+            "accepted" => {
+                let _rx = rx;
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            "full" => {
+                tx.try_send(Vec::new()).expect("prefill send queue");
+                let _rx = rx;
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            "closed" => {
+                drop(rx);
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            other => panic!("unknown Lean send outcome {other} in {}", case.name),
+        }
+    }
+
+    fn assert_lean_send_result(
+        case: &LeanQueueSendCase,
+        result: Result<(), &'static str>,
+        queued: &AtomicUsize,
+    ) {
+        let expected_error = lean_send_reject_to_error(&case.expected_reject);
+        assert_eq!(result.is_ok(), case.expected_valid, "{}", case.name);
+        match (result, expected_error) {
+            (Ok(()), None) => {}
+            (Err(actual), Some(expected)) => assert_eq!(actual, expected, "{}", case.name),
+            (Ok(()), Some(expected)) => {
+                panic!("{} accepted but Lean expected {expected}", case.name)
+            }
+            (Err(actual), None) => {
+                panic!(
+                    "{} rejected with {actual} but Lean expected accept",
+                    case.name
+                )
+            }
+        }
+        assert_eq!(
+            queued.load(Ordering::Acquire),
+            case.expected_queued_after,
+            "{}",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_queue_resource_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS") else {
+            eprintln!("skipping Lean queue-resource vectors; env var not set");
+            return;
+        };
+        let contents = std::fs::read_to_string(path).expect("read Lean queue-resource vectors");
+        let vectors: LeanQueueResourceVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean queue-resource vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for constant in &vectors.constants {
+            let expected = lean_queue_kind_max(&constant.kind)
+                .unwrap_or_else(|| panic!("unknown Lean queue kind {}", constant.kind));
+            assert_eq!(
+                constant.max_queued_bytes, expected,
+                "{} queue byte cap drifted from Lean",
+                constant.kind
+            );
+        }
+
+        for case in &vectors.reserve_cases {
+            assert_lean_reserve_case_matches_production(case);
+        }
+
+        for case in &vectors.send_cases {
+            assert_lean_send_case_matches_production(case);
+        }
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let queued_event_bytes = AtomicUsize::new(0);
+        let protocol = "/hegemon/test";
+        let payload = [1u8, 2, 3, 4, 5];
+        try_send_message_event(
+            &tx,
+            &queued_event_bytes,
+            [0x42; 32],
+            Cow::Borrowed(protocol),
+            &payload,
+        )
+        .expect("message event enqueue should pass");
+        let reserved = protocol.len() + payload.len();
+        assert_eq!(queued_event_bytes.load(Ordering::Acquire), reserved);
+        let event = rx.try_recv().expect("queued message event");
+        assert_eq!(event.queued_bytes(), reserved);
+    }
 }

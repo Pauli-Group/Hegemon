@@ -10598,8 +10598,8 @@
       "id": "network.frame-resource-admission",
       "claim_id": "network.frame-resource-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean frame-resource predicates, accepted network and PQ frame decoding occurs exactly when the encoded byte length is within the configured production cap, the codec marker matches the frame family, postcard decoding succeeds for postcard-encoded frames, and the postcard decoder consumes all bytes. Encode admission occurs exactly when the four-byte marker plus body length is within the configured cap. Oversize frames reject before marker or parser work, missing markers reject before postcard work, postcard failures reject before trailing-byte acceptance, and trailing bytes reject. The PQ session plaintext cap plus AEAD tag equals the session ciphertext cap.",
-      "informal_argument": "`Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff` and companion rejection theorems prove the executable admission table and rejection precedence. `accepted_frame_decode_exposes_facts` packages the bound, marker, postcard, and no-trailing-byte facts exposed by accepted inputs. `evaluate_frame_encode_accepts_iff` and `accepted_frame_encode_within_bound` prove outbound marker-plus-body size admission. Marker length and domain-separation theorems pin the HNW/PNH/PNS/PNT byte markers, while the PQ plaintext-plus-tag theorem connects postcard session plaintext admission to the encrypted frame cap. `gen_frame_resource_admission_vectors` emits Lean-derived constants and acceptance/rejection cases; formal-core checks those vectors against production `network::wire` and `pq-noise::codec` constants and representative encode/decode paths.",
+      "formal_statement": "For the executable Lean network resource predicates, accepted network and PQ frame decoding occurs exactly when the encoded byte length is within the configured production cap, the codec marker matches the frame family, postcard decoding succeeds for postcard-encoded frames, and the postcard decoder consumes all bytes. Encode admission occurs exactly when the four-byte marker plus body length is within the configured cap. Oversize frames reject before marker or parser work, missing markers reject before postcard work, postcard failures reject before trailing-byte acceptance, and trailing bytes reject. The PQ session plaintext cap plus AEAD tag equals the session ciphertext cap. Peer-send and event-channel queue reserve/send admission accepts exactly when the message bytes fit the queue cap, queued-byte addition does not overflow usize, and aggregate queued bytes stay within the configured queue cap; failed full/closed sends roll queued bytes back, and reserve rejection takes precedence over channel state.",
+      "informal_argument": "`Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff` and companion rejection theorems prove the executable frame admission table and rejection precedence. `accepted_frame_decode_exposes_facts` packages the bound, marker, postcard, and no-trailing-byte facts exposed by accepted inputs. `evaluate_frame_encode_accepts_iff` and `accepted_frame_encode_within_bound` prove outbound marker-plus-body size admission. Marker length and domain-separation theorems pin the HNW/PNH/PNS/PNT byte markers, while the PQ plaintext-plus-tag theorem connects postcard session plaintext admission to the encrypted frame cap. `Hegemon.Network.QueueResourceAdmission.queue_reserve_accepts_iff`, `accepted_queue_reserve_exposes_facts`, `accepted_bounded_send_exposes_facts`, and rollback/precedence theorems prove the executable queue byte-budget table for reserve, accepted send, queue-full, and queue-closed outcomes. `gen_frame_resource_admission_vectors` and `gen_queue_resource_admission_vectors` emit Lean-derived constants and acceptance/rejection cases; formal-core checks those vectors against production `network::wire`, `pq-noise::codec`, and `network_backend` queue accounting constants and helper behavior.",
       "depends_on": [
         "network.secure-channel-key-schedule",
         "network.pq-noise-key-schedule",
@@ -10608,14 +10608,20 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
         "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+        "formal/lean/Hegemon/Network/QueueResourceAdmission.lean",
+        "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean",
         "network/src/wire.rs",
+        "network/src/network_backend.rs",
         "pq-noise/src/codec.rs",
         "scripts/check_formal_core.sh"
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean",
         "formal/lean/Hegemon/Network/GenerateFrameResourceAdmissionVectors.lean",
+        "formal/lean/Hegemon/Network/QueueResourceAdmission.lean",
+        "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean",
         "network/src/wire.rs",
+        "network/src/network_backend.rs",
         "pq-noise/src/codec.rs",
         "formal/lean/README.md",
         "scripts/check_formal_core.sh",
@@ -10625,7 +10631,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-16",
-        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for network/PQ frame caps, marker-domain admission, postcard success, and no-trailing-byte rejection. Scope is admission and codec-resource behavior, not parser implementation soundness, primitive crypto, or full transport/session liveness."
+        "notes": "Accepted as Lean theorem evidence plus generated Rust conformance vectors for network/PQ frame caps, marker-domain admission, postcard success, no-trailing-byte rejection, and bounded peer/event queue accounting. Scope is admission, codec-resource behavior, and queue byte-budget accounting, not parser implementation soundness, primitive crypto, scheduler fairness, or full transport/session liveness."
       },
       "falsification_cases": [
         {
@@ -10644,12 +10650,17 @@
           "gate": "HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_frame_resource_admission_vectors_match_production -- --nocapture"
         },
         {
+          "id": "network-queue-resource-conformance",
+          "description": "Changing production peer-send or event-channel queue byte caps, reserve overflow/over-budget precedence, accepted-send queued-byte increments, full/closed rollback behavior, or reserve-before-channel-state behavior away from the Lean executable table must fail the generated-vector conformance test.",
+          "gate": "HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture"
+        },
+        {
           "id": "formal-core-frame-resource-gate",
-          "description": "The release formal-core wrapper must generate frame-resource vectors and run both production conformance tests.",
+          "description": "The release formal-core wrapper must generate frame-resource and queue-resource vectors and run all production conformance tests.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks bounded frame admission, marker-domain separation, postcard-decode success, no-trailing-byte rejection, outbound marker-plus-body bounds, and PQ plaintext/tag cap accounting for the network and PQ Noise frame codecs. It does not prove postcard implementation correctness, SHA/HKDF/AEAD/ML-KEM/ML-DSA security, tokio length-delimited transport correctness, network liveness, peer honesty, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks bounded frame admission, marker-domain separation, postcard-decode success, no-trailing-byte rejection, outbound marker-plus-body bounds, PQ plaintext/tag cap accounting, and peer/event queue byte-budget reserve/send/rollback accounting for the network and PQ Noise surfaces. It does not prove postcard implementation correctness, SHA/HKDF/AEAD/ML-KEM/ML-DSA security, tokio length-delimited transport correctness, scheduler fairness, network liveness, peer honesty, or complete native-node equivalence."
     }
   ]
 }

@@ -109,6 +109,7 @@ LEAN_SYNC_ADMISSION_VECTORS="$(mktemp)"
 LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$(mktemp)"
 LEAN_PQ_NOISE_VECTORS="$(mktemp)"
 LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$(mktemp)"
+LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS="$(mktemp)"
 LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS="$(mktemp)"
 LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$(mktemp)"
 LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$(mktemp)"
@@ -209,6 +210,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_network_secure_channel_vectors > "$LEAN_NETWORK_SECURE_CHANNEL_VECTORS"
   lake exe gen_pq_noise_vectors > "$LEAN_PQ_NOISE_VECTORS"
   lake exe gen_frame_resource_admission_vectors > "$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS"
+  lake exe gen_queue_resource_admission_vectors > "$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS"
   lake exe gen_note_ciphertext_wire_vectors > "$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS"
   lake exe gen_native_tx_leaf_artifact_vectors > "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS"
   lake exe gen_native_receipt_root_vectors > "$LEAN_NATIVE_RECEIPT_ROOT_VECTORS"
@@ -474,6 +476,8 @@ HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
   cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture
 HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p network lean_generated_frame_resource_admission_vectors_match_production -- --nocapture
+HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS="$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS" \
+  cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p pq-noise lean_generated_frame_resource_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS="$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS" \

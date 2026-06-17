@@ -111,6 +111,7 @@ import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.PqNoiseHandshakeChannel
 import Hegemon.Network.FrameResourceAdmission
+import Hegemon.Network.QueueResourceAdmission
 import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
