@@ -7,7 +7,7 @@
   "overall_completion_percent": 88.77,
   "last_full_formal_core": {
     "date": "2026-06-17T17:56:20Z",
-    "commit": "pre-commit-working-tree",
+    "commit": "87db8203",
     "status": "passed locally after hardening release CI gate acceptance and binding wallet output-batch privacy vectors to cursor-independent change-output public metadata",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
@@ -34,24 +34,24 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-17T14:08:02Z",
-    "commit": "362dbecf",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, full remote formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP; no rebuild/restart was needed because shipped runtime code was unchanged",
+    "date": "2026-06-17T18:26:34Z",
+    "commit": "87db8203",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, full remote formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP; no live-node rebuild/restart was needed because the shipped node runtime path was unchanged",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 020f3dff to codex/superneo-formal-verification at 362dbecf",
-      "did not rebuild target/release/hegemon-node or restart hegemon-node.service because this slice changed only Lean/formal metadata/docs/scripts",
-      "remote bash scripts/check_formal_core.sh passed with 118 claims, 1952 named Lean theorem declarations, 887 axiom-free theorem declarations, 1065 allowed-kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 492 blueprint edges, 528 falsification cases, 216 implementation bindings, 169 result obligations, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, 129 full-claim order constraints, 2412 full-claim theorem refs, and 11/11 native backend vectors",
-      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16536",
-      "bash scripts/test-node.sh wallet-send passed",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from dd9751b9 to codex/superneo-formal-verification at 87db8203",
+      "did not rebuild target/release/hegemon-node or restart hegemon-node.service because this slice changed wallet transaction construction, Lean/formal metadata/docs/scripts, and release tooling, not the shipped node service path",
+      "remote bash scripts/check_formal_core.sh passed with 118 claims, 1978 named Lean theorem declarations, 892 axiom-free theorem declarations, 1086 allowed-kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 493 blueprint edges, 531 falsification cases, 216 implementation bindings, 169 result obligations, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, 129 full-claim order constraints, 2412 full-claim theorem refs, and 11/11 native backend vectors",
+      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16853",
+      "bash scripts/test-node.sh wallet-send passed through submit_action_stages_and_imports_shielded_transfer",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
-      "hegemon_consensusStatus stayed at height 16536 during a 25-second high-difficulty live mining sample, syncing=false, peers=0",
-      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=299, and hash rate near 17.28 kH/s",
-      "HEGEMON_TEST_NODE_A_BASE=/tmp/hegemon-native-formal-admission-a HEGEMON_TEST_NODE_A_RPC=19958 HEGEMON_TEST_NODE_A_P2P=31458 HEGEMON_TEST_TIMEOUT_SECS=120 bash scripts/test-node.sh single-node passed by mining isolated height 2",
+      "hegemon_consensusStatus stayed at height 16853 during a 25-second high-difficulty live mining sample, syncing=false, peers=0",
+      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=279, and hash rate near 16.5 kH/s before and after the live sample",
+      "HEGEMON_TEST_NODE_A_BASE=/tmp/hegemon-native-formal-wallet-a HEGEMON_TEST_NODE_A_RPC=19960 HEGEMON_TEST_NODE_A_P2P=31460 HEGEMON_TEST_TIMEOUT_SECS=180 bash scripts/test-node.sh single-node passed by mining isolated height 1",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at 362dbecf with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "remote branch status was codex/superneo-formal-verification at 87db8203 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
-    "runtime_note": "The live node was not rebuilt or restarted because this slice changed only Lean/formal metadata/docs/scripts. Remote full formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP checks passed.",
+    "runtime_note": "The live node was not rebuilt or restarted because this slice did not change the shipped node service path. Remote full formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP checks passed.",
     "known_limitations": [
       "The 25-second live high-difficulty mining sample did not find a block, so block production was validated with an isolated dev miner instead.",
       "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync was not re-exercised in this no-runtime formal slice.",
