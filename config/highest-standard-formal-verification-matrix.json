@@ -34,23 +34,22 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-17T19:40:05Z",
-    "commit": "dfea67b1",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild/restart, smoke, wallet-send, live mining advancement, service health, and NTP",
+    "date": "2026-06-17T19:59:06Z",
+    "commit": "047b213a",
+    "status": "passed after metadata/formal fast-forward to codex/superneo-formal-verification, targeted remote append-vector gate, service health, RPC, mining status, and NTP; no rebuild/restart required",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 01d4fdb8 to codex/superneo-formal-verification at dfea67b1",
-      "rebuilt target/release/hegemon-node with make node and restarted hegemon-node.service because consensus commitment-tree code changed",
-      "RPC became ready after about 56 seconds; hegemon-node.service stayed active with NRestarts=0",
-      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 17015",
-      "bash scripts/test-node.sh wallet-send passed through submit_action_stages_and_imports_shielded_transfer",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 5d465cf8 to codex/superneo-formal-verification at 047b213a",
+      "did not rebuild target/release/hegemon-node or restart hegemon-node.service because this slice changes Lean, formal metadata, scripts, docs, and cfg(test) consensus conformance code only",
+      "remote Lean-generated commitment-tree append vector JSON validation passed",
+      "remote HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=<generated-json> cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture passed",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
-      "live mining advanced from height 17034 to 17043 in a 25-second sample",
-      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=34, and about 10.8 kH/s in the final sample",
+      "hegemon_consensusStatus reported height 17158 with syncing=false",
+      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=149, and about 15.4 kH/s",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at dfea67b1 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "remote branch status was codex/superneo-formal-verification at 047b213a with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
-    "runtime_note": "The live node was rebuilt and restarted because this slice changed the consensus crate used by the shipped node. Smoke, wallet-send, live mining advancement, service health, and NTP checks passed.",
+    "runtime_note": "The live node was not rebuilt or restarted because this slice did not change shipped runtime code. The targeted remote append-vector gate, RPC health, mining status, service health, and NTP checks passed.",
     "known_limitations": [
       "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync was not re-exercised during this targeted runtime validation.",
       "Hash/crypto/proof-system assumptions, simulator zero knowledge, advisory database and scanner completeness, complete parser implementation proofs, and complete native-node equivalence remain explicit residuals."
