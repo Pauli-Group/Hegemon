@@ -13510,6 +13510,45 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanPendingActionScaleWireVectorFile {
+        schema_version: u32,
+        pending_action_scale_wire_cases: Vec<LeanPendingActionScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingActionScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        tx_hash_bytes: usize,
+        binding_bytes: usize,
+        family_id_bytes: usize,
+        action_id_bytes: usize,
+        anchor_bytes: usize,
+        nullifier_count: usize,
+        nullifier_element_bytes: usize,
+        commitment_count: usize,
+        commitment_element_bytes: usize,
+        ciphertext_hash_count: usize,
+        ciphertext_hash_element_bytes: usize,
+        ciphertext_size_count: usize,
+        ciphertext_size_element_bytes: usize,
+        public_args_bytes: usize,
+        compact_prefixes_canonical: bool,
+        fee_bytes: usize,
+        candidate_option_tag_bytes: usize,
+        candidate_artifact_none: bool,
+        received_ms_bytes: usize,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanStorageDurabilityAdmissionVectorFile {
         schema_version: u32,
         storage_durability_admission_cases: Vec<LeanStorageDurabilityAdmissionCase>,
@@ -18974,6 +19013,170 @@ mod tests {
             "{} native block-action decode rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_pending_action_scale_wire_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean pending-action SCALE wire vectors");
+        let vectors: LeanPendingActionScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean pending-action SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.pending_action_scale_wire_cases.is_empty(),
+            "Lean pending-action SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.pending_action_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_pending_action_scale_wire_case(case);
+        }
+    }
+
+    fn expected_pending_action_no_candidate_len(case: &LeanPendingActionScaleWireCase) -> usize {
+        32 + 4
+            + 2
+            + 2
+            + 48
+            + (1 + 48 * case.nullifier_count)
+            + (1 + 48 * case.commitment_count)
+            + (1 + 48 * case.ciphertext_hash_count)
+            + (1 + 4 * case.ciphertext_size_count)
+            + (1 + case.public_args_bytes)
+            + 8
+            + 1
+            + 8
+    }
+
+    fn decode_lean_hex(raw_hex: &str) -> Vec<u8> {
+        let clean = raw_hex.strip_prefix("0x").unwrap_or(raw_hex);
+        hex::decode(clean).expect("Lean vector raw_hex must be valid hex")
+    }
+
+    fn expected_pending_action_scale_wire_fixture(
+        case: &LeanPendingActionScaleWireCase,
+    ) -> PendingAction {
+        match case.fixture.as_str() {
+            "valid_empty_no_candidate" => PendingAction {
+                tx_hash: [0u8; 32],
+                binding: KernelVersionBinding {
+                    circuit: 0,
+                    crypto: 0,
+                },
+                family_id: 0,
+                action_id: 0,
+                anchor: [0u8; 48],
+                nullifiers: Vec::new(),
+                commitments: Vec::new(),
+                ciphertext_hashes: Vec::new(),
+                ciphertext_sizes: Vec::new(),
+                public_args: Vec::new(),
+                fee: 0,
+                candidate_artifact: None,
+                received_ms: 0,
+            },
+            "valid_one_each_no_candidate" => PendingAction {
+                tx_hash: [9u8; 32],
+                binding: KernelVersionBinding {
+                    circuit: 7,
+                    crypto: 8,
+                },
+                family_id: 10,
+                action_id: 11,
+                anchor: [12u8; 48],
+                nullifiers: vec![[1u8; 48]],
+                commitments: vec![[2u8; 48]],
+                ciphertext_hashes: vec![[3u8; 48]],
+                ciphertext_sizes: vec![4],
+                public_args: vec![0xaa, 0xbb, 0xcc],
+                fee: 5,
+                candidate_artifact: None,
+                received_ms: 6,
+            },
+            other => panic!("no valid PendingAction fixture for {other}"),
+        }
+    }
+
+    fn verify_lean_pending_action_scale_wire_case(case: &LeanPendingActionScaleWireCase) {
+        let fixed_fields_ok = case.tx_hash_bytes == 32
+            && case.binding_bytes == 4
+            && case.family_id_bytes == 2
+            && case.action_id_bytes == 2
+            && case.anchor_bytes == 48
+            && case.fee_bytes == 8
+            && case.candidate_option_tag_bytes == 1
+            && case.received_ms_bytes == 8;
+        let vector_elements_ok = case.nullifier_element_bytes == 48
+            && case.commitment_element_bytes == 48
+            && case.ciphertext_hash_element_bytes == 48
+            && case.ciphertext_size_element_bytes == 4;
+        let expected_len = expected_pending_action_no_candidate_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && vector_elements_ok
+            && case.candidate_artifact_none
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.compact_prefixes_canonical
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean pending-action SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_pending_action_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production PendingAction::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<PendingAction>(&raw, "Lean pending action SCALE wire");
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production PendingAction exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production PendingAction exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(action) = actual {
+            assert_eq!(action.nullifiers.len(), case.nullifier_count);
+            assert_eq!(action.commitments.len(), case.commitment_count);
+            assert_eq!(action.ciphertext_hashes.len(), case.ciphertext_hash_count);
+            assert_eq!(action.ciphertext_sizes.len(), case.ciphertext_size_count);
+            assert_eq!(action.public_args.len(), case.public_args_bytes);
+            assert_eq!(
+                action.candidate_artifact.is_none(),
+                case.candidate_artifact_none
+            );
+            assert_eq!(action.encode().len(), case.total_bytes);
+        }
     }
 
     #[test]

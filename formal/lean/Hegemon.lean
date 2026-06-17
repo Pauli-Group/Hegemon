@@ -79,6 +79,7 @@ import Hegemon.Native.RpcAdmission
 import Hegemon.Native.DaSidecarReplayBinding
 import Hegemon.Native.RawIngressSidecarReplayRecoverability
 import Hegemon.Native.CanonicalPublicationRefinement
+import Hegemon.Native.PendingActionScaleWire
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement

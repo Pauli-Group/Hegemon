@@ -193,6 +193,9 @@ lean_exe gen_canonical_reorg_chain_admission_vectors where
 lean_exe gen_codec_admission_vectors where
   root := `Hegemon.Native.GenerateCodecAdmissionVectors
 
+lean_exe gen_pending_action_scale_wire_vectors where
+  root := `Hegemon.Native.GeneratePendingActionScaleWireVectors
+
 lean_exe gen_coinbase_accounting_admission_vectors where
   root := `Hegemon.Native.GenerateCoinbaseAccountingAdmissionVectors
 
