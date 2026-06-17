@@ -439,10 +439,216 @@ mod tests {
         note::MerklePath,
     };
 
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCommitmentTreeAppendVectorFile {
+        schema_version: u32,
+        append_cases: Vec<LeanCommitmentTreeAppendCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCommitmentTreeAppendCase {
+        name: String,
+        tree_depth: usize,
+        history_limit: usize,
+        initial_leaf_seeds: Vec<u64>,
+        append_leaf_seeds: Vec<u64>,
+        expected_appends: Vec<LeanCommitmentTreeAppendExpectation>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCommitmentTreeAppendExpectation {
+        leaf_seed: u64,
+        prior_leaf_count: u64,
+        leaf_index: u64,
+        result_leaf_count: u64,
+        prior_root_history_len: usize,
+        root_history_len: usize,
+        trace: Vec<LeanCommitmentTreeAppendTraceStep>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCommitmentTreeAppendTraceStep {
+        level: usize,
+        position: u64,
+        sibling_side: String,
+        sibling_is_default: bool,
+    }
+
     fn commitment_from_seed(seed: u64) -> Commitment {
         let mut commitment = [0u8; 48];
         commitment[40..48].copy_from_slice(&seed.to_be_bytes());
         commitment
+    }
+
+    fn expected_sibling_side(side: &str) -> CommitmentTreeAppendSiblingSide {
+        match side {
+            "left" => CommitmentTreeAppendSiblingSide::Left,
+            "right" => CommitmentTreeAppendSiblingSide::Right,
+            other => panic!("unknown Lean append sibling side {other:?}"),
+        }
+    }
+
+    fn verify_lean_commitment_tree_append_case(case: &LeanCommitmentTreeAppendCase) {
+        let mut tree = CommitmentTreeState::new_empty(case.tree_depth, case.history_limit)
+            .unwrap_or_else(|err| panic!("{}: create commitment tree: {err}", case.name));
+
+        for seed in &case.initial_leaf_seeds {
+            tree.append(commitment_from_seed(*seed))
+                .unwrap_or_else(|err| panic!("{}: append initial seed {seed}: {err}", case.name));
+        }
+
+        assert_eq!(
+            case.append_leaf_seeds.len(),
+            case.expected_appends.len(),
+            "{}: Lean append seeds and expectations must have the same length",
+            case.name
+        );
+
+        for (expected, seed) in case
+            .expected_appends
+            .iter()
+            .zip(case.append_leaf_seeds.iter().copied())
+        {
+            assert_eq!(expected.leaf_seed, seed, "{}: leaf seed drift", case.name);
+            assert_eq!(
+                tree.leaf_count(),
+                expected.prior_leaf_count,
+                "{}: prior leaf count drift before seed {seed}",
+                case.name
+            );
+            assert_eq!(
+                tree.root_history().count(),
+                expected.prior_root_history_len,
+                "{}: prior root-history length drift before seed {seed}",
+                case.name
+            );
+
+            let prior_root = tree.root();
+            let certificate = tree
+                .append_with_certificate(commitment_from_seed(seed))
+                .unwrap_or_else(|err| panic!("{}: certified append seed {seed}: {err}", case.name));
+
+            assert_eq!(
+                certificate.depth, case.tree_depth,
+                "{}: depth drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.history_limit, case.history_limit,
+                "{}: history limit drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.prior_root, prior_root,
+                "{}: prior root must be captured before mutation",
+                case.name
+            );
+            assert_eq!(
+                certificate.prior_leaf_count, expected.prior_leaf_count,
+                "{}: certificate prior count drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.leaf_index, expected.leaf_index,
+                "{}: certificate leaf index drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.result_leaf_count, expected.result_leaf_count,
+                "{}: certificate result count drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.prior_root_history_tail.len(),
+                expected.prior_root_history_len,
+                "{}: certificate prior history length drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.root_history_tail.len(),
+                expected.root_history_len,
+                "{}: certificate result history length drift",
+                case.name
+            );
+            assert_eq!(
+                tree.root_history().count(),
+                expected.root_history_len,
+                "{}: tree result history length drift",
+                case.name
+            );
+            assert_eq!(
+                certificate.trace.len(),
+                expected.trace.len(),
+                "{}: trace length drift",
+                case.name
+            );
+
+            for (actual, expected_step) in certificate.trace.iter().zip(&expected.trace) {
+                assert_eq!(
+                    actual.level, expected_step.level,
+                    "{}: trace level",
+                    case.name
+                );
+                assert_eq!(
+                    actual.position, expected_step.position,
+                    "{}: trace position at level {}",
+                    case.name, expected_step.level
+                );
+                assert_eq!(
+                    actual.sibling_side,
+                    expected_sibling_side(&expected_step.sibling_side),
+                    "{}: trace sibling side at level {}",
+                    case.name,
+                    expected_step.level
+                );
+                assert_eq!(
+                    actual.sibling_is_default, expected_step.sibling_is_default,
+                    "{}: trace default flag at level {}",
+                    case.name, expected_step.level
+                );
+            }
+
+            assert!(
+                certificate.replay_matches(),
+                "{}: production append certificate must replay under the real Merkle combiner",
+                case.name
+            );
+            assert_eq!(
+                certificate.replay_result_root(),
+                Some(tree.root()),
+                "{}: replay result root must equal live tree root",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn lean_generated_commitment_tree_append_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean commitment-tree append vectors");
+        let vectors: LeanCommitmentTreeAppendVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean commitment-tree append vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.append_cases.is_empty(),
+            "Lean commitment-tree append cases must not be empty"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.append_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_commitment_tree_append_case(case);
+        }
     }
 
     #[test]

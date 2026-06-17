@@ -31,6 +31,9 @@ lean_exe gen_bridge_mint_replay_policy_vectors where
 lean_exe gen_aggregation_v5_vectors where
   root := `Hegemon.Consensus.GenerateAggregationV5Vectors
 
+lean_exe gen_commitment_tree_append_vectors where
+  root := `Hegemon.Consensus.GenerateCommitmentTreeAppendVectors
+
 lean_exe gen_da_root_vectors where
   root := `Hegemon.Consensus.GenerateDaRootVectors
 
