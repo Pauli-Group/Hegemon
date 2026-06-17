@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 87.4,
+  "overall_completion_percent": 87.64,
   "last_full_formal_core": {
-    "date": "2026-06-17T07:51:08Z",
+    "date": "2026-06-17T08:46:03Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after binding non-transfer action ordering to semantic hashes, adding Lean metadata-resampling theorems, schema-v3 action-order vectors, production order-key conformance, and arrival-time resampling regressions",
+    "status": "passed locally after adding PQ Noise transport-completion theorem coverage, schema-v2 PQ Noise vectors, and production PqTransport outbound/inbound completion-output conformance",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1901,
+    "named_lean_theorems": 1902,
     "axiom_free_theorems": 862,
-    "axiom_dependent_theorems": 1039,
+    "axiom_dependent_theorems": 1040,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 519,
+    "falsification_cases": 520,
     "implementation_bindings": 214,
     "implementation_result_obligations": 167,
     "implementation_order_constraints": 144,
@@ -76,49 +76,47 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the non-transfer action-order metadata-resampling theorem package. The executable Lean model proves non-transfer order preimages and actions are fixed by public family/action IDs, semantic action hash, and nullifiers, and ignore local received_ms plus raw tx_hash metadata; pairwise relative non-transfer order is therefore stable under local metadata resampling.",
+    "summary": "Added the PQ Noise transport-completion theorem package. The executable Lean model now packages accepted authenticated PQ handshakes into completed local/peer transport-session facts: opposite roles, zero initial counters, matched send/receive slots, matched slot info labels, and AAD separation on both sides.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/ActionOrder.lean",
-      "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean"
+      "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean",
+      "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.non_transfer_order_preimage_ignores_local_metadata",
-      "Hegemon.Native.non_transfer_order_action_ignores_local_metadata",
-      "Hegemon.Native.non_transfer_order_preimage_eq_of_public_fields",
-      "Hegemon.Native.non_transfer_relative_order_ignores_local_metadata"
+      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_transport_completion_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.ActionOrder Hegemon.Native.GenerateActionOrderVectors passed locally; full bash scripts/check_formal_core.sh passed with 1901 named Lean theorem declarations, 862 axiom-free theorem declarations, 1039 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture plus non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes and pending_non_transfer_relative_order_ignores_received_ms_resampling passed locally and inside scripts/check_formal_core.sh.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the non-transfer ActionOrder theorem names, evidence paths, schema-v3 generated-vector conformance gate, and a production implementation binding requiring action_order_key_preimage to call non_transfer_action_order_key_preimage; full formal-core passed with 118 claims, 519 falsification cases, 214 implementation bindings, 167 result obligations, and 108 production nodes."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Network.PqNoiseHandshakeChannel Hegemon.Network.GeneratePqNoiseVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1902 named Lean theorem declarations, 862 axiom-free theorem declarations, 1040 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture passed locally and inside scripts/check_formal_core.sh, including schema-v2 PqTransport outbound/inbound completion-output cases.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the transport-completion theorem name, evidence paths, schema-v2 generated-vector conformance gate, and a falsification case for PqTransport completion-output drift; full formal-core passed with 118 claims, 520 falsification cases, 214 implementation bindings, 167 result obligations, and 108 production nodes."
     },
     "known_limitations": [
-      "This slice proves local metadata exclusion for accepted order-key inputs; it does not prove BLAKE2/BLAKE3 cryptographic security or implementation equivalence, miner fairness policy, scheduler/network timing privacy, full proof-system soundness, simulator zero knowledge, or complete native-node refinement."
+      "This slice proves and vector-binds direct pq-noise transport completion outputs; it does not prove SHA-256/HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, timeout/scheduler liveness, every higher-level network/native wrapper integration path, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound non-transfer action ordering to executable Lean-generated vectors and production Rust ordering. The native node now derives non-transfer order-key preimages from domain-separated family/action IDs, semantic action hash, and nullifiers instead of raw pending tx_hash; Lean schema-v3 action-order vectors and Rust regressions check bridge outbound, candidate artifact, and coinbase routes plus pending relative-order stability under received_ms resampling.",
+    "summary": "Bound PQ Noise transport completion to executable Lean-generated vectors and production Rust transport. The formal-vector gate now drives real PqTransport::upgrade_outbound and upgrade_inbound over paired streams, checks completed session role flags, remote peer IDs, zero initial byte counters, matched directional send/receive slots, and then sends the first encrypted frame through the completed session.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs factors non_transfer_action_order_key_preimage and routes non-transfer action_order_key_preimage through pending_action_semantic_hash instead of raw tx_hash",
-      "node/src/native/mod.rs checks bridge outbound, candidate artifact, and coinbase non-transfer order preimages and keys stay stable when received_ms changes while raw pending tx_hash changes",
-      "scripts/check_formal_core.sh runs the schema-v3 action-order vector conformance gate plus both non-transfer metadata-resampling regressions"
+      "No shipped runtime behavior changed; pq-noise/src/lib.rs cfg(test) formal vector conformance now exercises production PqTransport outbound/inbound upgrade completion outputs.",
+      "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean schema-v2 vectors add local-initiator and local-responder transport-completion cases.",
+      "scripts/check_formal_core.sh already regenerates PQ Noise vectors and runs the pq-noise production conformance gate, so the new transport cases are release-gated with zero runtime cost."
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.ActionOrder"
+      "Hegemon.Network.PqNoise",
+      "Hegemon.Network.PqNoiseHandshakeChannel"
     ],
     "validation": {
-      "status": "targeted Lean build, generated-vector JSON validation, action-order Rust conformance test, non-transfer metadata-resampling regressions, metadata gates, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1901 named Lean theorem declarations, 862 axiom-free theorem declarations, 1039 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 519 falsification cases, 214 implementation bindings, 167 result obligations, and 11 native backend reference vectors"
+      "status": "targeted Lean build, generated-vector JSON validation, PQ Noise transport-completion Rust conformance, metadata gates, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1902 named Lean theorem declarations, 862 axiom-free theorem declarations, 1040 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 520 falsification cases, 214 implementation bindings, 167 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "This slice changes production native action ordering, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes only Lean, formal metadata/docs, and cfg(test) pq-noise conformance code, so hegemon-dev should fast-forward without a live binary rebuild/restart, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
     {
       "id": "ledger.no-counterfeiting-supply-integrity",
       "weight": 9,
-      "completion_percent": 89,
+      "completion_percent": 91,
       "top_level_theorem_target": "Every accepted native chain preserves the native supply equation: genesis supply plus authorized subsidies and accepted coinbase fees minus explicit burns equals the claimed supply digest.",
       "current_evidence": [
         "formal/lean/Hegemon/Consensus/Supply.lean",
@@ -784,7 +782,7 @@
     {
       "id": "network.pq-channel-safety",
       "weight": 3,
-      "completion_percent": 89,
+      "completion_percent": 91,
       "top_level_theorem_target": "P2P secure channels derive secret, direction-separated keys from authenticated PQ handshakes, never reuse nonces under a key, and reject downgrade/legacy modes.",
       "current_evidence": [
         "formal/lean/Hegemon/Network/SecureChannel.lean",
@@ -798,13 +796,15 @@
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now binds accepted authenticated PQ handshakes directly to the PQ-native initial channel state and initial PQ Noise protect/open transitions, including role-correct slots, zero counters, separated AAD, and distinct protect/open slots",
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves the first local protected PQ frame is admitted by the peer open path under the matching peer receive slot and zero nonce",
         "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean now proves arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active PQ frames below u64 overflow",
+        "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean accepted_authenticated_pq_handshake_transport_completion_facts now packages completed local/peer role, zero-counter, matched-slot, matched-info, and AAD-separation facts",
         "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean now emits eight-frame initiator/responder PQ frame-sequence vectors",
+        "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean now emits real PqTransport outbound/inbound transport-completion vectors",
         "pq-noise/src/lib.rs formal vector gate drives production SecureSession send/recv, raw ciphertext emission, and raw open/decrypt against Lean slot, nonce, counter, and AAD expectations",
+        "pq-noise/src/lib.rs formal vector gate now drives real PqTransport::upgrade_outbound and upgrade_inbound completion outputs for expected role flags, remote peer IDs, zero initial byte counters, matched directional slots, and first encrypted frame admission",
         "formal/lean/Hegemon/Network/FrameResourceAdmission.lean proves HNW/PNH/PNS/PNT marker domains, PQ session plaintext-plus-tag frame accounting, and generated vector gates for network and PQ Noise frame caps/rejection precedence."
       ],
       "missing_work": [
-        "Extend bounded SecureSession frame-vector conformance to full transport/session completion outputs and all integration paths.",
-        "Bind production transport/session completion outputs to the PQ-native handshake-to-channel theorem surface.",
+        "Extend production completion-output conformance from the pq-noise transport crate into every higher-level network/native wrapper integration path.",
         "Discharge or externally justify ML-KEM/ML-DSA/HKDF/AES-GCM assumptions."
       ],
       "performance_constraint": "No extra round trips; checks should remain key-schedule/frame-admission local."

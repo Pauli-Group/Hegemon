@@ -2955,7 +2955,7 @@
       "id": "network.pq-noise-key-schedule",
       "component": "PQ Noise handshake and session channel",
       "claim_class": "lean_theorem",
-      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, prove the first local protected frame is admitted by the peer receive path under the matching directional slot and nonce, and prove arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active frames below u64 overflow. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, PqHandshake, and bounded SecureSession active frame send/receive paths, including raw emitted ciphertext and raw open/decrypt checks.",
+      "summary": "The Lean PQ Noise kernel proves executable HKDF input/label separation, initiator/responder send-receive key-slot mapping, 96-bit AES-GCM nonce layout, u64 counter overflow rejection, InitHello/RespHello/Finish signing preimage grammar, explicit session channel-state send/receive transitions, and assumption-explicit handshake-to-channel composition surfaces. Accepted authenticated PQ handshakes now establish PQ-native direction-separated channel facts, prove initial PQ Noise protect/open transitions use role-correct slots and zero counters with AAD distinct from both directional HKDF labels, prove the first local protected frame is admitted by the peer receive path under the matching directional slot and nonce, prove arbitrary bounded frame-index local-protect / peer-open slot, nonce, AAD, and counter agreement for modeled active frames below u64 overflow, and package transport-completion facts for opposite local/peer roles, zero initial counters, matching send/receive slots, and separated AAD. Generated Lean vectors are checked against the production pq-noise helpers used by SessionKeys, NoiseCipher, PqHandshake, bounded SecureSession active frame send/receive paths, raw emitted ciphertext and raw open/decrypt paths, and real PqTransport outbound/inbound upgrade completion outputs.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2994,6 +2994,7 @@
         "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_recv_infos_distinct",
         "Hegemon.Network.PqNoiseHandshakeChannel.secure_send_recv_labels_distinct",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_establishes_pq_channel_facts",
+        "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_transport_completion_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_initial_pq_protect_open_facts",
         "Hegemon.Network.PqNoiseHandshakeChannel.pq_send_slot_matches_peer_recv",
         "Hegemon.Network.PqNoiseHandshakeChannel.pq_recv_slot_matches_peer_send",
@@ -3005,9 +3006,9 @@
       ],
       "assumptions": [
         "The Lean model represents PQ Noise session HKDF input/label grammar, role/nonce control logic, and handshake signing preimage construction, not SHA-256, HKDF, AES-GCM, ML-KEM, or ML-DSA cryptographic security.",
-        "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement, and eight-frame production SecureSession send/open sequences in both directions. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; the frame-sequence vectors bind those transitions to the production byte path without adding runtime work.",
+        "Generated Lean conformance vectors cover transcript salt and ordered shared-secret IKM construction, exact i2r/r2i/aad HKDF info labels, initiator and responder key-slot selection, zero/one/pattern/max-minus-one nonce encodings, max-counter rejection, InitHello/RespHello/Finish signing preimage byte ordering including transcript-hash placement, eight-frame production SecureSession send/open sequences in both directions, and real PqTransport outbound/inbound completion outputs for role flags, peer IDs, zero initial byte counters, matching directional slots, and the first encrypted frame. The additional channel-state theorems are pure Lean transition theorems over the same executable nonce and role helpers; the frame-sequence and transport-completion vectors bind those transitions to the production byte path without adding runtime work.",
         "The PQ-native and legacy-comparison handshake-to-channel theorems carry transcript binding, ML-KEM agreement, ML-DSA authentication, HKDF soundness, and AEAD protect/open soundness as explicit assumptions rather than cryptographic reductions proved in Lean.",
-        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, send/receive channel-counter state transitions, first peer frame slot/nonce admission, arbitrary modeled bounded frame-index peer admission below u64 overflow, and bounded production active-frame byte-path conformance. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, full transport/session completion equivalence, full network liveness, or complete native-node equivalence."
+        "The theorem covers executable PQ Noise key-schedule, nonce admission, signing transcript grammar, send/receive channel-counter state transitions, first peer frame slot/nonce admission, arbitrary modeled bounded frame-index peer admission below u64 overflow, bounded production active-frame byte-path conformance, and direct production PqTransport session-completion output conformance. It does not prove SHA-256 or HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, KEM ciphertext correctness, timeout/scheduler liveness, every higher-level network wrapper integration path, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Network/PqNoise.lean",
@@ -3017,6 +3018,8 @@
         "pq-noise/src/noise.rs",
         "pq-noise/src/session.rs",
         "pq-noise/src/handshake.rs",
+        "pq-noise/src/transport.rs",
+        "pq-noise/src/lib.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],

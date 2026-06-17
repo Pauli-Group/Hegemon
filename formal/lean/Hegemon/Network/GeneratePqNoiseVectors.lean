@@ -95,6 +95,44 @@ def frameSequenceCaseJson (name : String) (role : Role) (sequenceLength : Nat) :
     ++ "      ]\n"
     ++ "    }"
 
+def transportCompletionCaseJson
+    (name : String)
+    (localRole : Role)
+    (plaintextLen seed : Nat) : String :=
+  let peer := peerRole localRole
+  let plaintext := patternedBytes plaintextLen seed
+  let firstFrameWireBytes := plaintext.length + 16
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"local_role\": " ++ roleJson localRole ++ ",\n"
+    ++ "      \"peer_role\": " ++ roleJson peer ++ ",\n"
+    ++ "      \"expected_local_is_initiator\": "
+      ++ boolJson (localRole == Role.initiator) ++ ",\n"
+    ++ "      \"expected_peer_is_initiator\": "
+      ++ boolJson (peer == Role.initiator) ++ ",\n"
+    ++ "      \"expected_roles_distinct\": "
+      ++ boolJson (localRole != peer) ++ ",\n"
+    ++ "      \"expected_local_send_slot\": "
+      ++ keySlotJson (sendSlot localRole) ++ ",\n"
+    ++ "      \"expected_local_recv_slot\": "
+      ++ keySlotJson (recvSlot localRole) ++ ",\n"
+    ++ "      \"expected_peer_send_slot\": "
+      ++ keySlotJson (sendSlot peer) ++ ",\n"
+    ++ "      \"expected_peer_recv_slot\": "
+      ++ keySlotJson (recvSlot peer) ++ ",\n"
+    ++ "      \"expected_local_send_matches_peer_recv\": "
+      ++ boolJson (sendSlot localRole == recvSlot peer) ++ ",\n"
+    ++ "      \"expected_local_recv_matches_peer_send\": "
+      ++ boolJson (recvSlot localRole == sendSlot peer) ++ ",\n"
+    ++ "      \"expected_initial_local_bytes_sent\": \"0\",\n"
+    ++ "      \"expected_initial_local_bytes_received\": \"0\",\n"
+    ++ "      \"expected_initial_peer_bytes_sent\": \"0\",\n"
+    ++ "      \"expected_initial_peer_bytes_received\": \"0\",\n"
+    ++ "      \"expected_first_frame_wire_bytes\": \""
+      ++ toString firstFrameWireBytes ++ "\",\n"
+    ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
+    ++ "    }"
+
 def initSigningCaseJson (name : String) (input : InitHelloSigningInput) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -159,7 +197,7 @@ def alternateFinishSigningInput : FinishSigningInput := {
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"session_key_cases\": [\n"
     ++ sessionKeyCaseJson "patterned-session" sampleSessionInput ++ ",\n"
     ++ sessionKeyCaseJson "alternate-session" alternateSessionInput ++ "\n"
@@ -178,6 +216,12 @@ def vectorJson : String :=
     ++ "  \"frame_sequence_cases\": [\n"
     ++ frameSequenceCaseJson "initiator-eight-frames" Role.initiator 8 ++ ",\n"
     ++ frameSequenceCaseJson "responder-eight-frames" Role.responder 8 ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"transport_completion_cases\": [\n"
+    ++ transportCompletionCaseJson "local-initiator-transport-completion"
+      Role.initiator 19 37 ++ ",\n"
+    ++ transportCompletionCaseJson "local-responder-transport-completion"
+      Role.responder 23 89 ++ "\n"
     ++ "  ],\n"
     ++ "  \"init_signing_cases\": [\n"
     ++ initSigningCaseJson "patterned-init" sampleInitSigningInput ++ ",\n"

@@ -81,6 +81,7 @@ mod formal_vectors {
         role_cases: Vec<LeanRoleCase>,
         nonce_cases: Vec<LeanNonceCase>,
         frame_sequence_cases: Vec<LeanFrameSequenceCase>,
+        transport_completion_cases: Vec<LeanTransportCompletionCase>,
         init_signing_cases: Vec<LeanInitSigningCase>,
         resp_signing_cases: Vec<LeanRespSigningCase>,
         finish_signing_cases: Vec<LeanFinishSigningCase>,
@@ -137,6 +138,28 @@ mod formal_vectors {
         expected_peer_next_recv_counter: String,
         expected_protected_slot_matches_peer_open: bool,
         expected_aad_distinct_from_key_info: bool,
+        plaintext_hex: String,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanTransportCompletionCase {
+        name: String,
+        local_role: String,
+        peer_role: String,
+        expected_local_is_initiator: bool,
+        expected_peer_is_initiator: bool,
+        expected_roles_distinct: bool,
+        expected_local_send_slot: String,
+        expected_local_recv_slot: String,
+        expected_peer_send_slot: String,
+        expected_peer_recv_slot: String,
+        expected_local_send_matches_peer_recv: bool,
+        expected_local_recv_matches_peer_send: bool,
+        expected_initial_local_bytes_sent: String,
+        expected_initial_local_bytes_received: String,
+        expected_initial_peer_bytes_sent: String,
+        expected_initial_peer_bytes_received: String,
+        expected_first_frame_wire_bytes: String,
         plaintext_hex: String,
     }
 
@@ -253,7 +276,7 @@ mod formal_vectors {
         let contents = std::fs::read_to_string(path).expect("read Lean PQ Noise vectors");
         let vectors: LeanPqNoiseVectorFile =
             serde_json::from_str(&contents).expect("parse Lean PQ Noise vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         let frame_keys = vector_session_keys(&vectors);
 
         for case in &vectors.session_key_cases {
@@ -523,6 +546,194 @@ mod formal_vectors {
                     case.name
                 );
             }
+        }
+
+        for case in &vectors.transport_completion_cases {
+            let local_is_initiator = parse_role(&case.local_role);
+            let peer_is_initiator = parse_role(&case.peer_role);
+            assert_eq!(
+                local_is_initiator, case.expected_local_is_initiator,
+                "{} local role",
+                case.name
+            );
+            assert_eq!(
+                peer_is_initiator, case.expected_peer_is_initiator,
+                "{} peer role",
+                case.name
+            );
+            assert_eq!(
+                local_is_initiator != peer_is_initiator,
+                case.expected_roles_distinct,
+                "{} role distinctness",
+                case.name
+            );
+
+            let local_identity =
+                LocalIdentity::generate(format!("{}-local-identity", case.name).as_bytes());
+            let peer_identity =
+                LocalIdentity::generate(format!("{}-peer-identity", case.name).as_bytes());
+            let local_peer_id = local_identity.peer_id();
+            let peer_peer_id = peer_identity.peer_id();
+            let local_transport = PqTransport::new(PqNoiseConfig::new(local_identity));
+            let peer_transport = PqTransport::new(PqNoiseConfig::new(peer_identity));
+            let (local_stream, peer_stream) = duplex(64 * 1024);
+
+            let (local_result, peer_result) = if local_is_initiator {
+                tokio::join!(
+                    local_transport.upgrade_outbound(local_stream),
+                    peer_transport.upgrade_inbound(peer_stream)
+                )
+            } else {
+                tokio::join!(
+                    local_transport.upgrade_inbound(local_stream),
+                    peer_transport.upgrade_outbound(peer_stream)
+                )
+            };
+
+            let (mut local_session, local_observed_peer_id) = local_result
+                .unwrap_or_else(|err| panic!("{} local transport upgrade: {err}", case.name));
+            let (mut peer_session, peer_observed_peer_id) = peer_result
+                .unwrap_or_else(|err| panic!("{} peer transport upgrade: {err}", case.name));
+
+            assert_eq!(
+                local_observed_peer_id, peer_peer_id,
+                "{} local observed remote peer id",
+                case.name
+            );
+            assert_eq!(
+                peer_observed_peer_id, local_peer_id,
+                "{} peer observed remote peer id",
+                case.name
+            );
+            assert_eq!(
+                local_session.remote_peer_id(),
+                peer_peer_id,
+                "{} local session remote peer id",
+                case.name
+            );
+            assert_eq!(
+                peer_session.remote_peer_id(),
+                local_peer_id,
+                "{} peer session remote peer id",
+                case.name
+            );
+            assert_eq!(
+                local_session.is_initiator(),
+                case.expected_local_is_initiator,
+                "{} local session role flag",
+                case.name
+            );
+            assert_eq!(
+                peer_session.is_initiator(),
+                case.expected_peer_is_initiator,
+                "{} peer session role flag",
+                case.name
+            );
+
+            let (local_send_slot, local_recv_slot) =
+                session_key_slots(local_session.is_initiator());
+            let (peer_send_slot, peer_recv_slot) = session_key_slots(peer_session.is_initiator());
+            assert_eq!(
+                slot_name(local_send_slot),
+                case.expected_local_send_slot,
+                "{} local send slot",
+                case.name
+            );
+            assert_eq!(
+                slot_name(local_recv_slot),
+                case.expected_local_recv_slot,
+                "{} local recv slot",
+                case.name
+            );
+            assert_eq!(
+                slot_name(peer_send_slot),
+                case.expected_peer_send_slot,
+                "{} peer send slot",
+                case.name
+            );
+            assert_eq!(
+                slot_name(peer_recv_slot),
+                case.expected_peer_recv_slot,
+                "{} peer recv slot",
+                case.name
+            );
+            assert_eq!(
+                local_send_slot == peer_recv_slot,
+                case.expected_local_send_matches_peer_recv,
+                "{} local-send peer-recv slot match",
+                case.name
+            );
+            assert_eq!(
+                local_recv_slot == peer_send_slot,
+                case.expected_local_recv_matches_peer_send,
+                "{} local-recv peer-send slot match",
+                case.name
+            );
+
+            assert_eq!(
+                local_session.bytes_sent(),
+                case.expected_initial_local_bytes_sent
+                    .parse::<u64>()
+                    .expect("initial local bytes sent"),
+                "{} initial local bytes sent",
+                case.name
+            );
+            assert_eq!(
+                local_session.bytes_received(),
+                case.expected_initial_local_bytes_received
+                    .parse::<u64>()
+                    .expect("initial local bytes received"),
+                "{} initial local bytes received",
+                case.name
+            );
+            assert_eq!(
+                peer_session.bytes_sent(),
+                case.expected_initial_peer_bytes_sent
+                    .parse::<u64>()
+                    .expect("initial peer bytes sent"),
+                "{} initial peer bytes sent",
+                case.name
+            );
+            assert_eq!(
+                peer_session.bytes_received(),
+                case.expected_initial_peer_bytes_received
+                    .parse::<u64>()
+                    .expect("initial peer bytes received"),
+                "{} initial peer bytes received",
+                case.name
+            );
+
+            let plaintext = decode_hex(&case.plaintext_hex);
+            let expected_wire_bytes = case
+                .expected_first_frame_wire_bytes
+                .parse::<u64>()
+                .expect("first frame wire bytes");
+            assert_eq!(
+                expected_wire_bytes,
+                plaintext.len() as u64 + 16,
+                "{} first frame wire accounting",
+                case.name
+            );
+            let (send_result, recv_result) =
+                tokio::join!(local_session.send(&plaintext), peer_session.recv());
+            send_result
+                .unwrap_or_else(|err| panic!("{} local transport session send: {err}", case.name));
+            let opened = recv_result
+                .unwrap_or_else(|err| panic!("{} peer transport session recv: {err}", case.name))
+                .unwrap_or_else(|| panic!("{} peer transport session EOF", case.name));
+            assert_eq!(opened, plaintext, "{} peer receives local frame", case.name);
+            assert_eq!(
+                local_session.bytes_sent(),
+                expected_wire_bytes,
+                "{} local bytes sent after first frame",
+                case.name
+            );
+            assert_eq!(
+                peer_session.bytes_received(),
+                expected_wire_bytes,
+                "{} peer bytes received after first frame",
+                case.name
+            );
         }
 
         for case in &vectors.init_signing_cases {

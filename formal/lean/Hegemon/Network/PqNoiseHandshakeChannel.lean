@@ -262,6 +262,90 @@ theorem accepted_authenticated_pq_handshake_establishes_pq_channel_facts
   · exact PqNoise.resp_hello_preimage_starts_with_domain
   · exact PqNoise.finish_preimage_starts_with_domain
 
+structure PqTransportCompletionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (localState peerState : PqNoise.ChannelState) : Prop where
+  localEstablished :
+    EstablishedPqChannelFacts surface crypto localState
+  peerRoleBound :
+    peerState.role = peerRole surface.role
+  peerSendCounterZero :
+    peerState.sendCounter = 0
+  peerRecvCounterZero :
+    peerState.recvCounter = 0
+  localSendSlotMatchesPeerRecv :
+    PqNoise.sendSlot localState.role = PqNoise.recvSlot peerState.role
+  localRecvSlotMatchesPeerSend :
+    PqNoise.recvSlot localState.role = PqNoise.sendSlot peerState.role
+  localSendInfoMatchesPeerRecvInfo :
+    PqNoise.expandInfo (PqNoise.sendSlot localState.role) =
+      PqNoise.expandInfo (PqNoise.recvSlot peerState.role)
+  localRecvInfoMatchesPeerSendInfo :
+    PqNoise.expandInfo (PqNoise.recvSlot localState.role) =
+      PqNoise.expandInfo (PqNoise.sendSlot peerState.role)
+  localSessionAadDistinctFromSend :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.sendSlot localState.role)
+  localSessionAadDistinctFromRecv :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.recvSlot localState.role)
+  peerSessionAadDistinctFromSend :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.sendSlot peerState.role)
+  peerSessionAadDistinctFromRecv :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.recvSlot peerState.role)
+
+theorem accepted_authenticated_pq_handshake_transport_completion_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto) :
+    PqTransportCompletionFacts
+      surface
+      crypto
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface) := by
+  refine
+    { localEstablished :=
+        accepted_authenticated_pq_handshake_establishes_pq_channel_facts handshake
+      peerRoleBound := ?_
+      peerSendCounterZero := ?_
+      peerRecvCounterZero := ?_
+      localSendSlotMatchesPeerRecv := ?_
+      localRecvSlotMatchesPeerSend := ?_
+      localSendInfoMatchesPeerRecvInfo := ?_
+      localRecvInfoMatchesPeerSendInfo := ?_
+      localSessionAadDistinctFromSend := ?_
+      localSessionAadDistinctFromRecv := ?_
+      peerSessionAadDistinctFromSend := ?_
+      peerSessionAadDistinctFromRecv := ?_ }
+  · simp [peerPqChannelStateFromHandshake, PqNoise.initialState]
+  · simp [peerPqChannelStateFromHandshake, PqNoise.initialState]
+  · simp [peerPqChannelStateFromHandshake, PqNoise.initialState]
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      (pq_send_slot_matches_peer_recv (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      (pq_recv_slot_matches_peer_send (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      congrArg PqNoise.expandInfo
+        (pq_send_slot_matches_peer_recv (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, peerPqChannelStateFromHandshake,
+      PqNoise.initialState] using
+      congrArg PqNoise.expandInfo
+        (pq_recv_slot_matches_peer_send (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
+      (PqNoise.aad_info_distinct_from_send (role := surface.role))
+  · simpa [pqChannelStateFromHandshake, PqNoise.initialState] using
+      (PqNoise.aad_info_distinct_from_recv (role := surface.role))
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
+      (PqNoise.aad_info_distinct_from_send (role := peerRole surface.role))
+  · simpa [peerPqChannelStateFromHandshake, PqNoise.initialState] using
+      (PqNoise.aad_info_distinct_from_recv (role := peerRole surface.role))
+
 theorem accepted_authenticated_pq_handshake_establishes_channel_facts
     {surface : HandshakeChannelSurface}
     {crypto : CryptoAssumptions surface}
