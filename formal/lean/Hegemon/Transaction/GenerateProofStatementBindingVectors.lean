@@ -55,6 +55,8 @@ def vectorJson : String :=
     ++ "  \"proof_statement_binding_cases\": [\n"
     ++ bindingCaseJson "valid-proof-binding-no-stablecoin" validFields ++ ",\n"
     ++ bindingCaseJson "valid-proof-binding-stablecoin" stablecoinFields ++ ",\n"
+    ++ bindingCaseJson "vector-partition-lengths-are-bound"
+        repartitionedLengthFields ++ ",\n"
     ++ bindingCaseJson "field-padding-asset-id-is-not-u64-max-padding"
         fieldPaddingCollisionFields ++ ",\n"
     ++ bindingCaseJson "bad-balance-slot-count-rejected"

@@ -1319,6 +1319,7 @@ mod tests {
     struct LeanProofWrapperAdmissionVectorFile {
         schema_version: u32,
         proof_wrapper_admission_cases: Vec<LeanProofWrapperAdmissionCase>,
+        proof_wrapper_metadata_projection_cases: Vec<LeanProofWrapperMetadataProjectionCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1337,6 +1338,21 @@ mod tests {
         verifier_accepts: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperMetadataProjectionCase {
+        name: String,
+        mutation: String,
+        wrapper_nullifiers_equal_bound_statement: bool,
+        wrapper_commitments_equal_bound_statement: bool,
+        wrapper_balance_slots_equal_bound_statement: bool,
+        serialized_public_inputs_equal_bound_projection: bool,
+        public_nullifier_rows_within_statement_boundary: bool,
+        public_ciphertext_rows_within_statement_boundary: bool,
+        public_asset_rows_within_statement_boundary: bool,
+        expected_projection_valid: bool,
     }
 
     #[test]
@@ -1722,6 +1738,16 @@ mod tests {
             assert!(names.insert(case.name.clone()));
             verify_lean_proof_wrapper_admission_case(case);
         }
+
+        assert!(
+            !vectors.proof_wrapper_metadata_projection_cases.is_empty(),
+            "Lean proof-wrapper metadata projection cases must not be empty"
+        );
+        let mut metadata_names = BTreeSet::new();
+        for case in &vectors.proof_wrapper_metadata_projection_cases {
+            assert!(metadata_names.insert(case.name.clone()));
+            verify_lean_proof_wrapper_metadata_projection_case(case);
+        }
     }
 
     fn verify_lean_proof_wrapper_admission_case(case: &LeanProofWrapperAdmissionCase) {
@@ -1751,6 +1777,84 @@ mod tests {
             "{} proof-wrapper admission rejection label drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_proof_wrapper_metadata_projection_case(
+        case: &LeanProofWrapperMetadataProjectionCase,
+    ) {
+        let expected_from_flags = case.wrapper_nullifiers_equal_bound_statement
+            && case.wrapper_commitments_equal_bound_statement
+            && case.wrapper_balance_slots_equal_bound_statement
+            && case.serialized_public_inputs_equal_bound_projection
+            && case.public_nullifier_rows_within_statement_boundary
+            && case.public_ciphertext_rows_within_statement_boundary
+            && case.public_asset_rows_within_statement_boundary;
+        assert_eq!(
+            expected_from_flags, case.expected_projection_valid,
+            "{} Lean metadata projection flags disagree with expected validity",
+            case.name
+        );
+
+        let mut proof = wrapper_admissible_dummy_proof();
+        apply_proof_wrapper_metadata_projection_mutation(&mut proof, &case.mutation);
+        let actual = transaction_proof_wrapper_public_inputs_for_admission(&proof, true);
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_projection_valid,
+            "{} production proof-wrapper metadata projection drifted from Lean spec: {actual:?}",
+            case.name
+        );
+    }
+
+    fn apply_proof_wrapper_metadata_projection_mutation(
+        proof: &mut TransactionProof,
+        mutation: &str,
+    ) {
+        match mutation {
+            "none" => {}
+            "wrapper_nullifier_drift" => proof.nullifiers[0] = bytes48(44),
+            "wrapper_commitment_drift" => proof.commitments[0] = bytes48(55),
+            "wrapper_balance_slot_drift" => proof.balance_slots[1].delta = 1,
+            "serialized_public_input_projection_drift" => {
+                proof
+                    .stark_public_inputs
+                    .as_mut()
+                    .expect("serialized public inputs")
+                    .fee = 1;
+            }
+            "public_nullifier_row_outside_boundary" => {
+                proof.public_inputs.nullifiers.push(bytes48(66));
+                proof.nullifiers = proof.public_inputs.nullifiers.clone();
+            }
+            "public_ciphertext_row_outside_boundary" => {
+                proof.public_inputs.ciphertext_hashes.push(bytes48(77));
+            }
+            "public_asset_row_outside_boundary" => {
+                proof.public_inputs.balance_slots.insert(
+                    1,
+                    BalanceSlot {
+                        asset_id: 7,
+                        delta: 0,
+                    },
+                );
+                proof.balance_slots = proof.public_inputs.balance_slots.clone();
+                proof
+                    .stark_public_inputs
+                    .as_mut()
+                    .expect("serialized public inputs")
+                    .balance_slot_asset_ids
+                    .insert(1, 7);
+            }
+            "serialized_asset_row_outside_boundary" => {
+                proof
+                    .stark_public_inputs
+                    .as_mut()
+                    .expect("serialized public inputs")
+                    .balance_slot_asset_ids
+                    .push(7);
+            }
+            other => panic!("unknown proof-wrapper metadata projection mutation: {other}"),
+        }
     }
 
     fn public_inputs_from_binding_case(

@@ -4,7 +4,9 @@ This log tracks `cargo audit` runs for the workspace. CI and release builds now
 run `./scripts/dependency-audit-gate.sh`, which fails on every unwaived
 vulnerability, warning, or yanked crate. Waivers live in
 `config/dependency-audit-waivers.json` and must include a reason, tracking id,
-package/version, kind, and expiry.
+package/version, kind, and expiry. A waiver must also match a current
+`cargo audit` finding; stale waivers are release-gate failures and must be
+removed when the underlying finding disappears.
 
 The waiver decision table is represented in Lean by
 `formal/lean/Hegemon/Release/DependencyAuditPolicy.lean`. The formal-core gate
@@ -95,3 +97,24 @@ Summary:
     - RUSTSEC-2026-0097 rand 0.9.2 https://github.com/rust-random/rand/pull/1763
     yanked: 1
     - unknown keccak 0.1.5
+
+## 2026-06-17
+
+Command: ./scripts/dependency-audit-gate.sh
+Exit status: 0
+
+Summary:
+
+    dependency audit findings: 8 total, 8 waived, 0 unwaived, 0 unused waivers
+    waived unmaintained RUSTSEC-2025-0141 bincode 1.3.3 until 2026-08-31 (DEP-2026-0002)
+    waived unmaintained RUSTSEC-2025-0057 fxhash 0.2.1 until 2026-08-31 (DEP-2026-0004)
+    waived unmaintained RUSTSEC-2024-0384 instant 0.1.13 until 2026-08-31 (DEP-2026-0005)
+    waived unmaintained RUSTSEC-2024-0436 paste 1.0.15 until 2026-08-31 (DEP-2026-0006)
+    waived unsound RUSTSEC-2026-0012 keccak 0.1.5 until 2026-08-31 (DEP-2026-0008)
+    waived unsound RUSTSEC-2026-0097 rand 0.8.5 until 2026-08-31 (DEP-2026-0009)
+    waived unsound RUSTSEC-2026-0097 rand 0.9.2 until 2026-08-31 (DEP-2026-0009)
+    waived yanked yanked:keccak:0.1.5 keccak 0.1.5 until 2026-08-31 (DEP-2026-0008)
+
+Stale waivers for tracing-subscriber 0.2.25, derivative 2.2.0, and
+rustls-pemfile 2.2.0 were removed after the stricter unused-waiver gate
+proved and enforced that every checked-in waiver must match a current finding.

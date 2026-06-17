@@ -119,6 +119,11 @@ def fieldPaddingCollisionFields : BindingFields :=
   { validFields with
     balanceSlotAssets := [0, 4294967294, paddingAsset, paddingAsset] }
 
+def repartitionedLengthFields : BindingFields :=
+  { validFields with
+    nullifierSeeds := validFields.nullifierSeeds ++ validFields.commitmentSeeds
+    commitmentSeeds := [] }
+
 def expectedValidMessageLength : Nat := 433
 def expectedValidBindingHashPreimageLength : Nat := 449
 
@@ -149,6 +154,10 @@ theorem bindingMessage_rejects_bad_balance_slot_count :
 
 theorem bindingMessage_distinguishes_field_padding_collision_from_padding :
     (bindingMessage fieldPaddingCollisionFields != bindingMessage validFields) = true := by
+  decide
+
+theorem bindingMessage_distinguishes_vector_partition_lengths :
+    (bindingMessage repartitionedLengthFields != bindingMessage validFields) = true := by
   decide
 
 theorem bindingHashPreimage_chunks_are_domain_separated :

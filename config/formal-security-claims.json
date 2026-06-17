@@ -92,7 +92,7 @@
       "id": "release.dependency-waivers",
       "component": "cargo dependency graph and formal-core checker toolchain",
       "claim_class": "lean_theorem",
-      "summary": "The Lean dependency-audit policy kernel proves that every cargo-audit finding must either be absent or be matched by a well-formed, non-expired waiver with exact advisory/package/version/kind metadata.",
+      "summary": "The Lean dependency-audit policy kernel proves that every cargo-audit finding must either be absent or be matched by a well-formed, non-expired waiver with exact advisory/package/version/kind metadata, and that every checked-in waiver must match a current cargo-audit finding so stale waivers fail closed.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_cargo_audit_json_with_policy",
       "production_eligible": true,
@@ -104,11 +104,13 @@
         "Hegemon.Release.DependencyAuditPolicy.kind_mismatch_rejects",
         "Hegemon.Release.DependencyAuditPolicy.missing_reason_rejects",
         "Hegemon.Release.DependencyAuditPolicy.no_findings_no_waivers_accepts",
-        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_rejects"
+        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_rejects",
+        "Hegemon.Release.DependencyAuditPolicy.unused_waiver_rejects",
+        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_precedes_unused_waiver"
       ],
       "assumptions": [
         "cargo-audit is available in release CI.",
-        "Waiver metadata is reviewed before release tagging.",
+        "Waiver metadata is reviewed before release tagging, and stale waivers are removed when cargo-audit findings disappear.",
         "The standalone formal-core checker lockfile is audited separately from the root workspace lockfile.",
         "Lean proves the waiver decision table over cargo-audit finding metadata; scripts/dependency-audit-gate.sh remains the executable evidence producer for the live cargo-audit JSON and waiver file."
       ],
@@ -195,9 +197,9 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
-    "bash scripts/check_formal_core.sh",
-    "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
-    "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
+        "bash scripts/check_formal_core.sh",
+        "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
       ],
       "residual_risks": []
@@ -444,26 +446,35 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "component": "transaction proof wrapper admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves that every accepted wrapper exposes the full statement surface as theorem-level facts. Generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
+      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves that every accepted wrapper exposes the full statement surface as theorem-level facts, and that accepted wrapper metadata cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the existing statement-binding boundary. Generated Lean vectors are checked against production transaction-circuit admission helpers, the default SmallWood verifier path, and the tx-proof manifest nested-proof verifier path.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Transaction.ProofWrapperAdmission.accepts_iff_proof_wrapper_preconditions",
         "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_statement_surface",
+        "Hegemon.Transaction.ProofWrapperAdmission.metadataProjectionAccepts_iff_preconditions",
+        "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperMetadataProjectionAccepts_implies_boundary_surface",
+        "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_metadata_projection_from_admission_accepts",
+        "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension",
         "Hegemon.Transaction.ProofWrapperAdmission.balance_slot_mismatch_rejects_before_verifier_acceptance",
         "Hegemon.Transaction.ProofWrapperAdmission.invalid_public_inputs_rejects_before_balance_slots",
         "Hegemon.Transaction.ProofWrapperAdmission.missing_proof_bytes_rejects_before_public_inputs",
         "Hegemon.Transaction.ProofWrapperAdmission.missing_serialized_public_inputs_rejects_before_public_validity",
         "Hegemon.Transaction.ProofWrapperAdmission.non_canonical_reencode_rejects_after_exact_consumption",
         "Hegemon.Transaction.ProofWrapperAdmission.non_exact_consumption_rejects",
+        "Hegemon.Transaction.ProofWrapperAdmission.public_asset_row_outside_statement_boundary_rejects",
+        "Hegemon.Transaction.ProofWrapperAdmission.public_ciphertext_row_outside_statement_boundary_rejects",
+        "Hegemon.Transaction.ProofWrapperAdmission.public_nullifier_row_outside_statement_boundary_rejects",
+        "Hegemon.Transaction.ProofWrapperAdmission.serialized_public_input_projection_drift_rejects",
         "Hegemon.Transaction.ProofWrapperAdmission.unsupported_backend_rejects_after_codec_admission",
         "Hegemon.Transaction.ProofWrapperAdmission.valid_wrapper_accepts",
+        "Hegemon.Transaction.ProofWrapperAdmission.valid_metadata_projection_accepts",
         "Hegemon.Transaction.ProofWrapperAdmission.verifier_rejection_rejects_after_all_admission_checks"
       ],
       "assumptions": [
         "The Lean model treats exact consumption, canonical re-encoding, public-input validity, balance-slot agreement, and verifier acceptance as production-derived predicates. It does not prove bincode correctness, STARK/SmallWood soundness, or the backend verifier implementation.",
-        "Generated Lean conformance vectors cover valid wrapper acceptance, non-exact consumption, non-canonical re-encoding, unsupported backend, missing proof bytes, missing serialized public inputs, invalid public inputs, balance-slot mismatch, verifier rejection, and rejection precedence.",
+        "Generated Lean conformance vectors cover valid wrapper acceptance, non-exact consumption, non-canonical re-encoding, unsupported backend, missing proof bytes, missing serialized public inputs, invalid public inputs, balance-slot mismatch, verifier rejection, rejection precedence, wrapper nullifier/commitment/balance metadata drift, serialized public-input projection drift, and public nullifier/ciphertext/asset row extension outside the statement boundary.",
         "The production Plonky3, default SmallWood, and manifest paths call the admission predicate around decoded-field admission and verifier acceptance. Exact/canonical byte consumption is still enforced by the explicit transaction proof wrapper decoder and manifest decoder, not by a Lean proof of bincode internals."
       ],
       "evidence_paths": [
@@ -755,10 +766,10 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
-    "bash scripts/check_formal_core.sh",
-    "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
-    "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture",
-    "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
+        "bash scripts/check_formal_core.sh",
+        "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
+        "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
       ],
       "residual_risks": [
@@ -892,6 +903,7 @@
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_stablecoin",
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_valid",
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_distinguishes_field_padding_collision_from_padding",
+        "Hegemon.Transaction.ProofStatementBinding.bindingMessage_distinguishes_vector_partition_lengths",
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_rejects_bad_balance_slot_count",
         "Hegemon.Transaction.ProofStatementBinding.bindingHashPreimage_chunks_are_domain_separated",
         "Hegemon.Transaction.ProofStatementBinding.bindingHashPreimage_valid_chunk0_length",
@@ -900,7 +912,7 @@
       "assumptions": [
         "The Lean model treats 48-byte commitments as abstract byte arrays generated from deterministic seeds; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
         "Generated Lean conformance vectors cover the statement-hash domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian fee/version/stablecoin fields, two's-complement signed value-balance and stablecoin issuance encoding, rejection for over-wide vectors or invalid signed-magnitude flags, and the `tx-public-inputs-digest-v1` postcard byte preimage for serialized verifier inputs.",
-        "Generated proof-binding vectors cover the binding-hash-v3 transcript message for nullifier/commitment/ciphertext partition lengths, fee, signed value balance, balance-slot assets, stablecoin payloads, chunk-domain-separated BLAKE2 preimages, and the distinction between the u64::MAX padding sentinel and the Goldilocks field-padding collision value.",
+        "Generated proof-binding vectors cover the binding-hash-v3 transcript message for nullifier/commitment/ciphertext partition lengths, repartitioning of the same digest bytes across nullifier and commitment vectors, fee, signed value balance, balance-slot assets, stablecoin payloads, chunk-domain-separated BLAKE2 preimages, and the distinction between the u64::MAX padding sentinel and the Goldilocks field-padding collision value.",
         "The proof binding-hash-v3 transcript does not include transaction balance_tag, circuit_version, or crypto_suite; those fields are covered by the transaction statement-hash vectors and consensus tx-leaf binding checks.",
         "The theorem covers the byte preimage grammar and Rust hash invocations over checked preimages, not BLAKE2/BLAKE3 cryptographic security, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
@@ -1028,7 +1040,7 @@
       "id": "formal.privacy-observer-boundary",
       "component": "privacy observer leakage boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions, a public metadata view that excludes raw ciphertext bytes, and a batch/timing view that exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index. It proves that changing private witnesses, prover randomness, or local action metadata such as arrival time does not change those projections; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; valid observer-chain worlds with equal public inputs and placement imply equal batch/timing leakage; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, the selected projected DA bytes can be tied to the public ciphertext-hash row through an explicit hash-match predicate, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
+      "summary": "The Lean privacy observer kernel defines the full public observer view for shielded transactions, a public metadata view that excludes raw ciphertext bytes, and a batch/timing view that exposes active-output count, public ciphertext count, parsed-summary count, block height, and action index. It proves that changing private witnesses, prover randomness, local action metadata such as arrival time, or local address metadata such as wallet address cursors does not change those projections; equal public inputs, parsed ciphertext summaries, and placement imply equal public metadata leakage without requiring equal ciphertext bytes; valid observer-chain worlds with equal public inputs and placement imply equal batch/timing leakage; ciphertext summaries are derived from public chain wire bytes, accepted summaries have the chain suite/KEM shape, valid observer-chain surfaces tie parsed ciphertext count to the public active-output count, equal public inputs, chain ciphertext wire observations, and placement imply equal full allowed leakage, accepted native tx-leaf output slots compose with that observer surface under the explicit canonical verifier soundness boundary, active native tx-leaf output slots force nonempty observer ciphertext bytes and summaries, active output slots have an in-bounds observer ciphertext rank, that rank selects a concrete observer wire row that parses to the same chain-format summary, the selected active slot exposes direct public-shape/statement/proof-binding vector indices for commitment and ciphertext-hash fields, byte-bounded selected observer wire rows have the fixed production chain ciphertext wire length and project to fixed-length DA preimage bytes, the selected projected DA bytes can be tied to the public ciphertext-hash row through an explicit hash-match predicate, and the active-output ciphertext boundary package carries the selected wire, parsed summary, projected DA bytes, fixed wire shape, indexed statement/proof rows, and native ciphertext-hash/payload-hash/output-count equality gates together.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_research_leakage_model",
       "production_eligible": false,
@@ -1045,12 +1057,18 @@
         "Hegemon.Privacy.Observer.observer_view_ignores_local_action_metadata",
         "Hegemon.Privacy.Observer.public_metadata_view_ignores_local_action_metadata",
         "Hegemon.Privacy.Observer.batch_timing_view_ignores_local_action_metadata",
+        "Hegemon.Privacy.Observer.observer_view_ignores_local_address_metadata",
+        "Hegemon.Privacy.Observer.public_metadata_view_ignores_local_address_metadata",
+        "Hegemon.Privacy.Observer.batch_timing_view_ignores_local_address_metadata",
         "Hegemon.Privacy.Observer.observer_view_ignores_private_witness_randomness_and_local_metadata",
         "Hegemon.Privacy.Observer.public_metadata_view_ignores_private_witness_randomness_and_local_metadata",
         "Hegemon.Privacy.Observer.batch_timing_view_ignores_private_witness_randomness_and_local_metadata",
         "Hegemon.Privacy.Observer.same_allowed_leakage_stable_under_local_action_metadata",
         "Hegemon.Privacy.Observer.same_public_metadata_leakage_stable_under_local_action_metadata",
         "Hegemon.Privacy.Observer.same_batch_timing_leakage_stable_under_local_action_metadata",
+        "Hegemon.Privacy.Observer.same_allowed_leakage_stable_under_local_address_metadata",
+        "Hegemon.Privacy.Observer.same_public_metadata_leakage_stable_under_local_address_metadata",
+        "Hegemon.Privacy.Observer.same_batch_timing_leakage_stable_under_local_address_metadata",
         "Hegemon.Privacy.Observer.same_public_metadata_leakage_of_public_summaries_and_placement",
         "Hegemon.Privacy.Observer.same_batch_timing_leakage_of_valid_public_inputs_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_wire_and_placement",
@@ -1069,6 +1087,7 @@
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_public_chain_wire_and_placement",
         "Hegemon.Privacy.Observer.same_allowed_leakage_of_valid_observer_chain_surfaces",
         "Hegemon.Privacy.Observer.same_allowed_leakage_iff_observer_view_eq",
+        "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_address_metadata",
         "Hegemon.Privacy.NativeObserverSurface.valid_observer_chain_surface_bound_to_shape",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_output_slot_bound_to_observer_surface",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_slot_forces_nonempty_observer_ciphertexts",
@@ -1087,7 +1106,7 @@
         "A valid observer-chain surface requires a valid public-input shape, parser-derived chain ciphertext summaries, and a public ciphertext-byte count equal to the active output count derived from public output flags.",
         "Active output-slot theorems prove that an active public output forces nonzero public active-output count, has an active-output rank below that count, selects an observer ciphertext wire row that parses to the same chain-format summary, exposes direct shape/statement/proof-binding vector indices for the selected commitment and ciphertext-hash fields, and under byte-bounded observer wires carries the fixed production chain ciphertext wire length plus fixed-length DA projection bytes. The packaged active-output ciphertext boundary additionally carries native ciphertext-hash, ciphertext-payload-hash, and output-count equality gates through the same selected row; the selected projected-DA hash theorem then ties those DA bytes to the public ciphertext-hash row only through an explicit hash-match predicate. This proves the selected row's structural DA preimage boundary, but still does not prove BLAKE3 security or in-Lean public ciphertext-hash equality for selected wire bytes.",
         "The native observer-surface theorem composes the observer boundary with accepted native tx-leaf/action output-slot binding and the canonical deployed verifier surface, but it inherits that surface's explicit `DeployedTxVerifierSoundnessAssumption` boundary.",
-        "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, prover randomness, and local action metadata from the formal observer, public-metadata, and batch/timing projections. The local metadata model names arrival-time-like and storage/mempool tags explicitly so implementation-equivalence tests can bind the proof to production received_ms behavior instead of omitting that state from the formal world.",
+        "The theorem excludes private witnesses, note plaintext seeds, memo plaintext seeds, note randomness, spend secret seeds, prover randomness, local action metadata, and local address metadata from the formal observer, public-metadata, and batch/timing projections. The local metadata models name arrival-time-like storage/mempool tags and wallet address-cursor tags explicitly so implementation-equivalence tests can bind the proof to production received_ms and next_address_index behavior instead of omitting that state from the formal world.",
         "This is a leakage-boundary theorem only. The public metadata view proves deterministic non-wire metadata preservation, and the batch/timing view proves deterministic batch-count and placement preservation under valid same-public-input worlds, but neither proves simulator-based zero-knowledge, ML-KEM/AEAD confidentiality, ciphertext indistinguishability, wallet metadata hygiene, timing privacy, network privacy, or proof-system privacy."
       ],
       "evidence_paths": [
@@ -1117,7 +1136,7 @@
       "id": "formal.ciphertext-privacy-game-boundary",
       "component": "note ciphertext privacy game boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, public metadata leakage, and explicit batch/timing leakage even when raw ciphertext bytes are not equal, and that the modeled unlinkability surface reduces to same public shape, same public metadata, same batch/timing leakage, and the named wire-indistinguishability premise. It packages the deterministic privacy boundary with first-class proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy assumptions, proves full observer, public metadata, and batch/timing projections ignore private witnesses, prover randomness, and local action metadata once public wire data is fixed, and now proves those public metadata and batch/timing projections remain stable under independent left/right private-witness, prover-randomness, and local-metadata resampling. It composes that public-metadata boundary with all active native tx-leaf output slots, proving every active public observer rank carries the same parsed summary and same statement/proof-bound commitment/ciphertext-hash fields across both privacy-game worlds while also carrying batch/timing equality and the explicit wire-indistinguishability obligation. It also proves the active-output public metadata boundary itself survives independent left/right private-witness/prover-randomness resampling and independent local wallet/action metadata resampling, including a combined secret-plus-local resampling theorem for selected and all active output rows while carrying the open proof-system, wallet metadata, timing/batching, and network assumptions. It quantifies the fixed wire/projected-DA boundary over every active output row, packages the selected-row decrypt-to-commitment/projected-DA hash theorem with the open-assumption boundary, and composes the materialized sidecar DA publication surface with that all-active projected-DA privacy boundary. The sidecar theorem carries materialized sidecar availability/size facts, wire replay DA-row binding, tx-leaf ciphertext hash/payload-hash gates, and statement/proof ciphertext-vector binding before applying the privacy-game theorem. Focused wallet and native regressions check same-plaintext same-recipient encryption freshness, same-public-summary-shape re-encryption under different wire bytes, wallet-local bookkeeping exclusion from public ciphertext projection, and that arrival-time-only sidecar pending-action hash changes do not alter semantic identity, materialized payload/replay rows, consensus transaction observer fields, or consensus DA blob/root projection.",
+      "summary": "The Lean ciphertext privacy-game boundary defines two valid observer-chain worlds with equal public inputs, equal parsed ciphertext summaries, equal placement, and one explicit cryptographic wire-indistinguishability obligation. It proves that such worlds preserve public ciphertext shape, active-output count, ciphertext summary count, accepted chain-format summaries, public metadata leakage, and explicit batch/timing leakage even when raw ciphertext bytes are not equal, and that the modeled unlinkability surface reduces to same public shape, same public metadata, same batch/timing leakage, and the named wire-indistinguishability premise. It packages the deterministic privacy boundary with first-class proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy assumptions, proves full observer, public metadata, and batch/timing projections ignore private witnesses, prover randomness, local action metadata, and local address metadata once public wire data is fixed, and now proves those public metadata and batch/timing projections remain stable under independent left/right private-witness, prover-randomness, and local action/address metadata resampling. It composes that public-metadata boundary with all active native tx-leaf output slots, proving every active public observer rank carries the same parsed summary and same statement/proof-bound commitment/ciphertext-hash fields across both privacy-game worlds while also carrying batch/timing equality and the explicit wire-indistinguishability obligation. It also proves the active-output public metadata boundary itself survives independent left/right private-witness/prover-randomness resampling and independent local wallet/action metadata resampling, including a combined secret-plus-local resampling theorem for selected and all active output rows while carrying the open proof-system, wallet metadata, timing/batching, and network assumptions. It quantifies the fixed wire/projected-DA boundary over every active output row, packages the selected-row decrypt-to-commitment/projected-DA hash theorem with the open-assumption boundary, and composes the materialized sidecar DA publication surface with that all-active projected-DA privacy boundary. The sidecar theorem carries materialized sidecar availability/size facts, wire replay DA-row binding, tx-leaf ciphertext hash/payload-hash gates, and statement/proof ciphertext-vector binding before applying the privacy-game theorem. Focused wallet and native regressions check same-plaintext same-recipient encryption freshness, same-public-summary-shape re-encryption under different wire bytes, wallet-local bookkeeping exclusion from public ciphertext projection, local address-cursor metadata exclusion from public ciphertext projection, and that arrival-time-only sidecar pending-action hash changes do not alter semantic identity, materialized payload/replay rows, consensus transaction observer fields, or consensus DA blob/root projection.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_crypto_indistinguishability_assumption_and_rust_randomness_regression",
       "production_eligible": false,
@@ -1145,6 +1164,8 @@
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_open_assumption_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_action_metadata_boundary_facts",
         "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_action_metadata_open_assumption_boundary_facts",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_boundary_facts",
+        "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_facts",
         "Hegemon.Privacy.NativeObserverSurface.active_output_public_metadata_boundary_secret_resampling",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_active_output_secret_resampling_boundary",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampling_boundary",
@@ -1156,7 +1177,7 @@
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_open_assumption_decrypt_da_boundary"
       ],
       "assumptions": [
-        "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability` gives the no-new-assumptions deterministic reduction: modeled unlinkability consists of equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise. `ciphertext_privacy_game_boundary_facts`, `ciphertext_privacy_game_secret_resampling_boundary_facts`, `ciphertext_privacy_game_open_assumption_boundary_facts`, and the local-action metadata boundary theorems additionally carry first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game; the resampling theorems prove public metadata and batch/timing leakage remain stable when left and right private witnesses, prover randomness, and local action metadata are independently replaced, while the open-assumption theorem packages the deterministic public boundary, the resampling boundary, the raw-wire-excluded public-leakage package, the same-wire leakage theorem, and the exact remaining assumption fields in one review surface. When the game is composed with active native tx-leaf output slots, every active public output rank carries the parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates across both worlds; the active-output secret/local resampling theorems prove that this public metadata boundary is preserved for selected and all active rows after independent private-witness/prover-randomness/local-action metadata resampling. The all-active wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The materialized sidecar theorem composes that all-active boundary with accepted sidecar materialization, wire replay DA-row binding, tx-leaf ciphertext publication, and statement/proof ciphertext-vector publication; the native regression proves arrival-time metadata changes only the raw pending-action hash, not the semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate, and the open-assumption decrypt/DA theorem packages that selected-row decrypt/hash evidence together with the public privacy-boundary assumption object.",
+        "The two privacy-game worlds must already satisfy `validObserverChainSurface`, so public-input shape, parser-derived chain ciphertext summaries, active-output ciphertext counts, and explicit batch/timing leakage are inherited from `formal.privacy-observer-boundary`. `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability` gives the no-new-assumptions deterministic reduction: modeled unlinkability consists of equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise. `ciphertext_privacy_game_boundary_facts`, `ciphertext_privacy_game_secret_resampling_boundary_facts`, `ciphertext_privacy_game_open_assumption_boundary_facts`, and the local action/address metadata boundary theorems additionally carry first-class assumptions for proof-system zero knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy instead of treating those surfaces as proved by the ciphertext game; the resampling theorems prove public metadata and batch/timing leakage remain stable when left and right private witnesses, prover randomness, local action metadata, and local address metadata are independently replaced, while the open-assumption theorem packages the deterministic public boundary, the resampling boundary, the raw-wire-excluded public-leakage package, the same-wire leakage theorem, and the exact remaining assumption fields in one review surface. When the game is composed with active native tx-leaf output slots, every active public output rank carries the parsed summary, statement/proof commitment row, statement/proof ciphertext-hash row, fixed wire/DA projection, and native ciphertext equality gates across both worlds; the active-output secret/local resampling theorems prove that this public metadata boundary is preserved for selected and all active rows after independent private-witness/prover-randomness/local-action metadata resampling. The all-active wire/DA theorem keeps ML-KEM, AEAD, KDF, RNG, and raw-wire indistinguishability as explicit assumptions. The materialized sidecar theorem composes that all-active boundary with accepted sidecar materialization, wire replay DA-row binding, tx-leaf ciphertext publication, and statement/proof ciphertext-vector publication; the native regression proves arrival-time metadata changes only the raw pending-action hash, not the semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection, and the wallet regression proves address-cursor advancement does not alter public chain ciphertext bytes, DA bytes, or ciphertext hashes for an already-created output. The selected-row decrypt-to-commitment theorem additionally assumes a modeled successful recipient decrypt for that selected summary and therefore keeps wrong-recipient/malleated ciphertext rejection behind the explicit crypto-authentication predicate, and the open-assumption decrypt/DA theorem packages that selected-row decrypt/hash evidence together with the public privacy-boundary assumption object.",
         "The cryptographic privacy step is the explicit `wireIndistinguishable` field. It stands for the ML-KEM encapsulation, AEAD confidentiality, KDF/domain separation, and RNG freshness assumptions needed to treat different same-shape ciphertext wires as computationally indistinguishable.",
         "The wallet regressions prove production encryption is not accidentally deterministic for same plaintext and same recipient under distinct RNG streams and that re-encryption preserves the Lean-modeled public summary shape while changing raw chain and DA wire bytes. They are not proofs of ML-KEM IND-CCA security, AEAD confidentiality, OS RNG quality, or simulator-based zero knowledge."
       ],
@@ -1181,6 +1202,7 @@
         "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
         "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture",
         "cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture",
+        "cargo test -p wallet local_address_metadata_does_not_change_public_ciphertext_projection --lib -- --nocapture",
         "cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -1193,7 +1215,7 @@
         },
         {
           "id": "wallet-metadata-and-timing-privacy-not-covered",
-          "description": "The boundary now exposes batch/timing leakage as a first-class projection and the wallet regression covers local bookkeeping that must not enter public ciphertext projection, but it does not hide broader wallet metadata, network metadata, mempool timing, batching patterns, or amount-pattern privacy.",
+          "description": "The boundary now exposes batch/timing leakage as a first-class projection and the wallet regressions cover local bookkeeping plus address-cursor metadata that must not enter public ciphertext projection, but it does not hide remaining wallet metadata, network metadata, mempool timing, batching patterns, or amount-pattern privacy.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -2945,7 +2967,7 @@
       "id": "native.sync-admission",
       "component": "native sync semantic admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, and inbound response block-count rejection; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Production inbound response-count admission now routes through the generic bounded-request helper with the sync block cap as the item-count cap. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
+      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, and accepted outbound response ranges exposing bounded-request item-count facts; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Production inbound response-count admission now routes through the generic bounded-request helper with the sync block cap as the item-count cap, and a focused block_range regression binds overwide outbound requests to the capped item-count surface before response publication. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2960,7 +2982,9 @@
         "Hegemon.Native.SyncAdmission.response_count_accepts_iff_within_limit",
         "Hegemon.Native.SyncAdmission.response_count_exact_limit_accepts",
         "Hegemon.Native.SyncAdmission.response_count_over_limit_rejects",
+        "Hegemon.Native.SyncAdmission.response_range_block_count_within_max_blocks",
         "Hegemon.Native.SyncAdmission.response_range_accepts_iff_from_within_cap",
+        "Hegemon.Native.SyncAdmission.response_range_bounded_request_accepts",
         "Hegemon.Native.SyncAdmission.response_range_caps_at_best",
         "Hegemon.Native.SyncAdmission.response_range_caps_at_max_blocks",
         "Hegemon.Native.SyncAdmission.response_range_empty_when_from_after_cap",
@@ -2968,12 +2992,14 @@
         "Hegemon.Native.SyncAdmission.response_range_empty_when_max_blocks_zero",
         "Hegemon.Native.SyncAdmission.response_range_saturating_cap",
         "Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap",
-        "Hegemon.Native.SyncAdmission.response_range_valid_keeps_requested_end"
+        "Hegemon.Native.SyncAdmission.response_range_valid_keeps_requested_end",
+        "Hegemon.Native.SyncAdmission.accepted_response_range_exposes_bounded_request_facts"
       ],
       "assumptions": [
         "The Lean model represents decoded native sync semantic admission after bounded wire decoding, with peer identity, message framing, and block validity represented outside this predicate.",
         "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, and exact/over-limit inbound response counts.",
         "The production inbound response-count helper constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and maps the sync response block count to the bounded-request item count.",
+        "Accepted outbound response ranges construct a generic bounded-request fact package in Lean with zero raw/decoded/per-item/aggregate/work dimensions and the served range length as item count; the production binding is the existing block_range call order plus a focused overwide-request regression, not a second runtime admission call.",
         "The theorem covers executable native sync range and response-count admission only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -2988,6 +3014,7 @@
         "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node block_range_caps_overwide_response_with_bounded_request_item_facts --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"

@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.63,
+  "overall_completion_percent": 86.82,
   "last_full_formal_core": {
-    "date": "2026-06-17T02:04:27Z",
-    "commit": "04ae72fb",
-    "status": "passed locally after binding candidate-artifact route public_args to the duplicated candidate_artifact payload, extending PendingAction SCALE vectors to the live SubmitCandidateArtifactArgs route payload shape, and adding CoinbaseActionPayloadScaleWire/MintCoinbaseArgs raw SCALE conformance",
+    "date": "2026-06-17T03:39:59Z",
+    "commit": "working-tree-pre-commit",
+    "status": "passed locally after integrating stale dependency-waiver rejection, proof-statement partition-length binding, proof-wrapper metadata row-boundary admission, wallet address-metadata privacy projection, and native sync response-range bounded-request facts",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1802,
-    "axiom_free_theorems": 807,
-    "axiom_dependent_theorems": 995,
+    "named_lean_theorems": 1833,
+    "axiom_free_theorems": 822,
+    "axiom_dependent_theorems": 1011,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 505,
+    "falsification_cases": 509,
     "implementation_bindings": 209,
     "implementation_result_obligations": 163,
     "implementation_order_constraints": 144,
@@ -79,104 +79,58 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Closed a concrete candidate-artifact route-payload malleability gap and extended raw-byte implementation equivalence. CandidateArtifactAdmission now rejects malformed SubmitCandidateArtifactArgs public_args and public_args/candidate_artifact mismatch before accepting a recursive-block artifact; production block/mempool validation exact-decodes the route payload and requires equality with the duplicated artifact. PendingActionScaleWire now models the live candidate route public_args bytes plus candidate_artifact field, and CoinbaseActionPayloadScaleWire models raw MintCoinbaseArgs SCALE bytes for shielded coinbase route payloads.",
+    "summary": "Integrated four zero/near-zero-runtime formal-verification slices: dependency waivers must be exact and live, statement-binding transcripts bind vector partition lengths, proof-wrapper metadata cannot extend statement/public row boundaries, wallet address-cursor metadata stays outside public ciphertext projections, and outbound sync response ranges expose bounded-request item-count facts.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
-      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
-      "formal/lean/Hegemon/Native/PendingActionScaleWire.lean",
-      "formal/lean/Hegemon/Native/GeneratePendingActionScaleWireVectors.lean",
-      "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean",
-      "formal/lean/Hegemon/Native/GenerateCoinbaseActionPayloadScaleWireVectors.lean",
-      "node/src/native/mod.rs",
-      "scripts/check_formal_core.sh",
-      "config/formal-security-claims.json",
-      "config/formal-security-blueprint.json",
-      "config/highest-standard-formal-verification-matrix.json",
-      "DESIGN.md",
-      "METHODS.md",
-      "formal/lean/README.md"
+      "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+      "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+      "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+      "formal/lean/Hegemon/Privacy/Observer.lean",
+      "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+      "formal/lean/Hegemon/Native/SyncAdmission.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CandidateArtifactAdmission.route_payload_decode_failed_rejects",
-      "Hegemon.Native.CandidateArtifactAdmission.route_payload_artifact_mismatch_rejects",
-      "Hegemon.Native.PendingActionScaleWire.pending_action_scale_wire_acceptance_exposes_facts",
-      "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_total_length",
-      "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_exact_decode",
-      "Hegemon.Native.PendingActionScaleWire.valid_candidate_artifact_some_accepts",
-      "Hegemon.Native.CoinbaseActionPayloadScaleWire.coinbase_action_payload_scale_wire_acceptance_exposes_facts",
-      "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_total_length",
-      "Hegemon.Native.CoinbaseActionPayloadScaleWire.accepted_coinbase_action_payload_scale_wire_exact_decode"
+      "Hegemon.Release.DependencyAuditPolicy.unused_waiver_rejects",
+      "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_precedes_unused_waiver",
+      "Hegemon.Transaction.ProofStatementBinding.bindingMessage_distinguishes_vector_partition_lengths",
+      "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension",
+      "Hegemon.Privacy.Observer.valid_observer_chain_surface_stable_under_local_address_metadata",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_boundary_facts",
+      "Hegemon.Native.SyncAdmission.accepted_response_range_exposes_bounded_request_facts",
+      "Hegemon.Privacy.CiphertextPrivacy.ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_facts"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CandidateArtifactAdmission Hegemon.Native.GenerateCandidateArtifactAdmissionVectors Hegemon.Native.PendingActionScaleWire Hegemon.Native.GeneratePendingActionScaleWireVectors Hegemon.Native.CoinbaseActionPayloadScaleWire Hegemon.Native.GenerateCoinbaseActionPayloadScaleWireVectors Hegemon passed locally; bash scripts/check_formal_core.sh passed the Lean proof kernel with 118 theorem-backed claims, 1802 named Lean theorem declarations, 807 axiom-free theorem declarations, 995 allowed kernel-axiom-dependent theorem declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed; HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=/tmp/candidate_artifact_admission.json cargo test -p hegemon-node candidate_artifact --lib --no-default-features -- --nocapture passed; HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=/tmp/coinbase_action_payload_scale_wire.json cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture passed.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T02:04:27Z after adding candidate route payload coherence, live candidate public_args PendingAction bytes, CoinbaseActionPayloadScaleWire/MintCoinbaseArgs raw-byte vectors, and metadata/inventory updates.",
-      "claims": 118,
-      "named_lean_theorems": 1802,
-      "axiom_free_theorems": 807,
-      "axiom_dependent_theorems": 995,
-      "temporary_axiom_theorems": 0,
-      "production_eligible_claims": 108,
-      "residual_risks": 47,
-      "blueprint_edges": 492,
-      "falsification_cases": 505,
-      "implementation_bindings": 209,
-      "implementation_result_obligations": 163,
-      "implementation_order_constraints": 144,
-      "implementation_order_edges": 374,
-      "implementation_dominance_constraints": 130,
-      "implementation_dominance_edges": 342,
-      "native_backend_vectors": 11
+      "lean_formal": "cd formal/lean && lake build Hegemon.Release.DependencyAuditPolicy Hegemon.Release.GenerateDependencyAuditPolicyVectors Hegemon.Transaction.ProofWrapperAdmission Hegemon.Transaction.ProofStatementBinding Hegemon.Transaction.GenerateProofStatementBindingVectors Hegemon passed locally with 150 jobs; targeted Lean files for privacy and sync admission passed through the integrated Hegemon build.",
+      "targeted_rust": "dependency-audit-gate passed with 8 waived / 0 unwaived / 0 unused waivers; generated proof-statement and proof-wrapper vectors passed production Rust conformance; wallet local bookkeeping and address metadata projection regressions passed; native sync response-range bounded-request regression passed.",
+      "claims_blueprint": "formal-core claims, blueprint, and inventory checks passed locally with 118 claims, 1833 named Lean theorem declarations, 509 falsification cases, and 209 implementation bindings."
     },
     "known_limitations": [
-      "This slice models and vector-checks no-candidate PendingAction SCALE wires, the shipped recursive-block CandidateArtifact::Some product lane, and representative MintCoinbaseArgs route payloads; it still does not prove arbitrary nested receipt-root/custom CandidateArtifact payload grammars if those paths are re-enabled.",
-      "The conformance gates check representative Lean-generated raw bytes against production encode/decode behavior; they are not full proofs of parity-scale-codec implementation correctness for every arbitrary byte string.",
-      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive mined/startup inbound bridge publication, and complete native-node refinement remain explicit residuals."
+      "These slices do not discharge hash collision resistance, STARK/FRI/PCS soundness, ML-KEM/AEAD indistinguishability, simulator zero knowledge, advisory database completeness, scanner completeness, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Closed a candidate-artifact route-payload coherence gap in production validation. Native candidate actions now exact-decode public_args as SubmitCandidateArtifactArgs and require that route payload to equal the duplicated candidate_artifact field before accepting the recursive-block artifact, so a mined/reloaded action cannot validate one artifact while carrying different or malformed route bytes.",
+    "summary": "Bound the new theorem slices to executable gates: dependency-audit rejects stale waivers, proof-statement/proof-wrapper Lean vectors are checked against production transcript/admission code, wallet metadata regressions check public ciphertext projections, and native sync response-range caps are checked before peer response allocation/serving.",
     "changed_runtime_paths": [
-      "node/src/native/mod.rs validate_candidate_action_payload exact-decodes SubmitCandidateArtifactArgs from PendingAction.public_args",
-      "node/src/native/mod.rs validate_candidate_action_payload requires decoded route payload equality with PendingAction.candidate_artifact",
-      "node/src/native/mod.rs candidate-artifact malformed-route and mismatch regressions",
-      "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean route payload decode/mismatch rejection theorems",
-      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean route payload rejection vectors",
-      "formal/lean/Hegemon/Native/PendingActionScaleWire.lean live candidate public_args plus candidate_artifact wire shape",
-      "formal/lean/Hegemon/Native/CoinbaseActionPayloadScaleWire.lean MintCoinbaseArgs raw SCALE wire conformance",
-      "scripts/check_formal_core.sh generated vector and Rust conformance gates"
+      "scripts/dependency-audit-gate.sh rejects unused validated waivers",
+      "config/dependency-audit-waivers.json removes stale waivers no longer present in cargo audit findings",
+      "circuits/transaction/src/proof.rs consumes proof-wrapper metadata projection vector cases in the existing generated-vector test",
+      "wallet/src/store.rs adds cfg(test) address metadata public-ciphertext projection regression",
+      "node/src/native/mod.rs adds cfg(test) native sync response-range bounded-request regression",
+      "scripts/check_formal_core.sh includes the new stale-waiver, wallet metadata, and sync response-range gates"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Native.CandidateArtifactAdmission.*",
-      "Hegemon.Native.PendingActionScaleWire.*",
-      "Hegemon.Native.CoinbaseActionPayloadScaleWire.*",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.*",
-      "Hegemon.Native.DaSidecarReplayBinding.*"
+      "Hegemon.Release.DependencyAuditPolicy",
+      "Hegemon.Transaction.ProofStatementBinding",
+      "Hegemon.Transaction.ProofWrapperAdmission",
+      "Hegemon.Privacy.Observer",
+      "Hegemon.Privacy.CiphertextPrivacy",
+      "Hegemon.Native.SyncAdmission"
     ],
     "validation": {
-      "targeted_rust": [
-        "HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=/tmp/candidate_artifact_admission.json cargo test -p hegemon-node candidate_artifact --lib --no-default-features -- --nocapture",
-        "HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS=/tmp/pending_action_scale_wire.json cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
-        "HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS=/tmp/coinbase_action_payload_scale_wire.json cargo test -p hegemon-node lean_generated_coinbase_action_payload_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture"
-      ],
-      "profile_projection": "The production runtime cost is a cheap exact decode and equality check on candidate-artifact actions before heavy recursive proof work; no transaction prover or proof-size change is introduced.",
-      "formal_core": "bash scripts/check_formal_core.sh passed locally at 2026-06-17T02:04:27Z with candidate route payload coherence, PendingAction live route payload wire fixtures, and CoinbaseActionPayloadScaleWire vectors enforced by the gate.",
-      "claims": 118,
-      "named_lean_theorems": 1802,
-      "production_eligible_claims": 108,
-      "falsification_cases": 505,
-      "implementation_bindings": 209,
-      "implementation_result_obligations": 163,
-      "implementation_dominance_constraints": 130,
-      "implementation_dominance_edges": 342,
-      "implementation_order_constraints": 144,
-      "implementation_order_edges": 374
+      "status": "full local formal-core passed with 118 claims, 1833 named Lean theorem declarations, 822 axiom-free theorem declarations, 1011 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 509 falsification cases, 209 implementation bindings, 163 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "The route-payload fix proves and checks candidate-artifact action byte/artifact coherence, not recursive proof cryptographic soundness.",
-      "The PendingAction and MintCoinbaseArgs wire gates check Lean-generated representative raw bytes against production encode/decode behavior; they do not prove parity-scale-codec correctness for every arbitrary byte string.",
-      "Hash/security equivalence, DA availability, proof-system soundness, storage durability assumptions, positive inbound bridge publication, and complete native-node equivalence remain open."
+      "No shipped node hot-path logic changes beyond release script/policy and cfg(test) conformance gates."
     ]
   },
   "properties": [
@@ -410,10 +364,11 @@
     {
       "id": "proof.statement-binding",
       "weight": 6,
-      "completion_percent": 97,
+      "completion_percent": 97.3,
       "top_level_theorem_target": "Every accepted proof artifact verifies exactly the consensus statement used for nullifiers, commitments, fees, asset deltas, public-input digest, backend profile, and block commitment.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors, with generated Rust conformance coverage",
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean accepted statement-surface theorem",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean conditional accepted-proof artifact theorems",
@@ -441,18 +396,19 @@
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean composes parsed native tx-leaf artifact byte-shape facts, explicit parser-to-canonical projection assumptions, accepted tx-leaf/action binding, canonical statement surface facts, pending-action byte publication, and raw-ingress pending-action tx-leaf publication into one parsed statement/artifact publication surface",
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean carries native tx-leaf statement/proof artifact facts through the transfer no-theft and input-slot authorization publication surface",
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now projects materialized transfer publication records to selected output-slot statement/proof artifact facts",
-        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table"
+        "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table",
+        "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production."
       ],
       "missing_work": [
         "Discharge remaining proof artifact entry points and the explicit native tx-leaf proof-system soundness assumptions.",
-        "State hash collision resistance and transcript assumptions explicitly."
+        "State hash collision resistance and transcript assumptions explicitly, including BLAKE3/BLAKE2 transcript collision resistance and implementation equivalence."
       ],
       "performance_constraint": "Keep shared helper reuse; no extra hashing beyond already-required statement construction."
     },
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 87,
+      "completion_percent": 87.4,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -503,20 +459,21 @@
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean narrows the balance/public-field deployed-verifier target to concrete P3 final-row AIR equations for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
         "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, includes serialized statement bytes, pads to eight-byte alignment, and changes when version or arithmetization profile material changes",
-        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled"
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled",
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests."
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
         "Mechanize or explicitly parameterize STARK/FRI soundness assumptions.",
         "Mechanize native lattice backend binding/fold assumptions or keep the backend out of production claims.",
-        "Discharge the split spend-only, balance/public-field, and SmallWood transcript/profile deployed verifier soundness assumptions with deployed verifier/AIR/refinement theorems instead of leaving them explicit."
+        "Continue extending proof-wrapper metadata and proof-artifact admission coverage until every production entry point is bound to the canonical statement surface."
       ],
       "performance_constraint": "Mostly proof work; any runtime admission additions must be cheap prechecks."
     },
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 67,
+      "completion_percent": 68,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -545,10 +502,11 @@
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves same-shape ciphertext privacy games preserve that explicit batch/timing leakage while leaving true timing privacy as an open assumption",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy as first-class assumptions in the privacy-game boundary theorem",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM, chain wire, DA wire, and ciphertext-hash bytes under distinct RNG streams",
-    "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
-    "formal/lean/Hegemon/Privacy/Observer.lean now models local action metadata explicitly and proves full observer, public metadata, and batch/timing projections ignore independently changed local metadata such as arrival-time-like fields",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
+        "formal/lean/Hegemon/Privacy/Observer.lean now models local action metadata explicitly and proves full observer, public metadata, and batch/timing projections ignore independently changed local metadata such as arrival-time-like fields",
+        "formal/lean/Hegemon/Privacy/Observer.lean now models local address metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed wallet address-cursor fields",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now carries local action metadata through the secret-resampling boundary so public metadata and explicit batch/timing leakage remain stable under independent private-witness, prover-randomness, and local-metadata resampling",
-        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local action metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and network assumptions explicit",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local action and local address metadata resampling preserve the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and network assumptions explicit",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability`, a no-new-assumptions reduction from modeled unlinkability to equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise",
         "wallet/src/notes.rs `reencryption_preserves_public_ciphertext_summary_shape` regression checks same-plaintext same-recipient re-encryption changes raw chain/DA wires while preserving the Lean-modeled public ciphertext summary shape after chain and DA parsing",
@@ -557,11 +515,13 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output-row metadata packages survive independent private-witness, prover-randomness, and local wallet/action metadata resampling for selected and all active rows",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean composes materialized sidecar DA publication, wire replay DA-row binding, tx-leaf ciphertext publication, statement/proof ciphertext-vector binding, and the all-active projected-DA privacy-game boundary over one accepted materialized sidecar surface",
         "node/src/native/mod.rs materialized_sidecar_observer_projection_ignores_received_time regression proves arrival-time-only pending-action hash changes do not alter the sidecar semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection",
-        "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash"
+        "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
+        "wallet/src/store.rs local_address_metadata_does_not_change_public_ciphertext_projection regression proves next_address_index advancement and persistence through address reservation/reopen do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash",
+        "Proof-wrapper metadata projection is now explicitly bounded: accepted wrappers cannot change the public statement projection or extend public nullifier/ciphertext/asset rows outside the bound statement, reducing proof-wrapper metadata leakage surface."
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/public-ciphertext projection and arrival-time sidecar projection into proof wrappers, batching policy, broader wallet metadata, and network metadata surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, and arrival-time sidecar projection into batching policy, remaining wallet metadata, and network metadata surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
@@ -855,7 +815,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 81,
+      "completion_percent": 82,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -874,10 +834,11 @@
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean composes accepted bounded-request cap facts with exact pending/block-action decode, pending reload, and wire replay, proving resource item count matches declared, decoded, and wire-row action counts.",
         "node/src/native/mod.rs `validate_block_action_byte_budget` rejects over-cap block action counts, per-action payloads, aggregate-byte overflow, and aggregate bytes before SCALE action decode; formal-core runs the focused `block_action_byte_budget` regression.",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now proves `accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows`, carrying `AcceptedBoundedRequestFacts` through accepted sync decode/count, exact block-action decode, wire replay, and raw canonical publication while proving resource item count matches admitted response count and raw block batch length.",
-        "node/src/native/mod.rs now checks Lean-generated bounded-request vectors against production `evaluate_native_bounded_request_admission` and routes inbound sync response-count admission through `native_sync_response_count_bounded_request` before block sorting/import; formal-core runs both `lean_generated_bounded_request_admission_vectors_match_production` and `native_sync_response_count_uses_bounded_request_item_gate`."
+        "node/src/native/mod.rs now checks Lean-generated bounded-request vectors against production `evaluate_native_bounded_request_admission` and routes inbound sync response-count admission through `native_sync_response_count_bounded_request` before block sorting/import; formal-core runs both `lean_generated_bounded_request_admission_vectors_match_production` and `native_sync_response_count_uses_bounded_request_item_gate`.",
+        "formal/lean/Hegemon/Native/SyncAdmission.lean now proves `accepted_response_range_exposes_bounded_request_facts`, carrying the outbound sync response-range cap into reusable bounded-request item-count facts before block_range publication; node/src/native/mod.rs regression `native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts` checks an overwide response-range request is capped to MAX_NATIVE_SYNC_RESPONSE_BLOCKS before block_range can allocate or serve peer response rows, and formal-core runs that focused regression."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families beyond native block actions and sync response counts to the reusable bounded-request admission table.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, and outbound sync response ranges to the reusable bounded-request admission table.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],
@@ -886,7 +847,7 @@
     {
       "id": "release.dependency-posture",
       "weight": 2,
-      "completion_percent": 83,
+      "completion_percent": 84.5,
       "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
       "current_evidence": [
         ".github/workflows/ci.yml release-build security dependencies and binary audit",
@@ -896,10 +857,12 @@
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
         "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
         "native backend review-policy and release-posture gates",
-        "formal-core dependency and release posture checks"
+        "formal-core dependency and release posture checks",
+        "DependencyAuditPolicy now rejects unused/stale waivers, generated vectors cover unused-waiver and unwaived-before-unused precedence, and scripts/dependency-audit-gate.sh fails release CI when a waiver no longer matches a current cargo-audit finding.",
+        "config/dependency-audit-waivers.json now contains only the 8 current cargo-audit findings after removing stale tracing-subscriber, derivative, and rustls-pemfile waivers; scripts/dependency-audit-gate.sh reports 8 waived, 0 unwaived, and 0 unused waivers."
       ],
       "missing_work": [
-        "Move any remaining advisory/waiver drift that is outside cargo-audit visibility into mandatory CI evidence.",
+        "Move any remaining advisory drift that is outside cargo-audit visibility into mandatory CI evidence.",
         "Add binary scanner completeness review and accepted external-review artifact requirements.",
         "Make repository-admin branch protection/ruleset evidence require formal-core, dependency-audit, release-build, native-backend-security, and security-adversarial checks."
       ],

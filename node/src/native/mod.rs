@@ -22422,6 +22422,40 @@ mod tests {
     }
 
     #[test]
+    fn native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts() {
+        let range = native_sync_response_range(NativeSyncResponseRangeInput {
+            from_height: 0,
+            to_height: u64::MAX,
+            best_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 100,
+            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        })
+        .expect("overwide request should still produce a capped range");
+        assert_eq!(range.from_height, 0);
+        assert_eq!(range.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1);
+
+        let range_count =
+            usize::try_from(range.to_height - range.from_height + 1).expect("range count");
+        assert_eq!(range_count, MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE);
+        assert_eq!(
+            evaluate_native_bounded_request_admission(NativeBoundedRequestAdmissionInput {
+                raw_byte_cap: usize::MAX,
+                decoded_byte_cap: usize::MAX,
+                item_count_cap: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+                item_byte_cap: usize::MAX,
+                aggregate_byte_cap: usize::MAX,
+                work_unit_cap: usize::MAX,
+                raw_bytes: 0,
+                decoded_bytes: 0,
+                item_count: range_count,
+                max_item_bytes: 0,
+                aggregate_bytes: 0,
+                work_units: 0,
+            }),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn block_range_rejects_missing_canonical_height_inside_admitted_range() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =

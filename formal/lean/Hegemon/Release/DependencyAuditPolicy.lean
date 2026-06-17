@@ -5,6 +5,7 @@ namespace DependencyAuditPolicy
 inductive DependencyAuditReject where
   | malformedWaiver
   | unwaivedFinding
+  | unusedWaiver
 deriving DecidableEq, Repr
 
 structure DependencyFinding where
@@ -56,14 +57,24 @@ def findingHasValidWaiver
     (finding : DependencyFinding) : Bool :=
   waivers.any (fun waiver => waiverIsValid waiver && waiverMatchesFinding finding waiver)
 
+def waiverMatchesAnyFinding
+    (findings : List DependencyFinding)
+    (waiver : DependencyWaiver) : Bool :=
+  findings.any (fun finding => waiverMatchesFinding finding waiver)
+
 def dependencyWaiversValid (input : DependencyAuditInput) : Bool :=
   input.waivers.all waiverIsValid
 
 def dependencyFindingsWaived (input : DependencyAuditInput) : Bool :=
   input.findings.all (findingHasValidWaiver input.waivers)
 
+def dependencyWaiversUsed (input : DependencyAuditInput) : Bool :=
+  input.waivers.all (waiverMatchesAnyFinding input.findings)
+
 def dependencyAuditPreconditions (input : DependencyAuditInput) : Bool :=
-  dependencyWaiversValid input && dependencyFindingsWaived input
+  dependencyWaiversValid input
+    && dependencyFindingsWaived input
+    && dependencyWaiversUsed input
 
 def evaluateDependencyAudit
     (input : DependencyAuditInput) : Except DependencyAuditReject Unit :=
@@ -71,6 +82,8 @@ def evaluateDependencyAudit
     Except.error DependencyAuditReject.malformedWaiver
   else if dependencyFindingsWaived input = false then
     Except.error DependencyAuditReject.unwaivedFinding
+  else if dependencyWaiversUsed input = false then
+    Except.error DependencyAuditReject.unusedWaiver
   else
     Except.ok ()
 
@@ -92,6 +105,7 @@ theorem accepts_iff_dependency_audit_preconditions
     dependencyAuditPreconditions evaluateDependencyAudit
   cases hWaivers : dependencyWaiversValid input <;>
     cases hFindings : dependencyFindingsWaived input <;>
+    cases hUsed : dependencyWaiversUsed input <;>
     simp
 
 def bincodeFinding : DependencyFinding :=
@@ -162,6 +176,25 @@ def invalidWaiverPrecedenceInput : DependencyAuditInput :=
     waivers := [{ validBincodeWaiver with hasTracking := false }]
   }
 
+def unusedWaiverInput : DependencyAuditInput :=
+  {
+    findings := []
+    waivers := [validBincodeWaiver]
+  }
+
+def unwaivedFindingPrecedesUnusedWaiverInput : DependencyAuditInput :=
+  {
+    findings := [
+      {
+        id := "RUSTSEC-2099-0001",
+        package := "unknown",
+        version := "0.0.0",
+        kind := "vulnerability"
+      }
+    ],
+    waivers := [validBincodeWaiver]
+  }
+
 theorem no_findings_no_waivers_accepts :
     evaluateDependencyAudit noFindingsNoWaivers = Except.ok () := by
   rfl
@@ -193,6 +226,16 @@ theorem missing_reason_rejects :
 theorem invalid_waiver_precedes_unwaived_finding :
     evaluateDependencyAudit invalidWaiverPrecedenceInput =
       Except.error DependencyAuditReject.malformedWaiver := by
+  rfl
+
+theorem unused_waiver_rejects :
+    evaluateDependencyAudit unusedWaiverInput =
+      Except.error DependencyAuditReject.unusedWaiver := by
+  rfl
+
+theorem unwaived_finding_precedes_unused_waiver :
+    evaluateDependencyAudit unwaivedFindingPrecedesUnusedWaiverInput =
+      Except.error DependencyAuditReject.unwaivedFinding := by
   rfl
 
 end DependencyAuditPolicy

@@ -35,6 +35,10 @@ def finding_has_valid_waiver(finding: dict, waivers: list[dict]) -> bool:
     )
 
 
+def waiver_matches_any_finding(waiver: dict, findings: list[dict]) -> bool:
+    return any(waiver_matches_finding(finding, waiver) for finding in findings)
+
+
 def evaluate_case(case: dict) -> tuple[bool, str | None]:
     findings = case["findings"]
     waivers = case["waivers"]
@@ -42,6 +46,8 @@ def evaluate_case(case: dict) -> tuple[bool, str | None]:
         return False, "malformed_waiver"
     if not all(finding_has_valid_waiver(finding, waivers) for finding in findings):
         return False, "unwaived_finding"
+    if not all(waiver_matches_any_finding(waiver, findings) for waiver in waivers):
+        return False, "unused_waiver"
     return True, None
 
 

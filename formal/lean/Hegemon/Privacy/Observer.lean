@@ -49,6 +49,12 @@ structure LocalActionMetadata where
   storageGeneration : Nat
 deriving DecidableEq, Repr
 
+structure LocalAddressMetadata where
+  nextAddressIndex : Nat
+  reservedInternalAddressCount : Nat
+  addressBookGeneration : Nat
+deriving DecidableEq, Repr
+
 structure ShieldedTransactionWorld where
   publicInputs : PublicInputShape
   ciphertextBytes : List (List Byte)
@@ -56,6 +62,7 @@ structure ShieldedTransactionWorld where
   blockHeight : Nat
   actionIndex : Nat
   localActionMetadata : LocalActionMetadata
+  localAddressMetadata : LocalAddressMetadata
   privateWitness : PrivateWitness
   proverRandomnessSeed : Nat
 deriving DecidableEq, Repr
@@ -308,6 +315,27 @@ theorem batch_timing_view_ignores_local_action_metadata
     (world : ShieldedTransactionWorld)
     (localActionMetadata : LocalActionMetadata) :
     batchTimingView { world with localActionMetadata := localActionMetadata } =
+      batchTimingView world := by
+  rfl
+
+theorem observer_view_ignores_local_address_metadata
+    (world : ShieldedTransactionWorld)
+    (localAddressMetadata : LocalAddressMetadata) :
+    observerView { world with localAddressMetadata := localAddressMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_local_address_metadata
+    (world : ShieldedTransactionWorld)
+    (localAddressMetadata : LocalAddressMetadata) :
+    publicMetadataView { world with localAddressMetadata := localAddressMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_local_address_metadata
+    (world : ShieldedTransactionWorld)
+    (localAddressMetadata : LocalAddressMetadata) :
+    batchTimingView { world with localAddressMetadata := localAddressMetadata } =
       batchTimingView world := by
   rfl
 
@@ -714,12 +742,47 @@ theorem same_batch_timing_leakage_stable_under_local_action_metadata
       { right with localActionMetadata := rightLocal } := by
   exact same
 
+theorem same_allowed_leakage_stable_under_local_address_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    sameAllowedLeakage
+      { left with localAddressMetadata := leftAddress }
+      { right with localAddressMetadata := rightAddress } := by
+  exact same
+
+theorem same_public_metadata_leakage_stable_under_local_address_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : samePublicMetadataLeakage left right)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    samePublicMetadataLeakage
+      { left with localAddressMetadata := leftAddress }
+      { right with localAddressMetadata := rightAddress } := by
+  exact same
+
+theorem same_batch_timing_leakage_stable_under_local_address_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameBatchTimingLeakage left right)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    sameBatchTimingLeakage
+      { left with localAddressMetadata := leftAddress }
+      { right with localAddressMetadata := rightAddress } := by
+  exact same
+
 theorem valid_observer_chain_surface_stable_under_local_action_metadata
     {world : ShieldedTransactionWorld}
     (valid : validObserverChainSurface world)
     (localActionMetadata : LocalActionMetadata) :
     validObserverChainSurface
       { world with localActionMetadata := localActionMetadata } := by
+  simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
+theorem valid_observer_chain_surface_stable_under_local_address_metadata
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world)
+    (localAddressMetadata : LocalAddressMetadata) :
+    validObserverChainSurface
+      { world with localAddressMetadata := localAddressMetadata } := by
   simpa [validObserverChainSurface, summariesMatchChainWire] using valid
 
 end Observer

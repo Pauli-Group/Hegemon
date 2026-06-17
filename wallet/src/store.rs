@@ -1782,6 +1782,106 @@ mod tests {
     }
 
     #[test]
+    fn local_address_metadata_does_not_change_public_ciphertext_projection() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = store.primary_address().unwrap();
+        let mut rng = StdRng::seed_from_u64(117);
+
+        let note = NotePlaintext::random(
+            41,
+            0,
+            MemoPlaintext::new(b"address metadata projection".to_vec()),
+            &mut rng,
+        );
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        let before = public_ciphertext_projection(&ciphertext);
+        let pre_address_metadata_bundle = crate::rpc::TransactionBundle::new(
+            vec![0x31],
+            vec![],
+            vec![commitment],
+            &[ciphertext.clone()],
+            [0x32; 48],
+            [0x33; 64],
+            [0, u64::MAX, u64::MAX, u64::MAX],
+            0,
+            0,
+            transaction_circuit::StablecoinPolicyBinding::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            store
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            0
+        );
+        let external_address = store.next_address().unwrap();
+        let internal_address = store.reserve_internal_address().unwrap();
+        let next_external_address = store.next_address().unwrap();
+        assert_ne!(external_address.pk_recipient, internal_address.pk_recipient);
+        assert_ne!(
+            internal_address.pk_recipient,
+            next_external_address.pk_recipient
+        );
+        assert_eq!(
+            store
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            3
+        );
+
+        drop(store);
+        let reopened = WalletStore::open(&path, "passphrase").unwrap();
+        assert_eq!(
+            reopened
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            3
+        );
+        let post_reopen_address = reopened.next_address().unwrap();
+        assert_ne!(
+            next_external_address.pk_recipient,
+            post_reopen_address.pk_recipient
+        );
+        assert_eq!(
+            reopened
+                .with_state(|state| Ok(state.next_address_index))
+                .unwrap(),
+            4
+        );
+
+        let after = public_ciphertext_projection(&ciphertext);
+        assert_eq!(after, before);
+
+        let post_address_metadata_bundle = crate::rpc::TransactionBundle::new(
+            vec![0x34],
+            vec![],
+            vec![commitment],
+            &[ciphertext.clone()],
+            [0x35; 48],
+            [0x36; 64],
+            [0, u64::MAX, u64::MAX, u64::MAX],
+            1,
+            0,
+            transaction_circuit::StablecoinPolicyBinding::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            pre_address_metadata_bundle.ciphertexts, post_address_metadata_bundle.ciphertexts,
+            "wallet-local address cursor metadata must not enter chain ciphertext bytes"
+        );
+
+        let decoded = post_address_metadata_bundle.decode_notes().unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(public_ciphertext_projection(&decoded[0]), before);
+    }
+
+    #[test]
     fn recovered_note_uses_commitment_index_as_position() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wallet.dat");

@@ -1,6 +1,10 @@
+import Hegemon.Resource.BoundedRequestAdmission
+
 namespace Hegemon
 namespace Native
 namespace SyncAdmission
+
+open Hegemon.Resource.BoundedRequestAdmission
 
 def u64Max : Nat := 18446744073709551615
 
@@ -55,6 +59,110 @@ def responseCountRejects (input : SyncResponseCountInput) : Bool :=
 
 def responseCountAccepts (input : SyncResponseCountInput) : Bool :=
   responseCountRejects input = false
+
+def responseRangeBlockCount (range : Nat × Nat) : Nat :=
+  range.snd + 1 - range.fst
+
+def responseRangeBoundedPolicy
+    (input : SyncResponseRangeInput) : ResourcePolicy :=
+  {
+    rawByteCap := u64Max,
+    decodedByteCap := u64Max,
+    itemCountCap := input.maxBlocks,
+    itemByteCap := u64Max,
+    aggregateByteCap := u64Max,
+    workUnitCap := u64Max
+  }
+
+def responseRangeBoundedRequest (range : Nat × Nat) : ResourceRequest :=
+  {
+    rawBytes := 0,
+    decodedBytes := 0,
+    itemCount := responseRangeBlockCount range,
+    maxItemBytes := 0,
+    aggregateBytes := 0,
+    workUnits := 0
+  }
+
+theorem saturating_add_u64_window_count_le
+    (lhs rhs : Nat) :
+    saturatingAddU64 lhs rhs + 1 - lhs ≤ rhs + 1 := by
+  unfold saturatingAddU64
+  by_cases over : u64Max - lhs < rhs
+  · simp [over]
+    omega
+  · simp [over]
+    omega
+
+theorem response_cap_end_window_count_le
+    (input : SyncResponseRangeInput)
+    (maxNonzero : input.maxBlocks ≠ 0) :
+    responseCapEnd input + 1 - input.fromHeight ≤ input.maxBlocks := by
+  have capEndLe :
+      responseCapEnd input ≤
+        saturatingAddU64 input.fromHeight (input.maxBlocks - 1) := by
+    unfold responseCapEnd
+    exact
+      Nat.le_trans
+        (Nat.min_le_right input.toHeight
+          (min input.bestHeight
+            (saturatingAddU64 input.fromHeight (input.maxBlocks - 1))))
+        (Nat.min_le_right input.bestHeight
+          (saturatingAddU64 input.fromHeight (input.maxBlocks - 1)))
+  have window :=
+    saturating_add_u64_window_count_le
+      input.fromHeight
+      (input.maxBlocks - 1)
+  have maxPositive : 1 ≤ input.maxBlocks :=
+    Nat.succ_le_of_lt (Nat.pos_of_ne_zero maxNonzero)
+  have window' :
+      saturatingAddU64 input.fromHeight (input.maxBlocks - 1)
+          + 1 - input.fromHeight ≤ input.maxBlocks := by
+    simpa [Nat.sub_add_cancel maxPositive] using window
+  omega
+
+theorem response_range_block_count_within_max_blocks
+    {input : SyncResponseRangeInput}
+    {range : Nat × Nat}
+    (accepted : responseRange input = some range) :
+    responseRangeBlockCount range ≤ input.maxBlocks := by
+  unfold responseRange at accepted
+  by_cases maxZero : input.maxBlocks = 0
+  · simp [maxZero] at accepted
+  · by_cases fromWithin : input.fromHeight ≤ responseCapEnd input
+    · simp [maxZero, fromWithin] at accepted
+      cases accepted
+      exact response_cap_end_window_count_le input maxZero
+    · simp [maxZero, fromWithin] at accepted
+
+theorem response_range_bounded_request_accepts
+    {input : SyncResponseRangeInput}
+    {range : Nat × Nat}
+    (accepted : responseRange input = some range) :
+    evaluateBoundedRequest
+      (responseRangeBoundedPolicy input)
+      (responseRangeBoundedRequest range) = none := by
+  have countWithin :=
+    response_range_block_count_within_max_blocks accepted
+  have countNotOver :
+      ¬ input.maxBlocks < responseRangeBlockCount range :=
+    Nat.not_lt.mpr countWithin
+  simp [
+    evaluateBoundedRequest,
+    responseRangeBoundedPolicy,
+    responseRangeBoundedRequest,
+    countNotOver
+  ]
+
+theorem accepted_response_range_exposes_bounded_request_facts
+    {input : SyncResponseRangeInput}
+    {range : Nat × Nat}
+    (accepted : responseRange input = some range) :
+    AcceptedBoundedRequestFacts
+      (responseRangeBoundedPolicy input)
+      (responseRangeBoundedRequest range) :=
+  accepted_bounded_request_exposes_all_caps
+    (response_range_bounded_request_accepts accepted)
 
 theorem response_range_accepts_iff_from_within_cap
     {input : SyncResponseRangeInput} :

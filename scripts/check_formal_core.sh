@@ -354,6 +354,48 @@ HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$LEAN_BRIDGE_MINT_REPLAY_POLICY_
   cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture
 python3 "$ROOT/scripts/check_dependency_audit_policy_vectors.py" \
   "$LEAN_DEPENDENCY_AUDIT_POLICY_VECTORS"
+DEPENDENCY_AUDIT_UNUSED_AUDIT="$(mktemp)"
+DEPENDENCY_AUDIT_UNUSED_POLICY="$(mktemp)"
+cat > "$DEPENDENCY_AUDIT_UNUSED_AUDIT" <<'JSON'
+{
+  "vulnerabilities": {
+    "list": []
+  },
+  "warnings": {}
+}
+JSON
+cat > "$DEPENDENCY_AUDIT_UNUSED_POLICY" <<'JSON'
+{
+  "schema": 1,
+  "generated_at_utc": "2099-01-01",
+  "waivers": [
+    {
+      "id": "RUSTSEC-2099-0001",
+      "package": "stale-package",
+      "version": "1.0.0",
+      "kind": "vulnerability",
+      "expires": "2099-01-01",
+      "tracking": "DEP-2099-0001",
+      "reason": "Synthetic stale waiver used to prove the dependency-audit gate rejects waiver drift."
+    }
+  ]
+}
+JSON
+set +e
+DEPENDENCY_AUDIT_UNUSED_OUTPUT="$("$ROOT/scripts/dependency-audit-gate.sh" \
+  --audit-json "$DEPENDENCY_AUDIT_UNUSED_AUDIT" \
+  --policy "$DEPENDENCY_AUDIT_UNUSED_POLICY" 2>&1)"
+DEPENDENCY_AUDIT_UNUSED_STATUS=$?
+set -e
+if [ "$DEPENDENCY_AUDIT_UNUSED_STATUS" -eq 0 ]; then
+  printf 'dependency-audit gate accepted an unused synthetic waiver\n' >&2
+  exit 1
+fi
+if [[ "$DEPENDENCY_AUDIT_UNUSED_OUTPUT" != *"unused dependency audit waivers"* ]]; then
+  printf 'dependency-audit gate rejected the synthetic waiver for the wrong reason:\n%s\n' \
+    "$DEPENDENCY_AUDIT_UNUSED_OUTPUT" >&2
+  exit 1
+fi
 HEGEMON_LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS="$LEAN_TRANSFER_ACTION_PAYLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_transfer_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_TRANSFER_STATE_ADMISSION_VECTORS="$LEAN_TRANSFER_STATE_ADMISSION_VECTORS" \
@@ -422,6 +464,7 @@ HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS="$LEAN_STORAGE_DURABILITY_ADMI
 HEGEMON_LEAN_SYNC_ADMISSION_VECTORS="$LEAN_SYNC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" \
@@ -440,6 +483,7 @@ cargo test -p wallet decrypt_rejects --lib -- --nocapture
 cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture
 cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture
 cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture
+cargo test -p wallet local_address_metadata_does_not_change_public_ciphertext_projection --lib -- --nocapture
 cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture
 cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture
 cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture

@@ -9,6 +9,7 @@ def rejectionJson : Option DependencyAuditReject -> String
   | none => "null"
   | some DependencyAuditReject.malformedWaiver => "\"malformed_waiver\""
   | some DependencyAuditReject.unwaivedFinding => "\"unwaived_finding\""
+  | some DependencyAuditReject.unusedWaiver => "\"unused_waiver\""
 
 def findingJson (finding : DependencyFinding) : String :=
   "        {\n"
@@ -74,7 +75,11 @@ def vectorJson : String :=
     ++ dependencyAuditPolicyCaseJson "missing-reason-rejects"
       missingReasonInput ++ ",\n"
     ++ dependencyAuditPolicyCaseJson "invalid-waiver-precedes-unwaived-finding"
-      invalidWaiverPrecedenceInput ++ "\n"
+      invalidWaiverPrecedenceInput ++ ",\n"
+    ++ dependencyAuditPolicyCaseJson "unused-waiver-rejects"
+      unusedWaiverInput ++ ",\n"
+    ++ dependencyAuditPolicyCaseJson "unwaived-finding-precedes-unused-waiver"
+      unwaivedFindingPrecedesUnusedWaiverInput ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

@@ -110,6 +110,94 @@ theorem proofWrapperAccepts_implies_statement_surface {input : ProofWrapperInput
       serializedPublicInputsPresent, publicInputsValid, nullifierVectorAgrees,
       commitmentVectorAgrees, balanceSlotsAgree, verifierAccepts⟩
 
+structure ProofWrapperMetadataProjectionInput where
+  wrapperNullifiersEqualBoundStatement : Bool
+  wrapperCommitmentsEqualBoundStatement : Bool
+  wrapperBalanceSlotsEqualBoundStatement : Bool
+  serializedPublicInputsEqualBoundProjection : Bool
+  publicNullifierRowsWithinStatementBoundary : Bool
+  publicCiphertextRowsWithinStatementBoundary : Bool
+  publicAssetRowsWithinStatementBoundary : Bool
+deriving DecidableEq, Repr
+
+def metadataProjectionFromAdmissionInput
+    (input : ProofWrapperInput) : ProofWrapperMetadataProjectionInput :=
+  { wrapperNullifiersEqualBoundStatement := input.nullifierVectorAgrees
+    wrapperCommitmentsEqualBoundStatement := input.commitmentVectorAgrees
+    wrapperBalanceSlotsEqualBoundStatement := input.balanceSlotsAgree
+    serializedPublicInputsEqualBoundProjection := input.publicInputsValid
+    publicNullifierRowsWithinStatementBoundary := input.publicInputsValid
+    publicCiphertextRowsWithinStatementBoundary := input.publicInputsValid
+    publicAssetRowsWithinStatementBoundary :=
+      input.publicInputsValid && input.balanceSlotsAgree }
+
+def proofWrapperMetadataProjectionPreconditions
+    (input : ProofWrapperMetadataProjectionInput) : Bool :=
+  input.wrapperNullifiersEqualBoundStatement
+    && input.wrapperCommitmentsEqualBoundStatement
+    && input.wrapperBalanceSlotsEqualBoundStatement
+    && input.serializedPublicInputsEqualBoundProjection
+    && input.publicNullifierRowsWithinStatementBoundary
+    && input.publicCiphertextRowsWithinStatementBoundary
+    && input.publicAssetRowsWithinStatementBoundary
+
+def proofWrapperMetadataProjectionAccepts
+    (input : ProofWrapperMetadataProjectionInput) : Bool :=
+  proofWrapperMetadataProjectionPreconditions input
+
+def acceptedProofWrapperMetadataProjectionSurface
+    (input : ProofWrapperMetadataProjectionInput) : Prop :=
+  input.wrapperNullifiersEqualBoundStatement = true
+    ∧ input.wrapperCommitmentsEqualBoundStatement = true
+    ∧ input.wrapperBalanceSlotsEqualBoundStatement = true
+    ∧ input.serializedPublicInputsEqualBoundProjection = true
+    ∧ input.publicNullifierRowsWithinStatementBoundary = true
+    ∧ input.publicCiphertextRowsWithinStatementBoundary = true
+    ∧ input.publicAssetRowsWithinStatementBoundary = true
+
+theorem metadataProjectionAccepts_iff_preconditions
+    {input : ProofWrapperMetadataProjectionInput} :
+    proofWrapperMetadataProjectionAccepts input = true
+      ↔ proofWrapperMetadataProjectionPreconditions input = true := by
+  rfl
+
+theorem proofWrapperMetadataProjectionAccepts_implies_boundary_surface
+    {input : ProofWrapperMetadataProjectionInput}
+    (accepted : proofWrapperMetadataProjectionAccepts input = true) :
+    acceptedProofWrapperMetadataProjectionSurface input := by
+  simp [proofWrapperMetadataProjectionAccepts,
+    proofWrapperMetadataProjectionPreconditions] at accepted
+  rcases accepted with
+    ⟨⟨⟨⟨⟨⟨hNullifiers, hCommitments⟩, hBalance⟩, hSerialized⟩,
+      hNullifierRows⟩, hCiphertextRows⟩, hAssetRows⟩
+  exact
+    ⟨hNullifiers, hCommitments, hBalance, hSerialized, hNullifierRows,
+      hCiphertextRows, hAssetRows⟩
+
+theorem proofWrapperAccepts_implies_metadata_projection_from_admission_accepts
+    {input : ProofWrapperInput}
+    (accepted : proofWrapperAccepts input = true) :
+    proofWrapperMetadataProjectionAccepts
+      (metadataProjectionFromAdmissionInput input) = true := by
+  have surface := proofWrapperAccepts_implies_statement_surface accepted
+  rcases surface with
+    ⟨_, _, _, _, _, publicInputsValid, nullifierVectorAgrees,
+      commitmentVectorAgrees, balanceSlotsAgree, _⟩
+  simp [metadataProjectionFromAdmissionInput,
+    proofWrapperMetadataProjectionAccepts,
+    proofWrapperMetadataProjectionPreconditions,
+    publicInputsValid, nullifierVectorAgrees, commitmentVectorAgrees,
+    balanceSlotsAgree]
+
+theorem proofWrapperAccepts_implies_no_metadata_projection_or_row_extension
+    {input : ProofWrapperInput}
+    (accepted : proofWrapperAccepts input = true) :
+    acceptedProofWrapperMetadataProjectionSurface
+      (metadataProjectionFromAdmissionInput input) :=
+  proofWrapperMetadataProjectionAccepts_implies_boundary_surface
+    (proofWrapperAccepts_implies_metadata_projection_from_admission_accepts
+      accepted)
+
 def validWrapper : ProofWrapperInput :=
   { exactConsumption := true
     canonicalReencode := true
@@ -121,6 +209,9 @@ def validWrapper : ProofWrapperInput :=
     commitmentVectorAgrees := true
     balanceSlotsAgree := true
     verifierAccepts := true }
+
+def validMetadataProjection : ProofWrapperMetadataProjectionInput :=
+  metadataProjectionFromAdmissionInput validWrapper
 
 theorem valid_wrapper_accepts :
     evaluateProofWrapperRejection validWrapper = none := by
@@ -174,6 +265,52 @@ theorem balance_slot_mismatch_rejects_before_verifier_acceptance :
 theorem verifier_rejection_rejects_after_all_admission_checks :
     evaluateProofWrapperRejection { validWrapper with verifierAccepts := false } =
       some ProofWrapperReject.verifierRejected := by
+  decide
+
+theorem valid_metadata_projection_accepts :
+    proofWrapperMetadataProjectionAccepts validMetadataProjection = true := by
+  decide
+
+theorem wrapper_nullifier_metadata_drift_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        wrapperNullifiersEqualBoundStatement := false } = false := by
+  decide
+
+theorem wrapper_commitment_metadata_drift_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        wrapperCommitmentsEqualBoundStatement := false } = false := by
+  decide
+
+theorem wrapper_balance_metadata_drift_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        wrapperBalanceSlotsEqualBoundStatement := false } = false := by
+  decide
+
+theorem serialized_public_input_projection_drift_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        serializedPublicInputsEqualBoundProjection := false } = false := by
+  decide
+
+theorem public_nullifier_row_outside_statement_boundary_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        publicNullifierRowsWithinStatementBoundary := false } = false := by
+  decide
+
+theorem public_ciphertext_row_outside_statement_boundary_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        publicCiphertextRowsWithinStatementBoundary := false } = false := by
+  decide
+
+theorem public_asset_row_outside_statement_boundary_rejects :
+    proofWrapperMetadataProjectionAccepts
+      { validMetadataProjection with
+        publicAssetRowsWithinStatementBoundary := false } = false := by
   decide
 
 end ProofWrapperAdmission

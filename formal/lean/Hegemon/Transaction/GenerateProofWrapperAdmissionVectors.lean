@@ -40,6 +40,30 @@ def caseJson (name : String) (input : ProofWrapperInput) : String :=
     ++ "      \"expected_rejection\": " ++ rejectionJson rejection ++ "\n"
     ++ "    }"
 
+def metadataProjectionCaseJson
+    (name mutation : String)
+    (input : ProofWrapperMetadataProjectionInput) : String :=
+  let accepted := proofWrapperMetadataProjectionAccepts input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"mutation\": \"" ++ mutation ++ "\",\n"
+    ++ "      \"wrapper_nullifiers_equal_bound_statement\": "
+    ++ boolJson input.wrapperNullifiersEqualBoundStatement ++ ",\n"
+    ++ "      \"wrapper_commitments_equal_bound_statement\": "
+    ++ boolJson input.wrapperCommitmentsEqualBoundStatement ++ ",\n"
+    ++ "      \"wrapper_balance_slots_equal_bound_statement\": "
+    ++ boolJson input.wrapperBalanceSlotsEqualBoundStatement ++ ",\n"
+    ++ "      \"serialized_public_inputs_equal_bound_projection\": "
+    ++ boolJson input.serializedPublicInputsEqualBoundProjection ++ ",\n"
+    ++ "      \"public_nullifier_rows_within_statement_boundary\": "
+    ++ boolJson input.publicNullifierRowsWithinStatementBoundary ++ ",\n"
+    ++ "      \"public_ciphertext_rows_within_statement_boundary\": "
+    ++ boolJson input.publicCiphertextRowsWithinStatementBoundary ++ ",\n"
+    ++ "      \"public_asset_rows_within_statement_boundary\": "
+    ++ boolJson input.publicAssetRowsWithinStatementBoundary ++ ",\n"
+    ++ "      \"expected_projection_valid\": " ++ boolJson accepted ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
@@ -73,6 +97,43 @@ def vectorJson : String :=
         { validWrapper with nullifierVectorAgrees := false, commitmentVectorAgrees := false } ++ ",\n"
     ++ caseJson "commitment-vector-precedence-before-balance"
         { validWrapper with commitmentVectorAgrees := false, balanceSlotsAgree := false } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"proof_wrapper_metadata_projection_cases\": [\n"
+    ++ metadataProjectionCaseJson "valid-metadata-projection"
+        "none"
+        validMetadataProjection ++ ",\n"
+    ++ metadataProjectionCaseJson "wrapper-nullifier-metadata-drift-rejected"
+        "wrapper_nullifier_drift"
+        { validMetadataProjection with
+          wrapperNullifiersEqualBoundStatement := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "wrapper-commitment-metadata-drift-rejected"
+        "wrapper_commitment_drift"
+        { validMetadataProjection with
+          wrapperCommitmentsEqualBoundStatement := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "wrapper-balance-metadata-drift-rejected"
+        "wrapper_balance_slot_drift"
+        { validMetadataProjection with
+          wrapperBalanceSlotsEqualBoundStatement := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "serialized-public-input-projection-drift-rejected"
+        "serialized_public_input_projection_drift"
+        { validMetadataProjection with
+          serializedPublicInputsEqualBoundProjection := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "public-nullifier-row-outside-boundary-rejected"
+        "public_nullifier_row_outside_boundary"
+        { validMetadataProjection with
+          publicNullifierRowsWithinStatementBoundary := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "public-ciphertext-row-outside-boundary-rejected"
+        "public_ciphertext_row_outside_boundary"
+        { validMetadataProjection with
+          publicCiphertextRowsWithinStatementBoundary := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "public-asset-row-outside-boundary-rejected"
+        "public_asset_row_outside_boundary"
+        { validMetadataProjection with
+          publicAssetRowsWithinStatementBoundary := false } ++ ",\n"
+    ++ metadataProjectionCaseJson "serialized-asset-row-outside-boundary-rejected"
+        "serialized_asset_row_outside_boundary"
+        { validMetadataProjection with
+          publicAssetRowsWithinStatementBoundary := false } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

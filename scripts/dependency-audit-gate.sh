@@ -165,8 +165,8 @@ def matching_waiver(finding):
         return waiver
     return None
 
-unwaived = []
 waived = []
+unwaived = []
 for finding in findings:
     waiver = matching_waiver(finding)
     if waiver is None:
@@ -174,7 +174,24 @@ for finding in findings:
     else:
         waived.append((finding, waiver))
 
-print(f"dependency audit findings: {len(findings)} total, {len(waived)} waived, {len(unwaived)} unwaived")
+def finding_matches_waiver(finding, waiver):
+    return (
+        waiver["id"] == finding["id"]
+        and waiver["package"] == finding["package"]
+        and waiver["version"] == finding["version"]
+        and waiver["kind"] == finding["kind"]
+    )
+
+unused = [
+    waiver
+    for waiver in validated_waivers
+    if not any(finding_matches_waiver(finding, waiver) for finding in findings)
+]
+
+print(
+    f"dependency audit findings: {len(findings)} total, "
+    f"{len(waived)} waived, {len(unwaived)} unwaived, {len(unused)} unused waivers"
+)
 for finding, waiver in waived:
     print(
         f"waived {finding['kind']} {finding['id']} "
@@ -189,6 +206,16 @@ if unwaived:
         if finding["title"]:
             detail += f": {finding['title']}"
         print(detail)
+    raise SystemExit(1)
+
+if unused:
+    print("unused dependency audit waivers:")
+    for waiver in unused:
+        print(
+            f" - {waiver['kind']} {waiver['id']} "
+            f"{waiver['package']} {waiver['version']} "
+            f"expires {waiver['expires']} ({waiver['tracking']})"
+        )
     raise SystemExit(1)
 
 if audit_status not in (0, 1):

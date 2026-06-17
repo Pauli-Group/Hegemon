@@ -597,6 +597,63 @@ theorem ciphertext_privacy_game_local_action_metadata_boundary_facts
       assumptionProofs.timingAndBatchingPolicy,
       assumptionProofs.networkMetadataPolicy⟩
 
+def ciphertext_privacy_game_resample_local_address_metadata
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    CiphertextPrivacyGame
+      { left with localAddressMetadata := leftAddress }
+      { right with localAddressMetadata := rightAddress } := by
+  exact
+    { leftValid :=
+        valid_observer_chain_surface_stable_under_local_address_metadata
+          game.leftValid
+          leftAddress
+      rightValid :=
+        valid_observer_chain_surface_stable_under_local_address_metadata
+          game.rightValid
+          rightAddress
+      publicInputs := by
+        simpa [samePublicInputs] using game.publicInputs
+      summaries := by
+        simpa using game.summaries
+      placement := by
+        simpa [samePlacement] using game.placement
+      wireIndistinguishable := game.wireIndistinguishable
+      wireIndistinguishableProof := game.wireIndistinguishableProof }
+
+theorem ciphertext_privacy_game_local_address_metadata_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    samePublicMetadataLeakage
+        { left with localAddressMetadata := leftAddress }
+        { right with localAddressMetadata := rightAddress }
+      ∧ sameBatchTimingLeakage
+        { left with localAddressMetadata := leftAddress }
+        { right with localAddressMetadata := rightAddress }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨same_public_metadata_leakage_stable_under_local_address_metadata
+        (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+        leftAddress
+        rightAddress,
+      same_batch_timing_leakage_stable_under_local_address_metadata
+        (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftAddress
+        rightAddress,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      assumptionProofs.proofSystemZeroKnowledge,
+      assumptionProofs.walletMetadataHygiene,
+      assumptionProofs.timingAndBatchingPolicy,
+      assumptionProofs.networkMetadataPolicy⟩
+
 theorem same_wire_ciphertext_privacy_game_implies_same_allowed_leakage
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -682,6 +739,25 @@ theorem ciphertext_privacy_game_local_action_metadata_open_assumption_boundary_f
         game
         leftLocal
         rightLocal)
+      assumptionProofs
+
+theorem ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftAddress rightAddress : LocalAddressMetadata) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      { left with localAddressMetadata := leftAddress }
+      { right with localAddressMetadata := rightAddress }
+      game.wireIndistinguishable
+      assumptions := by
+  simpa [ciphertext_privacy_game_resample_local_address_metadata] using
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      (ciphertext_privacy_game_resample_local_address_metadata
+        game
+        leftAddress
+        rightAddress)
       assumptionProofs
 
 end CiphertextPrivacy
