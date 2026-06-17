@@ -4,7 +4,7 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 86.39,
+  "overall_completion_percent": 86.63,
   "last_full_formal_core": {
     "date": "2026-06-17T02:04:27Z",
     "commit": "04ae72fb",
@@ -516,7 +516,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 64,
+      "completion_percent": 67,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -547,18 +547,21 @@
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks distinct KEM, chain wire, DA wire, and ciphertext-hash bytes under distinct RNG streams",
     "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves public metadata and explicit batch/timing leakage remain stable under independent left/right private-witness and prover-randomness resampling across the same-shape ciphertext privacy game",
     "formal/lean/Hegemon/Privacy/Observer.lean now models local action metadata explicitly and proves full observer, public metadata, and batch/timing projections ignore independently changed local metadata such as arrival-time-like fields",
-    "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now carries local action metadata through the secret-resampling boundary so public metadata and explicit batch/timing leakage remain stable under independent private-witness, prover-randomness, and local-metadata resampling",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now carries local action metadata through the secret-resampling boundary so public metadata and explicit batch/timing leakage remain stable under independent private-witness, prover-randomness, and local-metadata resampling",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local action metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and network assumptions explicit",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now packages the deterministic public boundary, secret-resampling boundary, same-wire full-leakage discharge, raw-wire indistinguishability, proof-system zero-knowledge, wallet metadata hygiene, timing/batching policy, and network metadata policy into one open-assumption boundary theorem",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves `ciphertext_privacy_game_unlinkability_reduces_to_raw_wire_indistinguishability`, a no-new-assumptions reduction from modeled unlinkability to equal public shape, equal public metadata, equal batch/timing leakage, and the explicit raw-wire indistinguishability premise",
         "wallet/src/notes.rs `reencryption_preserves_public_ciphertext_summary_shape` regression checks same-plaintext same-recipient re-encryption changes raw chain/DA wires while preserving the Lean-modeled public ciphertext summary shape after chain and DA parsing",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now packages the selected decrypt-to-commitment/projected-DA hash boundary with that open-assumption privacy boundary so deterministic observer leakage, secret-resampling stability, same-wire discharge, and the explicit privacy assumptions travel with the native selected-output implementation evidence",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves selected and all-active native public metadata output-row packages survive independent left/right private-witness and prover-randomness resampling while carrying explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, and network metadata assumptions",
+        "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean now proves active native tx-leaf output-row metadata packages survive independent private-witness, prover-randomness, and local wallet/action metadata resampling for selected and all active rows",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean composes materialized sidecar DA publication, wire replay DA-row binding, tx-leaf ciphertext publication, statement/proof ciphertext-vector binding, and the all-active projected-DA privacy-game boundary over one accepted materialized sidecar surface",
-    "node/src/native/mod.rs materialized_sidecar_observer_projection_ignores_received_time regression proves arrival-time-only pending-action hash changes do not alter the sidecar semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection"
+        "node/src/native/mod.rs materialized_sidecar_observer_projection_ignores_received_time regression proves arrival-time-only pending-action hash changes do not alter the sidecar semantic hash, materialized ciphertext/replay key, replay-planned ciphertext rows, consensus transaction observer fields, or consensus DA blob/root projection",
+        "wallet/src/store.rs local_wallet_bookkeeping_does_not_change_public_ciphertext_projection regression proves sync height/hash, genesis hash, ciphertext cursor, tracked-note metadata, pending status, pending-recipient memo, and submission timestamp bookkeeping do not alter public ciphertext summary, chain wire bytes, DA bytes, or ciphertext hash"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, network metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond wallet public-summary shape and arrival-time projection into proof wrappers, batching policy, wallet metadata, and network metadata surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/public-ciphertext projection and arrival-time sidecar projection into proof wrappers, batching policy, broader wallet metadata, and network metadata surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."

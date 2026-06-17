@@ -1476,7 +1476,35 @@ mod tests {
     use crate::notes::NotePlaintext;
     use rand::{rngs::StdRng, SeedableRng};
     use tempfile::tempdir;
-    use transaction_circuit::hashing_pq::felts_to_bytes48;
+    use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct PublicCiphertextProjection {
+        version: u8,
+        crypto_suite: u16,
+        diversifier_index: u32,
+        kem_ciphertext_len: usize,
+        note_payload_len: usize,
+        memo_payload_len: usize,
+        chain_bytes: Vec<u8>,
+        da_bytes: Vec<u8>,
+        da_hash: [u8; 48],
+    }
+
+    fn public_ciphertext_projection(ciphertext: &NoteCiphertext) -> PublicCiphertextProjection {
+        let da_bytes = ciphertext.to_da_bytes().unwrap();
+        PublicCiphertextProjection {
+            version: ciphertext.version,
+            crypto_suite: ciphertext.crypto_suite,
+            diversifier_index: ciphertext.diversifier_index,
+            kem_ciphertext_len: ciphertext.kem_ciphertext.len(),
+            note_payload_len: ciphertext.note_payload.len(),
+            memo_payload_len: ciphertext.memo_payload.len(),
+            chain_bytes: ciphertext.to_chain_bytes().unwrap(),
+            da_hash: ciphertext_hash_bytes(&da_bytes),
+            da_bytes,
+        }
+    }
 
     #[test]
     fn create_and_open_round_trip() {
@@ -1656,6 +1684,101 @@ mod tests {
         assert_eq!(recent[0].tx_id, [9u8; 32]);
         assert_eq!(recent[0].mined_height, 7);
         assert_eq!(recent[0].confirmations(9), 3);
+    }
+
+    #[test]
+    fn local_wallet_bookkeeping_does_not_change_public_ciphertext_projection() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(73);
+
+        let note = NotePlaintext::random(
+            37,
+            0,
+            MemoPlaintext::new(b"observer projection".to_vec()),
+            &mut rng,
+        );
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        let before = public_ciphertext_projection(&ciphertext);
+        let pre_bookkeeping_bundle = crate::rpc::TransactionBundle::new(
+            vec![0xaa],
+            vec![],
+            vec![commitment],
+            &[ciphertext.clone()],
+            [0x11; 48],
+            [0x22; 64],
+            [0, u64::MAX, u64::MAX, u64::MAX],
+            0,
+            0,
+            transaction_circuit::StablecoinPolicyBinding::default(),
+        )
+        .unwrap();
+
+        store.set_last_synced_height(123).unwrap();
+        store.set_last_synced_block_hash([0x33; 32]).unwrap();
+        store.set_genesis_hash([0x44; 32]).unwrap();
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        assert_eq!(
+            store
+                .apply_ciphertext_batch(0, vec![Some(recovered)])
+                .unwrap(),
+            1
+        );
+        store.advance_ciphertext_cursor(3).unwrap();
+        let note_index = store.spendable_notes(0).unwrap()[0].index;
+        let nullifier = store.tracked_notes().unwrap()[0]
+            .nullifier
+            .expect("tracked full wallet note has a nullifier");
+        store.mark_notes_pending(&[note_index], true).unwrap();
+        store
+            .record_pending_submission(
+                [0x55; 32],
+                vec![nullifier],
+                vec![note_index],
+                vec![TransferRecipient {
+                    address: "local-only recipient label".to_string(),
+                    value: 37,
+                    asset_id: 0,
+                    memo: Some("local-only memo".to_string()),
+                }],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(store.last_synced_height().unwrap(), 123);
+        assert_eq!(store.next_ciphertext_index().unwrap(), 3);
+        assert_eq!(store.pending_transactions().unwrap().len(), 1);
+
+        let after = public_ciphertext_projection(&ciphertext);
+        assert_eq!(after, before);
+
+        let post_bookkeeping_bundle = crate::rpc::TransactionBundle::new(
+            vec![0xbb],
+            vec![],
+            vec![commitment],
+            &[ciphertext.clone()],
+            [0x66; 48],
+            [0x77; 64],
+            [0, u64::MAX, u64::MAX, u64::MAX],
+            1,
+            0,
+            transaction_circuit::StablecoinPolicyBinding::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            pre_bookkeeping_bundle.ciphertexts,
+            post_bookkeeping_bundle.ciphertexts,
+            "wallet-local scan cursors, sync metadata, and pending bookkeeping must not enter chain ciphertext bytes"
+        );
+
+        let decoded = post_bookkeeping_bundle.decode_notes().unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(public_ciphertext_projection(&decoded[0]), before);
     }
 
     #[test]

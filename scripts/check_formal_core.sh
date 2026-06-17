@@ -439,6 +439,7 @@ cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture
 cargo test -p wallet decrypt_rejects --lib -- --nocapture
 cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture
 cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture
+cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture
 cargo test -p wallet full_view_decrypt_binds_plaintext_note_data_commitment_and_witness --lib -- --nocapture
 cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib -- --nocapture
 cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture

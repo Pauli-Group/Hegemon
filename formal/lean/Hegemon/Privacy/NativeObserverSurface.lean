@@ -1859,6 +1859,517 @@ theorem native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_resampl
       leftProverRandomnessSeed
       rightProverRandomnessSeed
 
+theorem active_output_public_metadata_boundary_local_action_metadata_resampling
+    {input : TxLeafActionBindingInput}
+    {shape : PublicInputShape}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {left right : ShieldedTransactionWorld}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {leftLocal rightLocal : LocalActionMetadata}
+    (boundary :
+      ActiveOutputPublicMetadataBoundary
+        input
+        shape
+        bound
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash)
+    (metadataResampled :
+      samePublicMetadataLeakage
+        { left with localActionMetadata := leftLocal }
+        { right with localActionMetadata := rightLocal }) :
+    ActiveOutputPublicMetadataBoundary
+      input
+      shape
+      bound
+      statementFields
+      bindingFields
+      { left with localActionMetadata := leftLocal }
+      { right with localActionMetadata := rightLocal }
+      index
+      publicCommitment
+      publicCiphertextHash := by
+  rcases boundary with
+    ⟨leftWire,
+      rightWire,
+      summary,
+      leftWireAt,
+      rightWireAt,
+      leftSummaryAt,
+      rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      summaryFormat,
+      _metadata,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      boundFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingCommitment,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+  unfold ActiveOutputPublicMetadataBoundary
+  exact
+    ⟨leftWire,
+      rightWire,
+      summary,
+      by simpa using leftWireAt,
+      by simpa using rightWireAt,
+      by simpa using leftSummaryAt,
+      by simpa using rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      summaryFormat,
+      metadataResampled,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      boundFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingCommitment,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+
+theorem active_output_public_metadata_boundary_secret_and_local_resampling
+    {input : TxLeafActionBindingInput}
+    {shape : PublicInputShape}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {left right : ShieldedTransactionWorld}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {leftPrivateWitness rightPrivateWitness : PrivateWitness}
+    {leftProverRandomnessSeed rightProverRandomnessSeed : Nat}
+    {leftLocal rightLocal : LocalActionMetadata}
+    (boundary :
+      ActiveOutputPublicMetadataBoundary
+        input
+        shape
+        bound
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash)
+    (metadataResampled :
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }) :
+    ActiveOutputPublicMetadataBoundary
+      input
+      shape
+      bound
+      statementFields
+      bindingFields
+      { left with
+        privateWitness := leftPrivateWitness
+        proverRandomnessSeed := leftProverRandomnessSeed
+        localActionMetadata := leftLocal }
+      { right with
+        privateWitness := rightPrivateWitness
+        proverRandomnessSeed := rightProverRandomnessSeed
+        localActionMetadata := rightLocal }
+      index
+      publicCommitment
+      publicCiphertextHash := by
+  rcases boundary with
+    ⟨leftWire,
+      rightWire,
+      summary,
+      leftWireAt,
+      rightWireAt,
+      leftSummaryAt,
+      rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      summaryFormat,
+      _metadata,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      boundFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingCommitment,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+  unfold ActiveOutputPublicMetadataBoundary
+  exact
+    ⟨leftWire,
+      rightWire,
+      summary,
+      by simpa using leftWireAt,
+      by simpa using rightWireAt,
+      by simpa using leftSummaryAt,
+      by simpa using rightSummaryAt,
+      leftParsed,
+      rightParsed,
+      summaryFormat,
+      metadataResampled,
+      shapeFlag,
+      shapeCommitment,
+      shapeCiphertext,
+      boundFlag,
+      statementCommitment,
+      statementCiphertext,
+      bindingCommitment,
+      bindingCiphertext,
+      ciphertextHashesMatch,
+      ciphertextPayloadHashesMatch,
+      outputCountMatches,
+      outputFacts,
+      bindingFacts⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_all_active_outputs_local_action_metadata_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    ∀ index publicCommitment publicCiphertextHash,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+        samePublicMetadataLeakage
+          { left with localActionMetadata := leftLocal }
+          { right with localActionMetadata := rightLocal }
+          ∧ sameBatchTimingLeakage
+            { left with localActionMetadata := leftLocal }
+            { right with localActionMetadata := rightLocal }
+          ∧ game.wireIndistinguishable
+          ∧ assumptions.proofSystemZeroKnowledge
+          ∧ assumptions.walletMetadataHygiene
+          ∧ assumptions.timingAndBatchingPolicy
+          ∧ assumptions.networkMetadataPolicy
+          ∧ ActiveOutputPublicMetadataBoundary
+            input
+            shape
+            bound
+            statementFields
+            bindingFields
+            { left with localActionMetadata := leftLocal }
+            { right with localActionMetadata := rightLocal }
+            index
+            publicCommitment
+            publicCiphertextHash := by
+  intro index publicCommitment publicCiphertextHash slot
+  rcases
+      native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary
+        bindingAccepted
+        surface
+        slot
+        game
+        leftShape with
+    ⟨_metadata, _timing, wireIndistinguishable, activeBoundary⟩
+  rcases
+      ciphertext_privacy_game_local_action_metadata_boundary_facts
+        game
+        assumptionProofs
+        leftLocal
+        rightLocal with
+    ⟨metadataResampled,
+      timingResampled,
+      _wire,
+      proofZk,
+      walletMetadata,
+      timingPolicy,
+      networkPolicy⟩
+  exact
+    ⟨metadataResampled,
+      timingResampled,
+      wireIndistinguishable,
+      proofZk,
+      walletMetadata,
+      timingPolicy,
+      networkPolicy,
+      active_output_public_metadata_boundary_local_action_metadata_resampling
+        activeBoundary
+        metadataResampled⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_active_output_secret_and_local_resampling_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {index : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftPrivateWitness rightPrivateWitness : PrivateWitness)
+    (leftProverRandomnessSeed rightProverRandomnessSeed : Nat)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }
+      ∧ sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy
+      ∧ ActiveOutputPublicMetadataBoundary
+        input
+        shape
+        bound
+        statementFields
+        bindingFields
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localActionMetadata := leftLocal }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localActionMetadata := rightLocal }
+        index
+        publicCommitment
+        publicCiphertextHash := by
+  have selectedBoundary :=
+    native_tx_leaf_ciphertext_privacy_game_active_output_slot_selects_same_public_summary
+      bindingAccepted
+      surface
+      slot
+      game
+      leftShape
+  rcases selectedBoundary with
+    ⟨_metadata, _timing, wireIndistinguishable, activeBoundary⟩
+  have secretFacts :=
+    ciphertext_privacy_game_secret_resampling_boundary_facts
+      game
+      assumptionProofs
+  have metadataResampled :=
+    secretFacts.publicMetadataStableUnderIndependentSecretAndLocalResampling
+      leftPrivateWitness
+      rightPrivateWitness
+      leftProverRandomnessSeed
+      rightProverRandomnessSeed
+      leftLocal
+      rightLocal
+  have timingResampled :=
+    secretFacts.batchTimingStableUnderIndependentSecretAndLocalResampling
+      leftPrivateWitness
+      rightPrivateWitness
+      leftProverRandomnessSeed
+      rightProverRandomnessSeed
+      leftLocal
+      rightLocal
+  exact
+    ⟨metadataResampled,
+      timingResampled,
+      wireIndistinguishable,
+      secretFacts.proofSystemZeroKnowledge,
+      secretFacts.walletMetadataHygiene,
+      secretFacts.timingAndBatchingPolicy,
+      secretFacts.networkMetadataPolicy,
+      active_output_public_metadata_boundary_secret_and_local_resampling
+        activeBoundary
+        metadataResampled⟩
+
+theorem native_tx_leaf_ciphertext_privacy_game_all_active_outputs_secret_and_local_resampling_boundary
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftPrivateWitness rightPrivateWitness : PrivateWitness)
+    (leftProverRandomnessSeed rightProverRandomnessSeed : Nat)
+    (leftLocal rightLocal : LocalActionMetadata) :
+    ∀ index publicCommitment publicCiphertextHash,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+        samePublicMetadataLeakage
+          { left with
+            privateWitness := leftPrivateWitness
+            proverRandomnessSeed := leftProverRandomnessSeed
+            localActionMetadata := leftLocal }
+          { right with
+            privateWitness := rightPrivateWitness
+            proverRandomnessSeed := rightProverRandomnessSeed
+            localActionMetadata := rightLocal }
+          ∧ sameBatchTimingLeakage
+            { left with
+              privateWitness := leftPrivateWitness
+              proverRandomnessSeed := leftProverRandomnessSeed
+              localActionMetadata := leftLocal }
+            { right with
+              privateWitness := rightPrivateWitness
+              proverRandomnessSeed := rightProverRandomnessSeed
+              localActionMetadata := rightLocal }
+          ∧ game.wireIndistinguishable
+          ∧ assumptions.proofSystemZeroKnowledge
+          ∧ assumptions.walletMetadataHygiene
+          ∧ assumptions.timingAndBatchingPolicy
+          ∧ assumptions.networkMetadataPolicy
+          ∧ ActiveOutputPublicMetadataBoundary
+            input
+            shape
+            bound
+            statementFields
+            bindingFields
+            { left with
+              privateWitness := leftPrivateWitness
+              proverRandomnessSeed := leftProverRandomnessSeed
+              localActionMetadata := leftLocal }
+            { right with
+              privateWitness := rightPrivateWitness
+              proverRandomnessSeed := rightProverRandomnessSeed
+              localActionMetadata := rightLocal }
+            index
+            publicCommitment
+            publicCiphertextHash := by
+  intro index publicCommitment publicCiphertextHash slot
+  exact
+    native_tx_leaf_ciphertext_privacy_game_active_output_secret_and_local_resampling_boundary
+      bindingAccepted
+      surface
+      slot
+      game
+      leftShape
+      assumptionProofs
+      leftPrivateWitness
+      rightPrivateWitness
+      leftProverRandomnessSeed
+      rightProverRandomnessSeed
+      leftLocal
+      rightLocal
+
 theorem native_tx_leaf_ciphertext_privacy_game_selected_output_wire_da_commitment_boundary
     {input : TxLeafActionBindingInput}
     {wrapper : ProofWrapperInput}

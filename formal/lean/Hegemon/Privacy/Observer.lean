@@ -714,6 +714,14 @@ theorem same_batch_timing_leakage_stable_under_local_action_metadata
       { right with localActionMetadata := rightLocal } := by
   exact same
 
+theorem valid_observer_chain_surface_stable_under_local_action_metadata
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world)
+    (localActionMetadata : LocalActionMetadata) :
+    validObserverChainSurface
+      { world with localActionMetadata := localActionMetadata } := by
+  simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
 end Observer
 end Privacy
 end Hegemon
