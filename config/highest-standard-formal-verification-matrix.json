@@ -4,10 +4,10 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.85,
+  "overall_completion_percent": 88.91,
   "last_full_formal_core": {
     "date": "2026-06-17T19:12:29Z",
-    "commit": "working-tree-after-87db8203",
+    "commit": "01d4fdb8",
     "status": "passed locally after binding verified inbound bridge receipt handoff to the production bridge mint/replay policy with replay-state propagation and disabled mint authorization",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
@@ -34,27 +34,28 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-17T18:26:34Z",
-    "commit": "87db8203",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, full remote formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP; no live-node rebuild/restart was needed because the shipped node runtime path was unchanged",
+    "date": "2026-06-17T19:18:10Z",
+    "commit": "01d4fdb8",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild/restart, targeted remote formal gates, smoke, wallet-send, live mining advancement, service health, and NTP",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from dd9751b9 to codex/superneo-formal-verification at 87db8203",
-      "did not rebuild target/release/hegemon-node or restart hegemon-node.service because this slice changed wallet transaction construction, Lean/formal metadata/docs/scripts, and release tooling, not the shipped node service path",
-      "remote bash scripts/check_formal_core.sh passed with 118 claims, 1978 named Lean theorem declarations, 892 axiom-free theorem declarations, 1086 allowed-kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 493 blueprint edges, 531 falsification cases, 216 implementation bindings, 169 result obligations, 144/144 theorem-indexed order constraints, 130/130 theorem-indexed dominance constraints, 129 full-claim order constraints, 2412 full-claim theorem refs, and 11/11 native backend vectors",
-      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16853",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from d8f27556 to codex/superneo-formal-verification at 01d4fdb8",
+      "rebuilt target/release/hegemon-node with make node and restarted hegemon-node.service because shipped native bridge validation code changed",
+      "RPC became ready after 66 seconds; hegemon-node.service stayed active with NRestarts=0",
+      "remote JSON validation, claims, and blueprint gates passed with 118 claims, 1978 named Lean theorem declarations, 108 production-eligible claims, 47 residual risks, 493 blueprint edges, 532 falsification cases, 218 implementation bindings, 144/144 theorem-indexed order constraints, and 130/130 theorem-indexed dominance constraints",
+      "remote Lean-generated bridge mint/replay policy vector conformance passed against production Rust",
+      "remote verified_inbound_bridge_receipt_requires_mint_replay_policy_state_and_authorization regression passed",
+      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16885",
       "bash scripts/test-node.sh wallet-send passed through submit_action_stages_and_imports_shielded_transfer",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
-      "hegemon_consensusStatus stayed at height 16853 during a 25-second high-difficulty live mining sample, syncing=false, peers=0",
-      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=279, and hash rate near 16.5 kH/s before and after the live sample",
-      "HEGEMON_TEST_NODE_A_BASE=/tmp/hegemon-native-formal-wallet-a HEGEMON_TEST_NODE_A_RPC=19960 HEGEMON_TEST_NODE_A_P2P=31460 HEGEMON_TEST_TIMEOUT_SECS=180 bash scripts/test-node.sh single-node passed by mining isolated height 1",
+      "live mining advanced from height 16885 to 16893 in a 25-second sample, then later to height 16902",
+      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=23, and about 11.0 kH/s in the final snapshot",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at 87db8203 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "remote branch status was codex/superneo-formal-verification at 01d4fdb8 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
-    "runtime_note": "The live node was not rebuilt or restarted because this slice did not change the shipped node service path. Remote full formal-core, smoke, wallet-send, live mining-health sample, isolated mining, service health, and NTP checks passed.",
+    "runtime_note": "The live node was rebuilt and restarted because this slice changed the shipped node bridge validation path. Targeted remote formal gates, smoke, wallet-send, live mining advancement, service health, and NTP checks passed.",
     "known_limitations": [
-      "The 25-second live high-difficulty mining sample did not find a block, so block production was validated with an isolated dev miner instead.",
-      "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync was not re-exercised in this no-runtime formal slice.",
+      "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync was not re-exercised during this targeted runtime validation.",
       "Hash/crypto/proof-system assumptions, simulator zero knowledge, advisory database and scanner completeness, complete parser implementation proofs, and complete native-node equivalence remain explicit residuals."
     ]
   },
@@ -277,7 +278,7 @@
     {
       "id": "ledger.commitment-tree-integrity",
       "weight": 6,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "Accepted state roots equal ordered insertion of accepted note commitments, and every accepted Merkle membership proof opens to a prior committed note.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
@@ -297,13 +298,15 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean carries synced raw block batches through raw canonical publication to accepted ledger/tree replay and commitment-root publication facts",
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean packages consensus-root/state-root/provided-root agreement, root-history membership, state path export, and transaction Merkle-path verifier acceptance into one membership handoff fact surface, including same-root changed-leaf rejection by the Merkle path rather than by root mismatch",
         "consensus/src/commitment_tree.rs regression `commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify` gives finite production conformance evidence that consensus append roots, state-merkle authentication paths, and transaction-circuit MerklePath verification agree under the real merkle_node combiner",
+        "consensus/src/commitment_tree.rs exposes an opt-in `CommitmentTreeState::append_with_certificate` path sharing the same mutation body as hot `append`, recording prior/result root-history tails, leaf index/value, per-level sibling orientation/default choices, per-level parents, and result root/count for replay",
+        "scripts/check_formal_core.sh now runs the `cargo test -p consensus append_` slice, covering append-root handoff, append certificate replay, hot-path root equality, and certificate drift rejection",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean binds canonical commitment rows to exact ordered commitments and planned indexes decoded from accepted raw-ingress action rows",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now lifts exact ordered commitment values and planned indexes through the full native publication path-family theorem",
         "accepted_raw_ingress_full_byte_publication_binds_commitment_tree_content packages accepted raw-ingress full-byte publication, accepted ledger/tree replay, commitment-root publication, replayed leaf-cursor, and canonical row content over one raw witness",
         "SmallWood spend row-boundary gates now reject active Merkle sibling/root drift while Lean exposes active Merkle-root, position, and path-acceptance facts for the deployed inline-Merkle verifier surface"
       ],
       "missing_work": [
-        "Lift the accepted commitment-root publication surface into a full Merkle-root/tree-content invariant beyond the now production-bound append-root and membership-path handoff.",
+        "Lift the production append-transition certificate into Lean-generated mutation vectors and the accepted commitment-root publication surface.",
         "Bind arbitrary raw-byte action decoding to the same raw ledger/tree replay fields.",
         "Lift from root-cursor equality to full production Merkle tree content/hash implementation equivalence."
       ],

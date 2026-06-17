@@ -5971,7 +5971,7 @@
       "id": "consensus.commitment-tree-membership-handoff",
       "component": "consensus commitment-tree membership handoff",
       "claim_class": "lean_theorem",
-      "summary": "The Lean commitment-tree membership handoff package proves that accepted handoff facts require consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. A formal-core Rust regression gives finite production conformance evidence for the real Poseidon2 hash handoff between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node, including wrong-leaf, wrong-position, pre-append-root, and later-leaf rejection cases.",
+      "summary": "The Lean commitment-tree membership handoff package proves that accepted handoff facts require consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. Formal-core Rust regressions give finite production conformance evidence for the real Poseidon2 hash handoff between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node, including wrong-leaf, wrong-position, pre-append-root, and later-leaf rejection cases. The same gate now covers the opt-in production append-transition certificate path, which shares the hot append mutation body and records replayable per-level sibling/parent facts plus prior/result root-history tails.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_plus_rust_conformance_regression",
       "production_eligible": true,
@@ -5988,7 +5988,7 @@
       "assumptions": [
         "The Lean theorem models the membership handoff predicate over abstract digests using the existing transaction Merkle-path kernel; the production Rust regression checks the real consensus/state-merkle/transaction hash implementations against each other.",
         "The Rust regression intentionally uses raw tree append APIs where a zero commitment is a real leaf; block-level zero-commitment filtering remains covered by the separate tree-transition and block-action admission paths.",
-        "This claim provides Lean handoff facts plus a finite production conformance regression for append-root and membership-path interoperability. It does not prove full production implementation equivalence, Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, complete block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
+        "This claim provides Lean handoff facts plus finite production conformance regressions for append-root, membership-path interoperability, and replayable append-transition certificates. It does not prove full production implementation equivalence, Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, complete block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
@@ -6001,13 +6001,13 @@
       ],
       "gates": [
         "cd formal/lean && lake build Hegemon.Native.CommitmentTreeMembershipRefinement Hegemon",
-        "cargo test -p consensus commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture",
+        "cargo test -p consensus append_ -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {
           "id": "complete-commitment-tree-refinement-open",
-          "description": "This claim binds the append-root and membership-path handoff, but complete raw-byte native-node replay/reorg/startup commitment-tree equivalence, hash security, and proof soundness remain open.",
+          "description": "This claim binds the append-root, membership-path handoff, and replayable append-transition certificate path, but complete raw-byte native-node replay/reorg/startup commitment-tree equivalence, hash security, and proof soundness remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -6017,7 +6017,7 @@
       "id": "formal.native-commitment-tree-refinement",
       "component": "native commitment-tree refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, that accepted raw-ingress full-byte publication binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows, and that the same raw-ingress field-projection surface binds canonical nullifier and bridge replay rows to exact ordered decoded/planned replay-set content.",
+      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, that accepted raw-ingress full-byte publication binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows, and that the same raw-ingress field-projection surface binds canonical nullifier and bridge replay rows to exact ordered decoded/planned replay-set content. Production consensus code now exposes an opt-in append-transition certificate that records replayable tree-mutation facts without changing the hot append API.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_nonproduction_refinement",
       "production_eligible": false,
@@ -6071,7 +6071,8 @@
         "The commitment-tree content refinement consumes the accepted raw-ingress field-projection evidence already checked by production regressions; its replay-set package now carries exact ordered nullifier rows and exact ordered planned bridge replay rows through the same raw witness. It does not prove arbitrary parser internals, replay-key hash security, nullifier cryptographic security, or Merkle hash implementation equivalence.",
         "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
         "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; the replay-set content slice is production-bound by a focused canonical-index rebuild regression that compares decoded nullifier rows, materialized/planned replay keys, rebuild-plan rows, and persisted sled markers.",
-        "This slice does not prove commitment-tree hash security, Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
+        "The production append-transition certificate records the exact sibling orientation/default choices, parents, prior/result root-history tails, leaf index/value, and result root/count while sharing the same mutation body as the hot append path; this is a Rust production-binding hook, not yet a Lean-generated mutation-vector proof.",
+        "This slice does not prove commitment-tree hash security, complete Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, full production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon.lean",
@@ -6083,12 +6084,14 @@
         "formal/lean/Hegemon/Native/CanonicalPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
+        "consensus/src/commitment_tree.rs",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cargo test -p consensus append_ -- --nocapture",
         "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],

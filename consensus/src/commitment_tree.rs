@@ -19,6 +19,141 @@ pub enum CommitmentTreeError {
     Hash(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommitmentTreeAppendSiblingSide {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitmentTreeAppendLevelTrace {
+    pub level: usize,
+    pub position: u64,
+    pub sibling: Commitment,
+    pub sibling_side: CommitmentTreeAppendSiblingSide,
+    pub sibling_is_default: bool,
+    pub parent: Commitment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitmentTreeAppendTransitionCertificate {
+    pub depth: usize,
+    pub history_limit: usize,
+    pub prior_root: Commitment,
+    pub prior_leaf_count: u64,
+    pub prior_root_history_tail: Vec<Commitment>,
+    pub leaf_index: u64,
+    pub leaf: Commitment,
+    pub trace: Vec<CommitmentTreeAppendLevelTrace>,
+    pub result_root: Commitment,
+    pub result_leaf_count: u64,
+    pub root_history_tail: Vec<Commitment>,
+}
+
+impl CommitmentTreeAppendTransitionCertificate {
+    fn history_tail_matches_root(&self, tail: &[Commitment], root: Commitment) -> bool {
+        tail.last()
+            .is_some_and(|history_root| *history_root == root)
+            && (self.history_limit == 0 || tail.len() <= self.history_limit)
+    }
+
+    pub fn replay_result_root(&self) -> Option<Commitment> {
+        if self.leaf_index != self.prior_leaf_count
+            || self.result_leaf_count != self.prior_leaf_count.checked_add(1)?
+            || self.trace.len() != self.depth
+        {
+            return None;
+        }
+
+        let default_nodes = compute_default_nodes(self.depth).ok()?;
+        let mut current = self.leaf;
+        let mut position = self.leaf_index;
+        for (level, step) in self.trace.iter().enumerate() {
+            let expected_side = if position & 1 == 0 {
+                CommitmentTreeAppendSiblingSide::Right
+            } else {
+                CommitmentTreeAppendSiblingSide::Left
+            };
+            let expected_default = expected_side == CommitmentTreeAppendSiblingSide::Right;
+            if step.level != level
+                || step.position != position
+                || step.sibling_side != expected_side
+                || step.sibling_is_default != expected_default
+            {
+                return None;
+            }
+            if expected_default && step.sibling != default_nodes[level] {
+                return None;
+            }
+
+            let parent = match step.sibling_side {
+                CommitmentTreeAppendSiblingSide::Left => {
+                    merkle_node_bytes(&step.sibling, &current)?
+                }
+                CommitmentTreeAppendSiblingSide::Right => {
+                    merkle_node_bytes(&current, &step.sibling)?
+                }
+            };
+            if parent != step.parent {
+                return None;
+            }
+            current = parent;
+            position >>= 1;
+        }
+        Some(current)
+    }
+
+    pub fn replay_matches(&self) -> bool {
+        self.history_tail_matches_root(&self.prior_root_history_tail, self.prior_root)
+            && self.history_tail_matches_root(&self.root_history_tail, self.result_root)
+            && self.replay_result_root() == Some(self.result_root)
+    }
+}
+
+struct CommitmentTreeAppendMutation {
+    prior_root: Commitment,
+    prior_leaf_count: u64,
+    prior_root_history_tail: Option<Vec<Commitment>>,
+    leaf_index: u64,
+    result_root: Commitment,
+    result_leaf_count: u64,
+}
+
+impl CommitmentTreeAppendMutation {
+    fn certificate(
+        self,
+        depth: usize,
+        history_limit: usize,
+        leaf: Commitment,
+        trace: Vec<CommitmentTreeAppendLevelTrace>,
+        root_history_tail: Vec<Commitment>,
+    ) -> CommitmentTreeAppendTransitionCertificate {
+        CommitmentTreeAppendTransitionCertificate {
+            depth,
+            history_limit,
+            prior_root: self.prior_root,
+            prior_leaf_count: self.prior_leaf_count,
+            prior_root_history_tail: self
+                .prior_root_history_tail
+                .expect("append certificate path must capture prior root history"),
+            leaf_index: self.leaf_index,
+            leaf,
+            trace,
+            result_root: self.result_root,
+            result_leaf_count: self.result_leaf_count,
+            root_history_tail,
+        }
+    }
+}
+
+impl CommitmentTreeAppendTransitionCertificate {
+    pub fn result_root_is_last_history_root(&self) -> bool {
+        self.root_history_tail
+            .last()
+            .is_some_and(|root| *root == self.result_root)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommitmentTreeState {
     depth: usize,
@@ -94,10 +229,23 @@ impl CommitmentTreeState {
     }
 
     pub fn append(&mut self, leaf: Commitment) -> Result<Commitment, CommitmentTreeError> {
+        Ok(self.append_inner(leaf, None)?.result_root)
+    }
+
+    fn append_inner(
+        &mut self,
+        leaf: Commitment,
+        mut trace: Option<&mut Vec<CommitmentTreeAppendLevelTrace>>,
+    ) -> Result<CommitmentTreeAppendMutation, CommitmentTreeError> {
         if self.is_full() {
             return Err(CommitmentTreeError::TreeFull);
         }
 
+        let prior_root = self.root;
+        let prior_leaf_count = self.leaf_count;
+        let prior_root_history_tail = trace
+            .is_some()
+            .then(|| self.root_history.iter().copied().collect());
         let position = self.leaf_count;
         let mut current = leaf;
         let mut level_position = position;
@@ -109,11 +257,31 @@ impl CommitmentTreeState {
                 current = merkle_node_bytes(&current, &default_right).ok_or_else(|| {
                     CommitmentTreeError::Hash("non-canonical commitment bytes".into())
                 })?;
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.push(CommitmentTreeAppendLevelTrace {
+                        level,
+                        position: level_position,
+                        sibling: default_right,
+                        sibling_side: CommitmentTreeAppendSiblingSide::Right,
+                        sibling_is_default: true,
+                        parent: current,
+                    });
+                }
             } else {
                 let left = self.frontier[level];
                 current = merkle_node_bytes(&left, &current).ok_or_else(|| {
                     CommitmentTreeError::Hash("non-canonical commitment bytes".into())
                 })?;
+                if let Some(trace) = trace.as_deref_mut() {
+                    trace.push(CommitmentTreeAppendLevelTrace {
+                        level,
+                        position: level_position,
+                        sibling: left,
+                        sibling_side: CommitmentTreeAppendSiblingSide::Left,
+                        sibling_is_default: false,
+                        parent: current,
+                    });
+                }
             }
             level_position >>= 1;
         }
@@ -124,7 +292,29 @@ impl CommitmentTreeState {
             .checked_add(1)
             .expect("commitment tree leaf count overflow");
         self.record_root(self.root);
-        Ok(self.root)
+        Ok(CommitmentTreeAppendMutation {
+            prior_root,
+            prior_leaf_count,
+            prior_root_history_tail,
+            leaf_index: position,
+            result_root: self.root,
+            result_leaf_count: self.leaf_count,
+        })
+    }
+
+    pub fn append_with_certificate(
+        &mut self,
+        leaf: Commitment,
+    ) -> Result<CommitmentTreeAppendTransitionCertificate, CommitmentTreeError> {
+        let mut trace = Vec::with_capacity(self.depth);
+        let mutation = self.append_inner(leaf, Some(&mut trace))?;
+        Ok(mutation.certificate(
+            self.depth,
+            self.history_limit,
+            leaf,
+            trace,
+            self.root_history.iter().copied().collect(),
+        ))
     }
 
     pub fn extend<I>(&mut self, leaves: I) -> Result<Commitment, CommitmentTreeError>
@@ -363,5 +553,81 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn append_with_certificate_replays_transition_and_preserves_hot_append_root() {
+        let depth = 4;
+        let leaves = (1..=8).map(commitment_from_seed).collect::<Vec<_>>();
+        let mut normal_tree = CommitmentTreeState::new_empty(depth, 3).expect("normal tree");
+        let mut certified_tree = CommitmentTreeState::new_empty(depth, 3).expect("certified tree");
+
+        for (index, leaf) in leaves.iter().enumerate() {
+            let prior_root = certified_tree.root();
+            let prior_leaf_count = certified_tree.leaf_count();
+            let normal_root = normal_tree.append(*leaf).expect("normal append");
+            let certificate = certified_tree
+                .append_with_certificate(*leaf)
+                .expect("certified append");
+
+            assert_eq!(certificate.depth, depth);
+            assert_eq!(certificate.history_limit, 3);
+            assert_eq!(certificate.prior_root, prior_root);
+            assert_eq!(certificate.prior_leaf_count, prior_leaf_count);
+            assert_eq!(certificate.leaf_index, index as u64);
+            assert_eq!(certificate.leaf, *leaf);
+            assert_eq!(certificate.result_root, normal_root);
+            assert_eq!(certificate.result_root, certified_tree.root());
+            assert_eq!(certificate.result_leaf_count, prior_leaf_count + 1);
+            assert_eq!(certificate.trace.len(), depth);
+            assert_eq!(
+                certificate.root_history_tail,
+                certified_tree.root_history().copied().collect::<Vec<_>>()
+            );
+            assert!(certificate.root_history_tail.len() <= 3);
+            assert!(certificate.replay_matches());
+
+            for (level, step) in certificate.trace.iter().enumerate() {
+                let level_position = (index as u64) >> level;
+                assert_eq!(step.level, level);
+                assert_eq!(step.position, level_position);
+                if level_position & 1 == 0 {
+                    assert_eq!(step.sibling_side, CommitmentTreeAppendSiblingSide::Right);
+                    assert!(step.sibling_is_default);
+                } else {
+                    assert_eq!(step.sibling_side, CommitmentTreeAppendSiblingSide::Left);
+                    assert!(!step.sibling_is_default);
+                }
+            }
+        }
+
+        assert_eq!(normal_tree, certified_tree);
+    }
+
+    #[test]
+    fn append_certificate_replay_rejects_drift() {
+        let mut tree = CommitmentTreeState::new_empty(3, 8).expect("tree");
+        let mut certificate = tree
+            .append_with_certificate(commitment_from_seed(42))
+            .expect("certified append");
+        assert!(certificate.replay_matches());
+
+        certificate.trace[0].sibling[0] ^= 0x80;
+        assert!(!certificate.replay_matches());
+    }
+
+    #[test]
+    fn append_certificate_replay_allows_unbounded_root_history() {
+        let mut tree = CommitmentTreeState::new_empty(3, 0).expect("tree");
+        assert_eq!(tree.root_history().count(), 1);
+
+        let certificate = tree
+            .append_with_certificate(commitment_from_seed(43))
+            .expect("certified append");
+
+        assert_eq!(certificate.prior_root_history_tail.len(), 1);
+        assert_eq!(certificate.root_history_tail.len(), 2);
+        assert!(certificate.replay_matches());
+        assert!(certificate.result_root_is_last_history_root());
     }
 }

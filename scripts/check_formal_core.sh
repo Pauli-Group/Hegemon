@@ -291,7 +291,7 @@ HEGEMON_LEAN_SUPPLY_INVARIANT_VECTORS="$LEAN_SUPPLY_INVARIANT_VECTORS" \
 HEGEMON_LEAN_TREE_TRANSITION_VECTORS="$LEAN_TREE_TRANSITION_VECTORS" \
   cargo test -p consensus lean_generated_tree_transition_vectors_match_production -- --nocapture
 cargo test -p consensus \
-  commitment_tree_append_roots_match_state_merkle_and_membership_paths_verify -- --nocapture
+  append_ -- --nocapture
 HEGEMON_LEAN_VERSION_POLICY_VECTORS="$LEAN_VERSION_POLICY_VECTORS" \
   cargo test -p consensus lean_generated_version_policy_vectors_match_production -- --nocapture
 HEGEMON_LEAN_SUPPLY_VECTORS="$LEAN_SUPPLY_VECTORS" \
