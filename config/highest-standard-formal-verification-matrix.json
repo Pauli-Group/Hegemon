@@ -32,30 +32,31 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-17T11:46:33Z",
-    "commit": "166a5927",
+    "date": "2026-06-17T12:08:32Z",
+    "commit": "2e464c19",
     "status": "passed after fast-forward to codex/superneo-formal-verification, remote theorem-index checker/metadata gates, smoke, wallet-send, live mining height advance, service health, and NTP; no rebuild/restart was needed because shipped runtime code was unchanged",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 2c8bd157 to codex/superneo-formal-verification at 166a5927",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 75c342fb to codex/superneo-formal-verification at 2e464c19",
       "did not rebuild target/release/hegemon-node or restart hegemon-node.service because this slice changed only formal-core checker code and docs/config metadata",
       "jq empty passed for formal-security-claims.json, formal-security-blueprint.json, and highest-standard-formal-verification-matrix.json",
+      "matrix recomputation passed with recorded=88.09 and computed=88.09",
       "cargo fmt --check --manifest-path scripts/hegemon_formal_core/Cargo.toml passed",
-      "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml passed with 115 tests, including theorem-indexed order accept/reject cases",
+      "cargo test --manifest-path scripts/hegemon_formal_core/Cargo.toml passed with 116 tests, including theorem-indexed order accept/reject cases and policy rejection for unindexed production order constraints",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json passed with 118 claims, 1941 named Lean theorem declarations, 108 production-eligible claims, and 47 residual risks",
-      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 527 falsification cases, 216 implementation bindings, 144 order constraints, and 130 dominance constraints",
+      "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint --claims config/formal-security-claims.json config/formal-security-blueprint.json passed with 118 nodes, 492 edges, 527 falsification cases, 216 implementation bindings, 144/144 theorem-indexed order constraints, 374/374 theorem-indexed order edges, 130/130 theorem-indexed dominance constraints, and 342/342 theorem-indexed dominance edges",
       "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-formal-inventory passed",
-      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16459",
+      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16478",
       "bash scripts/test-node.sh wallet-send passed",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
-      "hegemon_consensusStatus advanced from height 16459 to 16464 during the 20-second live mining sample, syncing=false, peers=0",
-      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found advanced from 222 to 227, and hash rate stayed near 17.56-17.58 kH/s",
+      "hegemon_consensusStatus advanced from height 16478 to 16480 during the 20-second live mining sample, syncing=false, peers=0",
+      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found advanced from 241 to 243, and hash rate stayed near 17.48-17.50 kH/s",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at 166a5927 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "remote branch status was codex/superneo-formal-verification at 2e464c19 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
     "runtime_note": "The live node was not rebuilt or restarted because this slice changed only formal-core checker code and docs/config metadata. Remote checker/metadata gates, smoke, wallet-send, live mining height advance, service health, and NTP checks passed.",
     "known_limitations": [
-      "The remote validation ran targeted formal-core checker/metadata gates rather than the full remote formal-core wrapper; full formal-core passed locally at 2026-06-17T11:43:19Z before deployment.",
+      "The remote validation ran targeted formal-core checker/metadata gates rather than the full remote formal-core wrapper; full formal-core passed locally at 2026-06-17T12:03:38Z before deployment.",
       "The live node had zero peers during validation, so sync health was checked as not syncing with shouldHavePeers=false; no two-node sync run was attempted in this deployment pass.",
       "Hash/crypto/proof-system assumptions, simulator zero knowledge, advisory database and scanner completeness, complete parser implementation proofs, and complete native-node equivalence remain explicit residuals."
     ]
