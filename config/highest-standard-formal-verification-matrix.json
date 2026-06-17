@@ -4,21 +4,21 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 88.0,
+  "overall_completion_percent": 88.02,
   "last_full_formal_core": {
-    "date": "2026-06-17T09:30:39Z",
+    "date": "2026-06-17T10:11:33Z",
     "commit": "working-tree-on-codex/superneo-formal-verification",
-    "status": "passed locally after adding PQ Noise wrapper-completion theorem coverage, schema-v3 PQ Noise vectors, and production network/native wrapper completion-output conformance",
+    "status": "passed locally after adding mineable candidate-selection theorem coverage, schema-v2 mineable action vectors, and production select_mineable_actions conformance",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1905,
+    "named_lean_theorems": 1911,
     "axiom_free_theorems": 864,
-    "axiom_dependent_theorems": 1041,
+    "axiom_dependent_theorems": 1047,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 521,
+    "falsification_cases": 523,
     "implementation_bindings": 214,
     "implementation_result_obligations": 167,
     "implementation_order_constraints": 144,
@@ -75,42 +75,44 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the PQ Noise wrapper-completion theorem package. The executable Lean model now packages accepted authenticated PQ handshakes into completed wrapper-observable session facts: opposite roles and initiator flags, zero initial byte counters, matched send/receive slots inherited from transport completion, and first-frame payload-plus-AEAD-tag wire accounting.",
+    "summary": "Added the mineable candidate-selection theorem package. The executable Lean model now counts only mineable transfer actions, rejects candidate selection for zero-transfer batches, accepts transfers exactly when they are mineable, accepts non-candidate plain actions, and selects only the first canonical-order candidate artifact whose tx_count matches the mineable transfer count.",
     "lean_modules": [
-      "formal/lean/Hegemon/Network/PqNoiseHandshakeChannel.lean",
-      "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean"
+      "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_transport_completion_facts",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_wrapper_completion_facts"
+      "Hegemon.Native.MineableActionAdmission.selected_candidate_none_when_no_mineable_transfers",
+      "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
+      "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
+      "Hegemon.Native.MineableActionAdmission.selection_accepts_candidate_iff_selected",
+      "Hegemon.Native.MineableActionAdmission.selection_accepts_transfer_iff_mineable",
+      "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Network.PqNoiseHandshakeChannel passed locally; schema-v3 PQ Noise vectors generated with 2 transport-completion cases and 2 wrapper-completion cases.",
-      "targeted_rust": "HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_pq_noise_vectors_match_production -- --nocapture and HEGEMON_LEAN_PQ_NOISE_VECTORS=<generated-json> cargo test -p network lean_generated_pq_wrapper_completion_vectors_match --lib -- --nocapture passed locally, covering pq-noise PqTransport plus network::pq_transport and NativePqTransport wrapper completion outputs.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the wrapper-completion theorem name, schema-v3 generated-vector conformance gates, and falsification cases for PqTransport and network/native wrapper completion-output drift."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.MineableActionAdmission Hegemon.Native.GenerateMineableActionAdmissionVectors Hegemon passed locally; schema-v2 mineable action vectors generated with admission and ordered-selection cases.",
+      "targeted_rust": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture passed locally, covering production evaluate_native_mineable_action_admission and select_mineable_actions.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the mineable candidate-selection theorem names, schema-v2 generated-vector conformance gate, and falsification cases for zero-transfer rejection, matching tx_count selection, unmineable sidecar exclusion, and first matching candidate selection."
     },
     "known_limitations": [
-      "This slice proves and vector-binds direct pq-noise transport completion outputs plus the two shipped higher-level network/native PQ wrappers; it does not prove SHA-256/HKDF implementation equivalence, AES-GCM security, ML-KEM/ML-DSA security, OS RNG quality, timeout/scheduler liveness, future wrappers, or complete native-node refinement."
+      "This slice proves and vector-binds the ordered mineable candidate policy used by block-template construction; it does not prove global miner fairness, remote network timing/topology privacy, full wallet output-batch privacy policy, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound PQ Noise transport and wrapper completion to executable Lean-generated vectors and production Rust. The formal-vector gates now drive real PqTransport::upgrade_outbound and upgrade_inbound, network::pq_transport upgrade_outbound/upgrade_inbound, and NativePqTransport upgrade_outbound/upgrade_inbound over paired streams, checking completed session role flags, remote peer IDs, zero initial byte counters, matched directional send/receive slots, and first encrypted-frame byte accounting.",
+    "summary": "Bound the mineable candidate-selection model to executable Lean-generated vectors and production Rust. The formal-vector gate now constructs real pending native actions, stages sidecar ciphertext metadata when needed, runs production preselection to count mineable transfers, drives select_mineable_actions, and compares the selected candidate plus accepted action labels against Lean's ordered-selection table.",
     "changed_runtime_paths": [
-      "No shipped runtime behavior changed; pq-noise/src/lib.rs cfg(test) formal vector conformance exercises production PqTransport outbound/inbound upgrade completion outputs.",
-      "network/src/pq_transport.rs and network/src/native_transport.rs cfg(test) formal vector conformance now exercise the shipped higher-level PQ wrapper upgrade outputs without widening the public API.",
-      "formal/lean/Hegemon/Network/GeneratePqNoiseVectors.lean schema-v3 vectors add local-initiator/local-responder transport-completion cases plus network_pq_transport and native_pq_transport wrapper-completion cases.",
-      "scripts/check_formal_core.sh regenerates PQ Noise vectors and runs the pq-noise, network wrapper, and native wrapper production conformance gates, so the new wrapper cases are release-gated with zero runtime cost."
+      "No shipped runtime behavior changed; node/src/native/mod.rs cfg(test) formal vector conformance now checks production select_mineable_actions against Lean's ordered candidate-selection table.",
+      "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean schema-v2 vectors add zero-transfer, one-transfer, two-transfer, unmineable-sidecar, and first-matching-candidate selection cases.",
+      "scripts/check_formal_core.sh regenerates mineable action-admission vectors and runs the hegemon-node production conformance gate, so the new selection cases are release-gated with zero runtime cost."
     ],
     "supporting_theorem_families": [
-      "Hegemon.Network.PqNoise",
-      "Hegemon.Network.PqNoiseHandshakeChannel"
+      "Hegemon.Native.MineableActionAdmission"
     ],
     "validation": {
-      "status": "targeted Lean build, generated-vector JSON validation, PQ Noise transport-completion Rust conformance, and network/native wrapper completion Rust conformance passed locally; full formal-core rerun is the next gate for this slice."
+      "status": "targeted Lean build, generated-vector JSON validation, hegemon-node mineable action-admission/selection Rust conformance, axiom audit, metadata gates, and full local formal-core passed."
     },
     "known_limitations": [
-      "This slice changes only Lean, formal metadata/docs, scripts, and cfg(test) pq-noise/network conformance code, so hegemon-dev should fast-forward without a live binary rebuild/restart, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes only Lean, formal metadata/docs, and cfg(test) native conformance code, so hegemon-dev should fast-forward without a live binary rebuild/restart, then pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
@@ -455,7 +457,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 73.5,
+      "completion_percent": 73.7,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -511,11 +513,14 @@
         "formal/lean/Hegemon/Native/ActionOrder.lean now models non-transfer order-key preimages as domain-separated family/action IDs plus semantic action hash and proves preimages/actions plus pairwise relative order ignore local received_ms and raw tx_hash metadata",
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean emits bridge/candidate-artifact/coinbase non-transfer metadata-resampling preimage cases checked against the production semantic preimage helper",
         "node/src/native/mod.rs non_transfer_action_order_key_preimage_ignores_received_ms_for_public_routes proves bridge, candidate-artifact, and coinbase order preimages/keys ignore received_ms while raw pending-action hashes still change",
-        "node/src/native/mod.rs pending_non_transfer_relative_order_ignores_received_ms_resampling proves pending non-transfer relative order is stable under received_ms resampling"
+        "node/src/native/mod.rs pending_non_transfer_relative_order_ignores_received_ms_resampling proves pending non-transfer relative order is stable under received_ms resampling",
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean now models ordered same-block candidate-artifact selection from the canonical mineable-transfer count and proves candidates are accepted iff selected, transfers are accepted iff mineable, and plain actions pass",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean schema-v2 vectors cover zero-transfer candidate rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from transfer count, and canonical-order first matching candidate selection",
+        "node/src/native/mod.rs lean_generated_mineable_action_admission_vectors_match_production now drives production select_mineable_actions over real pending-action fixtures, staged sidecar metadata, candidate artifacts, and bridge actions, catching insertion-order drift in same-count candidate selection"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer and non-transfer order independence from arrival metadata, and PQ connection/relay consensus-payload projection into remaining batching policy, remaining wallet metadata, miner fairness policy, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted transfer/non-transfer order independence from arrival metadata, canonical mineable candidate-selection policy, and PQ connection/relay consensus-payload projection into wallet output-batch policy, remaining wallet metadata, global miner fairness policy, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."

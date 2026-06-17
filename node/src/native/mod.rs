@@ -14423,6 +14423,8 @@ mod tests {
         name: String,
         amount_nonzero: bool,
         commitment_matches: bool,
+        #[serde(default)]
+        mineable_selection_cases: Vec<LeanMineableSelectionCase>,
         commitment_nonzero: bool,
         ciphertext_bytes: usize,
         max_ciphertext_bytes: usize,
@@ -14437,6 +14439,29 @@ mod tests {
     struct LeanCoinbaseActionPayloadScaleWireVectorFile {
         schema_version: u32,
         coinbase_action_payload_scale_wire_cases: Vec<LeanCoinbaseActionPayloadScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMineableSelectionCase {
+        name: String,
+        transfer_count: usize,
+        selected_candidate_action_id: Option<usize>,
+        actions: Vec<LeanMineableSelectionAction>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMineableSelectionAction {
+        label: String,
+        fixture: String,
+        action_id: usize,
+        transfer_route: bool,
+        transfer_mineable: bool,
+        candidate_artifact_route: bool,
+        candidate_tx_count: usize,
+        expected_selected: bool,
+        expected_accepted: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -21641,12 +21666,20 @@ mod tests {
             .label(),
             "input_count_mismatch"
         );
+        assert!(
+            !vectors.mineable_selection_cases.is_empty(),
+            "Lean mineable selection cases must not be empty"
+        );
         assert_eq!(
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     output_count_matches: false,
                     version_matches: false,
                     ..valid
+        for case in &vectors.mineable_selection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mineable_selection_case(case);
+        }
                 }
             )
             .expect_err("output count mismatch must reject before version")
@@ -21674,6 +21707,173 @@ mod tests {
             evaluate_native_tx_leaf_action_binding_admission(
                 NativeTxLeafActionBindingAdmissionInput {
                     balance_tag_matches: false,
+    fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut label_by_hash = BTreeMap::<[u8; 32], String>::new();
+        let mut label_by_action_id = BTreeMap::<usize, String>::new();
+
+        for action_case in &case.actions {
+            let action = lean_mineable_selection_fixture_action(action_case, anchor);
+            assert_eq!(
+                is_shielded_transfer_action(&action),
+                action_case.transfer_route,
+                "{} {} transfer-route fixture drifted from Lean spec",
+                case.name,
+                action_case.label
+            );
+            assert_eq!(
+                is_candidate_artifact_action(&action),
+                action_case.candidate_artifact_route,
+                "{} {} candidate-route fixture drifted from Lean spec",
+                case.name,
+                action_case.label
+            );
+            if let Some(candidate) = action.candidate_artifact.as_ref() {
+                assert_eq!(
+                    usize::try_from(candidate.tx_count).expect("tx_count fits usize"),
+                    action_case.candidate_tx_count,
+                    "{} {} candidate tx_count fixture drifted from Lean spec",
+                    case.name,
+                    action_case.label
+                );
+            }
+            if action_case.transfer_route && action_case.transfer_mineable {
+                stage_ciphertext_metadata_for_action(&mut state, &action);
+            }
+
+            let preselection_input = native_mineable_action_admission_input(&state, &action, None);
+            if action_case.transfer_route {
+                assert_eq!(
+                    evaluate_native_mineable_action_admission(preselection_input).is_ok(),
+                    action_case.transfer_mineable,
+                    "{} {} transfer preselection mineability drifted from Lean spec",
+                    case.name,
+                    action_case.label
+                );
+            }
+
+            assert!(
+                label_by_hash
+                    .insert(action.tx_hash, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate fixture tx_hash for {}",
+                case.name,
+                action_case.label
+            );
+            assert!(
+                label_by_action_id
+                    .insert(action_case.action_id, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate Lean action_id {}",
+                case.name,
+                action_case.action_id
+            );
+            state.pending_actions.insert(action.tx_hash, action);
+        }
+
+        let transfer_count = ordered_pending_actions(&state)
+            .iter()
+            .filter(|action| is_shielded_transfer_action(action))
+            .filter(|action| {
+                let input = native_mineable_action_admission_input(&state, action, None);
+                evaluate_native_mineable_action_admission(input).is_ok()
+            })
+            .count();
+        assert_eq!(
+            transfer_count, case.transfer_count,
+            "{} mineable transfer count drifted from Lean spec",
+            case.name
+        );
+
+        let selected = select_mineable_actions(&state);
+        let actual_labels = selected
+            .iter()
+            .map(|action| {
+                label_by_hash
+                    .get(&action.tx_hash)
+                    .unwrap_or_else(|| panic!("{} selected unknown action", case.name))
+                    .clone()
+            })
+            .collect::<Vec<_>>();
+        let expected_labels = case
+            .actions
+            .iter()
+            .filter(|action| action.expected_accepted)
+            .map(|action| action.label.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_labels, expected_labels,
+            "{} selected mineable action order drifted from Lean spec",
+            case.name
+        );
+
+        let actual_selected_candidate = selected
+            .iter()
+            .find(|action| is_candidate_artifact_action(action))
+            .map(|action| {
+                case.actions
+                    .iter()
+                    .find(|candidate| {
+                        label_by_hash
+                            .get(&action.tx_hash)
+                            .is_some_and(|label| label == &candidate.label)
+                    })
+                    .expect("selected candidate has Lean case")
+                    .action_id
+            });
+        assert_eq!(
+            actual_selected_candidate, case.selected_candidate_action_id,
+            "{} selected candidate action id drifted from Lean spec",
+            case.name
+        );
+
+        for action_case in &case.actions {
+            let actual_accepted = actual_labels
+                .iter()
+                .any(|label| label == &action_case.label);
+            assert_eq!(
+                actual_accepted, action_case.expected_accepted,
+                "{} {} accepted flag drifted from Lean spec",
+                case.name, action_case.label
+            );
+            let actual_selected = actual_selected_candidate
+                .is_some_and(|selected_id| selected_id == action_case.action_id);
+            assert_eq!(
+                actual_selected, action_case.expected_selected,
+                "{} {} selected-candidate flag drifted from Lean spec",
+                case.name, action_case.label
+            );
+        }
+    }
+
+    fn lean_mineable_selection_fixture_action(
+        action_case: &LeanMineableSelectionAction,
+        anchor: [u8; 48],
+    ) -> PendingAction {
+        match action_case.fixture.as_str() {
+            "inline-a" => test_inline_transfer_action(anchor, [161u8; 48], [162u8; 48], 0),
+            "sidecar-a" => test_sidecar_transfer_action(anchor, [163u8; 48], [164u8; 48], 0),
+            "sidecar-missing" => test_sidecar_transfer_action(anchor, [165u8; 48], [166u8; 48], 0),
+            "candidate-one-a" => test_candidate_artifact_action(1, 171),
+            "candidate-one-b" => test_candidate_artifact_action(1, 172),
+            "candidate-two" => test_candidate_artifact_action(2, 173),
+            "bridge-a" => test_outbound_bridge_action(b"lean mineable selection bridge-a"),
+            other => panic!("unknown Lean mineable selection fixture {other}"),
+        }
+    }
+
+    fn stage_ciphertext_metadata_for_action(state: &mut NativeState, action: &PendingAction) {
+        for (hash, size) in action
+            .ciphertext_hashes
+            .iter()
+            .zip(action.ciphertext_sizes.iter())
+        {
+            state.staged_ciphertexts.insert(hex48(hash), *size);
+        }
+    }
+
                     receipt_statement_hash_matches: false,
                     public_inputs_digest_matches: false,
                     proof_digest_matches: false,

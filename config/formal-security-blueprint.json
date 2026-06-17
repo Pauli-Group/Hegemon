@@ -1295,6 +1295,8 @@
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
         "formal/lean/Hegemon/Native/ActionOrder.lean",
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
@@ -1315,6 +1317,8 @@
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
         "formal/lean/Hegemon/Native/ActionOrder.lean",
         "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+        "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
@@ -1333,7 +1337,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a research privacy-game boundary with explicit cryptographic, proof-system, wallet metadata, timing/batching, and network metadata assumptions plus production wallet randomness/bookkeeping/address-metadata regressions and PQ connection/relay metadata projection regression. The secret-resampling and open-assumption package theorems strengthen deterministic unlinkability coverage, and the native all-active secret-plus-local resampling theorem now carries selected-row public metadata packages across independent private-witness/prover-randomness/local-action metadata resampling. This node still does not claim to mechanize ML-KEM, AEAD, RNG, or simulator-based zero-knowledge security."
+        "notes": "Accepted as a research privacy-game boundary with explicit cryptographic, proof-system, wallet metadata, timing/batching, and network metadata assumptions plus production wallet randomness/bookkeeping/address-metadata regressions, PQ connection/relay metadata projection regression, and native mineable candidate-selection conformance. The secret-resampling and open-assumption package theorems strengthen deterministic unlinkability coverage, and the native all-active secret-plus-local resampling theorem now carries selected-row public metadata packages across independent private-witness/prover-randomness/local-action metadata resampling. This node still does not claim to mechanize ML-KEM, AEAD, RNG, global miner fairness, or simulator-based zero-knowledge security."
       },
       "falsification_cases": [
         {
@@ -1365,6 +1369,11 @@
           "id": "native-sidecar-arrival-time-observer-projection",
           "description": "Changing only sidecar pending-action arrival time must not alter semantic identity, materialized ciphertexts, replay keys, or consensus transaction observer fields.",
           "gate": "cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "mineable-candidate-selection-conformance",
+          "description": "Native block-template candidate selection must follow the Lean ordered mineable-transfer count and first-matching-candidate table, including zero-transfer rejection and unmineable sidecar exclusion.",
+          "gate": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
           "id": "formal-core-ciphertext-privacy-game-boundary-gate",
@@ -4407,8 +4416,8 @@
       "id": "native.mineable-action-admission",
       "claim_id": "native.mineable-action-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native mineable-action admission predicate, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. `gen_mineable_action_admission_vectors` emits Lean-derived accept/reject examples, and the formal-core gate checks them against the production `evaluate_native_mineable_action_admission` helper used by native candidate selection before `prepare_work` and by mined-block import through the prepared mining-action recovery path. Native regressions show stale or mismatched sidecar transfers plus candidate artifacts produce an empty template, while matching staged sidecar metadata keeps the transfer and selected candidate in work.",
+      "formal_statement": "For the executable Lean native mineable-action admission and ordered-selection predicates, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate for the canonical ordered mineable-transfer count; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. The selection theorems `selected_candidate_none_when_no_mineable_transfers`, `first_matching_candidate_head_matches`, `first_matching_candidate_skips_nonmatching_head`, `selection_accepts_candidate_iff_selected`, `selection_accepts_transfer_iff_mineable`, and `selection_accepts_plain_action` prove the ordered candidate-selection table over a canonical action list: zero mineable transfers select no candidate, transfers are accepted iff mineable, plain actions pass, and only the first candidate with tx_count equal to the mineable transfer count is selected. `gen_mineable_action_admission_vectors` emits schema-v2 Lean-derived accept/reject and selection examples, and the formal-core gate checks them against production `evaluate_native_mineable_action_admission` plus `select_mineable_actions` before `prepare_work` and mined-block import recovery. The generated selection vectors cover zero-transfer rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from the transfer count, and canonical-order first matching candidate selection.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -4496,7 +4505,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block-template action admission. Scope is the cheap local selection gate before mining work, not recursive proof soundness or candidate-selection fairness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native block-template action admission and ordered candidate selection. Scope is the cheap local selection gate before mining work, not recursive proof soundness or global miner fairness."
       },
       "falsification_cases": [
         {
@@ -4506,7 +4515,12 @@
         },
         {
           "id": "lean-generated-mineable-action-admission-conformance",
-          "description": "Changing production native mineable-action admission away from the Lean executable spec must fail the generated-vector conformance step.",
+          "description": "Changing production native mineable-action admission or ordered candidate selection away from the Lean executable spec must fail the generated-vector conformance step.",
+          "gate": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "lean-generated-mineable-selection-conformance",
+          "description": "Changing production `select_mineable_actions` so candidate selection uses insertion order, arrival metadata, or a nonmatching transfer count must fail the schema-v2 generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
@@ -4520,7 +4534,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native block-template action admission only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, pending-action reload completeness, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, candidate selection fairness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native block-template action admission and ordered same-block candidate selection only. It does not prove SCALE decoder correctness, ciphertext hash security or implementation equivalence, pending-action reload completeness, sled/BTreeMap consistency, DA durability, native tx-leaf proof soundness, recursive proof cryptographic soundness, global miner fairness, or complete native-node equivalence."
     },
     {
       "id": "native.miner-identity",
