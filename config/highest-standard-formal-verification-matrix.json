@@ -34,26 +34,23 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-17T19:18:10Z",
-    "commit": "01d4fdb8",
-    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild/restart, targeted remote formal gates, smoke, wallet-send, live mining advancement, service health, and NTP",
+    "date": "2026-06-17T19:40:05Z",
+    "commit": "dfea67b1",
+    "status": "passed after fast-forward to codex/superneo-formal-verification, release rebuild/restart, smoke, wallet-send, live mining advancement, service health, and NTP",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from d8f27556 to codex/superneo-formal-verification at 01d4fdb8",
-      "rebuilt target/release/hegemon-node with make node and restarted hegemon-node.service because shipped native bridge validation code changed",
-      "RPC became ready after 66 seconds; hegemon-node.service stayed active with NRestarts=0",
-      "remote JSON validation, claims, and blueprint gates passed with 118 claims, 1978 named Lean theorem declarations, 108 production-eligible claims, 47 residual risks, 493 blueprint edges, 532 falsification cases, 218 implementation bindings, 144/144 theorem-indexed order constraints, and 130/130 theorem-indexed dominance constraints",
-      "remote Lean-generated bridge mint/replay policy vector conformance passed against production Rust",
-      "remote verified_inbound_bridge_receipt_requires_mint_replay_policy_state_and_authorization regression passed",
-      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 16885",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 01d4fdb8 to codex/superneo-formal-verification at dfea67b1",
+      "rebuilt target/release/hegemon-node with make node and restarted hegemon-node.service because consensus commitment-tree code changed",
+      "RPC became ready after about 56 seconds; hegemon-node.service stayed active with NRestarts=0",
+      "bash scripts/smoke-test.sh passed against the live 127.0.0.1:9944 RPC service at height 17015",
       "bash scripts/test-node.sh wallet-send passed through submit_action_stages_and_imports_shielded_transfer",
       "system_health reported isSyncing=false, peers=0, shouldHavePeers=false",
-      "live mining advanced from height 16885 to 16893 in a 25-second sample, then later to height 16902",
-      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=23, and about 11.0 kH/s in the final snapshot",
+      "live mining advanced from height 17034 to 17043 in a 25-second sample",
+      "hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=34, and about 10.8 kH/s in the final sample",
       "hegemon-node.service stayed active with NRestarts=0",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at 01d4fdb8 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "remote branch status was codex/superneo-formal-verification at dfea67b1 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
-    "runtime_note": "The live node was rebuilt and restarted because this slice changed the shipped node bridge validation path. Targeted remote formal gates, smoke, wallet-send, live mining advancement, service health, and NTP checks passed.",
+    "runtime_note": "The live node was rebuilt and restarted because this slice changed the consensus crate used by the shipped node. Smoke, wallet-send, live mining advancement, service health, and NTP checks passed.",
     "known_limitations": [
       "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync was not re-exercised during this targeted runtime validation.",
       "Hash/crypto/proof-system assumptions, simulator zero knowledge, advisory database and scanner completeness, complete parser implementation proofs, and complete native-node equivalence remain explicit residuals."
