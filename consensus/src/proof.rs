@@ -2095,16 +2095,91 @@ pub fn tx_validity_claims_from_tx_artifacts(
     verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TxValidityClaimMatchRejection {
+    CountMismatch,
+    ReceiptStatementHashMismatch,
+    ReceiptProofDigestMismatch,
+    ReceiptPublicInputsDigestMismatch,
+    ReceiptVerifierProfileMismatch,
+    BindingStatementHashMismatch,
+    BindingAnchorRootMismatch,
+    BindingFeeMismatch,
+    BindingCircuitVersionMismatch,
+}
+
+impl TxValidityClaimMatchRejection {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::CountMismatch => "count_mismatch",
+            Self::ReceiptStatementHashMismatch => "receipt_statement_hash_mismatch",
+            Self::ReceiptProofDigestMismatch => "receipt_proof_digest_mismatch",
+            Self::ReceiptPublicInputsDigestMismatch => "receipt_public_inputs_digest_mismatch",
+            Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
+            Self::BindingStatementHashMismatch => "binding_statement_hash_mismatch",
+            Self::BindingAnchorRootMismatch => "binding_anchor_root_mismatch",
+            Self::BindingFeeMismatch => "binding_fee_mismatch",
+            Self::BindingCircuitVersionMismatch => "binding_circuit_version_mismatch",
+        }
+    }
+}
+
+fn evaluate_tx_validity_claim_match(
+    provided: &TxValidityClaim,
+    verified: &TxValidityClaim,
+) -> Result<(), TxValidityClaimMatchRejection> {
+    if provided.receipt.statement_hash != verified.receipt.statement_hash {
+        return Err(TxValidityClaimMatchRejection::ReceiptStatementHashMismatch);
+    }
+    if provided.receipt.proof_digest != verified.receipt.proof_digest {
+        return Err(TxValidityClaimMatchRejection::ReceiptProofDigestMismatch);
+    }
+    if provided.receipt.public_inputs_digest != verified.receipt.public_inputs_digest {
+        return Err(TxValidityClaimMatchRejection::ReceiptPublicInputsDigestMismatch);
+    }
+    if provided.receipt.verifier_profile != verified.receipt.verifier_profile {
+        return Err(TxValidityClaimMatchRejection::ReceiptVerifierProfileMismatch);
+    }
+    if provided.binding.statement_hash != verified.binding.statement_hash {
+        return Err(TxValidityClaimMatchRejection::BindingStatementHashMismatch);
+    }
+    if provided.binding.anchor != verified.binding.anchor {
+        return Err(TxValidityClaimMatchRejection::BindingAnchorRootMismatch);
+    }
+    if provided.binding.fee != verified.binding.fee {
+        return Err(TxValidityClaimMatchRejection::BindingFeeMismatch);
+    }
+    if provided.binding.circuit_version != verified.binding.circuit_version {
+        return Err(TxValidityClaimMatchRejection::BindingCircuitVersionMismatch);
+    }
+    Ok(())
+}
+
+fn evaluate_tx_validity_claims_match_verified_artifacts(
+    provided_claims: &[TxValidityClaim],
+    verified_claims: &[TxValidityClaim],
+) -> Result<(), TxValidityClaimMatchRejection> {
+    if provided_claims.len() != verified_claims.len() {
+        return Err(TxValidityClaimMatchRejection::CountMismatch);
+    }
+    provided_claims
+        .iter()
+        .zip(verified_claims)
+        .try_for_each(|(provided, verified)| evaluate_tx_validity_claim_match(provided, verified))
+}
+
 fn ensure_claims_match_verified_artifacts(
     provided_claims: &[TxValidityClaim],
     verified_claims: &[TxValidityClaim],
 ) -> Result<(), ProofError> {
-    if provided_claims != verified_claims {
-        return Err(ProofError::AggregationProofInputsMismatch(
-            "provided tx validity claims do not match verified backend artifacts".to_string(),
-        ));
-    }
-    Ok(())
+    evaluate_tx_validity_claims_match_verified_artifacts(provided_claims, verified_claims).map_err(
+        |_| {
+            ProofError::AggregationProofInputsMismatch(
+                "provided tx validity claims do not match verified backend artifacts".to_string(),
+            )
+        },
+    )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2952,6 +3027,30 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanTxValidityClaimMatchVectorFile {
+        schema_version: u32,
+        tx_validity_claim_match_cases: Vec<LeanTxValidityClaimMatchCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTxValidityClaimMatchCase {
+        name: String,
+        count_matches: bool,
+        receipt_statement_hash_matches: bool,
+        receipt_proof_digest_matches: bool,
+        receipt_public_inputs_digest_matches: bool,
+        receipt_verifier_profile_matches: bool,
+        binding_statement_hash_matches: bool,
+        binding_anchor_root_matches: bool,
+        binding_fee_matches: bool,
+        binding_circuit_version_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanReceiptRootAdmissionVectorFile {
         schema_version: u32,
         payload_cases: Vec<LeanReceiptRootPayloadCase>,
@@ -3385,6 +3484,79 @@ mod tests {
         (block, tx_statements_commitment, artifact)
     }
 
+    fn sample_tx_validity_claim(seed: u64) -> TxValidityClaim {
+        let statement_hash = patterned_bytes48(seed);
+        TxValidityClaim::new(
+            TxValidityReceipt::new(
+                statement_hash,
+                patterned_bytes48(seed + 1),
+                patterned_bytes48(seed + 2),
+                patterned_bytes48(seed + 3),
+            ),
+            TxStatementBinding {
+                statement_hash,
+                anchor: patterned_bytes48(seed + 4),
+                fee: seed + 5,
+                circuit_version: seed as u32 + 6,
+            },
+        )
+    }
+
+    fn tx_validity_claims_for_match_case(
+        case: &LeanTxValidityClaimMatchCase,
+    ) -> (Vec<TxValidityClaim>, Vec<TxValidityClaim>) {
+        let verified = sample_tx_validity_claim(0x30);
+        let mut provided = verified.clone();
+        if !case.receipt_statement_hash_matches {
+            provided.receipt.statement_hash = patterned_bytes48(0x80);
+        }
+        if !case.receipt_proof_digest_matches {
+            provided.receipt.proof_digest = patterned_bytes48(0x81);
+        }
+        if !case.receipt_public_inputs_digest_matches {
+            provided.receipt.public_inputs_digest = patterned_bytes48(0x82);
+        }
+        if !case.receipt_verifier_profile_matches {
+            provided.receipt.verifier_profile = patterned_bytes48(0x83);
+        }
+        if !case.binding_statement_hash_matches {
+            provided.binding.statement_hash = patterned_bytes48(0x84);
+        }
+        if !case.binding_anchor_root_matches {
+            provided.binding.anchor = patterned_bytes48(0x85);
+        }
+        if !case.binding_fee_matches {
+            provided.binding.fee = verified.binding.fee + 1;
+        }
+        if !case.binding_circuit_version_matches {
+            provided.binding.circuit_version = verified.binding.circuit_version + 1;
+        }
+
+        let provided_claims = vec![provided];
+        let mut verified_claims = vec![verified];
+        if !case.count_matches {
+            verified_claims.push(sample_tx_validity_claim(0x90));
+        }
+        (provided_claims, verified_claims)
+    }
+
+    fn verify_lean_tx_validity_claim_match_case(case: &LeanTxValidityClaimMatchCase) {
+        let (provided, verified) = tx_validity_claims_for_match_case(case);
+        let result = evaluate_tx_validity_claims_match_verified_artifacts(&provided, &verified);
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{}: claim-match validity disagreed with Lean",
+            case.name
+        );
+        let observed_rejection = result.err().map(|rejection| rejection.label().to_string());
+        assert_eq!(
+            observed_rejection, case.expected_rejection,
+            "{}: claim-match rejection disagreed with Lean",
+            case.name
+        );
+    }
+
     #[test]
     fn lean_generated_proof_policy_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_PROOF_POLICY_VECTORS") else {
@@ -3431,6 +3603,31 @@ mod tests {
         for case in &vectors.native_tx_leaf_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_native_tx_leaf_admission_case(case);
+        }
+    }
+
+    #[test]
+    fn lean_generated_tx_validity_claim_matching_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean tx-validity claim matching vectors");
+        let vectors: LeanTxValidityClaimMatchVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean tx-validity claim matching vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.tx_validity_claim_match_cases.is_empty(),
+            "Lean tx-validity claim matching cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.tx_validity_claim_match_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_tx_validity_claim_match_case(case);
         }
     }
 

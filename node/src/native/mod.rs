@@ -1554,6 +1554,22 @@ struct NativeCandidateArtifactAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeCandidateArtifactResourceProjectionInput {
+    raw_byte_cap: usize,
+    decoded_byte_cap: usize,
+    item_count_cap: usize,
+    item_byte_cap: usize,
+    aggregate_byte_cap: usize,
+    work_unit_cap: usize,
+    declared_bytes: usize,
+    proof_bytes: usize,
+    receipt_bytes: usize,
+    recursive_bytes: usize,
+    tx_count: usize,
+    da_chunk_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeCandidateArtifactAdmissionRejection {
     StateDeltasPresent,
     RoutePayloadDecodeFailed,
@@ -7819,7 +7835,8 @@ fn validate_transfer_action_payload(action: &PendingAction) -> Result<()> {
 fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     let input = native_candidate_artifact_admission_input(true, true, true, Some(artifact));
     evaluate_native_candidate_artifact_admission(input)
-        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))
+        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))?;
+    validate_candidate_artifact_resource_projection(artifact)
 }
 
 fn validate_candidate_action_payload(action: &PendingAction) -> Result<()> {
@@ -7845,7 +7862,13 @@ fn validate_candidate_action_payload(action: &PendingAction) -> Result<()> {
         action.candidate_artifact.as_ref(),
     );
     evaluate_native_candidate_artifact_admission(input)
-        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))
+        .map_err(|rejection| native_candidate_artifact_admission_error(input, rejection))?;
+    validate_candidate_artifact_resource_projection(
+        action
+            .candidate_artifact
+            .as_ref()
+            .expect("candidate artifact was accepted as present"),
+    )
 }
 
 fn candidate_action_has_no_state_deltas(action: &PendingAction) -> bool {
@@ -7908,6 +7931,71 @@ fn native_candidate_artifact_admission_input(
     }
 }
 
+fn native_candidate_artifact_resource_projection_input(
+    artifact: &CandidateArtifact,
+) -> NativeCandidateArtifactResourceProjectionInput {
+    let proof_bytes = artifact.commitment_proof.data.len();
+    let receipt_bytes = artifact
+        .receipt_root
+        .as_ref()
+        .map_or(0, |receipt| receipt.encoded_size());
+    let recursive_bytes = artifact
+        .recursive_block
+        .as_ref()
+        .map_or(0, |recursive| recursive.proof.data.len());
+    let variable_bytes = proof_bytes
+        .saturating_add(receipt_bytes)
+        .saturating_add(recursive_bytes);
+    let declared_bytes = artifact.encoded_size().saturating_sub(variable_bytes);
+    NativeCandidateArtifactResourceProjectionInput {
+        raw_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        decoded_byte_cap: MAX_NATIVE_RPC_ACTION_BYTES,
+        item_count_cap: MAX_BATCH_SIZE as usize,
+        item_byte_cap: RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+        aggregate_byte_cap: RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+        work_unit_cap: usize::MAX,
+        declared_bytes,
+        proof_bytes,
+        receipt_bytes,
+        recursive_bytes,
+        tx_count: artifact.tx_count as usize,
+        da_chunk_count: artifact.da_chunk_count as usize,
+    }
+}
+
+fn native_candidate_artifact_resource_bounded_request(
+    input: NativeCandidateArtifactResourceProjectionInput,
+) -> NativeBoundedRequestAdmissionInput {
+    let aggregate_bytes = input
+        .proof_bytes
+        .saturating_add(input.receipt_bytes)
+        .saturating_add(input.recursive_bytes);
+    NativeBoundedRequestAdmissionInput {
+        raw_byte_cap: input.raw_byte_cap,
+        decoded_byte_cap: input.decoded_byte_cap,
+        item_count_cap: input.item_count_cap,
+        item_byte_cap: input.item_byte_cap,
+        aggregate_byte_cap: input.aggregate_byte_cap,
+        work_unit_cap: input.work_unit_cap,
+        raw_bytes: input.declared_bytes,
+        decoded_bytes: input.declared_bytes.saturating_add(aggregate_bytes),
+        item_count: input.tx_count,
+        max_item_bytes: input
+            .proof_bytes
+            .max(input.receipt_bytes)
+            .max(input.recursive_bytes),
+        aggregate_bytes,
+        work_units: input.da_chunk_count,
+    }
+}
+
+fn validate_candidate_artifact_resource_projection(artifact: &CandidateArtifact) -> Result<()> {
+    let input = native_candidate_artifact_resource_projection_input(artifact);
+    let bounded = native_candidate_artifact_resource_bounded_request(input);
+    evaluate_native_bounded_request_admission(bounded)
+        .map_err(|rejection| native_candidate_artifact_resource_admission_error(bounded, rejection))
+}
+
 fn evaluate_native_candidate_artifact_admission(
     input: NativeCandidateArtifactAdmissionInput,
 ) -> Result<(), NativeCandidateArtifactAdmissionRejection> {
@@ -7945,6 +8033,44 @@ fn evaluate_native_candidate_artifact_admission(
         Err(NativeCandidateArtifactAdmissionRejection::RecursiveProofTooLarge)
     } else {
         Ok(())
+    }
+}
+
+fn native_candidate_artifact_resource_admission_error(
+    input: NativeBoundedRequestAdmissionInput,
+    rejection: NativeBoundedRequestAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+            "candidate artifact declared byte count {} exceeds cap {}",
+            input.raw_bytes,
+            input.raw_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+            "candidate artifact decoded byte count {} exceeds cap {}",
+            input.decoded_bytes,
+            input.decoded_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+            "candidate artifact tx_count {} exceeds bounded request cap {}",
+            input.item_count,
+            input.item_count_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+            "candidate artifact proof-like item byte count {} exceeds cap {}",
+            input.max_item_bytes,
+            input.item_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+            "candidate artifact aggregate proof-like byte count {} exceeds cap {}",
+            input.aggregate_bytes,
+            input.aggregate_byte_cap
+        ),
+        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+            "candidate artifact DA chunk count {} exceeds bounded request work cap {}",
+            input.work_units,
+            input.work_unit_cap
+        ),
     }
 }
 
@@ -8595,7 +8721,7 @@ fn is_candidate_artifact_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
 }
 
-fn action_order_key(action: &PendingAction) -> [u8; 32] {
+fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
     let mut preimage = Vec::new();
     match (action.family_id, action.action_id) {
         (FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE) => {
@@ -8627,6 +8753,11 @@ fn action_order_key(action: &PendingAction) -> [u8; 32] {
     if preimage.is_empty() {
         preimage.extend_from_slice(&action.tx_hash);
     }
+    preimage
+}
+
+fn action_order_key(action: &PendingAction) -> [u8; 32] {
+    let preimage = action_order_key_preimage(action);
     crypto::hashes::blake2_256(&preimage)
 }
 
@@ -13084,6 +13215,7 @@ mod tests {
     struct LeanActionOrderVectorFile {
         schema_version: u32,
         action_order_cases: Vec<LeanActionOrderCase>,
+        transfer_order_preimage_cases: Vec<LeanTransferOrderPreimageCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -13099,6 +13231,20 @@ mod tests {
     struct LeanOrderedAction {
         is_transfer: bool,
         key: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTransferOrderPreimageCase {
+        name: String,
+        route: String,
+        binding_hash: String,
+        nullifiers: Vec<String>,
+        received_ms: u64,
+        resampled_received_ms: u64,
+        expected_preimage: String,
+        expected_preimage_len: usize,
+        expected_same_after_resample: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14006,6 +14152,8 @@ mod tests {
     struct LeanCandidateArtifactAdmissionVectorFile {
         schema_version: u32,
         candidate_artifact_admission_cases: Vec<LeanCandidateArtifactAdmissionCase>,
+        candidate_artifact_resource_projection_cases:
+            Vec<LeanCandidateArtifactResourceProjectionCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14028,6 +14176,32 @@ mod tests {
         recursive_payload_present: bool,
         recursive_proof_bytes: usize,
         max_recursive_proof_bytes: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactResourceProjectionCase {
+        name: String,
+        declared_bytes: usize,
+        proof_bytes: usize,
+        receipt_bytes: usize,
+        recursive_bytes: usize,
+        tx_count: usize,
+        da_chunk_count: usize,
+        raw_byte_cap: usize,
+        decoded_byte_cap: usize,
+        item_count_cap: usize,
+        item_byte_cap: usize,
+        aggregate_byte_cap: usize,
+        work_unit_cap: usize,
+        expected_raw_bytes: usize,
+        expected_decoded_bytes: usize,
+        expected_item_count: usize,
+        expected_max_item_bytes: usize,
+        expected_aggregate_bytes: usize,
+        expected_work_units: usize,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -17678,6 +17852,118 @@ mod tests {
     }
 
     #[test]
+    fn transfer_action_order_key_preimage_ignores_received_ms_for_inline_and_sidecar() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let inline = test_inline_transfer_action(anchor, [31u8; 48], [41u8; 48], 0);
+        let sidecar = test_sidecar_transfer_action(anchor, [32u8; 48], [42u8; 48], 0);
+
+        for (idx, action) in [inline, sidecar].into_iter().enumerate() {
+            validate_transfer_action_payload(&action).expect("test transfer validates");
+            let mut resampled = action.clone();
+            resampled.received_ms = u64::MAX - u64::try_from(idx).expect("idx fits u64");
+            resampled.tx_hash = pending_action_hash(&resampled);
+
+            assert_ne!(
+                action.tx_hash, resampled.tx_hash,
+                "raw pending-action identity still records local arrival metadata"
+            );
+            assert_eq!(
+                pending_action_semantic_hash(&action),
+                pending_action_semantic_hash(&resampled),
+                "semantic identity must ignore local arrival metadata"
+            );
+            assert_eq!(
+                action_order_key_preimage(&action),
+                action_order_key_preimage(&resampled),
+                "accepted transfer order-key preimage must ignore local arrival metadata"
+            );
+            assert_eq!(
+                action_order_key(&action),
+                action_order_key(&resampled),
+                "accepted transfer order key must ignore local arrival metadata"
+            );
+            assert_eq!(
+                action_order_key_preimage(&action).len(),
+                64 + 48 * action.nullifiers.len(),
+                "accepted transfer order preimage is binding_hash || nullifiers"
+            );
+        }
+    }
+
+    #[test]
+    fn mineable_transfer_relative_order_ignores_received_ms_resampling() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut inline = test_inline_transfer_action(anchor, [33u8; 48], [43u8; 48], 0);
+        let mut sidecar = test_sidecar_transfer_action(anchor, [34u8; 48], [44u8; 48], 0);
+        inline.received_ms = 10;
+        inline.tx_hash = pending_action_hash(&inline);
+        sidecar.received_ms = 20;
+        sidecar.tx_hash = pending_action_hash(&sidecar);
+
+        for (hash, size) in sidecar
+            .ciphertext_hashes
+            .iter()
+            .zip(sidecar.ciphertext_sizes.iter())
+        {
+            state.staged_ciphertexts.insert(hex48(hash), *size);
+        }
+        state.pending_actions.insert(inline.tx_hash, inline.clone());
+        state
+            .pending_actions
+            .insert(sidecar.tx_hash, sidecar.clone());
+
+        let selected = select_mineable_actions(&state);
+        let transfer_projection = selected_transfer_order_projection(&selected);
+        assert_eq!(
+            transfer_projection.len(),
+            2,
+            "both test transfers must be mineable"
+        );
+
+        let mut resampled_state = state.clone();
+        resampled_state.pending_actions.clear();
+        let mut resampled_inline = inline.clone();
+        let mut resampled_sidecar = sidecar.clone();
+        resampled_inline.received_ms = 9001;
+        resampled_sidecar.received_ms = 1;
+        resampled_inline.tx_hash = pending_action_hash(&resampled_inline);
+        resampled_sidecar.tx_hash = pending_action_hash(&resampled_sidecar);
+        resampled_state
+            .pending_actions
+            .insert(resampled_inline.tx_hash, resampled_inline);
+        resampled_state
+            .pending_actions
+            .insert(resampled_sidecar.tx_hash, resampled_sidecar);
+
+        let resampled_selected = select_mineable_actions(&resampled_state);
+        assert_eq!(
+            selected_transfer_order_projection(&resampled_selected),
+            transfer_projection,
+            "mineable accepted transfer relative order must ignore local arrival metadata"
+        );
+    }
+
+    fn selected_transfer_order_projection(
+        actions: &[PendingAction],
+    ) -> Vec<(Vec<u8>, [u8; 32], [u8; 32])> {
+        actions
+            .iter()
+            .filter(|action| is_shielded_transfer_action(action))
+            .map(|action| {
+                (
+                    action_order_key_preimage(action),
+                    action_order_key(action),
+                    pending_action_semantic_hash(action),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
     fn lean_generated_action_order_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_ORDER_VECTORS") else {
             eprintln!(
@@ -17688,16 +17974,24 @@ mod tests {
         let raw = std::fs::read_to_string(&path).expect("read generated Lean action-order vectors");
         let vectors: LeanActionOrderVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean action-order vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.action_order_cases.is_empty(),
             "Lean action-order cases must not be empty"
+        );
+        assert!(
+            !vectors.transfer_order_preimage_cases.is_empty(),
+            "Lean transfer-order preimage cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
         for case in &vectors.action_order_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_action_order_case(case);
+        }
+        for case in &vectors.transfer_order_preimage_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_transfer_order_preimage_case(case);
         }
     }
 
@@ -17727,6 +18021,79 @@ mod tests {
             previous = Some(*key);
         }
         true
+    }
+
+    fn verify_lean_transfer_order_preimage_case(case: &LeanTransferOrderPreimageCase) {
+        let action = transfer_order_preimage_case_action(case, case.received_ms);
+        let expected_preimage =
+            decode_lean_hex_bytes(&case.expected_preimage).expect("decode Lean preimage hex");
+        let actual_preimage = action_order_key_preimage(&action);
+        assert_eq!(
+            actual_preimage.len(),
+            case.expected_preimage_len,
+            "{} transfer action-order preimage length drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_preimage, expected_preimage,
+            "{} transfer action-order preimage bytes drifted from Lean spec",
+            case.name
+        );
+
+        let resampled = transfer_order_preimage_case_action(case, case.resampled_received_ms);
+        let resampled_preimage = action_order_key_preimage(&resampled);
+        assert_eq!(
+            actual_preimage == resampled_preimage,
+            case.expected_same_after_resample,
+            "{} transfer action-order local-arrival resampling predicate drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            action_order_key(&action) == action_order_key(&resampled),
+            case.expected_same_after_resample,
+            "{} transfer action-order key local-arrival resampling predicate drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn transfer_order_preimage_case_action(
+        case: &LeanTransferOrderPreimageCase,
+        received_ms: u64,
+    ) -> PendingAction {
+        let binding_hash =
+            parse_hex64(&case.binding_hash).expect("Lean binding_hash must be 64-byte hex");
+        let nullifiers = case
+            .nullifiers
+            .iter()
+            .map(|raw| parse_hex48(raw).expect("Lean nullifier must be 48-byte hex"))
+            .collect::<Vec<_>>();
+        let first_nullifier = nullifiers.first().copied().unwrap_or([31u8; 48]);
+        let mut action = match case.route.as_str() {
+            "inline" => test_inline_transfer_action([9u8; 48], first_nullifier, [10u8; 48], 0),
+            "sidecar" => test_sidecar_transfer_action([9u8; 48], first_nullifier, [10u8; 48], 0),
+            other => panic!("unknown Lean transfer-order route {other}"),
+        };
+        match case.route.as_str() {
+            "inline" => {
+                let mut args: ShieldedTransferInlineArgs =
+                    decode_scale_exact(&action.public_args, "Lean transfer-order inline args")
+                        .expect("decode inline transfer args");
+                args.binding_hash = binding_hash;
+                action.public_args = args.encode();
+            }
+            "sidecar" => {
+                let mut args: ShieldedTransferSidecarArgs =
+                    decode_scale_exact(&action.public_args, "Lean transfer-order sidecar args")
+                        .expect("decode sidecar transfer args");
+                args.binding_hash = binding_hash;
+                action.public_args = args.encode();
+            }
+            _ => unreachable!("route matched above"),
+        }
+        action.nullifiers = nullifiers;
+        action.received_ms = received_ms;
+        action.tx_hash = pending_action_hash(&action);
+        action
     }
 
     #[test]
@@ -20655,16 +21022,26 @@ mod tests {
             .expect("read generated Lean candidate artifact admission vectors");
         let vectors: LeanCandidateArtifactAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean candidate artifact admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.candidate_artifact_admission_cases.is_empty(),
             "Lean candidate artifact admission cases must not be empty"
+        );
+        assert!(
+            !vectors
+                .candidate_artifact_resource_projection_cases
+                .is_empty(),
+            "Lean candidate artifact resource projection cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
         for case in &vectors.candidate_artifact_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_candidate_artifact_admission_case(case);
+        }
+        for case in &vectors.candidate_artifact_resource_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_candidate_artifact_resource_projection_case(case);
         }
     }
 
@@ -20699,6 +21076,70 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native candidate-artifact admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_candidate_artifact_resource_projection_case(
+        case: &LeanCandidateArtifactResourceProjectionCase,
+    ) {
+        let input = NativeCandidateArtifactResourceProjectionInput {
+            raw_byte_cap: case.raw_byte_cap,
+            decoded_byte_cap: case.decoded_byte_cap,
+            item_count_cap: case.item_count_cap,
+            item_byte_cap: case.item_byte_cap,
+            aggregate_byte_cap: case.aggregate_byte_cap,
+            work_unit_cap: case.work_unit_cap,
+            declared_bytes: case.declared_bytes,
+            proof_bytes: case.proof_bytes,
+            receipt_bytes: case.receipt_bytes,
+            recursive_bytes: case.recursive_bytes,
+            tx_count: case.tx_count,
+            da_chunk_count: case.da_chunk_count,
+        };
+        let bounded = native_candidate_artifact_resource_bounded_request(input);
+        assert_eq!(
+            bounded.raw_bytes, case.expected_raw_bytes,
+            "{} candidate-artifact declared-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.decoded_bytes, case.expected_decoded_bytes,
+            "{} candidate-artifact decoded-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.item_count, case.expected_item_count,
+            "{} candidate-artifact tx-count projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.max_item_bytes, case.expected_max_item_bytes,
+            "{} candidate-artifact proof-like max-byte projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.aggregate_bytes, case.expected_aggregate_bytes,
+            "{} candidate-artifact proof-like aggregate projection drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            bounded.work_units, case.expected_work_units,
+            "{} candidate-artifact DA chunk projection drifted from Lean spec",
+            case.name
+        );
+
+        let actual = evaluate_native_bounded_request_admission(bounded);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} candidate-artifact bounded-resource validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} candidate-artifact bounded-resource rejection drifted from Lean spec",
             case.name
         );
     }
@@ -26365,6 +26806,50 @@ mod tests {
         let err = validate_candidate_artifact(&artifact)
             .expect_err("oversized recursive candidate proof must fail admission");
         assert!(err.to_string().contains("recursive proof size"));
+    }
+
+    #[test]
+    fn candidate_artifact_acceptance_projects_resource_bytes_to_bounded_request() {
+        let artifact = test_candidate_artifact(1);
+        let input = native_candidate_artifact_resource_projection_input(&artifact);
+        assert_eq!(input.proof_bytes, 0);
+        assert_eq!(input.receipt_bytes, 0);
+        assert_eq!(input.recursive_bytes, 32);
+        assert_eq!(input.tx_count, 1);
+        assert_eq!(input.da_chunk_count, 1);
+
+        let bounded = native_candidate_artifact_resource_bounded_request(input);
+        assert_eq!(bounded.raw_bytes, input.declared_bytes);
+        assert_eq!(bounded.decoded_bytes, artifact.encoded_size());
+        assert_eq!(bounded.item_count, input.tx_count);
+        assert_eq!(bounded.max_item_bytes, input.recursive_bytes);
+        assert_eq!(bounded.aggregate_bytes, input.recursive_bytes);
+        assert_eq!(bounded.work_units, input.da_chunk_count);
+        assert_eq!(evaluate_native_bounded_request_admission(bounded), Ok(()));
+        validate_candidate_artifact(&artifact).expect("valid candidate artifact");
+    }
+
+    #[test]
+    fn candidate_artifact_resource_projection_rejects_proof_like_bytes_by_bounded_item_gate() {
+        let input = NativeCandidateArtifactResourceProjectionInput {
+            raw_byte_cap: 200,
+            decoded_byte_cap: 1024,
+            item_count_cap: MAX_BATCH_SIZE as usize,
+            item_byte_cap: 512,
+            aggregate_byte_cap: 600,
+            work_unit_cap: usize::MAX,
+            declared_bytes: 158,
+            proof_bytes: 0,
+            receipt_bytes: 0,
+            recursive_bytes: 513,
+            tx_count: 1,
+            da_chunk_count: 1,
+        };
+        let bounded = native_candidate_artifact_resource_bounded_request(input);
+        assert_eq!(
+            evaluate_native_bounded_request_admission(bounded),
+            Err(NativeBoundedRequestAdmissionRejection::ItemBytesExceeded)
+        );
     }
 
     #[test]

@@ -300,3 +300,6 @@ lean_exe gen_proof_wrapper_admission_vectors where
 
 lean_exe gen_statement_hash_vectors where
   root := `Hegemon.Transaction.GenerateStatementHashVectors
+
+lean_exe gen_tx_validity_claim_matching_vectors where
+  root := `Hegemon.Transaction.GenerateTxValidityClaimMatchingVectors

@@ -4,23 +4,23 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 87.02,
+  "overall_completion_percent": 87.24,
   "last_full_formal_core": {
-    "date": "2026-06-17T05:02:58Z",
-    "commit": "working-tree-on-c1510b1b",
-    "status": "passed locally after adding network QueueResourceAdmission theorems, generated queue-resource vectors, network_backend queue accounting conformance, and formal claims/blueprint/docs bindings",
+    "date": "2026-06-17T06:25:42Z",
+    "commit": "working-tree-on-53f5d1be",
+    "status": "passed locally after adding transfer action-order local-arrival invariance, candidate-artifact resource projection admission, TxValidityClaim exact matching, generated vectors, production conformance, and formal claims/blueprint/docs bindings",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 1863,
-    "axiom_free_theorems": 840,
-    "axiom_dependent_theorems": 1023,
+    "named_lean_theorems": 1887,
+    "axiom_free_theorems": 857,
+    "axiom_dependent_theorems": 1030,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
     "blueprint_edges": 492,
-    "falsification_cases": 512,
-    "implementation_bindings": 209,
-    "implementation_result_obligations": 163,
+    "falsification_cases": 516,
+    "implementation_bindings": 212,
+    "implementation_result_obligations": 166,
     "implementation_order_constraints": 144,
     "implementation_order_edges": 374,
     "implementation_dominance_constraints": 130,
@@ -75,44 +75,56 @@
   },
   "last_theorem_slice": {
     "date": "2026-06-17",
-    "summary": "Added the network QueueResourceAdmission theorem package: reserve acceptance is exactly message cap, usize overflow, and aggregate queued-byte cap satisfaction; accepted reserves expose those facts; oversize, overflow, and aggregate over-budget cases reject in deterministic order; accepted sends increment queued bytes; full/closed sends roll bytes back; and reserve rejection precedes channel state.",
+    "summary": "Added the transfer action-order local-arrival invariance, candidate-artifact resource projection, and TxValidityClaim exact matching theorem packages. Transfer ordering now proves the public preimage/action key and relative transfer ordering ignore local received_ms while remaining fixed by public fields. Candidate artifacts now project declared/proof/receipt/recursive byte counts plus tx/DA counts into bounded-request admission before acceptance. TxValidityClaim matching now proves accepted proof claims exactly match verified artifact counts, statement hashes, proof/public-input digests, verifier profile, binding statement hash, anchor, fee, and circuit version.",
     "lean_modules": [
-      "formal/lean/Hegemon/Network/QueueResourceAdmission.lean",
-      "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean"
+      "formal/lean/Hegemon/Native/ActionOrder.lean",
+      "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
+      "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
+      "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+      "formal/lean/Hegemon/Transaction/GenerateTxValidityClaimMatchingVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Network.QueueResourceAdmission.queue_reserve_accepts_iff",
-      "Hegemon.Network.QueueResourceAdmission.accepted_queue_reserve_exposes_facts",
-      "Hegemon.Network.QueueResourceAdmission.accepted_bounded_send_exposes_facts",
-      "Hegemon.Network.QueueResourceAdmission.bounded_send_full_rolls_back_queued_bytes",
-      "Hegemon.Network.QueueResourceAdmission.bounded_send_closed_rolls_back_queued_bytes",
-      "Hegemon.Network.QueueResourceAdmission.bounded_send_reserve_rejection_precedes_channel_state"
+      "Hegemon.Native.ActionOrder.transfer_order_preimage_ignores_local_received_ms",
+      "Hegemon.Native.ActionOrder.transfer_order_action_ignores_local_received_ms",
+      "Hegemon.Native.ActionOrder.transfer_order_preimage_eq_of_public_fields",
+      "Hegemon.Native.ActionOrder.transfer_relative_order_ignores_local_received_ms",
+      "Hegemon.Native.ActionOrder.canonical_transfer_pair_order_ignores_local_received_ms",
+      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_resource_exposes_byte_caps",
+      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_after_resource_exposes_byte_caps",
+      "Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_after_resource_exposes_candidate_acceptance",
+      "Hegemon.Transaction.TxValidityClaimMatching.accepts_iff_claim_match_preconditions",
+      "Hegemon.Transaction.TxValidityClaimMatching.claimMatchAccepts_implies_exact_surface",
+      "Hegemon.Transaction.TxValidityClaimMatching.accepted_tx_validity_claim_fields_match_verified_artifact"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Network.QueueResourceAdmission Hegemon.Network.GenerateQueueResourceAdmissionVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1863 named Lean theorem declarations, 840 axiom-free theorem declarations, 1023 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
-      "targeted_rust": "HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture passed locally and inside scripts/check_formal_core.sh.",
-      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind QueueResourceAdmission theorem names, evidence paths, and the generated-vector conformance gate under network.frame-resource-admission; full formal-core passed with 118 claims, 512 falsification cases, 209 implementation bindings, and 108 production nodes."
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.ActionOrder Hegemon.Native.GenerateActionOrderVectors Hegemon.Native.CandidateArtifactResourceAdmission Hegemon.Native.GenerateCandidateArtifactAdmissionVectors Hegemon.Transaction.TxValidityClaimMatching Hegemon.Transaction.GenerateTxValidityClaimMatchingVectors Hegemon passed locally; full bash scripts/check_formal_core.sh passed with 1887 named Lean theorem declarations, 857 axiom-free theorem declarations, 1030 allowed-kernel-axiom-dependent declarations, and zero temporary axiom theorem dependencies.",
+      "targeted_rust": "HEGEMON_LEAN_ACTION_ORDER_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_order_vectors_match_production --lib --no-default-features -- --nocapture, transfer action-order local-arrival regressions, HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_admission_vectors_match_production --lib --no-default-features -- --nocapture, candidate-artifact resource projection regressions, HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS=<generated-json> cargo test -p consensus lean_generated_tx_validity_claim_matching_vectors_match_production --lib -- --nocapture, and TxValidityClaim exact-match regressions passed locally and inside scripts/check_formal_core.sh.",
+      "claims_blueprint": "formal-security-claims.json and formal-security-blueprint.json bind the ActionOrder, CandidateArtifactResourceAdmission, and TxValidityClaimMatching theorem names, evidence paths, implementation bindings, result obligations, and generated-vector conformance gates under privacy/action-order, native candidate-artifact admission, consensus self-contained proof policy, and consensus admission safety; full formal-core passed with 118 claims, 516 falsification cases, 212 implementation bindings, and 108 production nodes."
     },
     "known_limitations": [
-      "This slice does not prove tokio mpsc internals, scheduler fairness, peer honesty, network liveness, primitive cryptographic security, or complete native-node refinement."
+      "This slice does not prove BLAKE2/BLAKE3 cryptographic security or implementation equivalence, full proof-system soundness, simulator zero knowledge, arbitrary parser implementation correctness, scheduler/network liveness, or complete native-node refinement."
     ]
   },
   "last_production_binding_slice": {
     "date": "2026-06-17",
-    "summary": "Bound network queue resource admission to executable Lean-generated vectors: peer-send and event-channel byte caps, usize overflow rejection, aggregate over-budget rejection, accepted-send queued-byte increments, full/closed rollback, and reserve-before-channel-state precedence are checked against production network_backend queue accounting helpers.",
+    "summary": "Bound transfer action-order preimage construction, candidate-artifact resource projection, and TxValidityClaim exact matching to executable Lean-generated vectors and production Rust helpers. The node uses the same action-order preimage helper for transfer ordering, rejects candidate artifacts whose projected byte/count request violates bounded-resource admission before artifact acceptance, and consensus rejects proof claims that drift from verified artifact metadata.",
     "changed_runtime_paths": [
-      "network/src/network_backend.rs adds cfg(test) Lean queue-resource vector conformance for peer-send and message-event queue accounting",
-      "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean emits constants, reserve cases, and bounded-send cases for production comparison",
-      "scripts/check_formal_core.sh generates queue-resource vectors and runs the production conformance regression"
+      "node/src/native/mod.rs factors action_order_key_preimage into the production transfer ordering path and checks local received_ms invariance against Lean-generated vectors",
+      "node/src/native/mod.rs projects CandidateArtifact declared/proof/receipt/recursive bytes and tx/DA counts through native_candidate_artifact_resource_bounded_request before validate_candidate_artifact and validate_candidate_action_payload accept",
+      "consensus/src/proof.rs evaluates TxValidityClaim exact field matching before accepting verified transaction artifact claims into block proof verification",
+      "scripts/check_formal_core.sh generates action-order, candidate-artifact admission, and TxValidityClaim matching vectors and runs the production conformance regressions"
     ],
     "supporting_theorem_families": [
-      "Hegemon.Network.QueueResourceAdmission"
+      "Hegemon.Native.ActionOrder",
+      "Hegemon.Native.CandidateArtifactResourceAdmission",
+      "Hegemon.Transaction.TxValidityClaimMatching"
     ],
     "validation": {
-      "status": "targeted Lean build, HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1863 named Lean theorem declarations, 840 axiom-free theorem declarations, 1023 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 512 falsification cases, 209 implementation bindings, 163 result obligations, and 11 native backend reference vectors"
+      "status": "targeted Lean builds, generated-vector JSON validation, action-order/candidate-artifact/TxValidityClaim Rust conformance tests, and full local bash scripts/check_formal_core.sh passed with 118 claims, 1887 named Lean theorem declarations, 857 axiom-free theorem declarations, 1030 allowed-kernel-axiom-dependent declarations, zero temporary axiom dependencies, 516 falsification cases, 212 implementation bindings, 166 result obligations, and 11 native backend reference vectors"
     },
     "known_limitations": [
-      "No shipped node hot-path logic changes; this is Lean/formal metadata plus cfg(test) implementation-equivalence hardening of existing queue accounting."
+      "This slice changes production validation helpers in node/src/native and consensus/src/proof, so hegemon-dev must fast-forward, rebuild, restart, and pass remote targeted Lean/Rust, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "properties": [
@@ -390,7 +402,7 @@
     {
       "id": "proof.proof-system-soundness-boundary",
       "weight": 10,
-      "completion_percent": 87.4,
+      "completion_percent": 87.7,
       "top_level_theorem_target": "If the shipped proof verifier accepts a transaction, tx-leaf, receipt-root, or recursive-block artifact, then the corresponding abstract relation holds, subject to explicit STARK/hash/lattice assumptions.",
       "current_evidence": [
         "native backend review-policy and release-posture gates",
@@ -442,7 +454,8 @@
         "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, includes serialized statement bytes, pads to eight-byte alignment, and changes when version or arithmetization profile material changes",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled",
-        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests."
+        "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests.",
+        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims."
       ],
       "missing_work": [
         "Mechanize the transaction AIR relation or an auditable abstraction; current raw-ingress theorem keeps proof-system soundness explicit.",
@@ -455,7 +468,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 70,
+      "completion_percent": 72,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -503,11 +516,15 @@
         "formal/lean/Hegemon/Privacy/Observer.lean now models local network metadata explicitly and proves full observer, public metadata, batch/timing, and valid observer-chain surface projections ignore independently changed PQ peer/connection/relay counters",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean now proves local network metadata resampling preserves the open-assumption privacy-game boundary while keeping raw-wire, proof-system, wallet, timing, and remote network assumptions explicit",
         "network/src/p2p.rs pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection regression proves PQ connection info and relay config sentinel metadata do not change consensus-carrying proto wire bytes or decoded consensus payload projection and do not appear in those byte projections",
-        "network/src/native_transport.rs connection_info_metadata_does_not_change_wire_message_encoding regression checks low-level PqConnectionInfo changes do not alter identical payload wire encoding"
+        "network/src/native_transport.rs connection_info_metadata_does_not_change_wire_message_encoding regression checks low-level PqConnectionInfo changes do not alter identical payload wire encoding",
+        "formal/lean/Hegemon/Native/ActionOrder.lean now models accepted shielded-transfer order-key preimages as binding_hash concatenated with nullifiers and proves transfer preimages/actions plus pairwise relative transfer order ignore local received_ms resampling",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean emits inline/sidecar/two-nullifier/binding-drift/nullifier-drift/received_ms-resampling preimage cases checked against production action_order_key_preimage",
+        "node/src/native/mod.rs transfer_action_order_key_preimage_ignores_received_ms_for_inline_and_sidecar proves valid inline and sidecar transfer order preimages and keys ignore received_ms while raw pending-action hashes still change",
+        "node/src/native/mod.rs mineable_transfer_relative_order_ignores_received_ms_resampling proves select_mineable_actions preserves accepted transfer relative order under received_ms resampling"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
-        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, and PQ connection/relay consensus-payload projection into batching policy, remaining wallet metadata, and remote network timing/topology surfaces.",
+        "Expand unlinkability tests beyond the now-covered wallet-local bookkeeping/address-cursor public-ciphertext projection, proof-wrapper metadata projection, arrival-time sidecar projection, accepted-transfer order independence from arrival metadata, and PQ connection/relay consensus-payload projection into remaining batching policy, remaining wallet metadata, non-transfer ordering/fairness, and remote network timing/topology surfaces.",
         "Discharge or externally justify simulator-based zero-knowledge and ciphertext indistinguishability over the valid observer-chain surface."
       ],
       "performance_constraint": "Avoid adding padding or dummy traffic unless explicitly benchmarked and accepted."
@@ -669,7 +686,7 @@
     {
       "id": "consensus.admission-safety",
       "weight": 4,
-      "completion_percent": 91.2,
+      "completion_percent": 91.5,
       "top_level_theorem_target": "No block enters the accepted chain unless version, PoW, timestamp, retarget, miner identity, proof policy, supply, action root, DA root, and artifact checks pass in required order.",
       "current_evidence": [
         "PoW, header, version-policy, miner-identity, proof-policy, mined-work, announced-block, block-commitment, and work-template gates",
@@ -682,7 +699,8 @@
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast",
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean and gen_recursive_block_v2_verifier_surface_vectors prove/check recursive_block_v2 pre-proof surface admission before cryptographic child proof verification",
         "config/formal-security-blueprint.json requires verify_block_recursive_v2_surface to propagate and dominate verify_tree_child_v2 in the shipped recursive_block_v2 verifier path",
-        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean now rejects malformed candidate route public_args and public_args/candidate_artifact mismatch before accepting candidate artifacts; node/src/native/mod.rs revalidates those predicates on mempool staging, block validation, reload/reorg semantic admission, and mined action recovery paths"
+        "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean now rejects malformed candidate route public_args and public_args/candidate_artifact mismatch before accepting candidate artifacts; node/src/native/mod.rs revalidates those predicates on mempool staging, block validation, reload/reorg semantic admission, and mined action recovery paths",
+        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean and consensus/src/proof.rs now gate provided block tx-validity claims against verified backend artifact claims field-for-field before downstream proof-admission paths rely on them"
       ],
       "missing_work": [
         "Unify all admission components into one accepted-block theorem spanning raw bytes, sidecars, proofs, replay, fork-choice, and publication.",
@@ -801,7 +819,7 @@
     {
       "id": "resource.dos-bounds",
       "weight": 2,
-      "completion_percent": 84,
+      "completion_percent": 85,
       "top_level_theorem_target": "Every consensus-facing parser, RPC admission path, proof artifact, and sidecar enforces bounded size and bounded pre-verification work before allocation-heavy or proof-heavy work.",
       "current_evidence": [
         "resource-budget admission gate",
@@ -822,10 +840,11 @@
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now proves `accepted_sync_block_response_with_resource_bounds_binds_raw_canonical_publication_from_decoded_rows`, carrying `AcceptedBoundedRequestFacts` through accepted sync decode/count, exact block-action decode, wire replay, and raw canonical publication while proving resource item count matches admitted response count and raw block batch length.",
         "node/src/native/mod.rs now checks Lean-generated bounded-request vectors against production `evaluate_native_bounded_request_admission` and routes inbound sync response-count admission through `native_sync_response_count_bounded_request` before block sorting/import; formal-core runs both `lean_generated_bounded_request_admission_vectors_match_production` and `native_sync_response_count_uses_bounded_request_item_gate`.",
         "formal/lean/Hegemon/Native/SyncAdmission.lean now proves `accepted_response_range_exposes_bounded_request_facts`, carrying the outbound sync response-range cap into reusable bounded-request item-count facts before block_range publication; node/src/native/mod.rs regression `native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts` checks an overwide response-range request is capped to MAX_NATIVE_SYNC_RESPONSE_BLOCKS before block_range can allocate or serve peer response rows, and formal-core runs that focused regression.",
-        "formal/lean/Hegemon/Network/QueueResourceAdmission.lean proves peer-send and event-channel byte-budget reserve/send accounting, including exact-limit acceptance, message-over-cap rejection, usize overflow rejection, aggregate queue-budget rejection, accepted-send queued-byte increments, full/closed rollback, and reserve-before-channel-state precedence; `network/src/network_backend.rs` checks Lean-generated queue-resource vectors against the production queue accounting helpers."
+        "formal/lean/Hegemon/Network/QueueResourceAdmission.lean proves peer-send and event-channel byte-budget reserve/send accounting, including exact-limit acceptance, message-over-cap rejection, usize overflow rejection, aggregate queue-budget rejection, accepted-send queued-byte increments, full/closed rollback, and reserve-before-channel-state precedence; `network/src/network_backend.rs` checks Lean-generated queue-resource vectors against the production queue accounting helpers.",
+        "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean proves accepted candidate artifacts project declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunks into reusable bounded-request caps; node/src/native/mod.rs checks that projection before accepting candidate artifacts."
       ],
       "missing_work": [
-        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
+        "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, and network queue byte caps to the reusable bounded-request or queue-resource admission tables.",
         "Add explicit cost classes for every public input family.",
         "Benchmark any new runtime check on hegemon-dev or local release builds."
       ],

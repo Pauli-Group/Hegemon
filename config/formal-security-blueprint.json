@@ -1276,6 +1276,8 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/ActionOrder.lean",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
         "formal/lean/Hegemon/Wallet/NotePlaintextCommitment.lean",
@@ -1294,6 +1296,8 @@
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Native/ActionOrder.lean",
+        "formal/lean/Hegemon/Native/GenerateActionOrderVectors.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextDecrypt.lean",
@@ -2312,8 +2316,8 @@
       "id": "consensus.self-contained-proof-policy",
       "claim_id": "consensus.self-contained-proof-policy",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean proof-policy transition, empty blocks must not carry proof payloads; non-empty product-path blocks must use self-contained aggregation with transaction artifacts, transaction validity claims, a proven batch, and a route-compatible aggregation payload; recursive blocks must not carry legacy commitment-proof bytes or receipt-root payloads and must carry a block artifact.",
-      "informal_argument": "The Lean theorems `Hegemon.Consensus.empty_clean_accepts`, `Hegemon.Consensus.empty_with_payload_rejects`, `Hegemon.Consensus.nonempty_requires_tx_artifacts`, `Hegemon.Consensus.nonempty_rejects_tx_artifact_count_mismatch`, `Hegemon.Consensus.nonempty_rejects_inline_required`, `Hegemon.Consensus.nonempty_requires_proven_batch`, `Hegemon.Consensus.recursive_rejects_commitment_proof_bytes`, `Hegemon.Consensus.recursive_requires_block_artifact`, and `Hegemon.Consensus.recursive_complete_accepts` prove core facts about the executable proof-policy decision table. `gen_proof_policy_vectors` emits Lean-derived accept/reject examples for empty blocks, missing transaction artifacts, count mismatch, legacy InlineRequired, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof bytes, recursive receipt-root payloads, missing recursive artifacts, complete recursive blocks, and receipt-root payload requirements. The formal-core gate checks those vectors against the production `evaluate_block_proof_policy` helper called by `ParallelProofVerifier` before heavy proof verification.",
+      "formal_statement": "For the executable Lean proof-policy transition, empty blocks must not carry proof payloads; non-empty product-path blocks must use self-contained aggregation with transaction artifacts, transaction validity claims, a proven batch, and a route-compatible aggregation payload; recursive blocks must not carry legacy commitment-proof bytes or receipt-root payloads and must carry a block artifact. For the executable TxValidityClaim matching transition, accepted provided claims must exactly match verified backend artifact receipts and statement bindings.",
+      "informal_argument": "The Lean theorems `Hegemon.Consensus.empty_clean_accepts`, `Hegemon.Consensus.empty_with_payload_rejects`, `Hegemon.Consensus.nonempty_requires_tx_artifacts`, `Hegemon.Consensus.nonempty_rejects_tx_artifact_count_mismatch`, `Hegemon.Consensus.nonempty_rejects_inline_required`, `Hegemon.Consensus.nonempty_requires_proven_batch`, `Hegemon.Consensus.recursive_rejects_commitment_proof_bytes`, `Hegemon.Consensus.recursive_requires_block_artifact`, and `Hegemon.Consensus.recursive_complete_accepts` prove core facts about the executable proof-policy decision table. `Hegemon.Transaction.TxValidityClaimMatching.accepted_tx_validity_claim_fields_match_verified_artifact` proves accepted claim matching exposes exact equality of receipt statement hash, proof digest, public-input digest, verifier profile, binding statement hash, anchor/root, fee, and circuit version, with companion rejection/precedence theorems. `gen_proof_policy_vectors` emits Lean-derived accept/reject examples for empty blocks, missing transaction artifacts, count mismatch, legacy InlineRequired, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof bytes, recursive receipt-root payloads, missing recursive artifacts, complete recursive blocks, and receipt-root payload requirements. `gen_tx_validity_claim_matching_vectors` emits exact-match and field-mismatch examples. The formal-core gate checks those vectors against the production `evaluate_block_proof_policy` helper and the production TxValidityClaim match helper called by `ParallelProofVerifier` before heavy proof verification can rely on provided claims.",
       "depends_on": [
         "formal.pow-fork-choice",
         "formal.transaction-balance",
@@ -2323,6 +2327,8 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
         "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+        "formal/lean/Hegemon/Transaction/GenerateTxValidityClaimMatchingVectors.lean",
         "consensus/src/proof.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -2349,11 +2355,29 @@
               "must_dominate_successors": true
             }
           ]
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "ensure_claims_match_verified_artifacts",
+          "required_callers": [
+            "ParallelProofVerifier::verify_block_with_backend"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "consensus/src/proof.rs",
+          "callee": "evaluate_tx_validity_claims_match_verified_artifacts",
+          "required_callers": [
+            "ensure_claims_match_verified_artifacts"
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
         "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+        "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+        "formal/lean/Hegemon/Transaction/GenerateTxValidityClaimMatchingVectors.lean",
         "consensus/src/proof.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -2362,7 +2386,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the consensus proof payload shape enforced before heavy artifact verification."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the consensus proof payload shape and provided-claim/verified-artifact matching enforced before heavy artifact verification."
       },
       "falsification_cases": [
         {
@@ -2379,9 +2403,14 @@
           "id": "self-contained-mode-regressions",
           "description": "Existing self-contained proof mode tests must continue rejecting missing or malformed aggregation payloads.",
           "gate": "cargo test -p consensus --test self_contained_mode -- --nocapture"
+        },
+        {
+          "id": "lean-generated-tx-validity-claim-matching-conformance",
+          "description": "Changing production TxValidityClaim matching away from the Lean executable exact-match table must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS=<generated-json> cargo test -p consensus lean_generated_tx_validity_claim_matching_vectors_match_production --lib -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks proof payload shape/admission only. It does not prove proven-batch binding, aggregation V5 header admission, recursive proof cryptographic soundness, tx leaf proof soundness, DA root derivation, receipt-root security, native backend security, or complete block-state equivalence. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
+      "scope_boundary": "This node proves and vector-checks proof payload shape/admission and deterministic provided TxValidityClaim exact matching against verified backend artifacts only. It does not prove proven-batch binding, aggregation V5 header admission, recursive proof cryptographic soundness, tx leaf proof soundness, DA root derivation, receipt-root security, native backend security, or complete block-state equivalence. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
     },
     {
       "id": "consensus.native-tx-leaf-admission",
@@ -5955,8 +5984,8 @@
       "id": "native.candidate-artifact-admission",
       "claim_id": "native.candidate-artifact-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native candidate-artifact admission transition, accepted candidate actions must carry no shielded state deltas, must have route public_args that exact-decode as SubmitCandidateArtifactArgs, must have that route payload equal the candidate_artifact payload field, must have a decoded artifact payload, and that artifact must match the shipped recursive_block_v2 schema, nonzero/in-bound tx count, nonzero DA chunks, verifier profile, empty legacy commitment-proof bytes, absent receipt-root payload, present nonempty recursive proof bytes, and recursive proof size cap.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.CandidateArtifactAdmission.valid_candidate_artifact_accepts`, `Hegemon.Native.CandidateArtifactAdmission.state_deltas_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.route_payload_decode_failed_rejects`, `Hegemon.Native.CandidateArtifactAdmission.route_payload_artifact_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.artifact_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.schema_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_too_large_rejects`, `Hegemon.Native.CandidateArtifactAdmission.da_chunk_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_mode_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_kind_rejects`, `Hegemon.Native.CandidateArtifactAdmission.verifier_profile_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.commitment_proof_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.receipt_root_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_payload_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_empty_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_too_large_rejects`, and `Hegemon.Native.CandidateArtifactAdmission.state_deltas_precede_artifact_validation` prove the executable admission table. `gen_candidate_artifact_admission_vectors` emits Lean-derived accept/reject examples for valid artifacts, malformed route payload bytes, route payload/artifact mismatch, and existing artifact-shape failures, and the formal-core gate checks them against `evaluate_native_candidate_artifact_admission`, the helper used by native candidate action and artifact validation.",
+      "formal_statement": "For the executable Lean native candidate-artifact admission transition, accepted candidate actions must carry no shielded state deltas, must have route public_args that exact-decode as SubmitCandidateArtifactArgs, must have that route payload equal the candidate_artifact payload field, must have a decoded artifact payload, and that artifact must match the shipped recursive_block_v2 schema, nonzero/in-bound tx count, nonzero DA chunks, verifier profile, empty legacy commitment-proof bytes, absent receipt-root payload, present nonempty recursive proof bytes, and recursive proof size cap. Accepted candidate artifacts must also project declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunk count into the reusable bounded-request caps before acceptance.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.CandidateArtifactAdmission.valid_candidate_artifact_accepts`, `Hegemon.Native.CandidateArtifactAdmission.state_deltas_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.route_payload_decode_failed_rejects`, `Hegemon.Native.CandidateArtifactAdmission.route_payload_artifact_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.artifact_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.schema_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.tx_count_too_large_rejects`, `Hegemon.Native.CandidateArtifactAdmission.da_chunk_count_zero_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_mode_rejects`, `Hegemon.Native.CandidateArtifactAdmission.wrong_proof_kind_rejects`, `Hegemon.Native.CandidateArtifactAdmission.verifier_profile_mismatch_rejects`, `Hegemon.Native.CandidateArtifactAdmission.commitment_proof_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.receipt_root_present_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_payload_missing_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_empty_rejects`, `Hegemon.Native.CandidateArtifactAdmission.recursive_proof_too_large_rejects`, and `Hegemon.Native.CandidateArtifactAdmission.state_deltas_precede_artifact_validation` prove the executable admission table. `Hegemon.Native.CandidateArtifactResourceAdmission.accepted_candidate_artifact_after_resource_exposes_byte_caps` proves accepted candidate artifacts expose bounded-request facts for declared bytes, total decoded bytes, tx count, per-proof-like bytes, aggregate proof-like bytes, and DA chunk work units before candidate acceptance. `gen_candidate_artifact_admission_vectors` emits Lean-derived accept/reject examples for valid artifacts, malformed route payload bytes, route payload/artifact mismatch, existing artifact-shape failures, and schema-v2 candidate-artifact resource projection cases; the formal-core gate checks them against `evaluate_native_candidate_artifact_admission`, `validate_candidate_artifact_resource_projection`, and the reusable bounded-request helper used by native candidate action and artifact validation.",
       "depends_on": [
         "native.action-scope-admission",
         "consensus.proven-batch-binding",
@@ -5966,6 +5995,7 @@
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
@@ -5996,10 +6026,20 @@
             "validate_pending_action_against_mempool_state"
           ],
           "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_candidate_artifact_resource_projection",
+          "required_callers": [
+            "validate_candidate_artifact",
+            "validate_candidate_action_payload"
+          ],
+          "result_obligation": "must_propagate_result"
         }
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactResourceAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "formal/lean/README.md",
@@ -6010,7 +6050,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native candidate-artifact admission. Scope is cheap decoded action/artifact shape and shipped-route admission, not recursive proof cryptographic soundness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native candidate-artifact admission and cheap candidate-artifact resource projection. Scope is decoded action/artifact shape, shipped-route admission, and bounded-request resource projection, not recursive proof cryptographic soundness."
       },
       "falsification_cases": [
         {
@@ -6029,12 +6069,17 @@
           "gate": "cargo test -p hegemon-node candidate_artifact_ --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "native-candidate-artifact-resource-projection-regressions",
+          "description": "Focused native tests must project candidate artifact byte/count/work dimensions into bounded-request admission before accepting artifacts.",
+          "gate": "cargo test -p hegemon-node candidate_artifact_resource_projection --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "formal-core-candidate-artifact-gate",
           "description": "The release formal-core wrapper must generate candidate-artifact admission vectors and run the production conformance test.",
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native candidate-artifact action/artifact admission only. It does not prove SCALE decoder correctness, verifier-profile digest construction, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, block tree-transition correctness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native candidate-artifact action/artifact admission plus cheap bounded-request resource projection for candidate artifact byte/count/work dimensions. It does not prove SCALE decoder correctness, verifier-profile digest construction, recursive proof cryptographic soundness, native tx-leaf proof soundness, DA soundness, statement commitment correctness, block tree-transition correctness, or complete native-node equivalence."
     },
     {
       "id": "native.candidate-artifact-coupling-admission",
@@ -6307,8 +6352,8 @@
       "id": "native.block-action-ordering",
       "claim_id": "native.block-action-ordering",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean action-ordering transition, the transfer-key subsequence of a native block is canonical exactly when it is nondecreasing in lexicographic byte order, and non-transfer actions do not affect that predicate.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.empty_canonical`, `Hegemon.Native.single_transfer_canonical`, `Hegemon.Native.non_transfer_ignored`, `Hegemon.Native.ordered_pair_accepts`, `Hegemon.Native.descending_pair_rejects`, and `Hegemon.Native.equal_pair_accepts` prove core facts about the executable order predicate. `gen_action_order_vectors` emits Lean-derived empty, single, ascending, equal-key, descending, tail-inversion, non-transfer-interleaved, and non-transfer-only examples. The formal-core gate checks those vectors against a Rust fold over the production `transfer_key_extends_canonical_order` helper used by native block import, while the existing native regression still validates full block actions through `validate_block_actions_locked`.",
+      "formal_statement": "For the executable Lean action-ordering transition, the transfer-key subsequence of a native block is canonical exactly when it is nondecreasing in lexicographic byte order, non-transfer actions do not affect that predicate, and accepted shielded-transfer order-key preimages are determined by public transfer binding hash plus nullifiers rather than local arrival metadata.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.empty_canonical`, `Hegemon.Native.single_transfer_canonical`, `Hegemon.Native.non_transfer_ignored`, `Hegemon.Native.ordered_pair_accepts`, `Hegemon.Native.descending_pair_rejects`, and `Hegemon.Native.equal_pair_accepts` prove core facts about the executable order predicate. The theorems `Hegemon.Native.transfer_order_preimage_ignores_local_received_ms`, `transfer_order_action_ignores_local_received_ms`, `transfer_order_preimage_eq_of_public_fields`, `transfer_relative_order_ignores_local_received_ms`, and `canonical_transfer_pair_order_ignores_local_received_ms` prove that the modeled transfer order preimage and pairwise relative transfer order ignore local arrival metadata once binding hash and nullifiers are fixed. `gen_action_order_vectors` emits Lean-derived empty, single, ascending, equal-key, descending, tail-inversion, non-transfer-interleaved, non-transfer-only, inline/sidecar transfer preimage, two-nullifier, binding-drift, nullifier-drift, and received_ms-resampling examples. The formal-core gate checks those vectors against a Rust fold over the production `transfer_key_extends_canonical_order` helper and the production `action_order_key_preimage` helper used by native block import and mining selection, while focused native regressions validate full block-action ordering and arrival-time-insensitive mineable transfer ordering.",
       "depends_on": [
         "formal.transaction-balance",
         "shielded.nullifier-state",
@@ -6351,7 +6396,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate. Scope is ordering of already-computed transfer keys."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for the native transfer-key ordering predicate and accepted-transfer preimage construction. Scope is ordering and local-arrival-insensitive transfer preimage construction, not hash security or full payload validation."
       },
       "falsification_cases": [
         {
@@ -6368,9 +6413,19 @@
           "id": "native-block-action-order-regression",
           "description": "Full native block-action validation must continue rejecting reversed shielded transfer actions.",
           "gate": "cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order --lib --no-default-features"
+        },
+        {
+          "id": "native-transfer-order-arrival-preimage-regression",
+          "description": "Accepted inline and sidecar transfer order-key preimages must ignore received_ms while raw pending-action hashes continue recording received_ms.",
+          "gate": "cargo test -p hegemon-node transfer_action_order_key_preimage_ignores_received_ms_for_inline_and_sidecar --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-mineable-transfer-order-arrival-regression",
+          "description": "Mineable accepted transfer relative ordering must remain stable when only received_ms is resampled.",
+          "gate": "cargo test -p hegemon-node mineable_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate only. It does not prove BLAKE2 action-order key derivation, native action hash/count admission, full block action payload validation, tx leaf proof soundness, DA ordering, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks the transfer-key ordering predicate and the accepted-transfer key-preimage boundary `binding_hash || nullifiers`, including independence from local received_ms. It does not prove BLAKE2 action-order key derivation security, native action hash/count admission, full block action payload validation, non-transfer ordering privacy, tx leaf proof soundness, DA ordering, miner fairness, or complete native-node equivalence."
     },
     {
       "id": "native.block-action-hash-admission",

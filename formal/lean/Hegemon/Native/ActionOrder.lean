@@ -4,10 +4,18 @@ namespace Hegemon
 namespace Native
 
 abbrev OrderKey := List Byte
+abbrev BindingHash := List Byte
+abbrev NullifierBytes := List Byte
 
 structure OrderedAction where
   isTransfer : Bool
   key : OrderKey
+deriving DecidableEq, Repr
+
+structure TransferOrderPreimageInput where
+  bindingHash : BindingHash
+  nullifiers : List NullifierBytes
+  localReceivedMs : Nat
 deriving DecidableEq, Repr
 
 def transfer (key : OrderKey) : OrderedAction :=
@@ -15,6 +23,18 @@ def transfer (key : OrderKey) : OrderedAction :=
 
 def nonTransfer (key : OrderKey) : OrderedAction :=
   { isTransfer := false, key }
+
+def concatByteRows : List (List Byte) -> List Byte
+  | [] => []
+  | row :: rest => row ++ concatByteRows rest
+
+def transferOrderPreimage
+    (input : TransferOrderPreimageInput) : OrderKey :=
+  input.bindingHash ++ concatByteRows input.nullifiers
+
+def transferOrderAction
+    (input : TransferOrderPreimageInput) : OrderedAction :=
+  transfer (transferOrderPreimage input)
 
 def lexLt : List Byte -> List Byte -> Bool
   | [], [] => false
@@ -79,6 +99,54 @@ theorem equal_pair_accepts
     {key : OrderKey} :
     canonicalTransferOrder [transfer key, transfer key] = true := by
   simp [canonicalTransferOrder, transferKeys, keysNondecreasing, transfer, lexLe]
+
+theorem transfer_order_preimage_ignores_local_received_ms
+    (input : TransferOrderPreimageInput)
+    (localReceivedMs : Nat) :
+    transferOrderPreimage { input with localReceivedMs := localReceivedMs } =
+      transferOrderPreimage input := by
+  rfl
+
+theorem transfer_order_action_ignores_local_received_ms
+    (input : TransferOrderPreimageInput)
+    (localReceivedMs : Nat) :
+    transferOrderAction { input with localReceivedMs := localReceivedMs } =
+      transferOrderAction input := by
+  rfl
+
+theorem transfer_order_preimage_eq_of_public_fields
+    {left right : TransferOrderPreimageInput}
+    (bindingHash : left.bindingHash = right.bindingHash)
+    (nullifiers : left.nullifiers = right.nullifiers) :
+    transferOrderPreimage left = transferOrderPreimage right := by
+  cases left
+  cases right
+  simp [transferOrderPreimage] at bindingHash nullifiers ⊢
+  simp [bindingHash, nullifiers]
+
+theorem transfer_relative_order_ignores_local_received_ms
+    (left right : TransferOrderPreimageInput)
+    (leftReceivedMs rightReceivedMs : Nat) :
+    lexLe
+        (transferOrderPreimage
+          { left with localReceivedMs := leftReceivedMs })
+        (transferOrderPreimage
+          { right with localReceivedMs := rightReceivedMs }) =
+      lexLe (transferOrderPreimage left) (transferOrderPreimage right) := by
+  rfl
+
+theorem canonical_transfer_pair_order_ignores_local_received_ms
+    (left right : TransferOrderPreimageInput)
+    (leftReceivedMs rightReceivedMs : Nat) :
+    canonicalTransferOrder
+        [ transferOrderAction
+            { left with localReceivedMs := leftReceivedMs },
+          transferOrderAction
+            { right with localReceivedMs := rightReceivedMs } ] =
+      canonicalTransferOrder
+        [ transferOrderAction left,
+          transferOrderAction right ] := by
+  rfl
 
 end Native
 end Hegemon

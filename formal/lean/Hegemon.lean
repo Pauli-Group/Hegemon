@@ -55,6 +55,7 @@ import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission
 import Hegemon.Native.CandidateArtifactAdmission
 import Hegemon.Native.CandidateArtifactCouplingAdmission
+import Hegemon.Native.CandidateArtifactResourceAdmission
 import Hegemon.Native.CanonicalReorgChainAdmission
 import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
@@ -141,6 +142,7 @@ import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SmallWoodTranscriptBinding
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash
+import Hegemon.Transaction.TxValidityClaimMatching
 import Hegemon.Wallet.NoteCiphertextDecrypt
 import Hegemon.Wallet.NotePlaintextCommitment
 import Hegemon.Wallet.NoteCiphertextWire
