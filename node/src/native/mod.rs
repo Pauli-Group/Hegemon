@@ -43,9 +43,9 @@ use protocol_kernel::manifest::{protocol_manifest, StablecoinPolicyManifestEntry
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
-    BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject, InboundReplayState,
-    OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
-    ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
+    BridgeMintPayloadV1, BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject,
+    InboundReplayState, OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
+    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_PAYLOAD_VERSION_V1, FAMILY_BRIDGE,
 };
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
@@ -96,6 +96,7 @@ const MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES: usize =
     HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1;
 const MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES: usize =
     MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES + MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES;
+const MAX_NATIVE_BRIDGE_MINT_AMOUNT: u64 = i64::MAX as u64;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
@@ -1037,6 +1038,19 @@ struct NativeBridgeMintReplayPolicyInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeMintPayloadAdmissionInput {
+    payload_decoded: bool,
+    payload_hash_matches: bool,
+    receipt_message_hash_matches: bool,
+    version_matches: bool,
+    destination_matches: bool,
+    recipient_commitment_nonzero: bool,
+    amount_nonzero: bool,
+    amount_within_bound: bool,
+    asset_non_native: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeWitnessExportAdmissionInput {
     block_hash_parameter_valid: bool,
     block_known: bool,
@@ -1117,6 +1131,35 @@ enum NativeBridgeMintReplayPolicyRejection {
     MintNotAuthorized,
     AmountDoesNotMatchReceipt,
     AmountOutOfBounds,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeMintPayloadAdmissionRejection {
+    PayloadDecodeFailed,
+    PayloadHashMismatch,
+    ReceiptMessageHashMismatch,
+    VersionMismatch,
+    DestinationMismatch,
+    RecipientCommitmentZero,
+    AmountZero,
+    AmountOutOfBounds,
+    NativeAssetNotAllowed,
+}
+
+impl NativeBridgeMintPayloadAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::PayloadDecodeFailed => "payload_decode_failed",
+            Self::PayloadHashMismatch => "payload_hash_mismatch",
+            Self::ReceiptMessageHashMismatch => "receipt_message_hash_mismatch",
+            Self::VersionMismatch => "version_mismatch",
+            Self::DestinationMismatch => "destination_mismatch",
+            Self::RecipientCommitmentZero => "recipient_commitment_zero",
+            Self::AmountZero => "amount_zero",
+            Self::AmountOutOfBounds => "amount_out_of_bounds",
+            Self::NativeAssetNotAllowed => "native_asset_not_allowed",
+        }
+    }
 }
 
 impl NativeBridgeMintReplayPolicyRejection {
@@ -9595,6 +9638,109 @@ fn evaluate_native_bridge_mint_replay_policy(
     }
 }
 
+fn evaluate_native_bridge_mint_payload_admission(
+    input: NativeBridgeMintPayloadAdmissionInput,
+) -> Result<(), NativeBridgeMintPayloadAdmissionRejection> {
+    if !input.payload_decoded {
+        Err(NativeBridgeMintPayloadAdmissionRejection::PayloadDecodeFailed)
+    } else if !input.payload_hash_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::PayloadHashMismatch)
+    } else if !input.receipt_message_hash_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::ReceiptMessageHashMismatch)
+    } else if !input.version_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::VersionMismatch)
+    } else if !input.destination_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch)
+    } else if !input.recipient_commitment_nonzero {
+        Err(NativeBridgeMintPayloadAdmissionRejection::RecipientCommitmentZero)
+    } else if !input.amount_nonzero {
+        Err(NativeBridgeMintPayloadAdmissionRejection::AmountZero)
+    } else if !input.amount_within_bound {
+        Err(NativeBridgeMintPayloadAdmissionRejection::AmountOutOfBounds)
+    } else if !input.asset_non_native {
+        Err(NativeBridgeMintPayloadAdmissionRejection::NativeAssetNotAllowed)
+    } else {
+        Ok(())
+    }
+}
+
+fn bridge_mint_payload_admission_input(
+    args: &InboundBridgeArgsV1,
+    output: &BridgeCheckpointOutputV1,
+    payload: Option<&BridgeMintPayloadV1>,
+) -> NativeBridgeMintPayloadAdmissionInput {
+    let payload_hash_matches =
+        args.message.payload_hash == bridge_payload_hash(&args.message.payload);
+    let receipt_message_hash_matches = output.message_hash == args.message.message_hash();
+    if let Some(payload) = payload {
+        NativeBridgeMintPayloadAdmissionInput {
+            payload_decoded: true,
+            payload_hash_matches,
+            receipt_message_hash_matches,
+            version_matches: payload.version == BRIDGE_MINT_PAYLOAD_VERSION_V1,
+            destination_matches: payload.destination_chain_id == HEGEMON_CHAIN_ID_V1,
+            recipient_commitment_nonzero: payload.recipient_commitment != [0u8; 48],
+            amount_nonzero: payload.amount != 0,
+            amount_within_bound: payload.amount <= MAX_NATIVE_BRIDGE_MINT_AMOUNT,
+            asset_non_native: payload.asset_id != transaction_core::constants::NATIVE_ASSET_ID,
+        }
+    } else {
+        NativeBridgeMintPayloadAdmissionInput {
+            payload_decoded: false,
+            payload_hash_matches,
+            receipt_message_hash_matches,
+            version_matches: false,
+            destination_matches: false,
+            recipient_commitment_nonzero: false,
+            amount_nonzero: false,
+            amount_within_bound: false,
+            asset_non_native: false,
+        }
+    }
+}
+
+fn native_bridge_mint_payload_admission_error(
+    rejection: NativeBridgeMintPayloadAdmissionRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeMintPayloadAdmissionRejection::PayloadDecodeFailed => anyhow!(
+            "inbound bridge mint payload exact decode failed ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::PayloadHashMismatch => anyhow!(
+            "inbound bridge mint payload hash mismatch ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::ReceiptMessageHashMismatch => anyhow!(
+            "inbound bridge mint receipt/message hash mismatch ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::VersionMismatch => anyhow!(
+            "inbound bridge mint payload version mismatch ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch => anyhow!(
+            "inbound bridge mint payload is not addressed to Hegemon ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::RecipientCommitmentZero => anyhow!(
+            "inbound bridge mint payload recipient commitment is zero ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::AmountZero => {
+            anyhow!("inbound bridge mint amount is zero ({})", rejection.label())
+        }
+        NativeBridgeMintPayloadAdmissionRejection::AmountOutOfBounds => anyhow!(
+            "inbound bridge mint amount exceeds native bridge mint cap ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::NativeAssetNotAllowed => anyhow!(
+            "inbound bridge mint payload must target a non-native bridge asset ({})",
+            rejection.label()
+        ),
+    }
+}
+
 fn native_bridge_action_payload_admission_error(
     action_id: u16,
     rejection: NativeBridgeActionPayloadAdmissionRejection,
@@ -9886,6 +10032,15 @@ fn enforce_verified_inbound_bridge_mint_replay_policy(
             "inbound bridge mint replay state is required before accepting verified bridge receipts"
         ));
     };
+    let mint_payload = decode_scale_exact::<BridgeMintPayloadV1>(
+        &args.message.payload,
+        "inbound bridge mint payload",
+    );
+    let payload_input =
+        bridge_mint_payload_admission_input(args, output, mint_payload.as_ref().ok());
+    evaluate_native_bridge_mint_payload_admission(payload_input)
+        .map_err(native_bridge_mint_payload_admission_error)?;
+    let _mint_payload = mint_payload.expect("payload admission requires exact decode");
     let replay_key = inbound_replay_key(args.source_chain_id, args.source_message_nonce);
     let policy_input = NativeBridgeMintReplayPolicyInput {
         inbound_bridge_mint: action.family_id == FAMILY_BRIDGE
@@ -9900,8 +10055,8 @@ fn enforce_verified_inbound_bridge_mint_replay_policy(
         replay_state,
         replay_key,
         mint_authorized: false,
-        amount_matches_receipt: false,
-        amount_within_bound: false,
+        amount_matches_receipt: true,
+        amount_within_bound: true,
     };
     match evaluate_native_bridge_mint_replay_policy(policy_input) {
         Ok(_) => Err(anyhow!(
@@ -14974,6 +15129,30 @@ mod tests {
         expected_rejection: Option<String>,
         expected_next_consumed: Option<Vec<String>>,
         expected_next_pending: Option<Vec<String>>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintPayloadAdmissionVectorFile {
+        schema_version: u32,
+        bridge_mint_payload_admission_cases: Vec<LeanBridgeMintPayloadAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintPayloadAdmissionCase {
+        name: String,
+        payload_decoded: bool,
+        payload_hash_matches: bool,
+        receipt_message_hash_matches: bool,
+        version_matches: bool,
+        destination_matches: bool,
+        recipient_commitment_nonzero: bool,
+        amount_nonzero: bool,
+        amount_within_bound: bool,
+        asset_non_native: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -23403,6 +23582,59 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn lean_generated_bridge_mint_payload_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge mint payload admission vectors");
+        let vectors: LeanBridgeMintPayloadAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge mint payload admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_mint_payload_admission_cases.is_empty(),
+            "Lean bridge mint payload admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_mint_payload_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_mint_payload_admission_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_mint_payload_admission_case(case: &LeanBridgeMintPayloadAdmissionCase) {
+        let input = NativeBridgeMintPayloadAdmissionInput {
+            payload_decoded: case.payload_decoded,
+            payload_hash_matches: case.payload_hash_matches,
+            receipt_message_hash_matches: case.receipt_message_hash_matches,
+            version_matches: case.version_matches,
+            destination_matches: case.destination_matches,
+            recipient_commitment_nonzero: case.recipient_commitment_nonzero,
+            amount_nonzero: case.amount_nonzero,
+            amount_within_bound: case.amount_within_bound,
+            asset_non_native: case.asset_non_native,
+        };
+        let actual_rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bridge mint payload admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge mint payload admission rejection drifted from Lean spec",
+            case.name
+        );
     }
 
     fn parse_lean_bridge_replay_key_set(
@@ -32243,7 +32475,8 @@ mod tests {
 
     #[test]
     fn verified_inbound_bridge_receipt_requires_mint_replay_policy_state_and_authorization() {
-        let action = test_disabled_risc0_inbound_bridge_action(b"verified policy bridge payload");
+        let payload = test_bridge_mint_payload_bytes();
+        let action = test_disabled_risc0_inbound_bridge_action(&payload);
         let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
             .expect("decode inbound bridge args");
         let output = test_bridge_checkpoint_output_for_message(&args.message);
@@ -32284,9 +32517,63 @@ mod tests {
             &mismatched_output,
             Some(InboundReplayState::default()),
         )
-        .expect_err("receipt/message mismatch must reject through mint policy");
-        assert!(err.to_string().contains("payload mismatch"));
-        assert!(err.to_string().contains("receipt_payload_mismatch"));
+        .expect_err("receipt/message mismatch must reject through mint payload admission");
+        assert!(err.to_string().contains("receipt/message hash mismatch"));
+        assert!(err.to_string().contains("receipt_message_hash_mismatch"));
+    }
+
+    #[test]
+    fn verified_inbound_bridge_receipt_requires_exact_mint_payload() {
+        let action = test_disabled_risc0_inbound_bridge_action(b"not a SCALE mint payload");
+        let args = InboundBridgeArgsV1::decode(&mut &action.public_args[..])
+            .expect("decode inbound bridge args");
+        let output = test_bridge_checkpoint_output_for_message(&args.message);
+
+        let err = enforce_verified_inbound_bridge_mint_replay_policy(
+            &action,
+            &args,
+            &output,
+            Some(InboundReplayState::default()),
+        )
+        .expect_err("malformed bridge mint payload must reject before mint policy");
+        assert!(err.to_string().contains("exact decode failed"));
+        assert!(err.to_string().contains("payload_decode_failed"));
+    }
+
+    #[test]
+    fn bridge_mint_payload_admission_rejects_invalid_payload_fields() {
+        let base =
+            test_bridge_mint_payload(42, transaction_core::constants::NATIVE_ASSET_ID + 7, 0x42);
+
+        let mut zero_amount = base.clone();
+        zero_amount.amount = 0;
+        let input = bridge_mint_payload_admission_input_from_payload(&zero_amount);
+        let rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .expect_err("zero bridge mint amount must reject");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintPayloadAdmissionRejection::AmountZero
+        );
+
+        let mut over_bound = base.clone();
+        over_bound.amount = MAX_NATIVE_BRIDGE_MINT_AMOUNT + 1;
+        let input = bridge_mint_payload_admission_input_from_payload(&over_bound);
+        let rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .expect_err("over-bound bridge mint amount must reject");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintPayloadAdmissionRejection::AmountOutOfBounds
+        );
+
+        let mut native_asset = base.clone();
+        native_asset.asset_id = transaction_core::constants::NATIVE_ASSET_ID;
+        let input = bridge_mint_payload_admission_input_from_payload(&native_asset);
+        let rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .expect_err("native-asset bridge mint payload must reject");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintPayloadAdmissionRejection::NativeAssetNotAllowed
+        );
     }
 
     #[test]
@@ -33013,6 +33300,35 @@ mod tests {
             proof_receipt: receipt.encode(),
             message,
         }
+    }
+
+    fn test_bridge_mint_payload(
+        amount: u64,
+        asset_id: u64,
+        recipient_tag: u8,
+    ) -> BridgeMintPayloadV1 {
+        BridgeMintPayloadV1 {
+            version: BRIDGE_MINT_PAYLOAD_VERSION_V1,
+            destination_chain_id: HEGEMON_CHAIN_ID_V1,
+            recipient_commitment: [recipient_tag.max(1); 48],
+            asset_id,
+            amount,
+            mint_nonce: 99,
+        }
+    }
+
+    fn test_bridge_mint_payload_bytes() -> Vec<u8> {
+        test_bridge_mint_payload(42, transaction_core::constants::NATIVE_ASSET_ID + 7, 0x42)
+            .encode()
+    }
+
+    fn bridge_mint_payload_admission_input_from_payload(
+        payload: &BridgeMintPayloadV1,
+    ) -> NativeBridgeMintPayloadAdmissionInput {
+        let payload_bytes = payload.encode();
+        let args = test_disabled_risc0_bridge_inbound_args(&payload_bytes);
+        let output = test_bridge_checkpoint_output_for_message(&args.message);
+        bridge_mint_payload_admission_input(&args, &output, Some(payload))
     }
 
     fn test_bridge_checkpoint_output_for_message(

@@ -127,6 +127,27 @@
       "This is a checker/metadata enforcement slice with zero shipped-runtime cost. It enforces that every production order gate has claim theorem evidence, but some constraints intentionally use the full node theorem set rather than a minimal per-gate theorem subset. The accepted-block certificate now exists at the full-byte accepted-predicate layer; complete raw parser, proof/hash/crypto, storage, fork-choice, and native-node refinement remain separate work."
     ]
   },
+  "last_bridge_mint_payload_admission_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a decoded bridge mint-payload admission gate for the future positive mint path while keeping positive minting disabled. `BridgeMintPayloadV1` is now a versioned fixed-field protocol-kernel payload, `Hegemon.Bridge.MintPayloadAdmission` proves the decoded admission table and rejection precedence, Lean-generated vectors bind the table to production Rust, and the verified inbound receipt handoff exact-decodes/admission-checks the payload before entering the disabled mint/replay policy.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Bridge/MintPayloadAdmission.lean",
+      "formal/lean/Hegemon/Bridge/GenerateMintPayloadAdmissionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Bridge.MintPayloadAdmission.accepts_iff_bridge_mint_payload_preconditions",
+      "Hegemon.Bridge.MintPayloadAdmission.accepted_bridge_mint_payload_exposes_facts",
+      "Hegemon.Bridge.MintPayloadAdmission.payload_decode_failure_precedes_hash",
+      "Hegemon.Bridge.MintPayloadAdmission.payload_hash_mismatch_rejects",
+      "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects"
+    ],
+    "validation": {
+      "status": "Targeted Lean build, generated-vector JSON validation, Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally."
+    },
+    "known_limitations": [
+      "This narrows the bridge mechanized-refinement gap at the mint payload boundary. It does not enable positive bridge minting, prove external receipt soundness, prove SCALE implementation correctness for all arbitrary bytes, or replace the required future PQ-clean receipt verifier and authorization story."
+    ]
+  },
   "last_accepted_block_admission_safety_slice": {
     "date": "2026-06-17",
     "summary": "Added `Hegemon.Native.AcceptedBlockAdmissionSafety`, a zero-runtime-cost Lean theorem package that derives one accepted-block admission-safety certificate from the raw-ingress full-byte publication facts. The certificate carries exact pending-action and block-action decode preconditions, action-hash and wire projection facts, sidecar availability and size binding, candidate/proven/semantic DA-root matching, statement and recursive-root binding, accepted ledger/tree replay, commitment-root publication, replayed supply and leaf cursor, carried tree-state preconditions, final nullifier uniqueness, final bridge replay-key uniqueness, parsed tx-leaf artifact byte-shape assumptions, accepted tx-leaf projection, and full statement artifact facts.",

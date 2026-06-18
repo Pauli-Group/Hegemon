@@ -6,6 +6,7 @@ import Hegemon.Bridge.HeaderMmr
 import Hegemon.Bridge.HeaderMmrTranscript
 import Hegemon.Bridge.LongRange
 import Hegemon.Bridge.MessageRoot
+import Hegemon.Bridge.MintPayloadAdmission
 import Hegemon.Bridge.MintReplayPolicy
 import Hegemon.Bridge.Replay
 import Hegemon.Consensus.AggregationV5

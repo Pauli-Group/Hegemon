@@ -28,6 +28,9 @@ lean_exe gen_bridge_flyclient_vectors where
 lean_exe gen_bridge_mint_replay_policy_vectors where
   root := `Hegemon.Bridge.GenerateMintReplayPolicyVectors
 
+lean_exe gen_bridge_mint_payload_admission_vectors where
+  root := `Hegemon.Bridge.GenerateMintPayloadAdmissionVectors
+
 lean_exe gen_aggregation_v5_vectors where
   root := `Hegemon.Consensus.GenerateAggregationV5Vectors
 

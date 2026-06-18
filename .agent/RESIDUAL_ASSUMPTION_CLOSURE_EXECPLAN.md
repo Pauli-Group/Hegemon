@@ -22,6 +22,8 @@ The visible outcome is that `bash scripts/check_formal_core.sh` fails if any res
 - [x] (2026-06-18 20:10Z) Committed the system-model gate slice as `990288aa Gate system-model assumptions fail-closed`.
 - [x] (2026-06-18 20:08Z) Added a native metadata bincode parser-oracle milestone: production current/legacy `NativeBlockMeta` exact decode is checked against an independent fixint/full-consumption/canonical-reencode oracle over valid, trailing, truncated, noisy, oversized, action-overrun, payload-overrun, and miner-field-overrun byte cases, and `scripts/check_formal_core.sh` now runs that gate.
 - [x] (2026-06-18 20:08Z) Validated the native metadata parser-oracle slice: JSON validation, rustfmt check, focused native metadata oracle test, shell syntax, whitespace check, formal inventory, `check-claims`, and `check-blueprint` all passed; blueprint now records 622 falsification cases with the new parser-oracle case.
+- [x] (2026-06-18 20:35Z) Added a bridge mint-payload refinement milestone: `BridgeMintPayloadV1` is a versioned fixed-field SCALE payload, `Hegemon.Bridge.MintPayloadAdmission` proves the decoded admission table, Lean generates conformance vectors, formal-core runs the Rust vector gate, and the verified receipt handoff exact-decodes/admission-checks the payload before the still-disabled mint/replay policy.
+- [x] (2026-06-18 20:40Z) Validated the bridge mint-payload slice with targeted Lean build, generated-vector JSON validation, Rust vector conformance, malformed-payload/invalid-field regressions, verified-receipt handoff regressions, and rustfmt.
 - [ ] For later milestones, replace each mechanized-track proposition with deeper theorem packages and generated Rust conformance gates.
 
 ## Surprises & Discoveries
@@ -54,6 +56,8 @@ This first slice converts the user-facing classification into a Lean theorem sur
 The second slice starts closing the fail-closed system-model bucket by adding a theorem-backed release gate and formal-core checker for DA retention, storage durability, global privacy boundary, release infrastructure, dependency scanner completeness, and performance budget monitoring evidence.
 
 The third slice starts burning down the parser mechanized-refinement bucket at a concrete trust boundary: native metadata exact decode now has an independent arbitrary-byte/mutation oracle gate. This narrows parser drift around current-first/legacy-fallback bincode metadata acceptance while keeping bincode implementation correctness itself outside the claim.
+
+The fourth slice starts burning down the bridge mechanized-refinement bucket at the future mint boundary: a verified receipt can no longer carry arbitrary bytes as the would-be mint instruction. It must exact-decode as `BridgeMintPayloadV1` and pass a theorem/vector-checked decoded admission table before hitting the disabled mint authorization gate. This still does not enable positive bridge minting or prove external receipt soundness.
 
 ## Context and Orientation
 

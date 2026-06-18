@@ -9,6 +9,7 @@ pub const FAMILY_BRIDGE: FamilyId = 5;
 pub const ACTION_BRIDGE_OUTBOUND: ActionId = 1;
 pub const ACTION_BRIDGE_INBOUND: ActionId = 2;
 pub const ACTION_REGISTER_BRIDGE_VERIFIER: ActionId = 3;
+pub const BRIDGE_MINT_PAYLOAD_VERSION_V1: u16 = 1;
 
 pub type ChainId = [u8; 32];
 pub type MessageRoot = [u8; 48];
@@ -53,6 +54,16 @@ pub struct InboundBridgeArgsV1 {
     pub message: BridgeMessageV1,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+pub struct BridgeMintPayloadV1 {
+    pub version: u16,
+    pub destination_chain_id: ChainId,
+    pub recipient_commitment: MessageHash,
+    pub asset_id: u64,
+    pub amount: u64,
+    pub mint_nonce: u128,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
 pub struct BridgeVerifierRegistrationV1 {
     pub source_chain_id: ChainId,
@@ -64,6 +75,7 @@ pub struct BridgeVerifierRegistrationV1 {
 impl DecodeWithMemTracking for BridgeMessageV1 {}
 impl DecodeWithMemTracking for OutboundBridgeArgsV1 {}
 impl DecodeWithMemTracking for InboundBridgeArgsV1 {}
+impl DecodeWithMemTracking for BridgeMintPayloadV1 {}
 impl DecodeWithMemTracking for BridgeVerifierRegistrationV1 {}
 
 impl InboundReplayState {

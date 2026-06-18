@@ -10,9 +10,10 @@ pub mod types;
 
 pub use bridge::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
-    BridgeMessageV1, BridgeVerifierRegistrationV1, ChainId, InboundBridgeArgsV1,
-    InboundReplayReject, InboundReplayState, MessageHash, MessageRoot, OutboundBridgeArgsV1,
-    ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND, ACTION_REGISTER_BRIDGE_VERIFIER, FAMILY_BRIDGE,
+    BridgeMessageV1, BridgeMintPayloadV1, BridgeVerifierRegistrationV1, ChainId,
+    InboundBridgeArgsV1, InboundReplayReject, InboundReplayState, MessageHash, MessageRoot,
+    OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
+    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_PAYLOAD_VERSION_V1, FAMILY_BRIDGE,
 };
 pub use manifest::{FamilySpec, KernelManifest};
 pub use router::FamilyRouter;
