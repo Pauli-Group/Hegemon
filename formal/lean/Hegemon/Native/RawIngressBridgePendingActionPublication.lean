@@ -4,6 +4,7 @@ import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.InboundBridgeReceiptAdmission
 import Hegemon.Native.NativeBackendReviewPolicy
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
+import Hegemon.Native.Risc0ReleaseVerifier
 
 namespace Hegemon
 namespace Native
@@ -25,6 +26,7 @@ open Hegemon.Native.InboundBridgeReceiptAdmission
 open Hegemon.Native.NativeBackendReviewPolicy
 open Hegemon.Native.PendingActionReload
 open Hegemon.Native.RawIngressPendingActionPublicationRefinement
+open Hegemon.Native.Risc0ReleaseVerifier
 open Hegemon.Native.RawIngressSidecarReplayRecoverability
 open Hegemon.Native.StorageDurabilityAdmission
 
@@ -1474,6 +1476,126 @@ theorem accepted_inbound_bridge_raw_ingress_canonical_publication_from_mint_repl
       finalReplayRejectsDuplicate := finalReplayRejects,
       canonicalSupplyIntegrity := canonicalSupply
     }
+
+theorem release_disabled_blocks_receipt_mint_replay_policy_before_replay
+    {releaseInput : Risc0ReleaseInput}
+    {policyInput :
+      Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayInput}
+    (disabled : releaseInput.verifierEnabled = false)
+    (receiptVerifiedReflectsRelease :
+      policyInput.receiptVerified =
+        risc0ReleaseVerifierAccepts releaseInput)
+    (inbound : policyInput.inboundBridgeMint = true)
+    (noDelta : policyInput.stateDeltasAbsent = true)
+    (present : policyInput.receiptEnvelopePresent = true) :
+    Hegemon.Bridge.MintReplayPolicy.evaluateReceiptMintReplay
+      policyInput =
+        Except.error
+          Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayReject.receiptNotVerified := by
+  have releaseRejects :
+      risc0ReleaseVerifierAccepts releaseInput = false :=
+    release_build_never_accepts disabled
+  have notVerified :
+      policyInput.receiptVerified = false := by
+    rw [receiptVerifiedReflectsRelease, releaseRejects]
+  exact
+    Hegemon.Bridge.MintReplayPolicy.receipt_not_verified_rejects_before_replay_or_mint
+      inbound
+      noDelta
+      present
+      notVerified
+
+theorem release_disabled_precludes_accepted_inbound_bridge_mint_policy
+    {releaseInput : Risc0ReleaseInput}
+    {policyInput :
+      Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayInput}
+    {policyResult :
+      Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayAccepted}
+    (disabled : releaseInput.verifierEnabled = false)
+    (receiptVerifiedReflectsRelease :
+      policyInput.receiptVerified =
+        risc0ReleaseVerifierAccepts releaseInput)
+    (policyAccepted :
+      Hegemon.Bridge.MintReplayPolicy.evaluateReceiptMintReplay
+        policyInput =
+          Except.ok policyResult) :
+    False := by
+  have releaseRejects :
+      risc0ReleaseVerifierAccepts releaseInput = false :=
+    release_build_never_accepts disabled
+  have notVerified :
+      policyInput.receiptVerified = false := by
+    rw [receiptVerifiedReflectsRelease, releaseRejects]
+  have policyFacts :=
+    Hegemon.Bridge.MintReplayPolicy.accepted_implies_receipt_mint_replay_facts
+      policyAccepted
+  have verified :
+      policyInput.receiptVerified = true :=
+    policyFacts.right.right.right.left
+  rw [notVerified] at verified
+  contradiction
+
+theorem release_disabled_precludes_raw_ingress_bridge_mint_replay_policy_publication
+    {input : BridgePayloadInput}
+    {mintSurface : InboundBridgeMintAmountSurface}
+    {assetSurface : InboundBridgeMintAssetSurface}
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {consumed next : List Nat}
+    {replay imported : Nat}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {policyInput :
+      Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayInput}
+    {policyResult :
+      Hegemon.Bridge.MintReplayPolicy.ReceiptMintReplayAccepted}
+    {policyNativeReplayKeyMatches : Prop}
+    {releaseInput : Risc0ReleaseInput}
+    (disabled : releaseInput.verifierEnabled = false)
+    (receiptVerifiedReflectsRelease :
+      policyInput.receiptVerified =
+        risc0ReleaseVerifierAccepts releaseInput)
+    (facts :
+      RawIngressBridgeMintReplayPolicyPublicationFacts
+        input
+        mintSurface
+        assetSurface
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        consumed
+        next
+        replay
+        imported
+        initial
+        final
+        blocks
+        policyInput
+        policyResult
+        policyNativeReplayKeyMatches) :
+    False :=
+  release_disabled_precludes_accepted_inbound_bridge_mint_policy
+    disabled
+    receiptVerifiedReflectsRelease
+    facts.policyAccepted
 
 theorem accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe
     {input : BridgePayloadInput}

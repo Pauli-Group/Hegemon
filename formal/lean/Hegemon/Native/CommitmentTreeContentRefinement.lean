@@ -56,6 +56,15 @@ def orderedPlannedBridgeReplayKeys
     (rows : List PendingActionFieldProjectionRow) : List Nat :=
   rows.filterMap (fun row => row.bridgeReplayKey)
 
+def orderedDecodedCiphertextIndexRows
+    (rows : List PendingActionFieldProjectionRow) :
+    List (Nat × Nat × Nat × Nat) :=
+  projectedCiphertextIndexRows rows
+
+def orderedPlannedCiphertextArchiveRows
+    (rows : List PendingActionFieldProjectionRow) : List (Nat × Nat) :=
+  projectedCiphertextArchiveRows rows
+
 def rawIngressAppendSummaries
     (depth historyLimit : Nat)
     (initial : NativeLedgerTreeReplayState)
@@ -2096,6 +2105,110 @@ theorem native_publication_rows_equivalence_binds_commitment_replay_content
           facts.canonicalBridgeReplayRowsMatchPlanned
     }
 
+structure NativePublicationRowsCiphertextContentFacts
+    (rows : NativePublicationRows) : Prop where
+  nativePublicationRows :
+    rows.equivalent
+  validationRowsProjectDecoded :
+    rows.validationRows = rows.decodedRows
+  materializedRowsProjectDecoded :
+    rows.materializedRows = rows.decodedRows
+  plannedRowsProjectDecoded :
+    rows.plannedRows = rows.decodedRows
+  wireRowsProjectDecoded :
+    rows.wireRows = rows.decodedRows
+  exactCanonicalCiphertextIndexRows :
+    rows.canonicalRows.ciphertextIndexRows =
+      projectedCiphertextIndexRows rows.decodedRows
+  exactCanonicalCiphertextArchiveRows :
+    rows.canonicalRows.ciphertextArchiveRows =
+      projectedCiphertextArchiveRows rows.plannedRows
+  exactCanonicalCiphertextArchiveRowsDecoded :
+    rows.canonicalRows.ciphertextArchiveRows =
+      projectedCiphertextArchiveRows rows.decodedRows
+  orderedCanonicalCiphertextIndexRows :
+    rows.canonicalRows.ciphertextIndexRows =
+      orderedDecodedCiphertextIndexRows rows.decodedRows
+  orderedCanonicalCiphertextArchiveRows :
+    rows.canonicalRows.ciphertextArchiveRows =
+      orderedPlannedCiphertextArchiveRows rows.plannedRows
+  orderedCanonicalCiphertextArchiveRowsDecoded :
+    rows.canonicalRows.ciphertextArchiveRows =
+      orderedPlannedCiphertextArchiveRows rows.decodedRows
+  canonicalCiphertextIndexRowCount :
+    rows.canonicalRows.ciphertextIndexRows.length =
+      (orderedDecodedCiphertextIndexRows rows.decodedRows).length
+  canonicalCiphertextArchiveRowCount :
+    rows.canonicalRows.ciphertextArchiveRows.length =
+      (orderedPlannedCiphertextArchiveRows rows.plannedRows).length
+  canonicalCiphertextArchiveDecodedRowCount :
+    rows.canonicalRows.ciphertextArchiveRows.length =
+      (orderedPlannedCiphertextArchiveRows rows.decodedRows).length
+
+theorem native_publication_rows_equivalence_binds_ciphertext_content
+    {rows : NativePublicationRows}
+    (facts : rows.equivalent) :
+    NativePublicationRowsCiphertextContentFacts rows := by
+  have plannedDecoded : rows.plannedRows = rows.decodedRows := by
+    calc
+      rows.plannedRows = rows.materializedRows :=
+        facts.plannedRowsProjectMaterialized
+      _ = rows.decodedRows :=
+        facts.materializedRowsProjectDecoded
+  have wireDecoded : rows.wireRows = rows.decodedRows := by
+    calc
+      rows.wireRows = rows.plannedRows :=
+        facts.wireRowsProjectPlanned
+      _ = rows.decodedRows :=
+        plannedDecoded
+  have archiveDecoded :
+      rows.canonicalRows.ciphertextArchiveRows =
+        projectedCiphertextArchiveRows rows.decodedRows := by
+    calc
+      rows.canonicalRows.ciphertextArchiveRows =
+          projectedCiphertextArchiveRows rows.plannedRows :=
+        facts.canonicalCiphertextArchiveRowsMatchPlanned
+      _ = projectedCiphertextArchiveRows rows.decodedRows := by
+        rw [plannedDecoded]
+  exact
+    {
+      nativePublicationRows := facts,
+      validationRowsProjectDecoded :=
+        facts.validationRowsProjectDecoded,
+      materializedRowsProjectDecoded :=
+        facts.materializedRowsProjectDecoded,
+      plannedRowsProjectDecoded :=
+        plannedDecoded,
+      wireRowsProjectDecoded :=
+        wireDecoded,
+      exactCanonicalCiphertextIndexRows :=
+        facts.canonicalCiphertextIndexRowsMatchDecoded,
+      exactCanonicalCiphertextArchiveRows :=
+        facts.canonicalCiphertextArchiveRowsMatchPlanned,
+      exactCanonicalCiphertextArchiveRowsDecoded :=
+        archiveDecoded,
+      orderedCanonicalCiphertextIndexRows := by
+        simpa [orderedDecodedCiphertextIndexRows] using
+          facts.canonicalCiphertextIndexRowsMatchDecoded,
+      orderedCanonicalCiphertextArchiveRows := by
+        simpa [orderedPlannedCiphertextArchiveRows] using
+          facts.canonicalCiphertextArchiveRowsMatchPlanned,
+      orderedCanonicalCiphertextArchiveRowsDecoded := by
+        simpa [orderedPlannedCiphertextArchiveRows] using
+          archiveDecoded,
+      canonicalCiphertextIndexRowCount := by
+        simpa [orderedDecodedCiphertextIndexRows] using
+          congrArg List.length
+            facts.canonicalCiphertextIndexRowsMatchDecoded,
+      canonicalCiphertextArchiveRowCount := by
+        simpa [orderedPlannedCiphertextArchiveRows] using
+          congrArg List.length
+            facts.canonicalCiphertextArchiveRowsMatchPlanned,
+      canonicalCiphertextArchiveDecodedRowCount := by
+        simpa [orderedPlannedCiphertextArchiveRows] using
+          congrArg List.length archiveDecoded
+    }
+
 structure NativePublicationPathFamilyCommitmentReplayContentFacts
     (minedInput : MinedBlockCommitPublicationInput)
     (rawIngress minedCommit announcedImport syncImport reorgReplay
@@ -2206,6 +2319,187 @@ theorem accepted_native_publication_path_family_binds_commitment_replay_content
         pathRows.minedAndStartupShareDecodedRows,
       rebuildAndBlockRangeShareCanonicalRows :=
         pathRows.rebuildAndBlockRangeShareCanonicalRows
+    }
+
+structure NativePublicationPathFamilyCiphertextContentFacts
+    (minedInput : MinedBlockCommitPublicationInput)
+    (rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows) : Prop where
+  pathFamilyRows :
+    NativePublicationPathFamilyRowEquivalenceFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair
+  rawIngressContent :
+    NativePublicationRowsCiphertextContentFacts rawIngress
+  minedCommitContent :
+    NativePublicationRowsCiphertextContentFacts minedCommit
+  announcedImportContent :
+    NativePublicationRowsCiphertextContentFacts announcedImport
+  syncImportContent :
+    NativePublicationRowsCiphertextContentFacts syncImport
+  reorgReplayContent :
+    NativePublicationRowsCiphertextContentFacts reorgReplay
+  canonicalIndexRebuildContent :
+    NativePublicationRowsCiphertextContentFacts canonicalIndexRebuild
+  blockRangeContent :
+    NativePublicationRowsCiphertextContentFacts blockRange
+  startupRepairContent :
+    NativePublicationRowsCiphertextContentFacts startupRepair
+  minedAndStartupShareDecodedRows :
+    minedCommit.decodedRows = startupRepair.decodedRows
+  minedAndStartupShareCiphertextIndexProjection :
+    projectedCiphertextIndexRows minedCommit.decodedRows =
+      projectedCiphertextIndexRows startupRepair.decodedRows
+  minedAndStartupShareCiphertextArchiveProjection :
+    projectedCiphertextArchiveRows minedCommit.decodedRows =
+      projectedCiphertextArchiveRows startupRepair.decodedRows
+  minedAndStartupShareCanonicalCiphertextIndexRows :
+    minedCommit.canonicalRows.ciphertextIndexRows =
+      startupRepair.canonicalRows.ciphertextIndexRows
+  minedAndStartupShareCanonicalCiphertextArchiveRows :
+    minedCommit.canonicalRows.ciphertextArchiveRows =
+      startupRepair.canonicalRows.ciphertextArchiveRows
+  rebuildAndBlockRangeShareCanonicalRows :
+    canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows
+  rebuildAndBlockRangeShareCanonicalCiphertextRows :
+    canonicalIndexRebuild.canonicalRows.ciphertextIndexRows =
+        blockRange.canonicalRows.ciphertextIndexRows
+      ∧ canonicalIndexRebuild.canonicalRows.ciphertextArchiveRows =
+        blockRange.canonicalRows.ciphertextArchiveRows
+
+theorem accepted_native_publication_path_family_binds_ciphertext_content
+    {minedInput : MinedBlockCommitPublicationInput}
+    {rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows}
+    (rawIngressRows : rawIngress.equivalent)
+    (minedAccepted :
+      minedBlockCommitPublicationAccepts minedInput = true)
+    (minedRows : minedCommit.equivalent)
+    (announcedRows : announcedImport.equivalent)
+    (syncRows : syncImport.equivalent)
+    (reorgRows : reorgReplay.equivalent)
+    (rebuildRows : canonicalIndexRebuild.equivalent)
+    (blockRangeRows : blockRange.equivalent)
+    (startupRows : startupRepair.equivalent)
+    (minedStartupDecoded :
+      minedCommit.decodedRows = startupRepair.decodedRows)
+    (rebuildBlockRangeCanonical :
+      canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows) :
+    NativePublicationPathFamilyCiphertextContentFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair := by
+  let pathRows :=
+    accepted_native_publication_path_family_binds_native_publication_rows
+      rawIngressRows
+      minedAccepted
+      minedRows
+      announcedRows
+      syncRows
+      reorgRows
+      rebuildRows
+      blockRangeRows
+      startupRows
+      minedStartupDecoded
+      rebuildBlockRangeCanonical
+  let minedContent :=
+    native_publication_rows_equivalence_binds_ciphertext_content
+      minedRows
+  let startupContent :=
+    native_publication_rows_equivalence_binds_ciphertext_content
+      startupRows
+  have indexProjection :
+      projectedCiphertextIndexRows minedCommit.decodedRows =
+        projectedCiphertextIndexRows startupRepair.decodedRows := by
+    rw [minedStartupDecoded]
+  have archiveProjection :
+      projectedCiphertextArchiveRows minedCommit.decodedRows =
+        projectedCiphertextArchiveRows startupRepair.decodedRows := by
+    rw [minedStartupDecoded]
+  have minedStartupCanonicalIndex :
+      minedCommit.canonicalRows.ciphertextIndexRows =
+        startupRepair.canonicalRows.ciphertextIndexRows := by
+    calc
+      minedCommit.canonicalRows.ciphertextIndexRows =
+          projectedCiphertextIndexRows minedCommit.decodedRows :=
+        minedContent.exactCanonicalCiphertextIndexRows
+      _ = projectedCiphertextIndexRows startupRepair.decodedRows :=
+        indexProjection
+      _ = startupRepair.canonicalRows.ciphertextIndexRows :=
+        startupContent.exactCanonicalCiphertextIndexRows.symm
+  have minedStartupCanonicalArchive :
+      minedCommit.canonicalRows.ciphertextArchiveRows =
+        startupRepair.canonicalRows.ciphertextArchiveRows := by
+    calc
+      minedCommit.canonicalRows.ciphertextArchiveRows =
+          projectedCiphertextArchiveRows minedCommit.decodedRows :=
+        minedContent.exactCanonicalCiphertextArchiveRowsDecoded
+      _ = projectedCiphertextArchiveRows startupRepair.decodedRows :=
+        archiveProjection
+      _ = startupRepair.canonicalRows.ciphertextArchiveRows :=
+        startupContent.exactCanonicalCiphertextArchiveRowsDecoded.symm
+  have rebuildBlockRangeCiphertext :
+      canonicalIndexRebuild.canonicalRows.ciphertextIndexRows =
+          blockRange.canonicalRows.ciphertextIndexRows
+        ∧ canonicalIndexRebuild.canonicalRows.ciphertextArchiveRows =
+          blockRange.canonicalRows.ciphertextArchiveRows := by
+    exact
+      ⟨congrArg PendingActionCanonicalFieldRows.ciphertextIndexRows
+          rebuildBlockRangeCanonical,
+        congrArg PendingActionCanonicalFieldRows.ciphertextArchiveRows
+          rebuildBlockRangeCanonical⟩
+  exact
+    {
+      pathFamilyRows := pathRows,
+      rawIngressContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          rawIngressRows,
+      minedCommitContent := minedContent,
+      announcedImportContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          announcedRows,
+      syncImportContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          syncRows,
+      reorgReplayContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          reorgRows,
+      canonicalIndexRebuildContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          rebuildRows,
+      blockRangeContent :=
+        native_publication_rows_equivalence_binds_ciphertext_content
+          blockRangeRows,
+      startupRepairContent := startupContent,
+      minedAndStartupShareDecodedRows :=
+        pathRows.minedAndStartupShareDecodedRows,
+      minedAndStartupShareCiphertextIndexProjection :=
+        indexProjection,
+      minedAndStartupShareCiphertextArchiveProjection :=
+        archiveProjection,
+      minedAndStartupShareCanonicalCiphertextIndexRows :=
+        minedStartupCanonicalIndex,
+      minedAndStartupShareCanonicalCiphertextArchiveRows :=
+        minedStartupCanonicalArchive,
+      rebuildAndBlockRangeShareCanonicalRows :=
+        pathRows.rebuildAndBlockRangeShareCanonicalRows,
+      rebuildAndBlockRangeShareCanonicalCiphertextRows :=
+        rebuildBlockRangeCiphertext
     }
 
 end CommitmentTreeContentRefinement
