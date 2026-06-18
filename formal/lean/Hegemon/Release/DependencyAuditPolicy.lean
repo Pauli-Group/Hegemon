@@ -23,6 +23,9 @@ structure DependencyWaiver where
   notExpired : Bool
   hasTracking : Bool
   hasReason : Bool
+  hasOwner : Bool
+  hasRemediation : Bool
+  hasReviewDate : Bool
 deriving DecidableEq, Repr
 
 structure DependencyAuditInput where
@@ -33,13 +36,21 @@ deriving DecidableEq, Repr
 def stringNonEmpty (value : String) : Bool :=
   value != ""
 
-def waiverHasRequiredFields (waiver : DependencyWaiver) : Bool :=
+def waiverHasIdentityFields (waiver : DependencyWaiver) : Bool :=
   stringNonEmpty waiver.id
     && stringNonEmpty waiver.package
     && stringNonEmpty waiver.version
     && stringNonEmpty waiver.kind
-    && waiver.hasTracking
+
+def waiverHasReleaseMetadata (waiver : DependencyWaiver) : Bool :=
+  waiver.hasTracking
     && waiver.hasReason
+    && waiver.hasOwner
+    && waiver.hasRemediation
+    && waiver.hasReviewDate
+
+def waiverHasRequiredFields (waiver : DependencyWaiver) : Bool :=
+  waiverHasIdentityFields waiver && waiverHasReleaseMetadata waiver
 
 def waiverIsValid (waiver : DependencyWaiver) : Bool :=
   waiverHasRequiredFields waiver && waiver.notExpired
@@ -138,6 +149,87 @@ theorem accepted_dependency_audit_waiver_is_valid
   have facts := accepted_dependency_audit_exposes_policy_facts accepted
   exact (List.all_eq_true.mp facts.1) waiver present
 
+theorem accepted_dependency_audit_waiver_has_release_metadata
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    waiverHasReleaseMetadata waiver = true := by
+  have valid :=
+    accepted_dependency_audit_waiver_is_valid accepted present
+  unfold waiverIsValid at valid
+  unfold waiverHasRequiredFields at valid
+  cases hIdentity : waiverHasIdentityFields waiver <;>
+    cases hMetadata : waiverHasReleaseMetadata waiver <;>
+    cases hNotExpired : waiver.notExpired <;>
+    simp [hIdentity, hMetadata] at valid ⊢
+
+theorem waiver_release_metadata_true_exposes_fields
+    {waiver : DependencyWaiver}
+    (metadata : waiverHasReleaseMetadata waiver = true) :
+    waiver.hasTracking = true
+      ∧ waiver.hasReason = true
+      ∧ waiver.hasOwner = true
+      ∧ waiver.hasRemediation = true
+      ∧ waiver.hasReviewDate = true := by
+  unfold waiverHasReleaseMetadata at metadata
+  simp at metadata
+  rcases metadata with
+    ⟨⟨⟨⟨tracking, reason⟩, owner⟩, remediation⟩, reviewDate⟩
+  exact ⟨tracking, reason, owner, remediation, reviewDate⟩
+
+theorem accepted_dependency_audit_waiver_release_metadata_fields
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    waiver.hasTracking = true
+      ∧ waiver.hasReason = true
+      ∧ waiver.hasOwner = true
+      ∧ waiver.hasRemediation = true
+      ∧ waiver.hasReviewDate = true := by
+  exact waiver_release_metadata_true_exposes_fields
+    (accepted_dependency_audit_waiver_has_release_metadata accepted present)
+
+theorem waiver_valid_true_exposes_current_review_policy
+    {waiver : DependencyWaiver}
+    (valid : waiverIsValid waiver = true) :
+    waiverHasIdentityFields waiver = true
+      ∧ waiver.hasTracking = true
+      ∧ waiver.hasReason = true
+      ∧ waiver.hasOwner = true
+      ∧ waiver.hasRemediation = true
+      ∧ waiver.hasReviewDate = true
+      ∧ waiver.notExpired = true := by
+  unfold waiverIsValid waiverHasRequiredFields at valid
+  simp at valid
+  rcases valid with ⟨⟨identity, metadata⟩, notExpired⟩
+  have metadataFields :=
+    waiver_release_metadata_true_exposes_fields metadata
+  exact
+    ⟨identity,
+      metadataFields.left,
+      metadataFields.right.left,
+      metadataFields.right.right.left,
+      metadataFields.right.right.right.left,
+      metadataFields.right.right.right.right,
+      notExpired⟩
+
+theorem accepted_dependency_audit_waiver_has_current_review_policy
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    waiverHasIdentityFields waiver = true
+      ∧ waiver.hasTracking = true
+      ∧ waiver.hasReason = true
+      ∧ waiver.hasOwner = true
+      ∧ waiver.hasRemediation = true
+      ∧ waiver.hasReviewDate = true
+      ∧ waiver.notExpired = true := by
+  exact waiver_valid_true_exposes_current_review_policy
+    (accepted_dependency_audit_waiver_is_valid accepted present)
+
 theorem accepted_dependency_audit_waiver_matches_live_finding
     {input : DependencyAuditInput}
     (accepted : evaluateDependencyAudit input = Except.ok ())
@@ -146,6 +238,138 @@ theorem accepted_dependency_audit_waiver_matches_live_finding
     waiverMatchesAnyFinding input.findings waiver = true := by
   have facts := accepted_dependency_audit_exposes_policy_facts accepted
   exact (List.all_eq_true.mp facts.2.2) waiver present
+
+theorem waiver_match_true_exposes_exact_fields
+    {finding : DependencyFinding}
+    {waiver : DependencyWaiver}
+    (matched : waiverMatchesFinding finding waiver = true) :
+    waiver.id = finding.id
+      ∧ waiver.package = finding.package
+      ∧ waiver.version = finding.version
+      ∧ waiver.kind = finding.kind := by
+  unfold waiverMatchesFinding at matched
+  simp at matched
+  rcases matched with
+    ⟨⟨⟨idExact, packageExact⟩, versionExact⟩, kindExact⟩
+  exact ⟨idExact, packageExact, versionExact, kindExact⟩
+
+theorem waiver_matches_any_finding_exposes_live_exact_match
+    {findings : List DependencyFinding}
+    {waiver : DependencyWaiver}
+    (matched : waiverMatchesAnyFinding findings waiver = true) :
+    ∃ finding, finding ∈ findings
+      ∧ waiverMatchesFinding finding waiver = true := by
+  unfold waiverMatchesAnyFinding at matched
+  simpa using matched
+
+theorem finding_has_valid_waiver_exposes_explicit_waiver
+    {waivers : List DependencyWaiver}
+    {finding : DependencyFinding}
+    (hasWaiver : findingHasValidWaiver waivers finding = true) :
+    ∃ waiver, waiver ∈ waivers
+      ∧ waiverIsValid waiver = true
+      ∧ waiverMatchesFinding finding waiver = true := by
+  unfold findingHasValidWaiver at hasWaiver
+  simpa using hasWaiver
+
+theorem accepted_dependency_audit_finding_has_explicit_current_reviewed_waiver
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {finding : DependencyFinding}
+    (present : finding ∈ input.findings) :
+    ∃ waiver, waiver ∈ input.waivers
+      ∧ waiver.id = finding.id
+      ∧ waiver.package = finding.package
+      ∧ waiver.version = finding.version
+      ∧ waiver.kind = finding.kind
+      ∧ waiver.hasTracking = true
+      ∧ waiver.hasReason = true
+      ∧ waiver.hasOwner = true
+      ∧ waiver.hasRemediation = true
+      ∧ waiver.hasReviewDate = true
+      ∧ waiver.notExpired = true := by
+  have hasWaiver :=
+    accepted_dependency_audit_finding_has_explicit_valid_waiver
+      accepted
+      present
+  rcases finding_has_valid_waiver_exposes_explicit_waiver hasWaiver with
+    ⟨waiver, waiverPresent, waiverValid, waiverMatched⟩
+  have exactFields :=
+    waiver_match_true_exposes_exact_fields
+      (finding := finding)
+      (waiver := waiver)
+      waiverMatched
+  have reviewPolicy :=
+    waiver_valid_true_exposes_current_review_policy waiverValid
+  exact
+    ⟨waiver,
+      waiverPresent,
+      exactFields.left,
+      exactFields.right.left,
+      exactFields.right.right.left,
+      exactFields.right.right.right,
+      reviewPolicy.right.left,
+      reviewPolicy.right.right.left,
+      reviewPolicy.right.right.right.left,
+      reviewPolicy.right.right.right.right.left,
+      reviewPolicy.right.right.right.right.right.left,
+      reviewPolicy.right.right.right.right.right.right⟩
+
+theorem accepted_dependency_audit_waiver_has_live_exact_finding
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    ∃ finding, finding ∈ input.findings
+      ∧ waiver.id = finding.id
+      ∧ waiver.package = finding.package
+      ∧ waiver.version = finding.version
+      ∧ waiver.kind = finding.kind := by
+  have matched :=
+    accepted_dependency_audit_waiver_matches_live_finding
+      accepted
+      present
+  rcases waiver_matches_any_finding_exposes_live_exact_match matched with
+    ⟨finding, findingPresent, findingMatched⟩
+  have exactFields :=
+    waiver_match_true_exposes_exact_fields
+      (finding := finding)
+      (waiver := waiver)
+      findingMatched
+  exact
+    ⟨finding,
+      findingPresent,
+      exactFields.left,
+      exactFields.right.left,
+      exactFields.right.right.left,
+        exactFields.right.right.right⟩
+
+theorem dependency_audit_rejects_malformed_waiver_fail_closed
+    {input : DependencyAuditInput}
+    (malformed : dependencyWaiversValid input = false) :
+    evaluateDependencyAudit input =
+      Except.error DependencyAuditReject.malformedWaiver := by
+  unfold evaluateDependencyAudit
+  simp [malformed]
+
+theorem dependency_audit_rejects_unwaived_finding_fail_closed
+    {input : DependencyAuditInput}
+    (waiversValid : dependencyWaiversValid input = true)
+    (findingsWaived : dependencyFindingsWaived input = false) :
+    evaluateDependencyAudit input =
+      Except.error DependencyAuditReject.unwaivedFinding := by
+  unfold evaluateDependencyAudit
+  simp [waiversValid, findingsWaived]
+
+theorem dependency_audit_rejects_unused_waiver_fail_closed
+    {input : DependencyAuditInput}
+    (waiversValid : dependencyWaiversValid input = true)
+    (findingsWaived : dependencyFindingsWaived input = true)
+    (waiversUsed : dependencyWaiversUsed input = false) :
+    evaluateDependencyAudit input =
+      Except.error DependencyAuditReject.unusedWaiver := by
+  unfold evaluateDependencyAudit
+  simp [waiversValid, findingsWaived, waiversUsed]
 
 def bincodeFinding : DependencyFinding :=
   {
@@ -163,7 +387,32 @@ def validBincodeWaiver : DependencyWaiver :=
     kind := "unmaintained",
     notExpired := true,
     hasTracking := true,
-    hasReason := true
+    hasReason := true,
+    hasOwner := true,
+    hasRemediation := true,
+    hasReviewDate := true
+    }
+
+def pasteFinding : DependencyFinding :=
+  {
+    id := "RUSTSEC-2024-0436",
+    package := "paste",
+    version := "1.0.15",
+    kind := "unmaintained"
+  }
+
+def validPasteWaiver : DependencyWaiver :=
+  {
+    id := "RUSTSEC-2024-0436",
+    package := "paste",
+    version := "1.0.15",
+    kind := "unmaintained",
+    notExpired := true,
+    hasTracking := true,
+    hasReason := true,
+    hasOwner := true,
+    hasRemediation := true,
+    hasReviewDate := true
   }
 
 def noFindingsNoWaivers : DependencyAuditInput :=
@@ -200,6 +449,48 @@ def missingReasonInput : DependencyAuditInput :=
   {
     findings := [bincodeFinding],
     waivers := [{ validBincodeWaiver with hasReason := false }]
+    }
+
+def missingTrackingInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with hasTracking := false }]
+  }
+
+def missingOwnerInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with hasOwner := false }]
+  }
+
+def missingRemediationInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with hasRemediation := false }]
+  }
+
+def missingReviewDateInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with hasReviewDate := false }]
+    }
+
+def missingIdInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with id := "" }]
+  }
+
+def versionMismatchInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding],
+    waivers := [{ validBincodeWaiver with version := "1.3.2" }]
+  }
+
+def multiFindingExactWaiversInput : DependencyAuditInput :=
+  {
+    findings := [bincodeFinding, pasteFinding],
+    waivers := [validBincodeWaiver, validPasteWaiver]
   }
 
 def invalidWaiverPrecedenceInput : DependencyAuditInput :=
@@ -260,6 +551,40 @@ theorem kind_mismatch_rejects :
 theorem missing_reason_rejects :
     evaluateDependencyAudit missingReasonInput =
       Except.error DependencyAuditReject.malformedWaiver := by
+    rfl
+
+theorem missing_tracking_rejects :
+    evaluateDependencyAudit missingTrackingInput =
+      Except.error DependencyAuditReject.malformedWaiver := by
+  rfl
+
+theorem missing_owner_rejects :
+    evaluateDependencyAudit missingOwnerInput =
+      Except.error DependencyAuditReject.malformedWaiver := by
+  rfl
+
+theorem missing_remediation_rejects :
+    evaluateDependencyAudit missingRemediationInput =
+      Except.error DependencyAuditReject.malformedWaiver := by
+  rfl
+
+theorem missing_review_date_rejects :
+    evaluateDependencyAudit missingReviewDateInput =
+      Except.error DependencyAuditReject.malformedWaiver := by
+    rfl
+
+theorem missing_id_rejects :
+    evaluateDependencyAudit missingIdInput =
+      Except.error DependencyAuditReject.malformedWaiver := by
+  rfl
+
+theorem version_mismatch_rejects :
+    evaluateDependencyAudit versionMismatchInput =
+      Except.error DependencyAuditReject.unwaivedFinding := by
+  rfl
+
+theorem multi_finding_exact_waivers_accepts :
+    evaluateDependencyAudit multiFindingExactWaiversInput = Except.ok () := by
   rfl
 
 theorem invalid_waiver_precedes_unwaived_finding :

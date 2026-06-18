@@ -7,6 +7,8 @@ def boolJson (value : Bool) : String :=
 
 def rejectionJson : Option StorageDurabilityReject -> String
   | none => "null"
+  | some StorageDurabilityReject.unsupportedOperation =>
+      "\"unsupported_operation\""
   | some StorageDurabilityReject.transactionRejected =>
       "\"transaction_rejected\""
   | some StorageDurabilityReject.durabilityFlushFailed =>
@@ -17,6 +19,7 @@ def caseJson (name operation : String) (input : StorageDurabilityInput) : String
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"operation\": \"" ++ operation ++ "\",\n"
+    ++ "      \"operation_supported\": " ++ boolJson input.operationSupported ++ ",\n"
     ++ "      \"transaction_accepted\": " ++ boolJson input.transactionAccepted ++ ",\n"
     ++ "      \"durability_flushed\": " ++ boolJson input.durabilityFlushed ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
@@ -25,7 +28,7 @@ def caseJson (name operation : String) (input : StorageDurabilityInput) : String
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"storage_durability_admission_cases\": [\n"
     ++ caseJson "mined-commit-durable" "mined_block_commit" valid ++ ",\n"
     ++ caseJson "reorg-commit-durable" "canonical_reorg_commit" valid ++ ",\n"
@@ -47,10 +50,25 @@ def vectorJson : String :=
       valid ++ ",\n"
     ++ caseJson "transaction-rejection-precedes-flush"
       "mined_block_commit"
-      { transactionAccepted := false, durabilityFlushed := false } ++ ",\n"
+      {
+        operationSupported := true,
+        transactionAccepted := false,
+        durabilityFlushed := false
+      } ++ ",\n"
     ++ caseJson "durability-flush-failure-rejected"
       "canonical_reorg_commit"
-      { transactionAccepted := true, durabilityFlushed := false } ++ "\n"
+      {
+        operationSupported := true,
+        transactionAccepted := true,
+        durabilityFlushed := false
+      } ++ ",\n"
+    ++ caseJson "unsupported-operation-rejected"
+      "unknown_storage_operation"
+      {
+        operationSupported := false,
+        transactionAccepted := true,
+        durabilityFlushed := true
+      } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

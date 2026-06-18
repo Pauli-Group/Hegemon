@@ -1660,6 +1660,108 @@ theorem accepted_ciphertext_privacy_game_public_metadata_privacy_certificate
     networkMetadataPolicy := deterministicBoundary.networkMetadataPolicy
   }
 
+theorem public_metadata_privacy_certificate_exposes_unlinkability_boundary
+    {left right : ShieldedTransactionWorld}
+    {wireIndistinguishable : Prop}
+    {assumptions : PrivacyBoundaryAssumptions}
+    (certificate :
+      PublicMetadataPrivacyCertificate
+        left
+        right
+        wireIndistinguishable
+        assumptions) :
+    samePublicCiphertextShape left right
+      ∧ samePublicMetadataLeakage left right
+      ∧ sameBatchTimingLeakage left right
+      ∧ RawWireExcludedPublicLeakageFacts
+        left
+        right
+        wireIndistinguishable
+      ∧ (left.ciphertextBytes = right.ciphertextBytes ->
+        sameAllowedLeakage left right)
+      ∧ wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨certificate.publicCiphertextShape,
+      certificate.publicMetadataProjection,
+      certificate.publicBatchTimingProjection,
+      certificate.rawWireExcludedFromPublicMetadata,
+      certificate.sameRawWireDischargesFullObserverLeakage,
+      certificate.rawWireIndistinguishable,
+      certificate.proofSystemZeroKnowledge,
+      certificate.walletMetadataHygiene,
+      certificate.timingAndBatchingPolicy,
+      certificate.networkMetadataPolicy⟩
+
+theorem public_metadata_privacy_certificate_all_local_metadata_resampling_boundary
+    {left right : ShieldedTransactionWorld}
+    {wireIndistinguishable : Prop}
+    {assumptions : PrivacyBoundaryAssumptions}
+    (certificate :
+      PublicMetadataPrivacyCertificate
+        left
+        right
+        wireIndistinguishable
+        assumptions)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localWalletBookkeepingMetadata := leftWallet
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localWalletBookkeepingMetadata := rightWallet
+          localNetworkMetadata := rightNetwork }
+      ∧ sameBatchTimingLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localWalletBookkeepingMetadata := leftWallet
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localWalletBookkeepingMetadata := rightWallet
+          localNetworkMetadata := rightNetwork }
+      ∧ wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨(certificate.allWalletLocalMetadataHidden
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftWallet
+        rightWallet
+        leftNetwork
+        rightNetwork).left,
+      (certificate.allWalletLocalMetadataHidden
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftWallet
+        rightWallet
+        leftNetwork
+        rightNetwork).right,
+      certificate.rawWireIndistinguishable,
+      certificate.proofSystemZeroKnowledge,
+      certificate.walletMetadataHygiene,
+      certificate.timingAndBatchingPolicy,
+      certificate.networkMetadataPolicy⟩
+
 def rawWireSplitCiphertextPrivacyGame :
     CiphertextPrivacyGame
       publicRawWireSplitLeftWorld

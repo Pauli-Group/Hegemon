@@ -2673,6 +2673,371 @@ theorem accepted_native_publication_path_family_binds_commitment_replay_content
         pathRows.rebuildAndBlockRangeShareCanonicalRows
     }
 
+def nativePublicationRowsOf
+    (decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow)
+    (canonicalRows : PendingActionCanonicalFieldRows) :
+    NativePublicationRows :=
+  {
+    decodedRows := decodedRows,
+    validationRows := validationRows,
+    materializedRows := materializedRows,
+    plannedRows := plannedRows,
+    wireRows := wireRows,
+    canonicalRows := canonicalRows
+  }
+
+structure NativePublicationPathFamilyLedgerIntegrityCertificate
+    (minedInput : MinedBlockCommitPublicationInput)
+    (rawIngress minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (depth historyLimit : Nat) : Prop where
+  pathFamilyContent :
+    NativePublicationPathFamilyCommitmentReplayContentFacts
+      minedInput
+      rawIngress
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair
+  acceptedLedgerTreeReplay :
+    validateNativeLedgerTreeReplayChain
+      initial
+      (rawTreeReplayInputs blocks) =
+      some final
+  replayedSupply :
+    expectedNativeSupplyAfter
+      initial.ledger.supply
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.supply
+  commitmentRootPublished :
+    expectedCommitmentRootAfter
+      initial.commitmentRoot
+      (rawTreeReplayInputs blocks) =
+      some final.commitmentRoot
+  leafCursorPublished :
+    expectedNativeLeafCountAfter
+      initial.ledger.leafCount
+      (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+      some final.ledger.leafCount
+  finalNullifierUniqueness :
+    final.ledger.spentNullifiers.Nodup
+  finalReplayUniqueness :
+    final.ledger.consumedBridgeReplays.Nodup
+  rawIngressExactCanonicalCommitmentRows :
+    rawIngress.canonicalRows.commitmentRows =
+      projectedCommitmentRows rawIngress.decodedRows
+  rawIngressExactCanonicalNullifierRows :
+    rawIngress.canonicalRows.nullifierRows =
+      projectedNullifierRows rawIngress.decodedRows
+  rawIngressExactCanonicalBridgeReplayRows :
+    rawIngress.canonicalRows.bridgeReplayRows =
+      projectedBridgeReplayRows rawIngress.plannedRows
+  rawIngressAppendMutationIndexesMatchCanonicalRows :
+    (rawIngressAppendSummaries depth historyLimit initial
+        rawIngress.decodedRows).map
+        (fun summary => summary.leafIndex) =
+      rawIngress.canonicalRows.commitmentRows.map (fun entry => entry.1)
+  rawIngressAppendMutationCountMatchesCanonicalRows :
+    (rawIngressAppendSummaries depth historyLimit initial
+        rawIngress.decodedRows).length =
+      rawIngress.canonicalRows.commitmentRows.length
+  minedCommitContent :
+    NativePublicationRowsCommitmentReplayContentFacts minedCommit
+  announcedImportContent :
+    NativePublicationRowsCommitmentReplayContentFacts announcedImport
+  syncImportContent :
+    NativePublicationRowsCommitmentReplayContentFacts syncImport
+  reorgReplayContent :
+    NativePublicationRowsCommitmentReplayContentFacts reorgReplay
+  canonicalIndexRebuildContent :
+    NativePublicationRowsCommitmentReplayContentFacts canonicalIndexRebuild
+  blockRangeContent :
+    NativePublicationRowsCommitmentReplayContentFacts blockRange
+  startupRepairContent :
+    NativePublicationRowsCommitmentReplayContentFacts startupRepair
+  minedAndStartupShareDecodedRows :
+    minedCommit.decodedRows = startupRepair.decodedRows
+  minedAndStartupShareCanonicalCommitmentRows :
+    minedCommit.canonicalRows.commitmentRows =
+      startupRepair.canonicalRows.commitmentRows
+  minedAndStartupShareCanonicalNullifierRows :
+    minedCommit.canonicalRows.nullifierRows =
+      startupRepair.canonicalRows.nullifierRows
+  minedAndStartupShareCanonicalBridgeReplayRows :
+    minedCommit.canonicalRows.bridgeReplayRows =
+      startupRepair.canonicalRows.bridgeReplayRows
+  rebuildAndBlockRangeShareCanonicalRows :
+    canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows
+  rebuildAndBlockRangeShareCanonicalCommitmentRows :
+    canonicalIndexRebuild.canonicalRows.commitmentRows =
+      blockRange.canonicalRows.commitmentRows
+  rebuildAndBlockRangeShareCanonicalNullifierRows :
+    canonicalIndexRebuild.canonicalRows.nullifierRows =
+      blockRange.canonicalRows.nullifierRows
+  rebuildAndBlockRangeShareCanonicalBridgeReplayRows :
+    canonicalIndexRebuild.canonicalRows.bridgeReplayRows =
+      blockRange.canonicalRows.bridgeReplayRows
+
+theorem raw_ingress_integrity_and_path_family_rows_bind_native_publication_ledger_integrity_certificate
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {materializedActionCount materializedPayloadCount : Nat}
+    {decodedRows validationRows materializedRows plannedRows wireRows :
+      List PendingActionFieldProjectionRow}
+    {canonicalRows : PendingActionCanonicalFieldRows}
+    {depth historyLimit : Nat}
+    {minedInput : MinedBlockCommitPublicationInput}
+    {minedCommit announcedImport syncImport reorgReplay
+      canonicalIndexRebuild blockRange startupRepair :
+        NativePublicationRows}
+    (integrity :
+      RawIngressCommitmentTreeNullifierIntegrityCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows
+        depth
+        historyLimit)
+    (minedAccepted :
+      minedBlockCommitPublicationAccepts minedInput = true)
+    (minedRows : minedCommit.equivalent)
+    (announcedRows : announcedImport.equivalent)
+    (syncRows : syncImport.equivalent)
+    (reorgRows : reorgReplay.equivalent)
+    (rebuildRows : canonicalIndexRebuild.equivalent)
+    (blockRangeRows : blockRange.equivalent)
+    (startupRows : startupRepair.equivalent)
+    (minedStartupDecoded :
+      minedCommit.decodedRows = startupRepair.decodedRows)
+    (rebuildBlockRangeCanonical :
+      canonicalIndexRebuild.canonicalRows = blockRange.canonicalRows) :
+    NativePublicationPathFamilyLedgerIntegrityCertificate
+      minedInput
+      (nativePublicationRowsOf
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows)
+      minedCommit
+      announcedImport
+      syncImport
+      reorgReplay
+      canonicalIndexRebuild
+      blockRange
+      startupRepair
+      initial
+      final
+      blocks
+      depth
+      historyLimit := by
+  have rawIngressRows :
+      (nativePublicationRowsOf
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows).equivalent := by
+    simpa [nativePublicationRowsOf, NativePublicationRows.equivalent] using
+      raw_ingress_full_byte_field_projection_binds_native_publication_rows
+        integrity.acceptedRawIngressFieldProjection
+  have pathContent :=
+    accepted_native_publication_path_family_binds_commitment_replay_content
+      rawIngressRows
+      minedAccepted
+      minedRows
+      announcedRows
+      syncRows
+      reorgRows
+      rebuildRows
+      blockRangeRows
+      startupRows
+      minedStartupDecoded
+      rebuildBlockRangeCanonical
+  have minedPlannedDecoded :
+      minedCommit.plannedRows = minedCommit.decodedRows := by
+    calc
+      minedCommit.plannedRows = minedCommit.materializedRows :=
+        pathContent.minedCommitContent.nativePublicationRows.plannedRowsProjectMaterialized
+      _ = minedCommit.decodedRows :=
+        pathContent.minedCommitContent.nativePublicationRows.materializedRowsProjectDecoded
+  have startupPlannedDecoded :
+      startupRepair.plannedRows = startupRepair.decodedRows := by
+    calc
+      startupRepair.plannedRows = startupRepair.materializedRows :=
+        pathContent.startupRepairContent.nativePublicationRows.plannedRowsProjectMaterialized
+      _ = startupRepair.decodedRows :=
+        pathContent.startupRepairContent.nativePublicationRows.materializedRowsProjectDecoded
+  have minedStartupCommitmentRows :
+      minedCommit.canonicalRows.commitmentRows =
+        startupRepair.canonicalRows.commitmentRows := by
+    calc
+      minedCommit.canonicalRows.commitmentRows =
+          projectedCommitmentRows minedCommit.decodedRows :=
+        pathContent.minedCommitContent.exactCanonicalCommitmentRows
+      _ = projectedCommitmentRows startupRepair.decodedRows := by
+        rw [pathContent.minedAndStartupShareDecodedRows]
+      _ = startupRepair.canonicalRows.commitmentRows :=
+        pathContent.startupRepairContent.exactCanonicalCommitmentRows.symm
+  have minedStartupNullifierRows :
+      minedCommit.canonicalRows.nullifierRows =
+        startupRepair.canonicalRows.nullifierRows := by
+    calc
+      minedCommit.canonicalRows.nullifierRows =
+          projectedNullifierRows minedCommit.decodedRows :=
+        pathContent.minedCommitContent.exactCanonicalNullifierRows
+      _ = projectedNullifierRows startupRepair.decodedRows := by
+        rw [pathContent.minedAndStartupShareDecodedRows]
+      _ = startupRepair.canonicalRows.nullifierRows :=
+        pathContent.startupRepairContent.exactCanonicalNullifierRows.symm
+  have minedStartupBridgeRows :
+      minedCommit.canonicalRows.bridgeReplayRows =
+        startupRepair.canonicalRows.bridgeReplayRows := by
+    calc
+      minedCommit.canonicalRows.bridgeReplayRows =
+          projectedBridgeReplayRows minedCommit.plannedRows :=
+        pathContent.minedCommitContent.exactCanonicalBridgeReplayRows
+      _ = projectedBridgeReplayRows minedCommit.decodedRows := by
+        rw [minedPlannedDecoded]
+      _ = projectedBridgeReplayRows startupRepair.decodedRows := by
+        rw [pathContent.minedAndStartupShareDecodedRows]
+      _ = projectedBridgeReplayRows startupRepair.plannedRows := by
+        rw [startupPlannedDecoded]
+      _ = startupRepair.canonicalRows.bridgeReplayRows :=
+        pathContent.startupRepairContent.exactCanonicalBridgeReplayRows.symm
+  exact
+    {
+      pathFamilyContent := pathContent,
+      acceptedLedgerTreeReplay :=
+        integrity.acceptedLedgerTreeReplay,
+      replayedSupply :=
+        integrity.replayedSupply,
+      commitmentRootPublished :=
+        integrity.commitmentRootPublished,
+      leafCursorPublished :=
+        integrity.leafCursorPublished,
+      finalNullifierUniqueness :=
+        integrity.finalNullifierUniqueness,
+      finalReplayUniqueness :=
+        integrity.finalReplayUniqueness,
+      rawIngressExactCanonicalCommitmentRows :=
+        integrity.exactCanonicalCommitmentRows,
+      rawIngressExactCanonicalNullifierRows :=
+        integrity.exactCanonicalNullifierRows,
+      rawIngressExactCanonicalBridgeReplayRows := by
+        simpa [nativePublicationRowsOf] using
+          integrity.exactCanonicalBridgeReplayRows,
+      rawIngressAppendMutationIndexesMatchCanonicalRows :=
+        integrity.appendMutationIndexesMatchCanonicalRows,
+      rawIngressAppendMutationCountMatchesCanonicalRows :=
+        integrity.appendMutationCountMatchesCanonicalRows,
+      minedCommitContent :=
+        pathContent.minedCommitContent,
+      announcedImportContent :=
+        pathContent.announcedImportContent,
+      syncImportContent :=
+        pathContent.syncImportContent,
+      reorgReplayContent :=
+        pathContent.reorgReplayContent,
+      canonicalIndexRebuildContent :=
+        pathContent.canonicalIndexRebuildContent,
+      blockRangeContent :=
+        pathContent.blockRangeContent,
+      startupRepairContent :=
+        pathContent.startupRepairContent,
+      minedAndStartupShareDecodedRows :=
+        pathContent.minedAndStartupShareDecodedRows,
+      minedAndStartupShareCanonicalCommitmentRows :=
+        minedStartupCommitmentRows,
+      minedAndStartupShareCanonicalNullifierRows :=
+        minedStartupNullifierRows,
+      minedAndStartupShareCanonicalBridgeReplayRows :=
+        minedStartupBridgeRows,
+      rebuildAndBlockRangeShareCanonicalRows :=
+        pathContent.rebuildAndBlockRangeShareCanonicalRows,
+      rebuildAndBlockRangeShareCanonicalCommitmentRows :=
+        congrArg PendingActionCanonicalFieldRows.commitmentRows
+          pathContent.rebuildAndBlockRangeShareCanonicalRows,
+      rebuildAndBlockRangeShareCanonicalNullifierRows :=
+        congrArg PendingActionCanonicalFieldRows.nullifierRows
+          pathContent.rebuildAndBlockRangeShareCanonicalRows,
+      rebuildAndBlockRangeShareCanonicalBridgeReplayRows :=
+        congrArg PendingActionCanonicalFieldRows.bridgeReplayRows
+          pathContent.rebuildAndBlockRangeShareCanonicalRows
+    }
+
 structure NativePublicationPathFamilyCiphertextContentFacts
     (minedInput : MinedBlockCommitPublicationInput)
     (rawIngress minedCommit announcedImport syncImport reorgReplay

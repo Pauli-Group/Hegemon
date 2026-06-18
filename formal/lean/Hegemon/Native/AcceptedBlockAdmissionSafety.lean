@@ -844,6 +844,506 @@ theorem accepted_raw_ingress_full_byte_publication_yields_canonical_admission_sa
         projection
         canonicalSurface)
 
+theorem canonical_admission_safety_certificate_exposes_replay_and_da_integrity
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    expectedNativeSupplyAfter
+        initial.ledger.supply
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.supply
+      ∧ expectedCommitmentRootAfter
+        initial.commitmentRoot
+        (rawTreeReplayInputs blocks) =
+        some final.commitmentRoot
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup
+      ∧ surface.daSidecarReplay.candidateBinding.daRootMatches = true
+      ∧ surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+      ∧ semanticFields.daRoot =
+        surface.daSidecarReplay.recursiveSemanticSource.daRoot := by
+  exact
+    ⟨certificate.rawReplayedSupply,
+      certificate.rawCommitmentRootPublication,
+      certificate.finalSpentNullifiersUnique,
+      certificate.finalBridgeReplaysUnique,
+      certificate.admissionSafetyFacts.candidateDaRootMatches,
+      certificate.admissionSafetyFacts.provenBatchDaRootMatches,
+      certificate.admissionSafetyFacts.semanticDaRootBound⟩
+
+theorem canonical_admission_safety_certificate_exposes_pre_admission_gates
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    exactDecodePreconditions pendingDecode = true
+      ∧ blockActionDecodePreconditions blockActionDecode = true
+      ∧ admissionPreconditions actionHash = true
+      ∧ blockIndexReloadPreconditions blockIndex = true
+      ∧ canonicalStateReloadPreconditions canonicalState = true
+      ∧ canonicalReorgChainPreconditions reorgChain = true
+      ∧ atomicCommitManifestPreconditions commitManifest = true
+      ∧ storageDurabilityPreconditions durability = true := by
+  exact
+    ⟨certificate.admissionSafetyFacts.pendingDecodePreconditions,
+      certificate.admissionSafetyFacts.blockActionDecodePreconditions,
+      certificate.admissionSafetyFacts.actionHashPreconditions,
+      certificate.blockIndexReloadPreconditionsHold,
+      certificate.canonicalStateReloadPreconditionsHold,
+      certificate.canonicalReorgChainPreconditionsHold,
+      certificate.atomicCommitManifestPreconditionsHold,
+      certificate.storageDurabilityPreconditionsHold⟩
+
+theorem canonical_admission_safety_certificate_exposes_tx_leaf_statement_artifact
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    AcceptedNativeTxLeafArtifactByteShapeFacts artifactBytes summary
+      ∧ NativeTxLeafArtifactCanonicalProjectionAssumptions
+        summary
+        txLeaf
+        shape
+        serializedFields
+        bound
+        statementFields
+        bindingFields
+      ∧ txLeafActionBindingAccepts txLeaf = true
+      ∧ NativeTxLeafFullStatementArtifactFacts
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot := by
+  exact
+    ⟨certificate.admissionSafetyFacts.artifactByteShapeFacts,
+      certificate.admissionSafetyFacts.txLeafProjectionAssumptions,
+      certificate.admissionSafetyFacts.txLeafAccepted,
+      certificate.admissionSafetyFacts.txLeafFullStatementArtifactFacts⟩
+
+theorem canonical_admission_safety_certificate_exposes_exact_parser_and_wire_projection
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    pendingDecode.parserAccepts = true
+      ∧ pendingDecode.consumedAllBytes = true
+      ∧ pendingDecode.canonicalReencodeMatches = true
+      ∧ actionCountMatches blockActionDecode = true
+      ∧ blockActionDecode.everyActionDecodesExactly = true
+      ∧ ActionWireReplayProjectionAdmission.evaluateActionWireReplayProjection
+        surface.daSidecarReplay.wireReplayProjection =
+        Except.ok wireOutput
+      ∧ wireOutput.projectedActionCount =
+        blockActionDecode.actualActionPayloadCount
+      ∧ txLeafActionBindingAccepts txLeaf = true := by
+  exact
+    ⟨certificate.admissionSafetyFacts.pendingDecodeExact.1,
+      certificate.admissionSafetyFacts.pendingDecodeExact.2.1,
+      certificate.admissionSafetyFacts.pendingDecodeExact.2.2,
+      certificate.admissionSafetyFacts.blockActionDecodeExact.1,
+      certificate.admissionSafetyFacts.blockActionDecodeExact.2,
+      certificate.admissionSafetyFacts.acceptedWireProjection,
+      certificate.admissionSafetyFacts.projectedActionRowsMatchDecodedPayloads,
+      certificate.admissionSafetyFacts.txLeafAccepted⟩
+
+theorem canonical_admission_safety_certificate_exposes_canonical_raw_replay_publication
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    validateNativeLedgerTreeReplayChain
+        initial
+        (rawTreeReplayInputs blocks) =
+        some final
+      ∧ validateNativeLedgerReplayChain
+        initial.ledger
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger
+      ∧ expectedNativeSupplyAfter
+        initial.ledger.supply
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.supply
+      ∧ expectedNativeLeafCountAfter
+        initial.ledger.leafCount
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.leafCount
+      ∧ nativeLedgerReplayCommitmentPlanPreconditions
+        initial.ledger
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) = true
+      ∧ rawProjectedTreeCarriedStatePreconditions initial blocks = true
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  exact
+    ⟨certificate.rawAcceptedLedgerTreeReplay,
+      certificate.rawAcceptedLedgerReplay,
+      certificate.rawReplayedSupply,
+      certificate.rawReplayedLeafCursor,
+      certificate.rawCommitmentPlan,
+      certificate.rawTreeCarriedStatePreconditions,
+      certificate.finalSpentNullifiersUnique,
+      certificate.finalBridgeReplaysUnique⟩
+
+theorem canonical_admission_safety_certificate_exposes_parser_wire_before_publication_order
+    {surface}
+    {pendingDecode}
+    {blockActionDecode}
+    {actionHash}
+    {wireOutput}
+    {semanticFields}
+    {blockIndex}
+    {canonicalState}
+    {reorgChain}
+    {commitManifest}
+    {durability}
+    {initial final}
+    {blocks}
+    {artifactBytes}
+    {summary}
+    {txLeaf}
+    {wrapper}
+    {shape}
+    {publicFields}
+    {serializedFields}
+    {bound}
+    {statementFields}
+    {statementBytes}
+    {bindingFields}
+    {bindingBytes}
+    {merkleRoot}
+    (certificate :
+      AcceptedBlockCanonicalAdmissionSafetyCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot) :
+    exactDecodePreconditions pendingDecode = true
+      ∧ pendingDecode.parserAccepts = true
+      ∧ pendingDecode.consumedAllBytes = true
+      ∧ pendingDecode.canonicalReencodeMatches = true
+      ∧ blockActionDecodePreconditions blockActionDecode = true
+      ∧ actionCountMatches blockActionDecode = true
+      ∧ blockActionDecode.everyActionDecodesExactly = true
+      ∧ ActionWireReplayProjectionAdmission.evaluateActionWireReplayProjection
+        surface.daSidecarReplay.wireReplayProjection =
+        Except.ok wireOutput
+      ∧ wireOutput.projectedActionCount =
+        blockActionDecode.actualActionPayloadCount
+      ∧ admissionPreconditions actionHash = true
+      ∧ txLeafActionBindingAccepts txLeaf = true
+      ∧ blockIndexReloadPreconditions blockIndex = true
+      ∧ canonicalStateReloadPreconditions canonicalState = true
+      ∧ canonicalReorgChainPreconditions reorgChain = true
+      ∧ atomicCommitManifestPreconditions commitManifest = true
+      ∧ storageDurabilityPreconditions durability = true
+      ∧ validateNativeLedgerTreeReplayChain
+        initial
+        (rawTreeReplayInputs blocks) =
+        some final := by
+  exact
+    ⟨certificate.admissionSafetyFacts.pendingDecodePreconditions,
+      certificate.admissionSafetyFacts.pendingDecodeExact.1,
+      certificate.admissionSafetyFacts.pendingDecodeExact.2.1,
+      certificate.admissionSafetyFacts.pendingDecodeExact.2.2,
+      certificate.admissionSafetyFacts.blockActionDecodePreconditions,
+      certificate.admissionSafetyFacts.blockActionDecodeExact.1,
+      certificate.admissionSafetyFacts.blockActionDecodeExact.2,
+      certificate.admissionSafetyFacts.acceptedWireProjection,
+      certificate.admissionSafetyFacts.projectedActionRowsMatchDecodedPayloads,
+      certificate.admissionSafetyFacts.actionHashPreconditions,
+      certificate.admissionSafetyFacts.txLeafAccepted,
+      certificate.blockIndexReloadPreconditionsHold,
+      certificate.canonicalStateReloadPreconditionsHold,
+      certificate.canonicalReorgChainPreconditionsHold,
+      certificate.atomicCommitManifestPreconditionsHold,
+      certificate.storageDurabilityPreconditionsHold,
+      certificate.rawAcceptedLedgerTreeReplay⟩
+
 end AcceptedBlockAdmissionSafety
 end Native
 end Hegemon

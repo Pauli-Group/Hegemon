@@ -1,6 +1,10 @@
+import Hegemon.Shielded.Nullifier
+
 namespace Hegemon
 namespace Native
 namespace TransferStateAdmission
+
+open Hegemon.Shielded
 
 inductive TransferNullifierState where
   | valid
@@ -33,6 +37,49 @@ structure TransferStateInput where
   sidecarCiphertextSizesPresent : Bool
   sidecarCiphertextSizesMatch : Bool
 deriving DecidableEq, Repr
+
+structure TransferNullifierRowsInput where
+  spent : List Nullifier
+  pending : List Nullifier
+  action : List Nullifier
+deriving DecidableEq, Repr
+
+def deriveMempoolNullifierStateGo
+    (spent : List Nullifier)
+    (pending seen : List Nullifier) :
+    List Nullifier -> TransferNullifierState
+  | [] => TransferNullifierState.valid
+  | key :: rest =>
+      if isZeroNullifier key then
+        TransferNullifierState.zero
+      else if key ∈ spent then
+        TransferNullifierState.alreadySpent
+      else if key ∈ pending then
+        if key ∈ seen then
+          TransferNullifierState.duplicate
+        else
+          TransferNullifierState.alreadyPending
+      else
+        deriveMempoolNullifierStateGo spent (key :: pending) (key :: seen) rest
+
+def deriveMempoolNullifierState (input : TransferNullifierRowsInput) :
+    TransferNullifierState :=
+  deriveMempoolNullifierStateGo input.spent input.pending [] input.action
+
+def deriveBlockNullifierStateGo :
+    List Nullifier -> List Nullifier -> TransferNullifierState
+  | _, [] => TransferNullifierState.valid
+  | spent, key :: rest =>
+      if isZeroNullifier key then
+        TransferNullifierState.zero
+      else if key ∈ spent then
+        TransferNullifierState.duplicate
+      else
+        deriveBlockNullifierStateGo (key :: spent) rest
+
+def deriveBlockNullifierState (input : TransferNullifierRowsInput) :
+    TransferNullifierState :=
+  deriveBlockNullifierStateGo input.spent input.action
 
 def evaluateTransferState
     (input : TransferStateInput) : Except TransferStateReject Unit :=
@@ -247,6 +294,119 @@ theorem nullifier_precedes_commitment_zero :
         commitmentsNonzero := false } =
       Except.error TransferStateReject.duplicateNullifier := by
   rfl
+
+def sampleNullifierA : Nullifier :=
+  Hegemon.patternedBytes 48 0x71
+
+def sampleNullifierB : Nullifier :=
+  Hegemon.patternedBytes 48 0xb2
+
+theorem mempool_same_action_duplicate_derives_duplicate :
+    deriveMempoolNullifierState
+      { spent := [],
+        pending := [],
+        action := [sampleNullifierA, sampleNullifierA] } =
+      TransferNullifierState.duplicate := by
+  rfl
+
+theorem mempool_fresh_doubleton_derives_duplicate
+    (key : Nullifier)
+    (spent pending : List Nullifier)
+    (nonzero : isZeroNullifier key = false)
+    (notSpent : key ∉ spent)
+    (notPending : key ∉ pending) :
+    deriveMempoolNullifierState
+      { spent := spent,
+        pending := pending,
+        action := [key, key] } =
+      TransferNullifierState.duplicate := by
+  unfold deriveMempoolNullifierState
+  simp [deriveMempoolNullifierStateGo, nonzero, notSpent, notPending]
+
+theorem mempool_prior_pending_precedes_action_duplicate :
+    deriveMempoolNullifierState
+      { spent := [],
+        pending := [sampleNullifierA],
+        action := [sampleNullifierA, sampleNullifierA] } =
+      TransferNullifierState.alreadyPending := by
+  rfl
+
+theorem mempool_prior_pending_precedes_action_duplicate_of_mem
+    (key : Nullifier)
+    (spent pending : List Nullifier)
+    (nonzero : isZeroNullifier key = false)
+    (notSpent : key ∉ spent)
+    (inPending : key ∈ pending) :
+    deriveMempoolNullifierState
+      { spent := spent,
+        pending := pending,
+        action := [key, key] } =
+      TransferNullifierState.alreadyPending := by
+  unfold deriveMempoolNullifierState
+  simp [deriveMempoolNullifierStateGo, nonzero, notSpent, inPending]
+
+theorem block_same_action_duplicate_derives_duplicate :
+    deriveBlockNullifierState
+      { spent := [],
+        pending := [],
+        action := [sampleNullifierA, sampleNullifierA] } =
+      TransferNullifierState.duplicate := by
+  rfl
+
+theorem block_fresh_doubleton_derives_duplicate
+    (key : Nullifier)
+    (spent pending : List Nullifier)
+    (nonzero : isZeroNullifier key = false)
+    (notSpent : key ∉ spent) :
+    deriveBlockNullifierState
+      { spent := spent,
+        pending := pending,
+        action := [key, key] } =
+      TransferNullifierState.duplicate := by
+  unfold deriveBlockNullifierState
+  simp [deriveBlockNullifierStateGo, nonzero, notSpent]
+
+theorem block_prior_spent_duplicate_derives_duplicate :
+    deriveBlockNullifierState
+      { spent := [sampleNullifierA],
+        pending := [],
+        action := [sampleNullifierA] } =
+      TransferNullifierState.duplicate := by
+  rfl
+
+theorem block_prior_spent_duplicate_derives_duplicate_of_mem
+    (key : Nullifier)
+    (spent pending : List Nullifier)
+    (nonzero : isZeroNullifier key = false)
+    (inSpent : key ∈ spent) :
+    deriveBlockNullifierState
+      { spent := spent,
+        pending := pending,
+        action := [key] } =
+      TransferNullifierState.duplicate := by
+  unfold deriveBlockNullifierState
+  simp [deriveBlockNullifierStateGo, nonzero, inSpent]
+
+theorem block_pending_only_does_not_reject_import :
+    deriveBlockNullifierState
+      { spent := [],
+        pending := [sampleNullifierA],
+        action := [sampleNullifierA] } =
+      TransferNullifierState.valid := by
+  rfl
+
+theorem block_pending_only_valid_when_unspent
+    (key : Nullifier)
+    (spent pending : List Nullifier)
+    (nonzero : isZeroNullifier key = false)
+    (notSpent : key ∉ spent) :
+    deriveBlockNullifierState
+      { spent := spent,
+        pending := key :: pending,
+        action := [key] } =
+      TransferNullifierState.valid := by
+  unfold deriveBlockNullifierState
+  simp [deriveBlockNullifierStateGo, nonzero, notSpent]
 
 theorem commitment_zero_precedes_stablecoin_policy :
     evaluateTransferState

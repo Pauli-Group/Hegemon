@@ -1,14 +1,30 @@
 import Hegemon.Network.PqNoiseHandshakeChannel
 import Hegemon.Privacy.NativeObserverSurface
+import Hegemon.Privacy.NativeSidecarObserverSurface
 
 namespace Hegemon
 namespace Privacy
 namespace PqTransportPrivacyBoundary
 
 open Hegemon.Native.BlockArtifactBindingAdmission
+open Hegemon.Native.ActionHashAdmission
+open Hegemon.Native.ActionWireReplayProjectionAdmission
+open Hegemon.Native.AcceptedChain
+open Hegemon.Native.AtomicCommitManifestAdmission
+open Hegemon.Native.BlockActionValidation
+open Hegemon.Native.BlockIndexReload
+open Hegemon.Native.BlockReplayInputProjection
+open Hegemon.Native.CanonicalReorgChainAdmission
+open Hegemon.Native.CanonicalStateReload
+open Hegemon.Native.CodecAdmission
+open Hegemon.Native.MaterializedSidecarDaBlobPublication
+open Hegemon.Native.RawIngressSidecarReplayRecoverability
+open Hegemon.Native.StorageDurabilityAdmission
+open Hegemon.Native.TxLeafArtifact
 open Hegemon.Network.PqNoiseHandshakeChannel
 open Hegemon.Privacy.CiphertextPrivacy
 open Hegemon.Privacy.NativeObserverSurface
+open Hegemon.Privacy.NativeSidecarObserverSurface
 open Hegemon.Privacy.Observer
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
@@ -794,6 +810,473 @@ theorem accepted_pq_kem_certificate_native_ciphertext_privacy_boundary_seed_hard
         residualCertificate.timingAndBatchingPolicy
       networkMetadataPolicy :=
         residualCertificate.networkMetadataPolicy }
+
+structure PqTransportMaterializedSidecarCiphertextPrivacyCertificate
+    (pqSurface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions pqSurface)
+    (localState peerState : Hegemon.Network.PqNoise.ChannelState)
+    (localBytesSent localBytesReceived peerBytesSent peerBytesReceived : Nat)
+    (firstFramePayloadBytes firstFrameTagBytes firstFrameWireBytes : Nat)
+    (sidecarSurface : RawIngressSidecarReplaySurface)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (actionHash : AdmissionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : Hegemon.Native.AcceptedChain.NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (txLeaf : TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop)
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (privacyAssumptions : PrivacyBoundaryAssumptions)
+    (residuals : PqTransportCiphertextPrimitiveResidualAssumptions)
+    (responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts) :
+    Prop where
+  sidecarPublicationFacts :
+    MaterializedSidecarDaBlobPublicationFacts
+      sidecarSurface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence
+  seedHardenedResidualCertificate :
+    PqTransportNativeCiphertextSeedHardenedResidualCertificate
+      pqSurface
+      crypto
+      localState
+      peerState
+      localBytesSent
+      localBytesReceived
+      peerBytesSent
+      peerBytesReceived
+      firstFramePayloadBytes
+      firstFrameTagBytes
+      firstFrameWireBytes
+      left
+      right
+      wireIndistinguishable
+      privacyAssumptions
+      residuals
+      responderSeed
+      initiatorSeed
+      txLeaf
+      shape
+      statementFields
+      bindingFields
+  materializedSidecarRows :
+    sidecarSurface.transferState.sidecarCiphertextsAvailable = true
+      ∧ sidecarSurface.transferState.sidecarCiphertextSizesPresent = true
+      ∧ sidecarSurface.transferState.sidecarCiphertextSizesMatch = true
+  wireReplayDaRowBinding :
+    actionWireReplayProjectionPreconditions
+        sidecarSurface.daSidecarReplay.wireReplayProjection = true
+      ∧ sidecarSurface.daSidecarReplay.wireReplayProjection.actionCount =
+        sidecarSurface.daSidecarReplay.wireReplayProjection.plannedCount
+      ∧ sidecarSurface.daSidecarReplay.wireReplayProjection.actionCount =
+        sidecarSurface.daSidecarReplay.wireReplayProjection.actions.length
+      ∧ wireOutput.projectedActionCount =
+        blockActionDecode.actualActionPayloadCount
+  txLeafCiphertextPublication :
+    txLeaf.ciphertextHashesMatch = true
+      ∧ txLeaf.ciphertextPayloadHashesMatch = true
+  statementCiphertextVectorPublication :
+    shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  nativeOpenAssumptionBoundary :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      left
+      right
+      wireIndistinguishable
+      privacyAssumptions
+  allActiveOutputDecryptDaFacts :
+    ∀ index publicCommitment publicCiphertextHash
+        attempt plaintext material data,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+      left.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? =
+          some attempt.ciphertext ->
+      evaluateDecrypt attempt = none ->
+      data = exportNoteData plaintext material ->
+      publicCommitment = commitmentFromNoteData data ->
+      (ciphertextHashMatches : List Byte → Digest → Prop) ->
+      (∀ {wire summary daBytes},
+        left.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) ->
+      (∀ {wire summary daBytes},
+        right.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) ->
+      ActiveOutputDecryptDaCommitmentFacts
+        residuals.mlKemCiphertextIndistinguishability
+        residuals.aeadCiphertextConfidentiality
+        residuals.hkdfExtractExpandPrimitiveSecurity
+        residuals.osRngQuality
+        wireIndistinguishable
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash
+        attempt
+        plaintext
+        material
+        ciphertextHashMatches
+  implementationSeedBoundary :
+    PqKemSeedTranscriptKdfImplementationBoundaryFacts
+      pqSurface
+      responderSeed
+      initiatorSeed
+  mlKemCiphertextIndistinguishability :
+    residuals.mlKemCiphertextIndistinguishability
+  aeadCiphertextConfidentiality :
+    residuals.aeadCiphertextConfidentiality
+  hkdfExtractExpandPrimitiveSecurity :
+    residuals.hkdfExtractExpandPrimitiveSecurity
+  osRngQuality :
+    residuals.osRngQuality
+  parserWireExactness :
+    residuals.parserWireExactness
+  rawWireIndistinguishable :
+    wireIndistinguishable
+  proofSystemZeroKnowledge :
+    privacyAssumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene :
+    privacyAssumptions.walletMetadataHygiene
+  timingAndBatchingPolicy :
+    privacyAssumptions.timingAndBatchingPolicy
+  networkMetadataPolicy :
+    privacyAssumptions.networkMetadataPolicy
+
+theorem accepted_pq_kem_materialized_sidecar_ciphertext_privacy_boundary_seed_hardened_residual_certificate
+    {pqSurface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions pqSurface}
+    {responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts}
+    {sidecarSurface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : Hegemon.Native.AcceptedChain.NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {txLeaf : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    {left right : ShieldedTransactionWorld}
+    {privacyAssumptions : PrivacyBoundaryAssumptions}
+    (kemTranscriptKdfCertificate :
+      AcceptedPqKemTranscriptKdfCertificate
+        pqSurface
+        crypto
+        responderSeed
+        initiatorSeed)
+    (privacyProofs : PrivacyBoundaryAssumptionProofs privacyAssumptions)
+    (mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity
+      osRngQuality
+      parserWireExactness : Prop)
+    (mlKemAssumption : mlKemCiphertextIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (hkdfAssumption : hkdfExtractExpandPrimitiveSecurity)
+    (osRngAssumption : osRngQuality)
+    (parserWireAssumption : parserWireExactness)
+    (firstFramePayloadBytes : Nat)
+    (facts :
+      MaterializedSidecarDaBlobPublicationFacts
+        sidecarSurface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        materializedRowsFeedTransactionNew
+        transactionNewFeedsConsensusDaBlob
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    PqTransportMaterializedSidecarCiphertextPrivacyCertificate
+      pqSurface
+      crypto
+      (pqChannelStateFromHandshake pqSurface)
+      (peerPqChannelStateFromHandshake pqSurface)
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes)
+      sidecarSurface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      materializedRowsFeedTransactionNew
+      transactionNewFeedsConsensusDaBlob
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence
+      left
+      right
+      game.wireIndistinguishable
+      privacyAssumptions
+      { mlKemCiphertextIndistinguishability :=
+          mlKemCiphertextIndistinguishability
+        aeadCiphertextConfidentiality :=
+          aeadCiphertextConfidentiality
+        hkdfExtractExpandPrimitiveSecurity :=
+          hkdfExtractExpandPrimitiveSecurity
+        osRngQuality :=
+          osRngQuality
+        parserWireExactness :=
+          parserWireExactness }
+      responderSeed
+      initiatorSeed := by
+  let seedCertificate :=
+    accepted_pq_kem_certificate_native_ciphertext_privacy_boundary_seed_hardened_residual_certificate
+      kemTranscriptKdfCertificate
+      privacyProofs
+      mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity
+      osRngQuality
+      parserWireExactness
+      mlKemAssumption
+      aeadAssumption
+      hkdfAssumption
+      osRngAssumption
+      parserWireAssumption
+      firstFramePayloadBytes
+      facts.fullBytePublication.txLeafAccepted
+      canonicalSurface
+      game
+      leftShape
+      leftObserverBytesBounded
+      rightObserverBytesBounded
+  rcases
+      materialized_sidecar_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary
+        privacyProofs
+        mlKemCiphertextIndistinguishability
+        aeadCiphertextConfidentiality
+        hkdfExtractExpandPrimitiveSecurity
+        osRngQuality
+        mlKemAssumption
+        aeadAssumption
+        hkdfAssumption
+        osRngAssumption
+        facts
+        canonicalSurface
+        game
+        leftShape
+        leftObserverBytesBounded
+        rightObserverBytesBounded with
+    ⟨materializedRows,
+      wireReplayDaRowBinding,
+      txLeafCiphertextPublication,
+      statementCiphertextVectorPublication,
+      nativeOpenAssumptionBoundary,
+      allActiveOutputDecryptDaFacts⟩
+  exact
+    { sidecarPublicationFacts := facts
+      seedHardenedResidualCertificate := seedCertificate
+      materializedSidecarRows := materializedRows
+      wireReplayDaRowBinding := wireReplayDaRowBinding
+      txLeafCiphertextPublication := txLeafCiphertextPublication
+      statementCiphertextVectorPublication :=
+        statementCiphertextVectorPublication
+      nativeOpenAssumptionBoundary := nativeOpenAssumptionBoundary
+      allActiveOutputDecryptDaFacts := allActiveOutputDecryptDaFacts
+      implementationSeedBoundary :=
+        seedCertificate.implementationSeedBoundary
+      mlKemCiphertextIndistinguishability :=
+        seedCertificate.mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality :=
+        seedCertificate.aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity :=
+        seedCertificate.hkdfExtractExpandPrimitiveSecurity
+      osRngQuality := seedCertificate.osRngQuality
+      parserWireExactness := seedCertificate.parserWireExactness
+      rawWireIndistinguishable :=
+        seedCertificate.rawWireIndistinguishable
+      proofSystemZeroKnowledge :=
+        seedCertificate.proofSystemZeroKnowledge
+      walletMetadataHygiene :=
+        seedCertificate.walletMetadataHygiene
+      timingAndBatchingPolicy :=
+        seedCertificate.timingAndBatchingPolicy
+      networkMetadataPolicy :=
+        seedCertificate.networkMetadataPolicy }
 
 end PqTransportPrivacyBoundary
 end Privacy

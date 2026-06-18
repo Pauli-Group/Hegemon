@@ -108,8 +108,16 @@ def validCandidateArtifact : CandidateArtifactInput :=
     maxRecursiveProofBytes := 522159
   }
 
+def customProofKindCandidateArtifact : CandidateArtifactInput :=
+  { validCandidateArtifact with proofKindRecursiveBlockV2 := false }
+
 theorem valid_candidate_artifact_accepts :
     evaluateCandidateArtifact validCandidateArtifact = Except.ok () := by
+  rfl
+
+theorem custom_proof_kind_rejects :
+    evaluateCandidateArtifact customProofKindCandidateArtifact =
+      Except.error CandidateArtifactReject.wrongProofKind := by
   rfl
 
 theorem state_deltas_present_rejects

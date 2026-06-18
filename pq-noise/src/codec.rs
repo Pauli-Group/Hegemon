@@ -3,9 +3,9 @@ use serde::{de::DeserializeOwned, Serialize};
 
 pub(crate) const HANDSHAKE_MAX_FRAME_LEN: usize = 64 * 1024;
 
-const HANDSHAKE_MAGIC: &[u8; 4] = b"PNH1";
-const SESSION_MAGIC: &[u8; 4] = b"PNS1";
-const TRANSCRIPT_MAGIC: &[u8; 4] = b"PNT1";
+pub(crate) const HANDSHAKE_MAGIC: &[u8; 4] = b"PNH1";
+pub(crate) const SESSION_MAGIC: &[u8; 4] = b"PNS1";
+pub(crate) const TRANSCRIPT_MAGIC: &[u8; 4] = b"PNT1";
 
 pub(crate) fn encode_handshake<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     encode_with_magic(value, HANDSHAKE_MAGIC, HANDSHAKE_MAX_FRAME_LEN)

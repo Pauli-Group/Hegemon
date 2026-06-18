@@ -1,3 +1,4 @@
+import Hegemon.Consensus.RecursiveBlockAdmission
 import Hegemon.Native.ActionRequestProjectionAdmission
 import Hegemon.Native.BridgeActionResourceAdmission
 import Hegemon.Native.CandidateArtifactAdmission
@@ -28,6 +29,7 @@ open Hegemon.Native.SyncAdmission
 open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafArtifactProjectionRefinement
+open Hegemon.Consensus.RecursiveBlockAdmission
 open Hegemon.Resource.BoundedRequestAdmission
 
 structure PreHeavyWorkResourceBoundSurface where
@@ -71,6 +73,193 @@ def base64ByteParseInput
     decodedBytes := surface.base64DecodedBytes,
     maxDecodedBytes := surface.base64MaxDecodedBytes
   }
+
+structure StagedProofUploadPreHeavyInput where
+  proofMetadata : ProofMetadataInput
+  stagedProofBudget : StagedProofBudgetInput
+  proofDecoded : ProofDecodedInput
+deriving DecidableEq, Repr
+
+inductive StagedProofUploadPreHeavyReject where
+  | metadata : SidecarUploadReject -> StagedProofUploadPreHeavyReject
+  | stagedProofBudget : BudgetReject -> StagedProofUploadPreHeavyReject
+  | decoded : SidecarUploadReject -> StagedProofUploadPreHeavyReject
+deriving DecidableEq, Repr
+
+def evaluateStagedProofUploadPreHeavy
+    (input : StagedProofUploadPreHeavyInput) :
+    Except StagedProofUploadPreHeavyReject Unit :=
+  match evaluateProofMetadata input.proofMetadata with
+  | Except.error reject =>
+      Except.error (StagedProofUploadPreHeavyReject.metadata reject)
+  | Except.ok _ =>
+      match evaluateStagedProofBudgetRejection input.stagedProofBudget with
+      | some reject =>
+          Except.error
+            (StagedProofUploadPreHeavyReject.stagedProofBudget reject)
+      | none =>
+          match evaluateProofDecoded input.proofDecoded with
+          | Except.error reject =>
+              Except.error (StagedProofUploadPreHeavyReject.decoded reject)
+          | Except.ok _ => Except.ok ()
+
+structure AcceptedStagedProofUploadPreHeavyFacts
+    (input : StagedProofUploadPreHeavyInput) : Prop where
+  proofMetadataAccepted :
+    evaluateProofMetadata input.proofMetadata = Except.ok ()
+  proofMetadataPreconditions :
+    proofMetadataPreconditions input.proofMetadata = true
+  stagedProofBudgetAccepted :
+    evaluateStagedProofBudgetRejection input.stagedProofBudget = none
+  stagedProofWithinBudget :
+    ¬ input.stagedProofBudget.maxBytes <
+      stagedProofBudgetTotal input.stagedProofBudget
+  proofDecodedAccepted :
+    evaluateProofDecoded input.proofDecoded = Except.ok ()
+  proofDecodedPreconditions :
+    proofDecodedPreconditions input.proofDecoded = true
+
+theorem accepted_staged_proof_upload_preheavy_exposes_bounds
+    {input : StagedProofUploadPreHeavyInput}
+    (accepted :
+      evaluateStagedProofUploadPreHeavy input = Except.ok ()) :
+    AcceptedStagedProofUploadPreHeavyFacts input := by
+  unfold evaluateStagedProofUploadPreHeavy at accepted
+  cases hMetadata : evaluateProofMetadata input.proofMetadata with
+  | error reject =>
+      simp [hMetadata] at accepted
+  | ok metadataUnit =>
+      cases hBudget :
+          evaluateStagedProofBudgetRejection input.stagedProofBudget with
+      | some budgetReject =>
+          simp [hMetadata, hBudget] at accepted
+      | none =>
+          cases hDecoded : evaluateProofDecoded input.proofDecoded with
+          | error decodedReject =>
+              simp [hMetadata, hBudget, hDecoded] at accepted
+          | ok decodedUnit =>
+              cases metadataUnit
+              cases decodedUnit
+              have metadataAccepts :
+                  accepts (evaluateProofMetadata input.proofMetadata) =
+                    true := by
+                simp [accepts, hMetadata]
+              have budgetAccepts :
+                  stagedProofBudgetAccepts input.stagedProofBudget =
+                    true := by
+                simp [stagedProofBudgetAccepts, hBudget]
+              have decodedAccepts :
+                  accepts (evaluateProofDecoded input.proofDecoded) =
+                    true := by
+                simp [accepts, hDecoded]
+              exact {
+                proofMetadataAccepted := hMetadata,
+                proofMetadataPreconditions := by
+                  have eq := proof_metadata_accepts_iff_preconditions
+                    input.proofMetadata
+                  rw [eq] at metadataAccepts
+                  exact metadataAccepts,
+                stagedProofBudgetAccepted := hBudget,
+                stagedProofWithinBudget :=
+                  staged_proof_accepts_iff_not_over_limit.mp
+                    budgetAccepts,
+                proofDecodedAccepted := hDecoded,
+                proofDecodedPreconditions := by
+                  have eq := proof_decoded_accepts_iff_preconditions
+                    input.proofDecoded
+                  rw [eq] at decodedAccepts
+                  exact decodedAccepts
+              }
+
+theorem staged_proof_upload_metadata_rejects_before_budget
+    {input : StagedProofUploadPreHeavyInput}
+    {reject : SidecarUploadReject}
+    (metadataReject :
+      evaluateProofMetadata input.proofMetadata =
+        Except.error reject) :
+    evaluateStagedProofUploadPreHeavy input =
+      Except.error (StagedProofUploadPreHeavyReject.metadata reject) := by
+  unfold evaluateStagedProofUploadPreHeavy
+  rw [metadataReject]
+
+theorem staged_proof_upload_budget_rejects_before_decoded
+    {input : StagedProofUploadPreHeavyInput}
+    {reject : BudgetReject}
+    (metadataAccepted :
+      evaluateProofMetadata input.proofMetadata = Except.ok ())
+    (budgetReject :
+      evaluateStagedProofBudgetRejection input.stagedProofBudget =
+        some reject) :
+    evaluateStagedProofUploadPreHeavy input =
+      Except.error
+        (StagedProofUploadPreHeavyReject.stagedProofBudget reject) := by
+  unfold evaluateStagedProofUploadPreHeavy
+  rw [metadataAccepted, budgetReject]
+
+theorem staged_proof_upload_decoded_rejects_after_budget_accepts
+    {input : StagedProofUploadPreHeavyInput}
+    {reject : SidecarUploadReject}
+    (metadataAccepted :
+      evaluateProofMetadata input.proofMetadata = Except.ok ())
+    (budgetAccepted :
+      evaluateStagedProofBudgetRejection input.stagedProofBudget = none)
+    (decodedReject :
+      evaluateProofDecoded input.proofDecoded = Except.error reject) :
+    evaluateStagedProofUploadPreHeavy input =
+      Except.error (StagedProofUploadPreHeavyReject.decoded reject) := by
+  unfold evaluateStagedProofUploadPreHeavy
+  rw [metadataAccepted, budgetAccepted, decodedReject]
+
+def validStagedProofUploadPreHeavyInput :
+    StagedProofUploadPreHeavyInput :=
+  {
+    proofMetadata := validProofMetadata,
+    stagedProofBudget := stagedProofReplacementInput,
+    proofDecoded := validProofDecoded
+  }
+
+def stagedProofBudgetPrecedesBindingMismatchInput :
+    StagedProofUploadPreHeavyInput :=
+  {
+    validStagedProofUploadPreHeavyInput with
+    stagedProofBudget := stagedProofOverLimitInput,
+    proofDecoded := {
+      validProofDecoded with
+      proofBindingHashMatchesKey := false
+    }
+  }
+
+def stagedProofBudgetPrecedesDecodedOversizeInput :
+    StagedProofUploadPreHeavyInput :=
+  {
+    validStagedProofUploadPreHeavyInput with
+    stagedProofBudget := stagedProofOverLimitInput,
+    proofDecoded := {
+      validProofDecoded with
+      proofBytes := validProofDecoded.maxProofBytes + 1
+    }
+  }
+
+theorem valid_staged_proof_upload_preheavy_accepts :
+    evaluateStagedProofUploadPreHeavy
+      validStagedProofUploadPreHeavyInput = Except.ok () := by
+  rfl
+
+theorem staged_proof_budget_precedes_binding_mismatch :
+    evaluateStagedProofUploadPreHeavy
+      stagedProofBudgetPrecedesBindingMismatchInput =
+        Except.error
+          (StagedProofUploadPreHeavyReject.stagedProofBudget
+            BudgetReject.stagedProofByteBudgetExceeded) := by
+  rfl
+
+theorem staged_proof_budget_precedes_decoded_oversize :
+    evaluateStagedProofUploadPreHeavy
+      stagedProofBudgetPrecedesDecodedOversizeInput =
+        Except.error
+          (StagedProofUploadPreHeavyReject.stagedProofBudget
+            BudgetReject.stagedProofByteBudgetExceeded) := by
+  rfl
 
 structure AcceptedPreHeavyWorkResourceBoundInputs
     (surface : PreHeavyWorkResourceBoundSurface) : Prop where
@@ -834,9 +1023,12 @@ structure PreHeavyWorkVerificationPathSurface where
   candidateArtifact : CandidateArtifactInput
   txLeafArtifactBytes : List Byte
   txLeafArtifactSummary : TxLeafSummary
+  txLeafArtifactResourcePolicy : ResourcePolicy
+  recursiveBlockArtifact : ArtifactAdmissionInput
   receiptRootExpectedLeafCount : Nat
   receiptRootArtifactBytes : List Byte
   receiptRootSummary : ReceiptRootSummary
+  receiptRootResourcePolicy : ResourcePolicy
 deriving DecidableEq, Repr
 
 structure AcceptedPreHeavyWorkVerificationPathInputs
@@ -859,6 +1051,14 @@ structure AcceptedPreHeavyWorkVerificationPathInputs
   txLeafArtifactParsed :
     parseNativeTxLeafArtifact surface.txLeafArtifactBytes =
       some surface.txLeafArtifactSummary
+  txLeafArtifactResourceAccepted :
+    evaluateBoundedRequest
+        surface.txLeafArtifactResourcePolicy
+        (txLeafArtifactResourceRequest
+          surface.txLeafArtifactBytes
+          surface.txLeafArtifactSummary) = none
+  recursiveBlockArtifactAccepted :
+    artifactAccepts surface.recursiveBlockArtifact = true
   receiptRootArtifactParsed :
     parseNativeReceiptRootArtifact surface.receiptRootArtifactBytes =
       some surface.receiptRootSummary
@@ -866,6 +1066,12 @@ structure AcceptedPreHeavyWorkVerificationPathInputs
     receiptRootScheduleAccepts
         surface.receiptRootExpectedLeafCount
         surface.receiptRootArtifactBytes = true
+  receiptRootResourceAccepted :
+    evaluateBoundedRequest
+        surface.receiptRootResourcePolicy
+        (receiptRootArtifactResourceRequest
+          surface.receiptRootArtifactBytes
+          surface.receiptRootSummary) = none
   parserCorrectnessAssumption :
     parserCorrectness
   benchmarkCapsAssumption :
@@ -896,9 +1102,25 @@ structure AcceptedPreHeavyWorkVerificationPathBounds
     AcceptedNativeTxLeafArtifactByteShapeFacts
       surface.txLeafArtifactBytes
       surface.txLeafArtifactSummary
+  txLeafArtifactResourceFacts :
+    AcceptedNativeTxLeafArtifactResourceFacts
+      surface.txLeafArtifactResourcePolicy
+      surface.txLeafArtifactBytes
+      surface.txLeafArtifactSummary
+  recursiveBlockArtifactResourceFacts :
+    AcceptedBoundedRequestFacts
+      (recursiveBlockArtifactResourcePolicy
+        surface.recursiveBlockArtifact)
+      (recursiveBlockArtifactResourceRequest
+        surface.recursiveBlockArtifact)
   receiptRootScheduleFacts :
     ReceiptRootScheduleFacts
       surface.receiptRootExpectedLeafCount
+      surface.receiptRootArtifactBytes
+      surface.receiptRootSummary
+  receiptRootResourceFacts :
+    ReceiptRootResourceFacts
+      surface.receiptRootResourcePolicy
       surface.receiptRootArtifactBytes
       surface.receiptRootSummary
   parserCorrectnessAssumption :
@@ -944,10 +1166,20 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
     txLeafArtifactByteShapeFacts :=
       accepted_native_tx_leaf_artifact_bytes_expose_shape_facts
         accepted.txLeafArtifactParsed,
+    txLeafArtifactResourceFacts :=
+      accepted_native_tx_leaf_artifact_resource_exposes_bounds
+        accepted.txLeafArtifactParsed
+        accepted.txLeafArtifactResourceAccepted,
+    recursiveBlockArtifactResourceFacts :=
+      recursive_block_artifact_accepts_implies_bounded_request_facts
+        accepted.recursiveBlockArtifactAccepted,
     receiptRootScheduleFacts :=
       receipt_root_schedule_accepts_implies_facts
         accepted.receiptRootArtifactParsed
         accepted.receiptRootScheduleAccepted,
+    receiptRootResourceFacts :=
+      accepted_receipt_root_resource_exposes_bounds
+        accepted.receiptRootResourceAccepted,
     parserCorrectnessAssumption :=
       accepted.parserCorrectnessAssumption,
     benchmarkCapsAssumption :=
@@ -975,9 +1207,25 @@ structure AcceptedPreHeavyWorkDoSBoundCertificate
     AcceptedNativeTxLeafArtifactByteShapeFacts
       surface.txLeafArtifactBytes
       surface.txLeafArtifactSummary
+  txLeafArtifactResourceFacts :
+    AcceptedNativeTxLeafArtifactResourceFacts
+      surface.txLeafArtifactResourcePolicy
+      surface.txLeafArtifactBytes
+      surface.txLeafArtifactSummary
+  recursiveBlockArtifactResourceFacts :
+    AcceptedBoundedRequestFacts
+      (recursiveBlockArtifactResourcePolicy
+        surface.recursiveBlockArtifact)
+      (recursiveBlockArtifactResourceRequest
+        surface.recursiveBlockArtifact)
   receiptRootScheduleFacts :
     ReceiptRootScheduleFacts
       surface.receiptRootExpectedLeafCount
+      surface.receiptRootArtifactBytes
+      surface.receiptRootSummary
+  receiptRootResourceFacts :
+    ReceiptRootResourceFacts
+      surface.receiptRootResourcePolicy
       surface.receiptRootArtifactBytes
       surface.receiptRootSummary
   parserCorrectnessAssumption :
@@ -1013,11 +1261,413 @@ theorem accepted_preheavy_work_dos_bound_certificate
     candidateArtifactBounds := pathBounds.candidateBounds,
     txLeafArtifactByteShapeFacts :=
       pathBounds.txLeafArtifactByteShapeFacts,
+    txLeafArtifactResourceFacts :=
+      pathBounds.txLeafArtifactResourceFacts,
+    recursiveBlockArtifactResourceFacts :=
+      pathBounds.recursiveBlockArtifactResourceFacts,
     receiptRootScheduleFacts := pathBounds.receiptRootScheduleFacts,
+    receiptRootResourceFacts := pathBounds.receiptRootResourceFacts,
     parserCorrectnessAssumption :=
       pathBounds.parserCorrectnessAssumption,
     benchmarkCapsAssumption :=
       pathBounds.benchmarkCapsAssumption
+  }
+
+inductive PublicInputCostFamily where
+  | mempoolAdmission
+  | stagedProofAdmission
+  | rpcHexBytes
+  | rpcBase64Bytes
+  | rpcBatch
+  | sidecarCiphertextRequest
+  | sidecarProofRequest
+  | sidecarCiphertextCapacity
+  | sidecarProofCapacity
+  | sidecarProofMetadata
+  | sidecarProofDecoded
+  | mineableAction
+  | syncWireDecode
+  | syncResponseRange
+  | syncResponseCount
+  | syncResponseImport
+  | submitActionRequest
+  | transferPayload
+  | bridgeActionPayload
+  | candidateArtifact
+  | nativeTxLeafArtifact
+  | receiptRootArtifact
+deriving DecidableEq, Repr
+
+def productionPublicInputCostFamilies : List PublicInputCostFamily := [
+  PublicInputCostFamily.mempoolAdmission,
+  PublicInputCostFamily.stagedProofAdmission,
+  PublicInputCostFamily.rpcHexBytes,
+  PublicInputCostFamily.rpcBase64Bytes,
+  PublicInputCostFamily.rpcBatch,
+  PublicInputCostFamily.sidecarCiphertextRequest,
+  PublicInputCostFamily.sidecarProofRequest,
+  PublicInputCostFamily.sidecarCiphertextCapacity,
+  PublicInputCostFamily.sidecarProofCapacity,
+  PublicInputCostFamily.sidecarProofMetadata,
+  PublicInputCostFamily.sidecarProofDecoded,
+  PublicInputCostFamily.mineableAction,
+  PublicInputCostFamily.syncWireDecode,
+  PublicInputCostFamily.syncResponseRange,
+  PublicInputCostFamily.syncResponseCount,
+  PublicInputCostFamily.syncResponseImport,
+  PublicInputCostFamily.submitActionRequest,
+  PublicInputCostFamily.transferPayload,
+  PublicInputCostFamily.bridgeActionPayload,
+  PublicInputCostFamily.candidateArtifact,
+  PublicInputCostFamily.nativeTxLeafArtifact,
+  PublicInputCostFamily.receiptRootArtifact
+]
+
+def publicInputCostFamilyCovered
+    (surface : PreHeavyWorkVerificationPathSurface)
+    (family : PublicInputCostFamily) : Prop :=
+  match family with
+  | PublicInputCostFamily.mempoolAdmission =>
+      evaluateMempoolBudgetRejection
+          surface.resourceSurface.mempoolBudget = none
+        ∧ ¬ surface.resourceSurface.mempoolBudget.maxBytes <
+          mempoolBudgetTotal surface.resourceSurface.mempoolBudget
+  | PublicInputCostFamily.stagedProofAdmission =>
+      evaluateStagedProofBudgetRejection
+          surface.resourceSurface.stagedProofBudget = none
+        ∧ ¬ surface.resourceSurface.stagedProofBudget.maxBytes <
+          stagedProofBudgetTotal surface.resourceSurface.stagedProofBudget
+  | PublicInputCostFamily.rpcHexBytes =>
+      byteParseAccepts (hexByteParseInput surface.resourceSurface) = true
+        ∧ (¬ hexLenLimit surface.resourceSurface.hexMaxDecodedBytes <
+            surface.resourceSurface.hexRawTextBytes
+          ∧ ¬ surface.resourceSurface.hexMaxDecodedBytes <
+            surface.resourceSurface.hexDecodedBytes)
+  | PublicInputCostFamily.rpcBase64Bytes =>
+      byteParseAccepts (base64ByteParseInput surface.resourceSurface) =
+          true
+        ∧ (¬ encodedLenLimit
+              surface.resourceSurface.base64MaxDecodedBytes <
+            surface.resourceSurface.base64RawTextBytes
+          ∧ ¬ surface.resourceSurface.base64MaxDecodedBytes <
+            surface.resourceSurface.base64DecodedBytes)
+  | PublicInputCostFamily.rpcBatch =>
+      evaluateBatchRejection surface.resourceSurface.rpcBatch = none
+        ∧ surface.resourceSurface.rpcBatch.requestCount ≠ 0
+        ∧ ¬ surface.resourceSurface.rpcBatch.maxRequests <
+          surface.resourceSurface.rpcBatch.requestCount
+  | PublicInputCostFamily.sidecarCiphertextRequest =>
+      evaluateCiphertextRequest
+          surface.resourceSurface.ciphertextRequest = Except.ok ()
+        ∧ ¬ surface.resourceSurface.ciphertextRequest.itemCount >
+          surface.resourceSurface.ciphertextRequest.maxItems
+  | PublicInputCostFamily.sidecarProofRequest =>
+      evaluateProofRequest
+          surface.resourceSurface.proofRequest = Except.ok ()
+        ∧ ¬ surface.resourceSurface.proofRequest.itemCount >
+          surface.resourceSurface.proofRequest.maxItems
+  | PublicInputCostFamily.sidecarCiphertextCapacity =>
+      evaluateCiphertextCapacity
+          surface.resourceSurface.ciphertextCapacity = Except.ok ()
+        ∧ capacityPreconditions
+          surface.resourceSurface.ciphertextCapacity = true
+  | PublicInputCostFamily.sidecarProofCapacity =>
+      evaluateProofCapacity
+          surface.resourceSurface.proofCapacity = Except.ok ()
+        ∧ capacityPreconditions
+          surface.resourceSurface.proofCapacity = true
+  | PublicInputCostFamily.sidecarProofMetadata =>
+      evaluateProofMetadata
+          surface.resourceSurface.proofMetadata = Except.ok ()
+        ∧ proofMetadataPreconditions
+          surface.resourceSurface.proofMetadata = true
+  | PublicInputCostFamily.sidecarProofDecoded =>
+      evaluateProofDecoded
+          surface.resourceSurface.proofDecoded = Except.ok ()
+        ∧ proofDecodedPreconditions
+          surface.resourceSurface.proofDecoded = true
+  | PublicInputCostFamily.mineableAction =>
+      evaluateMineableAction
+          surface.resourceSurface.mineableAction = Except.ok ()
+        ∧ mineableActionPreconditions
+          surface.resourceSurface.mineableAction = true
+  | PublicInputCostFamily.syncWireDecode =>
+      syncDecodeAccepts surface.syncPath.syncDecode = true
+        ∧ surface.syncPath.syncDecode.boundedWireDecodeAccepts = true
+        ∧ surface.syncPath.syncDecode.consumedAllBytes = true
+  | PublicInputCostFamily.syncResponseRange =>
+      responseRange surface.syncPath.responseRangeInput =
+          some surface.syncPath.responseRange
+        ∧ ¬ surface.syncPath.responseRangeInput.maxBlocks <
+          responseRangeBlockCount surface.syncPath.responseRange
+  | PublicInputCostFamily.syncResponseCount =>
+      responseCountAccepts surface.syncPath.responseCount = true
+        ∧ surface.syncPath.responseCount.blockCount ≤
+          surface.syncPath.responseCount.maxBlocks
+  | PublicInputCostFamily.syncResponseImport =>
+      evaluateBoundedRequest
+          surface.syncPath.resourcePolicy
+          surface.syncPath.resourceRequest = none
+        ∧ surface.syncPath.resourceRequest.itemCount =
+          surface.syncPath.responseCount.blockCount
+        ∧ ¬ surface.syncPath.resourcePolicy.itemCountCap <
+          surface.syncPath.responseCount.blockCount
+  | PublicInputCostFamily.submitActionRequest =>
+      actionRequestProjectionAccepts surface.actionRequest = true
+        ∧ actionRequestProjectionPreconditions surface.actionRequest =
+          true
+  | PublicInputCostFamily.transferPayload =>
+      transferPayloadAccepts surface.transferPayload = true
+        ∧ transferPayloadPreconditions surface.transferPayload = true
+        ∧ surface.transferPayload.proofBytes ≠ 0
+        ∧ ¬ surface.transferPayload.proofBytes >
+          surface.transferPayload.maxProofBytes
+        ∧ ¬ surface.transferPayload.inlineCiphertextBytes >
+          surface.transferPayload.maxCiphertextBytes
+  | PublicInputCostFamily.bridgeActionPayload =>
+      evaluateBoundedRequest
+          surface.bridgeResourcePolicy
+          (bridgeActionResourceRequest surface.bridgeResource) = none
+        ∧ ¬ surface.bridgeResourcePolicy.rawByteCap <
+          surface.bridgeResource.publicArgsBytes
+        ∧ ¬ surface.bridgeResourcePolicy.decodedByteCap <
+          surface.bridgeResource.publicArgsBytes
+        ∧ ¬ surface.bridgeResourcePolicy.aggregateByteCap <
+          bridgeActionResourceAggregateBytes surface.bridgeResource
+        ∧ ¬ surface.bridgeResourcePolicy.workUnitCap <
+          bridgeActionResourcePayloadWorkUnits surface.bridgeResource
+  | PublicInputCostFamily.candidateArtifact =>
+      evaluateCandidateArtifact surface.candidateArtifact =
+          Except.ok ()
+        ∧ surface.candidateArtifact.txCount ≠ 0
+        ∧ ¬ surface.candidateArtifact.txCount >
+          surface.candidateArtifact.maxTxCount
+        ∧ surface.candidateArtifact.daChunkCount ≠ 0
+        ∧ surface.candidateArtifact.recursiveProofBytes ≠ 0
+        ∧ ¬ surface.candidateArtifact.recursiveProofBytes >
+          surface.candidateArtifact.maxRecursiveProofBytes
+  | PublicInputCostFamily.nativeTxLeafArtifact =>
+      parseNativeTxLeafArtifact surface.txLeafArtifactBytes =
+          some surface.txLeafArtifactSummary
+        ∧ evaluateBoundedRequest
+          surface.txLeafArtifactResourcePolicy
+          (txLeafArtifactResourceRequest
+            surface.txLeafArtifactBytes
+            surface.txLeafArtifactSummary) = none
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.rawByteCap <
+          surface.txLeafArtifactBytes.length
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.decodedByteCap <
+          surface.txLeafArtifactBytes.length
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.itemCountCap <
+          txLeafArtifactDynamicItemCount
+            surface.txLeafArtifactSummary
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.itemByteCap <
+          surface.txLeafArtifactSummary.starkProofLen
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.aggregateByteCap <
+          txLeafArtifactAggregateBytes
+            surface.txLeafArtifactSummary
+        ∧ ¬ surface.txLeafArtifactResourcePolicy.workUnitCap <
+          txLeafArtifactWorkUnits
+            surface.txLeafArtifactSummary
+        ∧ surface.txLeafArtifactSummary.serialized.inputFlagCount ≤
+          TxLeafArtifact.maxInputs
+        ∧ surface.txLeafArtifactSummary.serialized.outputFlagCount ≤
+          TxLeafArtifact.maxOutputs
+        ∧ surface.txLeafArtifactSummary.serialized.balanceSlotCount ≤
+          TxLeafArtifact.balanceSlots
+        ∧ surface.txLeafArtifactSummary.publicTx.nullifierCount ≤
+          TxLeafArtifact.maxInputs
+        ∧ surface.txLeafArtifactSummary.publicTx.commitmentCount ≤
+          TxLeafArtifact.maxOutputs
+        ∧ surface.txLeafArtifactSummary.publicTx.ciphertextHashCount ≤
+          TxLeafArtifact.maxOutputs
+        ∧ surface.txLeafArtifactSummary.starkProofLen ≤
+          TxLeafArtifact.maxNativeTxStarkProofBytes
+        ∧ surface.txLeafArtifactSummary.commitment.rowCount ≤
+          TxLeafArtifact.matrixRows
+  | PublicInputCostFamily.receiptRootArtifact =>
+      parseNativeReceiptRootArtifact
+          surface.receiptRootArtifactBytes =
+        some surface.receiptRootSummary
+        ∧ evaluateBoundedRequest
+          surface.receiptRootResourcePolicy
+          (receiptRootArtifactResourceRequest
+            surface.receiptRootArtifactBytes
+            surface.receiptRootSummary) = none
+        ∧ ¬ surface.receiptRootResourcePolicy.rawByteCap <
+          surface.receiptRootArtifactBytes.length
+        ∧ ¬ surface.receiptRootResourcePolicy.decodedByteCap <
+          surface.receiptRootArtifactBytes.length
+        ∧ ¬ surface.receiptRootResourcePolicy.itemCountCap <
+          receiptRootDynamicItemCount surface.receiptRootSummary
+        ∧ ¬ surface.receiptRootResourcePolicy.itemByteCap <
+          receiptRootMaxItemBytes surface.receiptRootSummary
+        ∧ ¬ surface.receiptRootResourcePolicy.aggregateByteCap <
+          receiptRootAggregateBytes surface.receiptRootSummary
+        ∧ ¬ surface.receiptRootResourcePolicy.workUnitCap <
+          receiptRootWorkUnits surface.receiptRootSummary
+        ∧ receiptRootScheduleAccepts
+          surface.receiptRootExpectedLeafCount
+          surface.receiptRootArtifactBytes = true
+        ∧ 0 < surface.receiptRootExpectedLeafCount
+        ∧ surface.receiptRootSummary.leafCount =
+          surface.receiptRootExpectedLeafCount
+        ∧ surface.receiptRootSummary.foldCount =
+          expectedFoldCount surface.receiptRootExpectedLeafCount
+        ∧ allFoldShapesExact surface.receiptRootSummary.folds = true
+
+theorem preheavy_certificate_covers_public_input_cost_family
+    {surface : PreHeavyWorkVerificationPathSurface}
+    {parserCorrectness benchmarkCaps : Prop}
+    (certificate :
+      AcceptedPreHeavyWorkDoSBoundCertificate
+        surface
+        parserCorrectness
+        benchmarkCaps)
+    (family : PublicInputCostFamily) :
+    publicInputCostFamilyCovered surface family := by
+  cases family <;> unfold publicInputCostFamilyCovered
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.mempoolBudgetAccepted,
+      certificate.rpcAndSidecarResourceBounds.mempoolWithinBudget⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.stagedProofBudgetAccepted,
+      certificate.rpcAndSidecarResourceBounds.stagedProofWithinBudget⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.hexByteParseAccepted,
+      certificate.rpcAndSidecarResourceBounds.hexByteCapsHold⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.base64ByteParseAccepted,
+      certificate.rpcAndSidecarResourceBounds.base64ByteCapsHold⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.rpcBatchAccepted,
+      certificate.rpcAndSidecarResourceBounds.rpcBatchNonemptyWithinCap⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.ciphertextRequestAccepted,
+      certificate.rpcAndSidecarResourceBounds.ciphertextRequestWithinCap⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.proofRequestAccepted,
+      certificate.rpcAndSidecarResourceBounds.proofRequestWithinCap⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.ciphertextCapacityAccepted,
+      certificate.rpcAndSidecarResourceBounds.ciphertextCapacityPreconditions⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.proofCapacityAccepted,
+      certificate.rpcAndSidecarResourceBounds.proofCapacityPreconditions⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.proofMetadataAccepted,
+      certificate.rpcAndSidecarResourceBounds.proofMetadataPreconditions⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.proofDecodedAccepted,
+      certificate.rpcAndSidecarResourceBounds.proofDecodedPreconditions⟩
+  · exact ⟨
+      certificate.rpcAndSidecarResourceBounds.mineableActionAccepted,
+      certificate.rpcAndSidecarResourceBounds.mineableActionPreconditions⟩
+  · exact ⟨
+      certificate.syncBounds.syncDecodeAccepted,
+      certificate.syncBounds.syncDecodeExact⟩
+  · exact ⟨
+      certificate.syncBounds.responseRangeAccepted,
+      certificate.syncBounds.responseRangeItemCountWithinMaxBlocks⟩
+  · exact ⟨
+      certificate.syncBounds.responseCountAccepted,
+      certificate.syncBounds.responseCountWithinLimit⟩
+  · exact ⟨
+      certificate.syncBounds.syncResourceAccepted,
+      certificate.syncBounds.resourceItemCountMatchesResponseCount,
+      certificate.syncBounds.responseCountWithinResourceCap⟩
+  · exact ⟨
+      certificate.actionRequestBounds.actionRequestAccepted,
+      certificate.actionRequestBounds.actionRequestPreconditions⟩
+  · exact ⟨
+      certificate.transferBounds.transferPayloadAccepted,
+      certificate.transferBounds.transferPayloadPreconditions,
+      certificate.transferBounds.proofPresent,
+      certificate.transferBounds.proofWithinCap,
+      certificate.transferBounds.inlineCiphertextWithinCap⟩
+  · exact ⟨
+      certificate.bridgeResourceFacts.boundedFacts.accepted,
+      certificate.bridgeResourceFacts.publicArgsWithinRawCap,
+      certificate.bridgeResourceFacts.publicArgsWithinDecodedCap,
+      certificate.bridgeResourceFacts.dynamicAggregateWithinCap,
+      certificate.bridgeResourceFacts.payloadWorkWithinCap⟩
+  · exact ⟨
+      certificate.candidateArtifactBounds.candidateArtifactAccepted,
+      certificate.candidateArtifactBounds.txCountNonzero,
+      certificate.candidateArtifactBounds.txCountWithinCap,
+      certificate.candidateArtifactBounds.daChunkCountNonzero,
+      certificate.candidateArtifactBounds.recursiveProofNonempty,
+      certificate.candidateArtifactBounds.recursiveProofWithinCap⟩
+  · exact ⟨
+      certificate.txLeafArtifactByteShapeFacts.parsed,
+      certificate.txLeafArtifactResourceFacts.boundedFacts.accepted,
+      certificate.txLeafArtifactResourceFacts.artifactRawBytesWithinCap,
+      certificate.txLeafArtifactResourceFacts.artifactDecodedBytesWithinCap,
+      certificate.txLeafArtifactResourceFacts.dynamicItemCountWithinCap,
+      certificate.txLeafArtifactResourceFacts.starkProofBytesWithinItemByteCap,
+      certificate.txLeafArtifactResourceFacts.aggregateBytesWithinCap,
+      certificate.txLeafArtifactResourceFacts.workUnitsWithinCap,
+      certificate.txLeafArtifactByteShapeFacts.serializedInputFlagCountBound,
+      certificate.txLeafArtifactByteShapeFacts.serializedOutputFlagCountBound,
+      certificate.txLeafArtifactByteShapeFacts.serializedBalanceSlotCountBound,
+      certificate.txLeafArtifactByteShapeFacts.publicNullifierCountBound,
+      certificate.txLeafArtifactByteShapeFacts.publicCommitmentCountBound,
+      certificate.txLeafArtifactByteShapeFacts.publicCiphertextHashCountBound,
+      certificate.txLeafArtifactByteShapeFacts.starkProofLenBound,
+      certificate.txLeafArtifactByteShapeFacts.commitmentRowCountBound⟩
+  · exact ⟨
+      certificate.receiptRootScheduleFacts.parsed,
+      certificate.receiptRootResourceFacts.boundedFacts.accepted,
+      certificate.receiptRootResourceFacts.artifactRawBytesWithinCap,
+      certificate.receiptRootResourceFacts.artifactDecodedBytesWithinCap,
+      certificate.receiptRootResourceFacts.dynamicItemCountWithinCap,
+      certificate.receiptRootResourceFacts.maxItemBytesWithinCap,
+      certificate.receiptRootResourceFacts.aggregateBytesWithinCap,
+      certificate.receiptRootResourceFacts.workUnitsWithinCap,
+      certificate.receiptRootScheduleFacts.scheduleAccepted,
+      certificate.receiptRootScheduleFacts.expectedLeafCountPositive,
+      certificate.receiptRootScheduleFacts.leafCountMatches,
+      certificate.receiptRootScheduleFacts.foldCountMatches,
+      certificate.receiptRootScheduleFacts.foldShapesExact⟩
+
+structure PublicInputCostClassCoverageCertificate
+    (surface : PreHeavyWorkVerificationPathSurface)
+    (parserCorrectness benchmarkCaps : Prop) : Prop where
+  preHeavyDoSBoundCertificate :
+    AcceptedPreHeavyWorkDoSBoundCertificate
+      surface
+      parserCorrectness
+      benchmarkCaps
+  coveredFamilies :
+    ∀ family,
+      family ∈ productionPublicInputCostFamilies ->
+        publicInputCostFamilyCovered
+          surface
+          family
+  familyCount :
+    productionPublicInputCostFamilies.length = 22
+
+theorem accepted_preheavy_dos_certificate_covers_all_public_input_cost_classes
+    {surface : PreHeavyWorkVerificationPathSurface}
+    {parserCorrectness benchmarkCaps : Prop}
+    (certificate :
+      AcceptedPreHeavyWorkDoSBoundCertificate
+        surface
+        parserCorrectness
+        benchmarkCaps) :
+    PublicInputCostClassCoverageCertificate
+      surface
+      parserCorrectness
+      benchmarkCaps := by
+  exact {
+    preHeavyDoSBoundCertificate := certificate,
+    coveredFamilies := by
+      intro family _membership
+      exact preheavy_certificate_covers_public_input_cost_family
+        certificate
+        family,
+    familyCount := by
+      rfl
   }
 
 end PreHeavyWorkResourceBoundSurface

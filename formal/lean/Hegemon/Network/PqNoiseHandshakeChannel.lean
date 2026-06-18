@@ -1,4 +1,5 @@
 import Hegemon.Network.PqNoise
+import Hegemon.Network.FrameResourceAdmission
 import Hegemon.Network.SecureChannel
 
 namespace Hegemon
@@ -1225,6 +1226,171 @@ structure PqProductionChannelSafetyCertificate
   peerOpenedNextRecvCounter :
     peerOpenedNext.recvCounter = frameIndex + 1
 
+structure PqFailedOpenReplayAdmissionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (sendCounter : Nat) : Prop where
+  handshakeAccepted :
+    AcceptedAuthenticatedPqHandshake surface crypto
+  duplicateFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).accepted = false
+  duplicateRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).next =
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 1 }
+  nextFrameAfterDuplicateAccepted :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = true
+  nextFrameAfterDuplicateAdvancesRecvCounter :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).next.recvCounter = 2
+  futureFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  futureRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).next =
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 0 }
+  currentFrameAfterFutureRejectedAccepted :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).accepted = true
+  currentFrameAfterFutureRejectedAdvancesRecvCounter :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).next.recvCounter = 1
+
+theorem accepted_authenticated_pq_handshake_failed_open_replay_admission_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (sendCounter : Nat) :
+    PqFailedOpenReplayAdmissionFacts surface crypto sendCounter := by
+  refine
+    { handshakeAccepted := handshake
+      duplicateFrameRejected := ?_
+      duplicateRejectPreservesState := ?_
+      nextFrameAfterDuplicateAccepted := ?_
+      nextFrameAfterDuplicateAdvancesRecvCounter := ?_
+      futureFrameRejected := ?_
+      futureRejectPreservesState := ?_
+      currentFrameAfterFutureRejectedAccepted := ?_
+      currentFrameAfterFutureRejectedAdvancesRecvCounter := ?_ }
+  · rw [PqNoise.openFrameWithObservedWire_rejects_stale_duplicate_after_first]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_rejects_stale_duplicate_after_first]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_next_frame_after_duplicate_rejects_accepts]
+  · rw [PqNoise.openFrameWithObservedWire_next_frame_after_duplicate_rejects_accepts]
+  · rw [PqNoise.openFrameWithObservedWire_rejects_future_gap_before_first]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_rejects_future_gap_before_first]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_current_frame_after_future_rejects_accepts]
+  · rw [PqNoise.openFrameWithObservedWire_current_frame_after_future_rejects_accepts]
+
+structure PqSameRoleMisbindAdmissionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (sendCounter recvCounter : Nat) : Prop where
+  handshakeAccepted :
+    AcceptedAuthenticatedPqHandshake surface crypto
+  sameRoleSendSlotMismatchesRecv :
+    PqNoise.sendSlot surface.role ≠ PqNoise.recvSlot surface.role
+  peerRoleRequiredForSlotAdmission :
+    PqNoise.sendSlot surface.role = PqNoise.recvSlot (peerRole surface.role)
+  sameRoleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := surface.role, sendCounter := sendCounter, recvCounter := recvCounter }
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter recvCounter)).accepted = false
+  sameRoleRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := surface.role, sendCounter := sendCounter, recvCounter := recvCounter }
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter recvCounter)).next =
+      { role := surface.role, sendCounter := sendCounter, recvCounter := recvCounter }
+
+theorem accepted_authenticated_pq_handshake_same_role_misbind_admission_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (sendCounter recvCounter : Nat) :
+    PqSameRoleMisbindAdmissionFacts surface crypto sendCounter recvCounter := by
+  refine
+    { handshakeAccepted := handshake
+      sameRoleSendSlotMismatchesRecv := PqNoise.send_recv_slots_distinct
+      peerRoleRequiredForSlotAdmission :=
+        pq_send_slot_matches_peer_recv (role := surface.role)
+      sameRoleFrameRejected := ?_
+      sameRoleRejectPreservesState := ?_ }
+  · rw [PqNoise.openFrameWithObservedWire_rejects_same_role_send_slot]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_rejects_same_role_send_slot]
+    rfl
+
+structure PqIndexedStaleReplayAdmissionFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (sendCounter : Nat) : Prop where
+  handshakeAccepted :
+    AcceptedAuthenticatedPqHandshake surface crypto
+  staleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  staleRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).next =
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 3 }
+  currentFrameAfterStaleRejectedAccepted :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 3)).accepted = true
+  currentFrameAfterStaleRejectedAdvancesRecvCounter :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role, sendCounter := sendCounter, recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 3)).next.recvCounter = 4
+
+theorem accepted_authenticated_pq_handshake_indexed_stale_replay_admission_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (sendCounter : Nat) :
+    PqIndexedStaleReplayAdmissionFacts surface crypto sendCounter := by
+  refine
+    { handshakeAccepted := handshake
+      staleFrameRejected := ?_
+      staleRejectPreservesState := ?_
+      currentFrameAfterStaleRejectedAccepted := ?_
+      currentFrameAfterStaleRejectedAdvancesRecvCounter := ?_ }
+  · rw [PqNoise.openFrameWithObservedWire_rejects_stale_nonce_one_at_three]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_rejects_stale_nonce_one_at_three]
+    rfl
+  · rw [PqNoise.openFrameWithObservedWire_current_frame_after_stale_three_rejects_accepts]
+  · rw [PqNoise.openFrameWithObservedWire_current_frame_after_stale_three_rejects_accepts]
+
 theorem accepted_pq_v4_os_rng_transcript_kdf_directional_channel_safety_certificate
     {surface : HandshakeChannelSurface}
     {crypto : CryptoAssumptions surface}
@@ -1338,6 +1504,898 @@ theorem accepted_pq_v4_os_rng_transcript_kdf_directional_channel_safety_certific
         frameAdmission.peerOpenedNextSendCounterCarried
       peerOpenedNextRecvCounter :=
         frameAdmission.peerOpenedNextRecvCounter }
+
+structure PqProductionChannelReplaySafetyCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState) : Prop where
+  directionalChannelSafety :
+    PqProductionChannelSafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+  failedOpenReplayAdmission :
+    PqFailedOpenReplayAdmissionFacts surface crypto peerSendCounter
+
+theorem accepted_pq_v5_os_rng_transcript_kdf_directional_replay_channel_safety_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max) :
+    PqProductionChannelReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 }) := by
+  exact
+    { directionalChannelSafety :=
+        accepted_pq_v4_os_rng_transcript_kdf_directional_channel_safety_certificate
+          kemTranscriptKdf
+          frameInSequence
+          sequenceBound
+      failedOpenReplayAdmission :=
+        accepted_authenticated_pq_handshake_failed_open_replay_admission_facts
+          kemTranscriptKdf.handshakeAccepted
+          peerSendCounter }
+
+structure PqProductionChannelRoleBindingReplaySafetyCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState) : Prop where
+  replayChannelSafety :
+    PqProductionChannelReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+  sameRoleMisbindAdmission :
+    PqSameRoleMisbindAdmissionFacts surface crypto peerSendCounter frameIndex
+
+theorem accepted_pq_v6_os_rng_transcript_kdf_directional_replay_role_binding_channel_safety_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max) :
+    PqProductionChannelRoleBindingReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 }) := by
+  exact
+    { replayChannelSafety :=
+        accepted_pq_v5_os_rng_transcript_kdf_directional_replay_channel_safety_certificate
+          kemTranscriptKdf
+          frameInSequence
+          sequenceBound
+      sameRoleMisbindAdmission :=
+        accepted_authenticated_pq_handshake_same_role_misbind_admission_facts
+          kemTranscriptKdf.handshakeAccepted
+          peerSendCounter
+          frameIndex }
+
+structure PqProductionChannelIndexedReplaySafetyCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState) : Prop where
+  roleBindingReplaySafety :
+    PqProductionChannelRoleBindingReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+  indexedStaleReplayAdmission :
+    PqIndexedStaleReplayAdmissionFacts surface crypto peerSendCounter
+
+theorem accepted_pq_v7_os_rng_transcript_kdf_directional_replay_role_binding_indexed_stale_channel_safety_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max) :
+    PqProductionChannelIndexedReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 }) := by
+  exact
+    { roleBindingReplaySafety :=
+        accepted_pq_v6_os_rng_transcript_kdf_directional_replay_role_binding_channel_safety_certificate
+          kemTranscriptKdf
+          frameInSequence
+          sequenceBound
+      indexedStaleReplayAdmission :=
+        accepted_authenticated_pq_handshake_indexed_stale_replay_admission_facts
+          kemTranscriptKdf.handshakeAccepted
+          peerSendCounter }
+
+structure PqProductionWireParserAdmissionFacts
+    (handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput) : Prop where
+  handshakeFrameKind :
+    handshakeFrame.kind = FrameResourceAdmission.FrameKind.pqHandshake
+  sessionPlaintextFrameKind :
+    sessionPlaintextFrame.kind =
+      FrameResourceAdmission.FrameKind.pqSessionPlaintext
+  handshakeFrameAccepted :
+    FrameResourceAdmission.AcceptedFrameDecodeFacts handshakeFrame
+  sessionPlaintextFrameAccepted :
+    FrameResourceAdmission.AcceptedFrameDecodeFacts sessionPlaintextFrame
+  handshakeFrameWithinBound :
+    handshakeFrame.encodedBytes <=
+      FrameResourceAdmission.frameKindMaxLen handshakeFrame.kind
+  sessionPlaintextFrameWithinBound :
+    sessionPlaintextFrame.encodedBytes <=
+      FrameResourceAdmission.frameKindMaxLen sessionPlaintextFrame.kind
+  handshakeMarkerBound :
+    FrameResourceAdmission.frameKindMagic handshakeFrame.kind =
+      FrameResourceAdmission.pqHandshakeMagic
+  sessionPlaintextMarkerBound :
+    FrameResourceAdmission.frameKindMagic sessionPlaintextFrame.kind =
+      FrameResourceAdmission.pqSessionMagic
+  handshakeMarkerAccepted :
+    handshakeFrame.markerMatches = true
+  sessionPlaintextMarkerAccepted :
+    sessionPlaintextFrame.markerMatches = true
+  handshakePostcardDecoded :
+    handshakeFrame.postcardDecodes = true
+  sessionPlaintextPostcardDecoded :
+    sessionPlaintextFrame.postcardDecodes = true
+  handshakeNoTrailingBytes :
+    handshakeFrame.postcardConsumesAll = true
+  sessionPlaintextNoTrailingBytes :
+    sessionPlaintextFrame.postcardConsumesAll = true
+
+theorem accepted_pq_wire_parser_admission_facts
+    {handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput}
+    (handshakeFrameKind :
+      handshakeFrame.kind = FrameResourceAdmission.FrameKind.pqHandshake)
+    (sessionPlaintextFrameKind :
+      sessionPlaintextFrame.kind =
+        FrameResourceAdmission.FrameKind.pqSessionPlaintext)
+    (handshakeAccepted :
+      FrameResourceAdmission.evaluateFrameDecode handshakeFrame = none)
+    (sessionPlaintextAccepted :
+      FrameResourceAdmission.evaluateFrameDecode sessionPlaintextFrame = none) :
+    PqProductionWireParserAdmissionFacts
+      handshakeFrame
+      sessionPlaintextFrame := by
+  let handshakeFacts :=
+    FrameResourceAdmission.accepted_frame_decode_exposes_facts
+      handshakeAccepted
+  let sessionFacts :=
+    FrameResourceAdmission.accepted_frame_decode_exposes_facts
+      sessionPlaintextAccepted
+  have handshakePostcard :
+      FrameResourceAdmission.frameKindIsPostcardEncoded handshakeFrame.kind =
+        true := by
+    cases handshakeFrame.kind <;> rfl
+  have sessionPostcard :
+      FrameResourceAdmission.frameKindIsPostcardEncoded
+          sessionPlaintextFrame.kind =
+        true := by
+    cases sessionPlaintextFrame.kind <;> rfl
+  refine
+    { handshakeFrameKind := handshakeFrameKind
+      sessionPlaintextFrameKind := sessionPlaintextFrameKind
+      handshakeFrameAccepted := handshakeFacts
+      sessionPlaintextFrameAccepted := sessionFacts
+      handshakeFrameWithinBound := handshakeFacts.withinBound
+      sessionPlaintextFrameWithinBound := sessionFacts.withinBound
+      handshakeMarkerBound := ?_
+      sessionPlaintextMarkerBound := ?_
+      handshakeMarkerAccepted := handshakeFacts.markerAccepted
+      sessionPlaintextMarkerAccepted := sessionFacts.markerAccepted
+      handshakePostcardDecoded :=
+        handshakeFacts.postcardDecodeAccepted handshakePostcard
+      sessionPlaintextPostcardDecoded :=
+        sessionFacts.postcardDecodeAccepted sessionPostcard
+      handshakeNoTrailingBytes :=
+        handshakeFacts.noTrailingBytes handshakePostcard
+      sessionPlaintextNoTrailingBytes :=
+        sessionFacts.noTrailingBytes sessionPostcard }
+  · simp [handshakeFrameKind, FrameResourceAdmission.frameKindMagic]
+  · simp [sessionPlaintextFrameKind, FrameResourceAdmission.frameKindMagic]
+
+structure PqProductionWireParserReplayChannelSafetyCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState)
+    (firstFramePayloadBytes : Nat)
+    (handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput) : Prop where
+  indexedReplaySafety :
+    PqProductionChannelIndexedReplaySafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+  wrapperCompletion :
+    PqWrapperCompletionFacts
+      surface
+      crypto
+      localState
+      peerState
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes)
+  wireParserAdmission :
+    PqProductionWireParserAdmissionFacts
+      handshakeFrame
+      sessionPlaintextFrame
+  exactHandshakeWireConsumesAll :
+    handshakeFrame.postcardConsumesAll = true
+  exactSessionPlaintextWireConsumesAll :
+    sessionPlaintextFrame.postcardConsumesAll = true
+  handshakeWireBounded :
+    handshakeFrame.encodedBytes <=
+      FrameResourceAdmission.pqHandshakeMaxFrameLen
+  sessionPlaintextWireBounded :
+    sessionPlaintextFrame.encodedBytes <=
+      FrameResourceAdmission.pqSessionPlaintextMaxLen
+  duplicateFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).accepted = false
+  futureFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  indexedStaleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  sameRoleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := surface.role
+        sendCounter := peerSendCounter
+        recvCounter := frameIndex }
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)).accepted = false
+  osRngSeedsStillNotPublicTranscriptDerived :
+    responderSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+      ∧ initiatorSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+
+theorem accepted_pq_v8_os_rng_transcript_kdf_wire_parser_replay_channel_safety_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter firstFramePayloadBytes : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max)
+    {handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput}
+    (handshakeFrameKind :
+      handshakeFrame.kind = FrameResourceAdmission.FrameKind.pqHandshake)
+    (sessionPlaintextFrameKind :
+      sessionPlaintextFrame.kind =
+        FrameResourceAdmission.FrameKind.pqSessionPlaintext)
+    (handshakeAccepted :
+      FrameResourceAdmission.evaluateFrameDecode handshakeFrame = none)
+    (sessionPlaintextAccepted :
+      FrameResourceAdmission.evaluateFrameDecode sessionPlaintextFrame = none) :
+    PqProductionWireParserReplayChannelSafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 })
+      firstFramePayloadBytes
+      handshakeFrame
+      sessionPlaintextFrame := by
+  let indexedReplaySafety :=
+    accepted_pq_v7_os_rng_transcript_kdf_directional_replay_role_binding_indexed_stale_channel_safety_certificate
+      kemTranscriptKdf
+      (localRecvCounter := localRecvCounter)
+      (peerSendCounter := peerSendCounter)
+      frameInSequence
+      sequenceBound
+  let wrapperCompletion :=
+    accepted_authenticated_pq_handshake_wrapper_completion_facts
+      kemTranscriptKdf.handshakeAccepted
+      firstFramePayloadBytes
+  let wireParserAdmission :=
+    accepted_pq_wire_parser_admission_facts
+      handshakeFrameKind
+      sessionPlaintextFrameKind
+      handshakeAccepted
+      sessionPlaintextAccepted
+  let roleBindingReplaySafety :=
+    indexedReplaySafety.roleBindingReplaySafety
+  let replayChannelSafety :=
+    roleBindingReplaySafety.replayChannelSafety
+  let directionalChannelSafety :=
+    replayChannelSafety.directionalChannelSafety
+  refine
+    { indexedReplaySafety := indexedReplaySafety
+      wrapperCompletion := wrapperCompletion
+      wireParserAdmission := wireParserAdmission
+      exactHandshakeWireConsumesAll :=
+        wireParserAdmission.handshakeNoTrailingBytes
+      exactSessionPlaintextWireConsumesAll :=
+        wireParserAdmission.sessionPlaintextNoTrailingBytes
+      handshakeWireBounded := ?_
+      sessionPlaintextWireBounded := ?_
+      duplicateFrameRejected :=
+        replayChannelSafety.failedOpenReplayAdmission.duplicateFrameRejected
+      futureFrameRejected :=
+        replayChannelSafety.failedOpenReplayAdmission.futureFrameRejected
+      indexedStaleFrameRejected :=
+        indexedReplaySafety.indexedStaleReplayAdmission.staleFrameRejected
+      sameRoleFrameRejected :=
+        roleBindingReplaySafety.sameRoleMisbindAdmission.sameRoleFrameRejected
+      osRngSeedsStillNotPublicTranscriptDerived :=
+        ⟨directionalChannelSafety.responderSeedNotPublicTranscriptDerived,
+          directionalChannelSafety.initiatorSeedNotPublicTranscriptDerived⟩ }
+  · simpa [handshakeFrameKind, FrameResourceAdmission.frameKindMaxLen] using
+      wireParserAdmission.handshakeFrameWithinBound
+  · simpa [sessionPlaintextFrameKind, FrameResourceAdmission.frameKindMaxLen] using
+      wireParserAdmission.sessionPlaintextFrameWithinBound
+
+structure PqProductionChannelImplementationEquivalenceFacts
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState)
+    (firstFramePayloadBytes : Nat)
+    (handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput) : Prop where
+  wireParserReplayChannelSafety :
+    PqProductionWireParserReplayChannelSafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+      firstFramePayloadBytes
+      handshakeFrame
+      sessionPlaintextFrame
+  wrapperCompletion :
+    PqWrapperCompletionFacts
+      surface
+      crypto
+      localState
+      peerState
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes)
+  wireParserAdmission :
+    PqProductionWireParserAdmissionFacts
+      handshakeFrame
+      sessionPlaintextFrame
+  acceptedHandshake :
+    AcceptedAuthenticatedPqHandshake surface crypto
+  responderSeedOsRng :
+    responderSeed.source = PqNoise.KemSeedSource.osRng32
+  initiatorSeedOsRng :
+    initiatorSeed.source = PqNoise.KemSeedSource.osRng32
+  responderSeedConsumedByMlKem :
+    responderSeed.consumedByMlKemEncapsulate
+  initiatorSeedConsumedByMlKem :
+    initiatorSeed.consumedByMlKemEncapsulate
+  responderSeedNotPublicTranscriptDerived :
+    responderSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+  initiatorSeedNotPublicTranscriptDerived :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+  responderSeedNotFixedDeterministic :
+    responderSeed.source ≠ PqNoise.KemSeedSource.fixedDeterministic
+  initiatorSeedNotFixedDeterministic :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.fixedDeterministic
+  responderSeedNotCallerProvidedTest :
+    responderSeed.source ≠ PqNoise.KemSeedSource.callerProvidedTest
+  initiatorSeedNotCallerProvidedTest :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.callerProvidedTest
+  publicTranscriptOnlyEntersHkdfSalt :
+    PqNoise.hkdfSalt surface.pqSession = surface.pqSession.transcriptHash
+  kemSharedSecretsOnlyEnterHkdfIkmInHandshakeOrder :
+    PqNoise.hkdfIkm surface.pqSession =
+      surface.pqSession.shared1 ++ surface.pqSession.shared2
+  responseAndFinishSignaturesBindTranscript :
+    surface.respHello.transcriptHash = surface.pqSession.transcriptHash
+      ∧ surface.finish.transcriptHash = surface.pqSession.transcriptHash
+  directionalKeyAndAadLabelsSeparated :
+    PqNoise.initiatorToResponderInfo ≠ PqNoise.responderToInitiatorInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.initiatorToResponderInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.responderToInitiatorInfo
+  localSendSlotMatchesPeerRecv :
+    PqNoise.sendSlot localState.role = PqNoise.recvSlot peerState.role
+  localRecvSlotMatchesPeerSend :
+    PqNoise.recvSlot localState.role = PqNoise.sendSlot peerState.role
+  localSendInfoMatchesPeerRecvInfo :
+    PqNoise.expandInfo (PqNoise.sendSlot localState.role) =
+      PqNoise.expandInfo (PqNoise.recvSlot peerState.role)
+  localRecvInfoMatchesPeerSendInfo :
+    PqNoise.expandInfo (PqNoise.recvSlot localState.role) =
+      PqNoise.expandInfo (PqNoise.sendSlot peerState.role)
+  localSendSlotAdmittedByPeerRecv :
+    protectedSlot = peerOpenedSlot
+  frameAadDistinctFromDirectionalKeyInfo :
+    PqNoise.sessionAadInfo ≠ PqNoise.expandInfo protectedSlot
+  protectedNonceAtFrameIndex :
+    protectedNonce = PqNoise.nonceFromCounter frameIndex
+  peerOpenedNonceAtFrameIndex :
+    peerOpenedNonce = PqNoise.nonceFromCounter frameIndex
+  protectedNonceAdmittedByPeer :
+    protectedNonce = peerOpenedNonce
+  protectedNextSendCounter :
+    protectedNext.sendCounter = frameIndex + 1
+  peerOpenedNextRecvCounter :
+    peerOpenedNext.recvCounter = frameIndex + 1
+  duplicateFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).accepted = false
+  duplicateRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 1 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 0)).next =
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 1 }
+  futureFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  futureRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 0 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).next =
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 0 }
+  indexedStaleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).accepted = false
+  indexedStaleRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 3 }
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter 1)).next =
+      { role := peerRole surface.role
+        sendCounter := peerSendCounter
+        recvCounter := 3 }
+  sameRoleFrameRejected :
+    (PqNoise.openFrameWithObservedWire
+      { role := surface.role
+        sendCounter := peerSendCounter
+        recvCounter := frameIndex }
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)).accepted = false
+  sameRoleRejectPreservesState :
+    (PqNoise.openFrameWithObservedWire
+      { role := surface.role
+        sendCounter := peerSendCounter
+        recvCounter := frameIndex }
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)).next =
+      { role := surface.role
+        sendCounter := peerSendCounter
+        recvCounter := frameIndex }
+  exactHandshakeWireConsumesAll :
+    handshakeFrame.postcardConsumesAll = true
+  exactSessionPlaintextWireConsumesAll :
+    sessionPlaintextFrame.postcardConsumesAll = true
+  handshakeWireBounded :
+    handshakeFrame.encodedBytes <=
+      FrameResourceAdmission.pqHandshakeMaxFrameLen
+  sessionPlaintextWireBounded :
+    sessionPlaintextFrame.encodedBytes <=
+      FrameResourceAdmission.pqSessionPlaintextMaxLen
+  wrapperRolesDistinct :
+    localState.role ≠ peerState.role
+
+theorem accepted_pq_wire_parser_replay_channel_safety_exposes_implementation_equivalence_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    {localState peerState : PqNoise.ChannelState}
+    {sequenceLength frameIndex localRecvCounter peerSendCounter : Nat}
+    {protectedSlot : PqNoise.KeySlot}
+    {protectedNonce : List Byte}
+    {protectedNext : PqNoise.ChannelState}
+    {peerOpenedSlot : PqNoise.KeySlot}
+    {peerOpenedNonce : List Byte}
+    {peerOpenedNext : PqNoise.ChannelState}
+    {firstFramePayloadBytes : Nat}
+    {handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput}
+    (certificate :
+      PqProductionWireParserReplayChannelSafetyCertificate
+        surface
+        crypto
+        responderSeed
+        initiatorSeed
+        localState
+        peerState
+        sequenceLength
+        frameIndex
+        localRecvCounter
+        peerSendCounter
+        protectedSlot
+        protectedNonce
+        protectedNext
+        peerOpenedSlot
+        peerOpenedNonce
+        peerOpenedNext
+        firstFramePayloadBytes
+        handshakeFrame
+        sessionPlaintextFrame) :
+    PqProductionChannelImplementationEquivalenceFacts
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      localState
+      peerState
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+      firstFramePayloadBytes
+      handshakeFrame
+      sessionPlaintextFrame := by
+  let roleBindingReplaySafety :=
+    certificate.indexedReplaySafety.roleBindingReplaySafety
+  let replayChannelSafety :=
+    roleBindingReplaySafety.replayChannelSafety
+  let directionalSafety :=
+    replayChannelSafety.directionalChannelSafety
+  let failedReplay :=
+    replayChannelSafety.failedOpenReplayAdmission
+  let sameRole :=
+    roleBindingReplaySafety.sameRoleMisbindAdmission
+  let indexedStale :=
+    certificate.indexedReplaySafety.indexedStaleReplayAdmission
+  exact
+    { wireParserReplayChannelSafety := certificate
+      wrapperCompletion :=
+        certificate.wrapperCompletion
+      wireParserAdmission :=
+        certificate.wireParserAdmission
+      acceptedHandshake :=
+        directionalSafety.kemTranscriptKdf.handshakeAccepted
+      responderSeedOsRng :=
+        directionalSafety.responderSeedOsRng
+      initiatorSeedOsRng :=
+        directionalSafety.initiatorSeedOsRng
+      responderSeedConsumedByMlKem :=
+        directionalSafety.responderEncapsulationConsumesOsRngSeed
+      initiatorSeedConsumedByMlKem :=
+        directionalSafety.initiatorEncapsulationConsumesOsRngSeed
+      responderSeedNotPublicTranscriptDerived :=
+        directionalSafety.responderSeedNotPublicTranscriptDerived
+      initiatorSeedNotPublicTranscriptDerived :=
+        directionalSafety.initiatorSeedNotPublicTranscriptDerived
+      responderSeedNotFixedDeterministic :=
+        directionalSafety.responderSeedNotFixedDeterministic
+      initiatorSeedNotFixedDeterministic :=
+        directionalSafety.initiatorSeedNotFixedDeterministic
+      responderSeedNotCallerProvidedTest :=
+        directionalSafety.responderSeedNotCallerProvidedTest
+      initiatorSeedNotCallerProvidedTest :=
+        directionalSafety.initiatorSeedNotCallerProvidedTest
+      publicTranscriptOnlyEntersHkdfSalt :=
+        directionalSafety.publicTranscriptOnlyEntersSessionScheduleAsSalt
+      kemSharedSecretsOnlyEnterHkdfIkmInHandshakeOrder :=
+        directionalSafety.kemSharedSecretsOnlyEnterHkdfIkmInHandshakeOrder
+      responseAndFinishSignaturesBindTranscript :=
+        directionalSafety.responseAndFinishSignaturesBindTranscript
+      directionalKeyAndAadLabelsSeparated :=
+        directionalSafety.i2rR2iAndAadInfosSeparated
+      localSendSlotMatchesPeerRecv :=
+        directionalSafety.transportCompletion.localSendSlotMatchesPeerRecv
+      localRecvSlotMatchesPeerSend :=
+        directionalSafety.transportCompletion.localRecvSlotMatchesPeerSend
+      localSendInfoMatchesPeerRecvInfo :=
+        directionalSafety.transportCompletion.localSendInfoMatchesPeerRecvInfo
+      localRecvInfoMatchesPeerSendInfo :=
+        directionalSafety.transportCompletion.localRecvInfoMatchesPeerSendInfo
+      localSendSlotAdmittedByPeerRecv :=
+        directionalSafety.localSendSlotAdmittedByPeerRecv
+      frameAadDistinctFromDirectionalKeyInfo :=
+        directionalSafety.frameAadDistinctFromDirectionalKeyInfo
+      protectedNonceAtFrameIndex :=
+        directionalSafety.protectedNonceAtFrameIndex
+      peerOpenedNonceAtFrameIndex :=
+        directionalSafety.peerOpenedNonceAtFrameIndex
+      protectedNonceAdmittedByPeer :=
+        directionalSafety.protectedNonceAdmittedByPeer
+      protectedNextSendCounter :=
+        directionalSafety.protectedNextSendCounter
+      peerOpenedNextRecvCounter :=
+        directionalSafety.peerOpenedNextRecvCounter
+      duplicateFrameRejected :=
+        failedReplay.duplicateFrameRejected
+      duplicateRejectPreservesState :=
+        failedReplay.duplicateRejectPreservesState
+      futureFrameRejected :=
+        failedReplay.futureFrameRejected
+      futureRejectPreservesState :=
+        failedReplay.futureRejectPreservesState
+      indexedStaleFrameRejected :=
+        indexedStale.staleFrameRejected
+      indexedStaleRejectPreservesState :=
+        indexedStale.staleRejectPreservesState
+      sameRoleFrameRejected :=
+        sameRole.sameRoleFrameRejected
+      sameRoleRejectPreservesState :=
+        sameRole.sameRoleRejectPreservesState
+      exactHandshakeWireConsumesAll :=
+        certificate.exactHandshakeWireConsumesAll
+      exactSessionPlaintextWireConsumesAll :=
+        certificate.exactSessionPlaintextWireConsumesAll
+      handshakeWireBounded :=
+        certificate.handshakeWireBounded
+      sessionPlaintextWireBounded :=
+        certificate.sessionPlaintextWireBounded
+      wrapperRolesDistinct :=
+        certificate.wrapperCompletion.rolesDistinct }
+
+theorem accepted_pq_v9_os_rng_transcript_kdf_wire_parser_replay_channel_implementation_equivalence_facts
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter firstFramePayloadBytes : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max)
+    {handshakeFrame sessionPlaintextFrame :
+      FrameResourceAdmission.FrameDecodeInput}
+    (handshakeFrameKind :
+      handshakeFrame.kind = FrameResourceAdmission.FrameKind.pqHandshake)
+    (sessionPlaintextFrameKind :
+      sessionPlaintextFrame.kind =
+        FrameResourceAdmission.FrameKind.pqSessionPlaintext)
+    (handshakeAccepted :
+      FrameResourceAdmission.evaluateFrameDecode handshakeFrame = none)
+    (sessionPlaintextAccepted :
+      FrameResourceAdmission.evaluateFrameDecode sessionPlaintextFrame = none) :
+    PqProductionChannelImplementationEquivalenceFacts
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 })
+      firstFramePayloadBytes
+      handshakeFrame
+      sessionPlaintextFrame := by
+  exact
+    accepted_pq_wire_parser_replay_channel_safety_exposes_implementation_equivalence_facts
+      (accepted_pq_v8_os_rng_transcript_kdf_wire_parser_replay_channel_safety_certificate
+        kemTranscriptKdf
+        frameInSequence
+        sequenceBound
+        handshakeFrameKind
+        sessionPlaintextFrameKind
+        handshakeAccepted
+        sessionPlaintextAccepted)
 
 theorem accepted_authenticated_pq_handshake_initial_protect_open_facts
     {surface : HandshakeChannelSurface}

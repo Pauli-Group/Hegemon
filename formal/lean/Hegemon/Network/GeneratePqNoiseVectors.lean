@@ -12,6 +12,20 @@ def nullableNatStringJson (value : Option Nat) : String :=
   | none => "null"
   | some raw => "\"" ++ toString raw ++ "\""
 
+def nullableHexJson (value : Option (List Byte)) : String :=
+  match value with
+  | none => "null"
+  | some raw => "\"" ++ hexBytes raw ++ "\""
+
+def stringArrayJson (values : List String) : String :=
+  "[" ++ String.intercalate ", " (values.map fun value => "\"" ++ value ++ "\"") ++ "]"
+
+def natStringArrayJson (values : List Nat) : String :=
+  stringArrayJson (values.map toString)
+
+def hexArrayJson (values : List (List Byte)) : String :=
+  stringArrayJson (values.map hexBytes)
+
 def roleJson : Role -> String
   | Role.initiator => "\"initiator\""
   | Role.responder => "\"responder\""
@@ -122,6 +136,129 @@ def frameSequenceCaseJson (name : String) (role : Role) (sequenceLength : Nat) :
     ++ "      ]\n"
     ++ "    }"
 
+def replayAdmissionCaseJson
+    (name scenarioKind : String)
+    (role : Role)
+    (preacceptedFrameIndex : Option Nat)
+    (preacceptedFrameIndices : List Nat)
+    (rejectedFrameIndex recoveryFrameIndex recvCounterBeforeReject : Nat)
+    (preacceptedPlaintext rejectedPlaintext recoveryPlaintext : Option (List Byte))
+    (preacceptedPlaintexts : List (List Byte)) :
+    String :=
+  let peer := peerRole role
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"scenario_kind\": \"" ++ scenarioKind ++ "\",\n"
+    ++ "      \"role\": " ++ roleJson role ++ ",\n"
+    ++ "      \"peer_role\": " ++ roleJson peer ++ ",\n"
+    ++ "      \"expected_sender_slot\": " ++ keySlotJson (sendSlot role) ++ ",\n"
+    ++ "      \"expected_peer_open_slot\": " ++ keySlotJson (recvSlot peer) ++ ",\n"
+    ++ "      \"expected_sender_slot_matches_peer_open\": "
+      ++ boolJson (sendSlot role == recvSlot peer) ++ ",\n"
+    ++ "      \"preaccepted_frame_index\": "
+      ++ nullableNatStringJson preacceptedFrameIndex ++ ",\n"
+    ++ "      \"preaccepted_frame_indices\": "
+      ++ natStringArrayJson preacceptedFrameIndices ++ ",\n"
+    ++ "      \"rejected_frame_index\": \""
+      ++ toString rejectedFrameIndex ++ "\",\n"
+    ++ "      \"recovery_frame_index\": \""
+      ++ toString recoveryFrameIndex ++ "\",\n"
+    ++ "      \"expected_rejected_valid\": false,\n"
+    ++ "      \"expected_reject_preserves_recv_counter\": true,\n"
+    ++ "      \"expected_recv_counter_before_reject\": \""
+      ++ toString recvCounterBeforeReject ++ "\",\n"
+    ++ "      \"expected_recv_counter_after_reject\": \""
+      ++ toString recvCounterBeforeReject ++ "\",\n"
+    ++ "      \"expected_recovery_next_recv_counter\": \""
+      ++ toString (recoveryFrameIndex + 1) ++ "\",\n"
+    ++ "      \"rejected_nonce_hex\": \""
+      ++ hexBytes (nonceFromCounter rejectedFrameIndex) ++ "\",\n"
+    ++ "      \"expected_open_nonce_before_reject_hex\": \""
+      ++ hexBytes (nonceFromCounter recvCounterBeforeReject) ++ "\",\n"
+    ++ "      \"recovery_nonce_hex\": \""
+      ++ hexBytes (nonceFromCounter recoveryFrameIndex) ++ "\",\n"
+    ++ "      \"preaccepted_plaintext_hex\": "
+      ++ nullableHexJson preacceptedPlaintext ++ ",\n"
+    ++ "      \"preaccepted_plaintexts_hex\": "
+      ++ hexArrayJson preacceptedPlaintexts ++ ",\n"
+    ++ "      \"rejected_plaintext_hex\": "
+      ++ nullableHexJson rejectedPlaintext ++ ",\n"
+    ++ "      \"recovery_plaintext_hex\": "
+      ++ nullableHexJson recoveryPlaintext ++ "\n"
+    ++ "    }"
+
+def duplicateReplayAdmissionCaseJson (name : String) (role : Role) : String :=
+  let firstPlaintext := patternedBytes 7 223
+  let recoveryPlaintext := patternedBytes 11 29
+  replayAdmissionCaseJson
+    name
+    "duplicate_after_first"
+    role
+    (some 0)
+    [0]
+    0
+    1
+    1
+    (some firstPlaintext)
+    (some firstPlaintext)
+    (some recoveryPlaintext)
+    [firstPlaintext]
+
+def futureReplayAdmissionCaseJson (name : String) (role : Role) : String :=
+  replayAdmissionCaseJson
+    name
+    "future_before_current"
+    role
+    none
+    []
+    1
+    0
+    0
+    none
+    (some (patternedBytes 13 71))
+    (some (patternedBytes 5 181))
+    []
+
+def staleAfterThreeReplayAdmissionCaseJson (name : String) (role : Role) : String :=
+  let firstPlaintext := patternedBytes 7 223
+  let secondPlaintext := patternedBytes 9 47
+  let thirdPlaintext := patternedBytes 11 83
+  let recoveryPlaintext := patternedBytes 13 191
+  replayAdmissionCaseJson
+    name
+    "stale_after_three"
+    role
+    (some 1)
+    [0, 1, 2]
+    1
+    3
+    3
+    (some secondPlaintext)
+    (some secondPlaintext)
+    (some recoveryPlaintext)
+    [firstPlaintext, secondPlaintext, thirdPlaintext]
+
+def roleMisbindCaseJson
+    (name : String)
+    (role : Role)
+    (plaintextLen seed : Nat) : String :=
+  let plaintext := patternedBytes plaintextLen seed
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"role\": " ++ roleJson role ++ ",\n"
+    ++ "      \"expected_sender_slot\": " ++ keySlotJson (sendSlot role) ++ ",\n"
+    ++ "      \"expected_same_role_open_slot\": " ++ keySlotJson (recvSlot role) ++ ",\n"
+    ++ "      \"expected_sender_slot_matches_same_role_open\": "
+      ++ boolJson (sendSlot role == recvSlot role) ++ ",\n"
+    ++ "      \"frame_index\": \"0\",\n"
+    ++ "      \"expected_nonce_hex\": \""
+      ++ hexBytes (nonceFromCounter 0) ++ "\",\n"
+    ++ "      \"expected_rejected_valid\": false,\n"
+    ++ "      \"expected_reject_preserves_recv_counter\": true,\n"
+    ++ "      \"expected_recv_counter_after_reject\": \"0\",\n"
+    ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
+    ++ "    }"
+
 def transportCompletionCaseJson
     (name : String)
     (localRole : Role)
@@ -201,7 +338,74 @@ def wrapperCompletionCaseJson
       ++ toString firstFrameWireBytes ++ "\",\n"
     ++ "      \"expected_after_first_peer_bytes_received\": \""
       ++ toString firstFrameWireBytes ++ "\",\n"
-    ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
+      ++ "      \"plaintext_hex\": \"" ++ hexBytes plaintext ++ "\"\n"
+    ++ "    }"
+
+def productionChannelCertificateCaseJson
+    (name : String)
+    (localRole : Role)
+    (sequenceLength frameIndex firstFramePayloadBytes : Nat) : String :=
+  let peer := peerRole localRole
+  let tagBytes := Hegemon.Network.PqNoiseHandshakeChannel.pqAeadTagBytes
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"local_role\": " ++ roleJson localRole ++ ",\n"
+    ++ "      \"peer_role\": " ++ roleJson peer ++ ",\n"
+    ++ "      \"sequence_length\": \"" ++ toString sequenceLength ++ "\",\n"
+    ++ "      \"frame_index\": \"" ++ toString frameIndex ++ "\",\n"
+    ++ "      \"expected_frame_in_sequence\": "
+      ++ boolJson (frameIndex < sequenceLength) ++ ",\n"
+    ++ "      \"expected_sequence_within_counter_domain\": "
+      ++ boolJson (sequenceLength <= u64Max) ++ ",\n"
+    ++ "      \"expected_responder_seed_use\": "
+      ++ kemUseJson KemEncapsulationUse.responderEncapsulatesToInitiator ++ ",\n"
+    ++ "      \"expected_initiator_seed_use\": "
+      ++ kemUseJson KemEncapsulationUse.initiatorEncapsulatesToResponder ++ ",\n"
+    ++ "      \"expected_responder_seed_source\": "
+      ++ kemSeedSourceJson KemSeedSource.osRng32 ++ ",\n"
+    ++ "      \"expected_initiator_seed_source\": "
+      ++ kemSeedSourceJson KemSeedSource.osRng32 ++ ",\n"
+    ++ "      \"expected_seed_byte_length\": \"32\",\n"
+    ++ "      \"expected_public_transcript_seed_source\": false,\n"
+    ++ "      \"expected_transcript_only_hkdf_salt\": true,\n"
+    ++ "      \"expected_kem_ikm_ordered\": true,\n"
+    ++ "      \"expected_i2r_r2i_aad_separated\": true,\n"
+    ++ "      \"expected_local_send_slot\": "
+      ++ keySlotJson (sendSlot localRole) ++ ",\n"
+    ++ "      \"expected_peer_recv_slot\": "
+      ++ keySlotJson (recvSlot peer) ++ ",\n"
+    ++ "      \"expected_local_send_matches_peer_recv\": "
+      ++ boolJson (sendSlot localRole == recvSlot peer) ++ ",\n"
+    ++ "      \"expected_nonce_hex\": \""
+      ++ hexBytes (nonceFromCounter frameIndex) ++ "\",\n"
+    ++ "      \"expected_duplicate_frame_rejected\": true,\n"
+    ++ "      \"expected_future_frame_rejected\": true,\n"
+    ++ "      \"expected_indexed_stale_frame_rejected\": true,\n"
+    ++ "      \"expected_same_role_misbind_rejected\": true,\n"
+    ++ "      \"expected_reject_preserves_recv_counter\": true,\n"
+    ++ "      \"expected_handshake_wire_kind\": \"pq_handshake\",\n"
+    ++ "      \"expected_handshake_magic_hex\": \""
+      ++ hexBytes Hegemon.Network.FrameResourceAdmission.pqHandshakeMagic ++ "\",\n"
+    ++ "      \"expected_handshake_max_frame_len\": \""
+      ++ toString Hegemon.Network.FrameResourceAdmission.pqHandshakeMaxFrameLen ++ "\",\n"
+    ++ "      \"expected_handshake_marker_matches\": true,\n"
+    ++ "      \"expected_handshake_postcard_decodes\": true,\n"
+    ++ "      \"expected_handshake_postcard_consumes_all\": true,\n"
+    ++ "      \"expected_session_wire_kind\": \"pq_session_plaintext\",\n"
+    ++ "      \"expected_session_magic_hex\": \""
+      ++ hexBytes Hegemon.Network.FrameResourceAdmission.pqSessionMagic ++ "\",\n"
+    ++ "      \"expected_session_max_plaintext_len\": \""
+      ++ toString Hegemon.Network.FrameResourceAdmission.pqSessionPlaintextMaxLen ++ "\",\n"
+    ++ "      \"expected_session_marker_matches\": true,\n"
+    ++ "      \"expected_session_postcard_decodes\": true,\n"
+    ++ "      \"expected_session_postcard_consumes_all\": true,\n"
+    ++ "      \"expected_wrapper_completed\": true,\n"
+    ++ "      \"expected_first_frame_payload_bytes\": \""
+      ++ toString firstFramePayloadBytes ++ "\",\n"
+    ++ "      \"expected_first_frame_tag_bytes\": \""
+      ++ toString tagBytes ++ "\",\n"
+    ++ "      \"expected_first_frame_wire_bytes\": \""
+      ++ toString (firstFramePayloadBytes + tagBytes) ++ "\"\n"
     ++ "    }"
 
 def initSigningCaseJson (name : String) (input : InitHelloSigningInput) : String :=
@@ -268,7 +472,7 @@ def alternateFinishSigningInput : FinishSigningInput := {
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 4,\n"
+    ++ "  \"schema_version\": 8,\n"
     ++ "  \"kem_rng_source_cases\": [\n"
     ++ kemRngSourceCaseJson
       "responder-os-rng-encapsulates-to-initiator"
@@ -298,6 +502,34 @@ def vectorJson : String :=
     ++ frameSequenceCaseJson "initiator-eight-frames" Role.initiator 8 ++ ",\n"
     ++ frameSequenceCaseJson "responder-eight-frames" Role.responder 8 ++ "\n"
     ++ "  ],\n"
+    ++ "  \"replay_admission_cases\": [\n"
+    ++ duplicateReplayAdmissionCaseJson
+      "initiator-duplicate-after-first-preserves-recv-counter"
+      Role.initiator ++ ",\n"
+    ++ duplicateReplayAdmissionCaseJson
+      "responder-duplicate-after-first-preserves-recv-counter"
+      Role.responder ++ ",\n"
+    ++ futureReplayAdmissionCaseJson
+      "initiator-future-before-current-preserves-recv-counter"
+      Role.initiator ++ ",\n"
+    ++ futureReplayAdmissionCaseJson
+      "responder-future-before-current-preserves-recv-counter"
+      Role.responder ++ ",\n"
+    ++ staleAfterThreeReplayAdmissionCaseJson
+      "initiator-stale-after-three-preserves-recv-counter"
+      Role.initiator ++ ",\n"
+    ++ staleAfterThreeReplayAdmissionCaseJson
+      "responder-stale-after-three-preserves-recv-counter"
+      Role.responder ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"role_misbind_cases\": [\n"
+    ++ roleMisbindCaseJson
+      "initiator-same-role-open-rejects"
+      Role.initiator 17 97 ++ ",\n"
+    ++ roleMisbindCaseJson
+      "responder-same-role-open-rejects"
+      Role.responder 19 137 ++ "\n"
+    ++ "  ],\n"
     ++ "  \"transport_completion_cases\": [\n"
     ++ transportCompletionCaseJson "local-initiator-transport-completion"
       Role.initiator 19 37 ++ ",\n"
@@ -309,6 +541,14 @@ def vectorJson : String :=
       "network_pq_transport" 29 131 ++ ",\n"
     ++ wrapperCompletionCaseJson "native-pq-transport-wrapper-completion"
       "native_pq_transport" 31 173 ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"production_channel_certificate_cases\": [\n"
+    ++ productionChannelCertificateCaseJson
+      "initiator-v8-production-wire-parser-replay-certificate"
+      Role.initiator 8 3 29 ++ ",\n"
+    ++ productionChannelCertificateCaseJson
+      "responder-v8-production-wire-parser-replay-certificate"
+      Role.responder 8 3 31 ++ "\n"
     ++ "  ],\n"
     ++ "  \"init_signing_cases\": [\n"
     ++ initSigningCaseJson "patterned-init" sampleInitSigningInput ++ ",\n"

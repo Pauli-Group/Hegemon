@@ -26,10 +26,26 @@ def receiptRootSummaryJson (summary : ReceiptRootSummary) : String :=
     ++ "        \"folds\": " ++ foldSummaryArrayJson summary.folds ++ "\n"
     ++ "      }"
 
+def resourceRequestJson (request : Hegemon.Resource.BoundedRequestAdmission.ResourceRequest) :
+    String :=
+  "{ \"raw_bytes\": " ++ toString request.rawBytes
+    ++ ", \"decoded_bytes\": " ++ toString request.decodedBytes
+    ++ ", \"item_count\": " ++ toString request.itemCount
+    ++ ", \"max_item_bytes\": " ++ toString request.maxItemBytes
+    ++ ", \"aggregate_bytes\": " ++ toString request.aggregateBytes
+    ++ ", \"work_units\": " ++ toString request.workUnits
+    ++ " }"
+
 def summaryFieldJson (summary : Option ReceiptRootSummary) : String :=
   match summary with
   | none => "null"
   | some value => receiptRootSummaryJson value
+
+def resourceFieldJson (artifact : List Byte) (summary : Option ReceiptRootSummary) : String :=
+  match summary with
+  | none => "null"
+  | some value =>
+      resourceRequestJson (receiptRootArtifactResourceRequest artifact value)
 
 def receiptRootCaseJson (name : String) (expectedLeafCount : Nat) (artifact : List Byte) : String :=
   let summary := parseNativeReceiptRootArtifact artifact
@@ -39,7 +55,9 @@ def receiptRootCaseJson (name : String) (expectedLeafCount : Nat) (artifact : Li
     ++ "      \"expected_record_count\": " ++ toString expectedLeafCount ++ ",\n"
     ++ "      \"expected_parse_valid\": " ++ boolJson summary.isSome ++ ",\n"
     ++ "      \"expected_schedule_valid\": " ++ boolJson (receiptRootScheduleAccepts expectedLeafCount artifact) ++ ",\n"
-    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ "\n"
+    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ ",\n"
+    ++ "      \"expected_resource_request\": "
+    ++ resourceFieldJson artifact summary ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=

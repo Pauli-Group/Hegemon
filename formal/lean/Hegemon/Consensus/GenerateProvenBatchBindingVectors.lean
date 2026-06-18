@@ -24,6 +24,8 @@ def bindingRejectJson : Option BindingReject -> String
   | some BindingReject.statementCommitmentMismatch => "\"statement_commitment_mismatch\""
   | some BindingReject.daRootMismatch => "\"da_root_mismatch\""
   | some BindingReject.daChunkCountZero => "\"da_chunk_count_zero\""
+  | some BindingReject.missingRecursiveBlockArtifact =>
+      "\"missing_recursive_block_artifact\""
   | some BindingReject.artifactKindMismatch => "\"artifact_kind_mismatch\""
   | some BindingReject.artifactVerifierProfileMismatch =>
       "\"artifact_verifier_profile_mismatch\""
@@ -80,6 +82,9 @@ def vectorJson : String :=
       "da-chunk-count-zero-rejected"
       { validRecursiveBlockV2 with daChunkCount := 0 } ++ ",\n"
     ++ provenBatchBindingCaseJson
+      "missing-recursive-block-artifact-rejected"
+      { validRecursiveBlockV2 with hasArtifact := false } ++ ",\n"
+    ++ provenBatchBindingCaseJson
       "artifact-kind-mismatch-rejected"
       { validRecursiveBlockV2 with artifactKind := ArtifactKind.recursiveBlockV1 } ++ ",\n"
     ++ provenBatchBindingCaseJson
@@ -89,10 +94,10 @@ def vectorJson : String :=
       "recursive-block-receipt-root-payload-rejected"
       { validRecursiveBlockV2 with hasReceiptRoot := true } ++ ",\n"
     ++ provenBatchBindingCaseJson
-      "missing-artifact-skips-envelope-checks"
-      { validRecursiveBlockV2 with
+      "receipt-root-missing-block-artifact-skips-envelope-checks"
+      { validReceiptRoot with
         hasArtifact := false,
-        artifactKind := ArtifactKind.receiptRoot,
+        artifactKind := ArtifactKind.recursiveBlockV2,
         artifactVerifierProfileMatches := false
       } ++ ",\n"
     ++ provenBatchBindingCaseJson

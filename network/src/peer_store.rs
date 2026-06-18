@@ -247,6 +247,7 @@ impl PeerStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
     use std::time::Duration;
 
     fn temp_path(name: &str) -> PathBuf {
@@ -257,6 +258,60 @@ mod tests {
 
     fn uuid() -> String {
         format!("{:x}", rand::random::<u64>())
+    }
+
+    #[derive(Deserialize)]
+    struct LeanPeerStoreCapacityVectorFile {
+        schema_version: u32,
+        default_max_peer_store_entries: usize,
+        capacity_cases: Vec<LeanPeerStoreCapacityCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanPeerStoreCapacityCase {
+        name: String,
+        max_entries: usize,
+        entry_ids_by_recency: Vec<u16>,
+        expected_retained_ids: Vec<u16>,
+        expected_dropped_ids: Vec<u16>,
+        expected_retained_count: usize,
+        expected_dropped_count: usize,
+        expected_changed: bool,
+        expected_count_within_max: bool,
+        expected_retained_is_recency_prefix: bool,
+        expected_dropped_ids_absent: bool,
+    }
+
+    fn addr_for_peer_id(id: u16) -> SocketAddr {
+        format!("127.0.0.1:{}", 10_000u32 + u32::from(id))
+            .parse()
+            .expect("test peer addr")
+    }
+
+    fn store_with_recency_order(case: &LeanPeerStoreCapacityCase) -> PeerStore {
+        let path = temp_path(&format!("peer_store_capacity_{}", case.name));
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: case.max_entries,
+        });
+        let base_time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let entry_count = case.entry_ids_by_recency.len();
+
+        for (idx, id) in case.entry_ids_by_recency.iter().enumerate() {
+            let timestamp = base_time + Duration::from_secs((entry_count - idx) as u64);
+            let addr = addr_for_peer_id(*id);
+            store.entries.insert(
+                addr,
+                PeerRecord {
+                    addr,
+                    last_updated: timestamp,
+                    last_connected: Some(timestamp),
+                },
+            );
+        }
+
+        store
     }
 
     #[test]
@@ -294,6 +349,105 @@ mod tests {
 
         assert!(reloaded.entries.contains_key(&active));
         assert!(!reloaded.entries.contains_key(&stale));
+    }
+
+    #[test]
+    fn lean_generated_peer_store_capacity_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS") else {
+            eprintln!("skipping Lean peer-store capacity vectors; env var not set");
+            return;
+        };
+        let contents =
+            std::fs::read_to_string(path).expect("read Lean peer-store capacity vectors");
+        let vectors: LeanPeerStoreCapacityVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean peer-store capacity vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.default_max_peer_store_entries,
+            PeerStoreConfig::default().max_entries,
+            "default peer-store cap drifted from Lean"
+        );
+
+        for case in &vectors.capacity_cases {
+            let mut store = store_with_recency_order(case);
+            let changed = store.enforce_max_entries();
+            assert_eq!(changed, case.expected_changed, "{}", case.name);
+            assert_eq!(
+                store.entries.len(),
+                case.expected_retained_count,
+                "{} retained count",
+                case.name
+            );
+            assert_eq!(
+                store.entries.len() <= case.max_entries,
+                case.expected_count_within_max,
+                "{} retained count within max",
+                case.name
+            );
+
+            let retained: HashSet<_> = store.entries.keys().copied().collect();
+            let actual_retained_ids_by_recency: Vec<_> = case
+                .entry_ids_by_recency
+                .iter()
+                .copied()
+                .filter(|id| retained.contains(&addr_for_peer_id(*id)))
+                .collect();
+            let actual_dropped_ids_by_recency: Vec<_> = case
+                .entry_ids_by_recency
+                .iter()
+                .copied()
+                .filter(|id| !retained.contains(&addr_for_peer_id(*id)))
+                .collect();
+            assert_eq!(
+                actual_retained_ids_by_recency, case.expected_retained_ids,
+                "{} retained recency prefix",
+                case.name
+            );
+            assert_eq!(
+                actual_dropped_ids_by_recency, case.expected_dropped_ids,
+                "{} dropped recency suffix",
+                case.name
+            );
+            assert_eq!(
+                actual_dropped_ids_by_recency.len(),
+                case.expected_dropped_count,
+                "{} dropped count",
+                case.name
+            );
+            assert_eq!(
+                case.entry_ids_by_recency
+                    .iter()
+                    .take(case.expected_retained_ids.len())
+                    .copied()
+                    .collect::<Vec<_>>()
+                    == case.expected_retained_ids,
+                case.expected_retained_is_recency_prefix,
+                "{} retained prefix expectation",
+                case.name
+            );
+            for id in &case.expected_retained_ids {
+                assert!(
+                    retained.contains(&addr_for_peer_id(*id)),
+                    "{} retained expected peer {id}",
+                    case.name
+                );
+            }
+            for id in &case.expected_dropped_ids {
+                assert!(
+                    !retained.contains(&addr_for_peer_id(*id)),
+                    "{} dropped overflow peer {id}",
+                    case.name
+                );
+            }
+            assert_eq!(
+                case.expected_dropped_ids
+                    .iter()
+                    .all(|id| !retained.contains(&addr_for_peer_id(*id))),
+                case.expected_dropped_ids_absent,
+                "{} dropped ids absent expectation",
+                case.name
+            );
+        }
     }
 
     #[test]

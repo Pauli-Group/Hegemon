@@ -1,6 +1,7 @@
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 import Hegemon.Native.TxLeafArtifact
+import Hegemon.Resource.BoundedRequestAdmission
 import Hegemon.Transaction.ProofSystemBoundary
 
 namespace Hegemon
@@ -23,6 +24,7 @@ open Hegemon.Native.RawIngressSidecarReplayRecoverability
 open Hegemon.Native.StorageDurabilityAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafCanonicalSurface
+open Hegemon.Resource.BoundedRequestAdmission
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofSystemBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
@@ -201,6 +203,65 @@ structure AcceptedNativeTxLeafArtifactByteShapeFacts
           defaultBackendForVersion
             summary.publicTx.circuitVersion
             summary.publicTx.cryptoSuite)
+
+def txLeafArtifactDynamicItemCount (summary : TxLeafSummary) : Nat :=
+  summary.serialized.inputFlagCount
+    + summary.serialized.outputFlagCount
+    + summary.serialized.balanceSlotCount
+    + summary.publicTx.nullifierCount
+    + summary.publicTx.commitmentCount
+    + summary.publicTx.ciphertextHashCount
+    + summary.commitment.rowCount
+
+def txLeafArtifactRowCoeffCountTotal (summary : TxLeafSummary) : Nat :=
+  summary.commitment.rowCoeffCounts.foldl (fun total count => total + count) 0
+
+def txLeafArtifactAggregateBytes (summary : TxLeafSummary) : Nat :=
+  summary.starkProofLen
+    + TxLeafArtifact.digestWidth *
+      (summary.publicTx.nullifierCount
+        + summary.publicTx.commitmentCount
+        + summary.publicTx.ciphertextHashCount)
+    + 8 * txLeafArtifactRowCoeffCountTotal summary
+
+def txLeafArtifactWorkUnits (summary : TxLeafSummary) : Nat :=
+  txLeafArtifactDynamicItemCount summary
+    + txLeafArtifactRowCoeffCountTotal summary
+    + summary.starkProofLen
+
+def txLeafArtifactResourceRequest
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary) : ResourceRequest :=
+  {
+    rawBytes := artifactBytes.length,
+    decodedBytes := artifactBytes.length,
+    itemCount := txLeafArtifactDynamicItemCount summary,
+    maxItemBytes := summary.starkProofLen,
+    aggregateBytes := txLeafArtifactAggregateBytes summary,
+    workUnits := txLeafArtifactWorkUnits summary
+  }
+
+structure AcceptedNativeTxLeafArtifactResourceFacts
+    (policy : ResourcePolicy)
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary) : Prop where
+  byteShapeFacts :
+    AcceptedNativeTxLeafArtifactByteShapeFacts artifactBytes summary
+  boundedFacts :
+    AcceptedBoundedRequestFacts policy
+      (txLeafArtifactResourceRequest artifactBytes summary)
+  artifactRawBytesWithinCap :
+    ¬ policy.rawByteCap < artifactBytes.length
+  artifactDecodedBytesWithinCap :
+    ¬ policy.decodedByteCap < artifactBytes.length
+  dynamicItemCountWithinCap :
+    ¬ policy.itemCountCap < txLeafArtifactDynamicItemCount summary
+  starkProofBytesWithinItemByteCap :
+    ¬ policy.itemByteCap < summary.starkProofLen
+  aggregateBytesWithinCap :
+    ¬ policy.aggregateByteCap < txLeafArtifactAggregateBytes summary
+  workUnitsWithinCap :
+    ¬ policy.workUnitCap < txLeafArtifactWorkUnits summary
 
 structure NativeTxLeafArtifactCanonicalProjectionAssumptions
     (summary : TxLeafSummary)
@@ -635,6 +696,48 @@ theorem accepted_native_tx_leaf_artifact_bytes_expose_shape_facts
       commitmentRowCountBound := commitmentFacts.left
       commitmentRowCoeffCountBound := commitmentFacts.right
       backendExplicitOrDefault := parseBackend_facts hBackend }
+
+theorem accepted_native_tx_leaf_artifact_resource_exposes_bounds
+    {policy : ResourcePolicy}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    (parsed :
+      parseNativeTxLeafArtifact artifactBytes = some summary)
+    (accepted :
+      evaluateBoundedRequest policy
+        (txLeafArtifactResourceRequest artifactBytes summary) = none) :
+    AcceptedNativeTxLeafArtifactResourceFacts
+      policy
+      artifactBytes
+      summary := by
+  let boundedFacts :=
+    accepted_bounded_request_exposes_all_caps
+      (policy := policy)
+      (request := txLeafArtifactResourceRequest artifactBytes summary)
+      accepted
+  exact {
+    byteShapeFacts :=
+      accepted_native_tx_leaf_artifact_bytes_expose_shape_facts parsed,
+    boundedFacts := boundedFacts,
+    artifactRawBytesWithinCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.rawBytesWithinCap,
+    artifactDecodedBytesWithinCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.decodedBytesWithinCap,
+    dynamicItemCountWithinCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.itemCountWithinCap,
+    starkProofBytesWithinItemByteCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.itemBytesWithinCap,
+    aggregateBytesWithinCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.aggregateBytesWithinCap,
+    workUnitsWithinCap := by
+      simpa [txLeafArtifactResourceRequest] using
+        boundedFacts.workUnitsWithinCap
+  }
 
 theorem tx_leaf_projection_assumptions_accept_binding
     {summary : TxLeafSummary}

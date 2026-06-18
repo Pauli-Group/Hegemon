@@ -168,6 +168,38 @@ def openFrame
           nonceFromCounter state.recvCounter,
           { state with recvCounter := nextRecv })
 
+structure OpenFrameAdmissionResult where
+  slot : KeySlot
+  nonce : List Byte
+  next : ChannelState
+  accepted : Bool
+deriving DecidableEq, Repr
+
+def rejectedOpenFrameAdmission (state : ChannelState) :
+    OpenFrameAdmissionResult :=
+  { slot := recvSlot state.role
+    nonce := nonceFromCounter state.recvCounter
+    next := state
+    accepted := false }
+
+def openFrameWithObservedWire
+    (state : ChannelState)
+    (observedSlot : KeySlot)
+    (observedNonce : List Byte) :
+    OpenFrameAdmissionResult :=
+  let expectedSlot := recvSlot state.role
+  let expectedNonce := nonceFromCounter state.recvCounter
+  if observedSlot = expectedSlot ∧ observedNonce = expectedNonce then
+    match nextCounter state.recvCounter with
+    | none => rejectedOpenFrameAdmission state
+    | some nextRecv =>
+        { slot := expectedSlot
+          nonce := expectedNonce
+          next := { state with recvCounter := nextRecv }
+          accepted := true }
+  else
+    rejectedOpenFrameAdmission state
+
 structure InitHelloSigningInput where
   version : Nat
   mlkemPublicKey : List Byte
@@ -368,6 +400,195 @@ theorem openFrame_rejects_recv_overflow
     openFrame state = none := by
   unfold openFrame
   rw [atMax, nextCounter_rejects_u64_max]
+
+theorem openFrameWithObservedWire_accepts_current_below_max
+    {state : ChannelState}
+    (belowMax : state.recvCounter < u64Max) :
+    openFrameWithObservedWire
+      state
+      (recvSlot state.role)
+      (nonceFromCounter state.recvCounter) =
+      { slot := recvSlot state.role
+        nonce := nonceFromCounter state.recvCounter
+        next := { state with recvCounter := state.recvCounter + 1 }
+        accepted := true } := by
+  unfold openFrameWithObservedWire
+  simp [nextCounter_accepts_below_max belowMax]
+
+theorem openFrameWithObservedWire_rejects_recv_overflow
+    {state : ChannelState}
+    (atMax : state.recvCounter = u64Max) :
+    openFrameWithObservedWire
+      state
+      (recvSlot state.role)
+      (nonceFromCounter state.recvCounter) =
+      rejectedOpenFrameAdmission state := by
+  unfold openFrameWithObservedWire
+  rw [atMax]
+  simp [nextCounter_rejects_u64_max]
+
+theorem openFrameWithObservedWire_rejects_slot_mismatch
+    {state : ChannelState}
+    {observedSlot : KeySlot}
+    {observedNonce : List Byte}
+    (slotMismatch : observedSlot ≠ recvSlot state.role) :
+    openFrameWithObservedWire state observedSlot observedNonce =
+      rejectedOpenFrameAdmission state := by
+  unfold openFrameWithObservedWire
+  simp [slotMismatch]
+
+theorem openFrameWithObservedWire_rejects_nonce_mismatch
+    {state : ChannelState}
+    {observedSlot : KeySlot}
+    {observedNonce : List Byte}
+    (nonceMismatch : observedNonce ≠ nonceFromCounter state.recvCounter) :
+    openFrameWithObservedWire state observedSlot observedNonce =
+      rejectedOpenFrameAdmission state := by
+  unfold openFrameWithObservedWire
+  simp [nonceMismatch]
+
+theorem openFrameWithObservedWire_rejects_same_role_send_slot
+    {state : ChannelState} :
+    openFrameWithObservedWire
+      state
+      (sendSlot state.role)
+      (nonceFromCounter state.recvCounter) =
+      rejectedOpenFrameAdmission state := by
+  exact
+    openFrameWithObservedWire_rejects_slot_mismatch
+      (state := state)
+      (observedSlot := sendSlot state.role)
+      (observedNonce := nonceFromCounter state.recvCounter)
+      send_recv_slots_distinct
+
+theorem openFrameWithObservedWire_rejection_preserves_state
+    {state : ChannelState}
+    {observedSlot : KeySlot}
+    {observedNonce : List Byte}
+    (rejected :
+      (openFrameWithObservedWire state observedSlot observedNonce).accepted = false) :
+    (openFrameWithObservedWire state observedSlot observedNonce).next = state := by
+  unfold openFrameWithObservedWire at rejected ⊢
+  by_cases matchesCurrent :
+      observedSlot = recvSlot state.role ∧
+        observedNonce = nonceFromCounter state.recvCounter
+  · simp [matchesCurrent] at rejected ⊢
+    unfold nextCounter at rejected ⊢
+    by_cases belowMax : state.recvCounter < u64Max
+    · simp [belowMax] at rejected
+    · simp [belowMax, rejectedOpenFrameAdmission]
+  · simp [matchesCurrent, rejectedOpenFrameAdmission]
+
+theorem openFrameWithObservedWire_rejects_stale_duplicate_after_first
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 1 }
+      (recvSlot role)
+      (nonceFromCounter 0) =
+      rejectedOpenFrameAdmission
+        { role := role, sendCounter := sendCounter, recvCounter := 1 } := by
+  have nonceMismatch : nonceFromCounter 0 ≠ nonceFromCounter 1 := by
+    decide
+  exact
+    openFrameWithObservedWire_rejects_nonce_mismatch
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 1 })
+      (observedSlot := recvSlot role)
+      (observedNonce := nonceFromCounter 0)
+      nonceMismatch
+
+theorem openFrameWithObservedWire_rejects_future_gap_before_first
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 0 }
+      (recvSlot role)
+      (nonceFromCounter 1) =
+      rejectedOpenFrameAdmission
+        { role := role, sendCounter := sendCounter, recvCounter := 0 } := by
+  have nonceMismatch : nonceFromCounter 1 ≠ nonceFromCounter 0 := by
+    decide
+  exact
+    openFrameWithObservedWire_rejects_nonce_mismatch
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 0 })
+      (observedSlot := recvSlot role)
+      (observedNonce := nonceFromCounter 1)
+      nonceMismatch
+
+theorem openFrameWithObservedWire_next_frame_after_duplicate_rejects_accepts
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 1 }
+      (recvSlot role)
+      (nonceFromCounter 1) =
+      { slot := recvSlot role
+        nonce := nonceFromCounter 1
+        next := { role := role, sendCounter := sendCounter, recvCounter := 2 }
+        accepted := true } := by
+  have belowMax : 1 < u64Max := by
+    unfold u64Max
+    decide
+  exact
+    openFrameWithObservedWire_accepts_current_below_max
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 1 })
+      (by simpa using belowMax)
+
+theorem openFrameWithObservedWire_current_frame_after_future_rejects_accepts
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 0 }
+      (recvSlot role)
+      (nonceFromCounter 0) =
+      { slot := recvSlot role
+        nonce := nonceFromCounter 0
+        next := { role := role, sendCounter := sendCounter, recvCounter := 1 }
+        accepted := true } := by
+  have belowMax : 0 < u64Max := by
+    unfold u64Max
+    decide
+  exact
+    openFrameWithObservedWire_accepts_current_below_max
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 0 })
+      (by simpa using belowMax)
+
+theorem openFrameWithObservedWire_rejects_stale_nonce_one_at_three
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 3 }
+      (recvSlot role)
+      (nonceFromCounter 1) =
+      rejectedOpenFrameAdmission
+        { role := role, sendCounter := sendCounter, recvCounter := 3 } := by
+  have nonceMismatch : nonceFromCounter 1 ≠ nonceFromCounter 3 := by
+    decide
+  exact
+    openFrameWithObservedWire_rejects_nonce_mismatch
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 3 })
+      (observedSlot := recvSlot role)
+      (observedNonce := nonceFromCounter 1)
+      nonceMismatch
+
+theorem openFrameWithObservedWire_current_frame_after_stale_three_rejects_accepts
+    {role : Role}
+    {sendCounter : Nat} :
+    openFrameWithObservedWire
+      { role := role, sendCounter := sendCounter, recvCounter := 3 }
+      (recvSlot role)
+      (nonceFromCounter 3) =
+      { slot := recvSlot role
+        nonce := nonceFromCounter 3
+        next := { role := role, sendCounter := sendCounter, recvCounter := 4 }
+        accepted := true } := by
+  have belowMax : 3 < u64Max := by
+    unfold u64Max
+    decide
+  exact
+    openFrameWithObservedWire_accepts_current_below_max
+      (state := { role := role, sendCounter := sendCounter, recvCounter := 3 })
+      (by simpa using belowMax)
 
 theorem protectFrame_direction_and_counter
     {state next : ChannelState}

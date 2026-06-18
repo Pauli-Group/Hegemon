@@ -5,6 +5,7 @@ namespace RecursiveBlockV2VerifierSurface
 inductive SurfaceReject where
   | publicMismatch
   | proofWidthMismatch
+  | versionedCapMismatch
   | unsupportedTxCount
   | headerMismatch
   | proofDecodeFailed
@@ -18,6 +19,7 @@ deriving DecidableEq, Repr
 structure SurfaceInput where
   publicMatches : Bool
   proofWidthMatches : Bool
+  versionedCapMatches : Bool
   supportedTxCount : Bool
   headerMatches : Bool
   proofTraceDecodes : Bool
@@ -33,6 +35,8 @@ def evaluateSurfaceRejection (input : SurfaceInput) : Option SurfaceReject :=
     some SurfaceReject.publicMismatch
   else if input.proofWidthMatches = false then
     some SurfaceReject.proofWidthMismatch
+  else if input.versionedCapMatches = false then
+    some SurfaceReject.versionedCapMismatch
   else if input.supportedTxCount = false then
     some SurfaceReject.unsupportedTxCount
   else if input.headerMatches = false then
@@ -64,6 +68,8 @@ def surfacePreconditions (input : SurfaceInput) : Bool :=
     false
   else if input.proofWidthMatches = false then
     false
+  else if input.versionedCapMatches = false then
+    false
   else if input.supportedTxCount = false then
     false
   else if input.headerMatches = false then
@@ -93,12 +99,12 @@ def fullVerifierAccepts (input : SurfaceInput) : Bool :=
 theorem surface_accepts_iff_preconditions (input : SurfaceInput) :
     surfaceAccepts input = surfacePreconditions input := by
   cases input with
-  | mk publicMatches proofWidthMatches supportedTxCount headerMatches proofTraceDecodes
-      proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds proofProjectedWidthFits
-      cryptoVerifierAccepts =>
+  | mk publicMatches proofWidthMatches versionedCapMatches supportedTxCount headerMatches
+      proofTraceDecodes proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds
+      proofProjectedWidthFits cryptoVerifierAccepts =>
       unfold surfaceAccepts surfacePreconditions evaluateSurfaceRejection
-      cases publicMatches <;> cases proofWidthMatches <;> cases supportedTxCount <;>
-        cases headerMatches <;> cases proofTraceDecodes <;>
+      cases publicMatches <;> cases proofWidthMatches <;> cases versionedCapMatches <;>
+        cases supportedTxCount <;> cases headerMatches <;> cases proofTraceDecodes <;>
         cases proofCanonicalEncoding <;> cases proofPaddingZero <;>
         cases proofProjectionSucceeds <;> cases proofProjectedWidthFits <;>
         cases cryptoVerifierAccepts <;> simp
@@ -106,13 +112,13 @@ theorem surface_accepts_iff_preconditions (input : SurfaceInput) :
 theorem full_verifier_accepts_iff_surface_and_crypto (input : SurfaceInput) :
     fullVerifierAccepts input = fullVerifierPreconditions input := by
   cases input with
-  | mk publicMatches proofWidthMatches supportedTxCount headerMatches proofTraceDecodes
-      proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds proofProjectedWidthFits
-      cryptoVerifierAccepts =>
+  | mk publicMatches proofWidthMatches versionedCapMatches supportedTxCount headerMatches
+      proofTraceDecodes proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds
+      proofProjectedWidthFits cryptoVerifierAccepts =>
       unfold fullVerifierAccepts fullVerifierPreconditions surfacePreconditions
         evaluateFullVerifierRejection evaluateSurfaceRejection
-      cases publicMatches <;> cases proofWidthMatches <;> cases supportedTxCount <;>
-        cases headerMatches <;> cases proofTraceDecodes <;>
+      cases publicMatches <;> cases proofWidthMatches <;> cases versionedCapMatches <;>
+        cases supportedTxCount <;> cases headerMatches <;> cases proofTraceDecodes <;>
         cases proofCanonicalEncoding <;> cases proofPaddingZero <;>
         cases proofProjectionSucceeds <;> cases proofProjectedWidthFits <;>
         cases cryptoVerifierAccepts <;> simp
@@ -120,13 +126,13 @@ theorem full_verifier_accepts_iff_surface_and_crypto (input : SurfaceInput) :
 theorem full_accepts_implies_surface_accepts (input : SurfaceInput) :
     fullVerifierAccepts input = true -> surfaceAccepts input = true := by
   cases input with
-  | mk publicMatches proofWidthMatches supportedTxCount headerMatches proofTraceDecodes
-      proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds proofProjectedWidthFits
-      cryptoVerifierAccepts =>
+  | mk publicMatches proofWidthMatches versionedCapMatches supportedTxCount headerMatches
+      proofTraceDecodes proofCanonicalEncoding proofPaddingZero proofProjectionSucceeds
+      proofProjectedWidthFits cryptoVerifierAccepts =>
       unfold fullVerifierAccepts surfaceAccepts evaluateFullVerifierRejection
         evaluateSurfaceRejection
-      cases publicMatches <;> cases proofWidthMatches <;> cases supportedTxCount <;>
-        cases headerMatches <;> cases proofTraceDecodes <;>
+      cases publicMatches <;> cases proofWidthMatches <;> cases versionedCapMatches <;>
+        cases supportedTxCount <;> cases headerMatches <;> cases proofTraceDecodes <;>
         cases proofCanonicalEncoding <;> cases proofPaddingZero <;>
         cases proofProjectionSucceeds <;> cases proofProjectedWidthFits <;>
         cases cryptoVerifierAccepts <;> simp
@@ -135,6 +141,7 @@ def validSurface : SurfaceInput :=
   {
     publicMatches := true,
     proofWidthMatches := true,
+    versionedCapMatches := true,
     supportedTxCount := true,
     headerMatches := true,
     proofTraceDecodes := true,
@@ -157,6 +164,11 @@ theorem public_mismatch_rejects :
 theorem proof_width_mismatch_rejects :
     evaluateSurfaceRejection { validSurface with proofWidthMatches := false } =
       some SurfaceReject.proofWidthMismatch := by
+  decide
+
+theorem versioned_cap_mismatch_rejects :
+    evaluateSurfaceRejection { validSurface with versionedCapMatches := false } =
+      some SurfaceReject.versionedCapMismatch := by
   decide
 
 theorem unsupported_tx_count_rejects :

@@ -25,6 +25,18 @@ theorem natEq_true_eq {left right : Nat} :
   · intro impossible
     cases impossible
 
+def digestListEq (left right : List Digest) : Bool :=
+  if left = right then true else false
+
+theorem digestListEq_true_eq {left right : List Digest} :
+    digestListEq left right = true -> left = right := by
+  unfold digestListEq
+  split
+  · intro _
+    assumption
+  · intro impossible
+    cases impossible
+
 structure InputSpendWitness where
   value : Nat
   assetId : Nat
@@ -181,6 +193,83 @@ def ActiveInputAt :
         publicNullifier
         activeWitness
   | _, _, _, _, _, _, _ => False
+
+def materializeTxLeafInputNullifiers :
+    List Nat -> List Digest -> Option (List Digest)
+  | [], [] => some []
+  | [], _ :: _ => none
+  | flag :: flags, compactNullifiers =>
+      if flag = 0 then
+        match materializeTxLeafInputNullifiers flags compactNullifiers with
+        | some projected => some (0 :: projected)
+        | none => none
+      else if flag = 1 then
+        match compactNullifiers with
+        | publicNullifier :: rest =>
+            if publicNullifier = 0 then
+              none
+            else
+              match materializeTxLeafInputNullifiers flags rest with
+              | some projected => some (publicNullifier :: projected)
+              | none => none
+        | [] => none
+      else
+        none
+
+structure TxLeafInputProjectionSurface where
+  inputFlags : List Nat
+  compactNullifiers : List Digest
+  publicNullifiers : List Digest
+deriving DecidableEq, Repr
+
+def txLeafInputProjectionAccepted
+    (surface : TxLeafInputProjectionSurface) : Bool :=
+  match
+      materializeTxLeafInputNullifiers
+        surface.inputFlags
+        surface.compactNullifiers with
+  | some projected =>
+      digestListEq projected surface.publicNullifiers
+        && allInputsValid surface.inputFlags surface.publicNullifiers
+  | none => false
+
+theorem txLeafInputProjectionAccepted_implies_materialized_public_nullifiers
+    {surface : TxLeafInputProjectionSurface}
+    (accepted : txLeafInputProjectionAccepted surface = true) :
+    materializeTxLeafInputNullifiers
+      surface.inputFlags
+      surface.compactNullifiers = some surface.publicNullifiers := by
+  unfold txLeafInputProjectionAccepted at accepted
+  cases h :
+      materializeTxLeafInputNullifiers
+        surface.inputFlags
+        surface.compactNullifiers with
+  | none =>
+      rw [h] at accepted
+      simp at accepted
+  | some projected =>
+      rw [h] at accepted
+      simp at accepted
+      have projectionEq : projected = surface.publicNullifiers :=
+        digestListEq_true_eq accepted.left
+      exact congrArg some projectionEq
+
+theorem txLeafInputProjectionAccepted_implies_public_inputs_valid
+    {surface : TxLeafInputProjectionSurface}
+    (accepted : txLeafInputProjectionAccepted surface = true) :
+    allInputsValid surface.inputFlags surface.publicNullifiers = true := by
+  unfold txLeafInputProjectionAccepted at accepted
+  cases h :
+      materializeTxLeafInputNullifiers
+        surface.inputFlags
+        surface.compactNullifiers with
+  | none =>
+      rw [h] at accepted
+      simp at accepted
+  | some projected =>
+      rw [h] at accepted
+      simp at accepted
+      exact accepted.right
 
 def transactionSpendAuthorized
     (shape : PublicInputShape)
@@ -583,6 +672,51 @@ theorem accepted_wrapper_implies_input_slot_facts_at
       (soundSpend accepted)
       slot
 
+theorem tx_leaf_projection_and_spend_authorized_input_slot_facts_at
+    {surface : TxLeafInputProjectionSurface}
+    {shape : PublicInputShape}
+    {merkleRoot : Digest}
+    {witnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (projectionAccepted : txLeafInputProjectionAccepted surface = true)
+    (shapeFlags : shape.inputFlags = surface.inputFlags)
+    (shapeNullifiers : shape.nullifiers = surface.publicNullifiers)
+    (authorized : transactionSpendAuthorized shape merkleRoot witnesses = true)
+    (slot :
+      ActiveInputAt
+        surface.inputFlags
+        surface.publicNullifiers
+        witnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness := by
+  have _materialized :=
+    txLeafInputProjectionAccepted_implies_materialized_public_nullifiers
+      projectionAccepted
+  have slotOnShape :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        witnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [shapeFlags, shapeNullifiers]
+    exact slot
+  exact
+    transactionSpendAuthorized_input_slot_facts_at
+      authorized
+      slotOnShape
+
 def sampleWitness : InputSpendWitness :=
   let base : InputSpendWitness :=
     { value := 5
@@ -616,6 +750,51 @@ theorem sample_transaction_spend_authorized :
       sampleWitness.noteCommitment
       [sampleWitness,
         { sampleWitness with noteCommitment := 0, spendSecret := 0 }] = true := by
+  decide
+
+def sampleTxLeafInputProjectionPrefix : TxLeafInputProjectionSurface :=
+  { inputFlags := [1, 0]
+    compactNullifiers := [11]
+    publicNullifiers := [11, 0] }
+
+def sampleTxLeafInputProjectionHole : TxLeafInputProjectionSurface :=
+  { inputFlags := [0, 1]
+    compactNullifiers := [22]
+    publicNullifiers := [0, 22] }
+
+theorem sample_tx_leaf_input_projection_prefix_accepts :
+    txLeafInputProjectionAccepted sampleTxLeafInputProjectionPrefix = true := by
+  decide
+
+theorem sample_tx_leaf_input_projection_hole_accepts :
+    txLeafInputProjectionAccepted sampleTxLeafInputProjectionHole = true := by
+  decide
+
+theorem tx_leaf_input_projection_active_zero_nullifier_rejects :
+    txLeafInputProjectionAccepted
+      { sampleTxLeafInputProjectionPrefix with
+        compactNullifiers := [0]
+        publicNullifiers := [0, 0] } = false := by
+  decide
+
+theorem tx_leaf_input_projection_missing_compact_nullifier_rejects :
+    txLeafInputProjectionAccepted
+      { sampleTxLeafInputProjectionPrefix with compactNullifiers := [] } = false := by
+  decide
+
+theorem tx_leaf_input_projection_extra_compact_nullifier_rejects :
+    txLeafInputProjectionAccepted
+      { sampleTxLeafInputProjectionPrefix with compactNullifiers := [11, 12] } = false := by
+  decide
+
+theorem tx_leaf_input_projection_malformed_input_flag_rejects :
+    txLeafInputProjectionAccepted
+      { sampleTxLeafInputProjectionPrefix with inputFlags := [2, 0] } = false := by
+  decide
+
+theorem tx_leaf_input_projection_prefix_alias_rejects :
+    txLeafInputProjectionAccepted
+      { sampleTxLeafInputProjectionHole with publicNullifiers := [22, 0] } = false := by
   decide
 
 theorem active_input_wrong_secret_rejects :

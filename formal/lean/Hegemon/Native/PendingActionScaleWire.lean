@@ -44,6 +44,15 @@ structure PendingActionScaleWireInput where
   candidateArtifactVerifierProfileBytes : Nat
   candidateArtifactReceiptRootOptionTagBytes : Nat
   candidateArtifactReceiptRootNone : Bool
+  candidateArtifactReceiptRootProofBytes : Nat
+  candidateArtifactReceiptRootProofCompactPrefixBytes : Nat
+  candidateArtifactReceiptRootRelationIdBytes : Nat
+  candidateArtifactReceiptRootShapeDigestBytes : Nat
+  candidateArtifactReceiptRootLeafCountBytes : Nat
+  candidateArtifactReceiptRootFoldCountBytes : Nat
+  candidateArtifactReceiptRootReceiptCount : Nat
+  candidateArtifactReceiptRootReceiptCompactPrefixBytes : Nat
+  candidateArtifactReceiptRootReceiptElementBytes : Nat
   candidateArtifactRecursiveBlockOptionTagBytes : Nat
   candidateArtifactRecursiveBlockPresent : Bool
   candidateArtifactRecursiveProofBytes : Nat
@@ -53,19 +62,81 @@ structure PendingActionScaleWireInput where
   canonicalReencodeMatches : Bool
 deriving DecidableEq, Repr
 
-def recursiveBlockCandidateArtifactEncodedLen
-    (commitmentProofBytes recursiveProofBytes : Nat) : Nat :=
+def txValidityReceiptEncodedLen : Nat :=
+  48 + 48 + 48 + 48
+
+def receiptRootProofPayloadEncodedLen
+    (rootProofCompactPrefixBytes rootProofBytes
+      receiptCompactPrefixBytes receiptCount receiptElementBytes : Nat) :
+    Nat :=
+  (rootProofCompactPrefixBytes + rootProofBytes)
+    + 32 + 32 + 4 + 4
+    + (receiptCompactPrefixBytes + receiptCount * receiptElementBytes)
+
+def recursiveBlockProofPayloadEncodedLen (recursiveProofBytes : Nat) : Nat :=
+  1 + recursiveProofBytes
+
+def candidateArtifactReceiptRootPayloadBytesExpected
+    (input : PendingActionScaleWireInput) : Nat :=
+  if input.candidateArtifactReceiptRootNone then
+    0
+  else
+    receiptRootProofPayloadEncodedLen
+      input.candidateArtifactReceiptRootProofCompactPrefixBytes
+      input.candidateArtifactReceiptRootProofBytes
+      input.candidateArtifactReceiptRootReceiptCompactPrefixBytes
+      input.candidateArtifactReceiptRootReceiptCount
+      input.candidateArtifactReceiptRootReceiptElementBytes
+
+def candidateArtifactRecursiveBlockPayloadBytesExpected
+    (input : PendingActionScaleWireInput) : Nat :=
+  if input.candidateArtifactRecursiveBlockPresent then
+    recursiveBlockProofPayloadEncodedLen input.candidateArtifactRecursiveProofBytes
+  else
+    0
+
+def candidateArtifactSomeEncodedLen
+    (commitmentProofBytes receiptRootOptionTagBytes receiptRootPayloadBytes
+      recursiveBlockOptionTagBytes recursiveBlockPayloadBytes : Nat) : Nat :=
   1 + 4 + 48 + 48 + 4
     + (1 + commitmentProofBytes)
     + 1 + 1 + 48
-    + 1
-    + 1 + (1 + recursiveProofBytes)
+    + receiptRootOptionTagBytes + receiptRootPayloadBytes
+    + recursiveBlockOptionTagBytes + recursiveBlockPayloadBytes
+
+def recursiveBlockCandidateArtifactEncodedLen
+    (commitmentProofBytes recursiveProofBytes : Nat) : Nat :=
+  candidateArtifactSomeEncodedLen
+    commitmentProofBytes
+    1
+    0
+    1
+    (recursiveBlockProofPayloadEncodedLen recursiveProofBytes)
+
+def receiptRootCandidateArtifactEncodedLen
+    (commitmentProofBytes rootProofCompactPrefixBytes rootProofBytes
+      receiptCompactPrefixBytes receiptCount receiptElementBytes : Nat) :
+    Nat :=
+  candidateArtifactSomeEncodedLen
+    commitmentProofBytes
+    1
+    (receiptRootProofPayloadEncodedLen
+      rootProofCompactPrefixBytes
+      rootProofBytes
+      receiptCompactPrefixBytes
+      receiptCount
+      receiptElementBytes)
+    1
+    0
 
 def candidateArtifactSomePayloadBytesExpected
     (input : PendingActionScaleWireInput) : Nat :=
-  recursiveBlockCandidateArtifactEncodedLen
+  candidateArtifactSomeEncodedLen
     input.candidateArtifactCommitmentProofBytes
-    input.candidateArtifactRecursiveProofBytes
+    input.candidateArtifactReceiptRootOptionTagBytes
+    (candidateArtifactReceiptRootPayloadBytesExpected input)
+    input.candidateArtifactRecursiveBlockOptionTagBytes
+    (candidateArtifactRecursiveBlockPayloadBytesExpected input)
 
 def candidateArtifactPayloadBytesExpected
     (input : PendingActionScaleWireInput) : Nat :=
@@ -127,12 +198,29 @@ def candidateArtifactSomeFixedWidthsOk
     && input.candidateArtifactReceiptRootOptionTagBytes == 1
     && input.candidateArtifactRecursiveBlockOptionTagBytes == 1
 
+def candidateArtifactReceiptRootPayloadOk
+    (input : PendingActionScaleWireInput) : Bool :=
+  input.candidateArtifactReceiptRootNone
+    || (input.candidateArtifactReceiptRootProofCompactPrefixBytes == 1
+      && input.candidateArtifactReceiptRootRelationIdBytes == 32
+      && input.candidateArtifactReceiptRootShapeDigestBytes == 32
+      && input.candidateArtifactReceiptRootLeafCountBytes == 4
+      && input.candidateArtifactReceiptRootFoldCountBytes == 4
+      && input.candidateArtifactReceiptRootReceiptCompactPrefixBytes == 1
+      && input.candidateArtifactReceiptRootReceiptElementBytes ==
+        txValidityReceiptEncodedLen)
+
+def candidateArtifactSomePayloadOk
+    (input : PendingActionScaleWireInput) : Bool :=
+  candidateArtifactSomeFixedWidthsOk input
+    && candidateArtifactReceiptRootPayloadOk input
+    && ((input.candidateArtifactReceiptRootNone == false)
+      || input.candidateArtifactRecursiveBlockPresent)
+
 def candidateArtifactPayloadOk (input : PendingActionScaleWireInput) : Bool :=
   input.candidateArtifactPayloadBytes == candidateArtifactPayloadBytesExpected input
     && (input.candidateArtifactNone
-      || (candidateArtifactSomeFixedWidthsOk input
-        && input.candidateArtifactReceiptRootNone
-        && input.candidateArtifactRecursiveBlockPresent))
+      || candidateArtifactSomePayloadOk input)
 
 def expectedLengthMatches (input : PendingActionScaleWireInput) : Bool :=
   input.totalBytes ==
@@ -343,6 +431,15 @@ def validEmptyNoCandidate : PendingActionScaleWireInput :=
     candidateArtifactVerifierProfileBytes := 0,
     candidateArtifactReceiptRootOptionTagBytes := 0,
     candidateArtifactReceiptRootNone := false,
+    candidateArtifactReceiptRootProofBytes := 0,
+    candidateArtifactReceiptRootProofCompactPrefixBytes := 0,
+    candidateArtifactReceiptRootRelationIdBytes := 0,
+    candidateArtifactReceiptRootShapeDigestBytes := 0,
+    candidateArtifactReceiptRootLeafCountBytes := 0,
+    candidateArtifactReceiptRootFoldCountBytes := 0,
+    candidateArtifactReceiptRootReceiptCount := 0,
+    candidateArtifactReceiptRootReceiptCompactPrefixBytes := 0,
+    candidateArtifactReceiptRootReceiptElementBytes := 0,
     candidateArtifactRecursiveBlockOptionTagBytes := 0,
     candidateArtifactRecursiveBlockPresent := false,
     candidateArtifactRecursiveProofBytes := 0,
@@ -385,9 +482,56 @@ def validCandidateArtifactSome : PendingActionScaleWireInput :=
     candidateArtifactVerifierProfileBytes := 48,
     candidateArtifactReceiptRootOptionTagBytes := 1,
     candidateArtifactReceiptRootNone := true,
+    candidateArtifactReceiptRootProofBytes := 0,
+    candidateArtifactReceiptRootProofCompactPrefixBytes := 0,
+    candidateArtifactReceiptRootRelationIdBytes := 0,
+    candidateArtifactReceiptRootShapeDigestBytes := 0,
+    candidateArtifactReceiptRootLeafCountBytes := 0,
+    candidateArtifactReceiptRootFoldCountBytes := 0,
+    candidateArtifactReceiptRootReceiptCount := 0,
+    candidateArtifactReceiptRootReceiptCompactPrefixBytes := 0,
+    candidateArtifactReceiptRootReceiptElementBytes := 0,
     candidateArtifactRecursiveBlockOptionTagBytes := 1,
     candidateArtifactRecursiveBlockPresent := true,
     candidateArtifactRecursiveProofBytes := 32,
+    totalBytes := pendingActionEncodedLen 0 0 0 0 2 payloadBytes payloadBytes
+  }
+
+def validCandidateArtifactSomeReceiptRootSlice : PendingActionScaleWireInput :=
+  let payloadBytes := receiptRootCandidateArtifactEncodedLen 0 1 3 1 1
+    txValidityReceiptEncodedLen
+  {
+    validEmptyNoCandidate with
+    familyIdBytes := 2,
+    actionIdBytes := 2,
+    publicArgsBytes := payloadBytes,
+    publicArgsCompactPrefixBytes := 2,
+    candidateArtifactNone := false,
+    candidateArtifactPayloadBytes := payloadBytes,
+    candidateArtifactVersionBytes := 1,
+    candidateArtifactTxCountBytes := 4,
+    candidateArtifactTxStatementsCommitmentBytes := 48,
+    candidateArtifactDaRootBytes := 48,
+    candidateArtifactDaChunkCountBytes := 4,
+    candidateArtifactCommitmentProofBytes := 0,
+    candidateArtifactProofModeBytes := 1,
+    candidateArtifactProofKindBytes := 1,
+    candidateArtifactVerifierProfileBytes := 48,
+    candidateArtifactReceiptRootOptionTagBytes := 1,
+    candidateArtifactReceiptRootNone := false,
+    candidateArtifactReceiptRootProofBytes := 3,
+    candidateArtifactReceiptRootProofCompactPrefixBytes := 1,
+    candidateArtifactReceiptRootRelationIdBytes := 32,
+    candidateArtifactReceiptRootShapeDigestBytes := 32,
+    candidateArtifactReceiptRootLeafCountBytes := 4,
+    candidateArtifactReceiptRootFoldCountBytes := 4,
+    candidateArtifactReceiptRootReceiptCount := 1,
+    candidateArtifactReceiptRootReceiptCompactPrefixBytes := 1,
+    candidateArtifactReceiptRootReceiptElementBytes :=
+      txValidityReceiptEncodedLen,
+    candidateArtifactRecursiveBlockOptionTagBytes := 1,
+    candidateArtifactRecursiveBlockPresent := false,
+    candidateArtifactRecursiveProofBytes := 0,
     totalBytes := pendingActionEncodedLen 0 0 0 0 2 payloadBytes payloadBytes
   }
 
@@ -402,6 +546,17 @@ theorem valid_one_each_no_candidate_accepts :
 theorem valid_candidate_artifact_some_accepts :
     pendingActionScaleWireAccepts validCandidateArtifactSome = true := by
   rfl
+
+theorem valid_candidate_artifact_some_receipt_root_slice_accepts :
+    pendingActionScaleWireAccepts
+      validCandidateArtifactSomeReceiptRootSlice = true := by
+  rfl
+
+theorem valid_candidate_artifact_some_receipt_root_slice_binds_receipt_vector :
+    validCandidateArtifactSomeReceiptRootSlice.candidateArtifactReceiptRootReceiptCount = 1
+      ∧ validCandidateArtifactSomeReceiptRootSlice.candidateArtifactReceiptRootReceiptElementBytes =
+        txValidityReceiptEncodedLen := by
+  exact And.intro rfl rfl
 
 def malformedNullifierCountOverrun : PendingActionScaleWireInput :=
   { validOneEachNoCandidate with
@@ -435,6 +590,18 @@ def candidateSomeMissingPayload : PendingActionScaleWireInput :=
 
 theorem candidate_some_missing_payload_rejects :
     evaluatePendingActionScaleWireRejection candidateSomeMissingPayload =
+      some PendingActionScaleWireReject.parserRejected := by
+  rfl
+
+def candidateSomeReceiptRootReceiptCountOverrun :
+    PendingActionScaleWireInput :=
+  { validCandidateArtifactSomeReceiptRootSlice with
+    candidateArtifactReceiptRootReceiptCount := 2,
+    canonicalReencodeMatches := false }
+
+theorem candidate_some_receipt_root_receipt_count_overrun_rejects :
+    evaluatePendingActionScaleWireRejection
+      candidateSomeReceiptRootReceiptCountOverrun =
       some PendingActionScaleWireReject.parserRejected := by
   rfl
 

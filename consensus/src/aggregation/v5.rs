@@ -325,6 +325,7 @@ enum AggregationV5HeaderReject {
     UnsupportedVersion,
     UnsupportedProofFormat,
     UnsupportedPublicValuesEncoding,
+    TreeArityMismatch,
     StatementCommitmentLength,
     StatementCommitmentMismatch,
     ChildCountOutOfRange,
@@ -344,6 +345,7 @@ impl AggregationV5HeaderReject {
             Self::UnsupportedVersion => "unsupported_version",
             Self::UnsupportedProofFormat => "unsupported_proof_format",
             Self::UnsupportedPublicValuesEncoding => "unsupported_public_values_encoding",
+            Self::TreeArityMismatch => "tree_arity_mismatch",
             Self::StatementCommitmentLength => "statement_commitment_length",
             Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
             Self::ChildCountOutOfRange => "child_count_out_of_range",
@@ -367,7 +369,8 @@ impl AggregationV5HeaderReject {
             | Self::StatementCommitmentLength
             | Self::RootLevelOutOfRange
             | Self::FanInZero => ProofError::AggregationProofV5Decode(message),
-            Self::StatementCommitmentMismatch
+            Self::TreeArityMismatch
+            | Self::StatementCommitmentMismatch
             | Self::ChildCountOutOfRange
             | Self::SubtreeTxCountMismatch
             | Self::TreeLevelsMismatch
@@ -392,6 +395,9 @@ fn evaluate_header(
     }
     if payload.public_values_encoding != AGGREGATION_PUBLIC_VALUES_ENCODING_V2 {
         return Err(AggregationV5HeaderReject::UnsupportedPublicValuesEncoding);
+    }
+    if payload.tree_arity as usize != merge_fan_in() {
+        return Err(AggregationV5HeaderReject::TreeArityMismatch);
     }
     if payload.tx_statements_commitment.len() != 48 {
         return Err(AggregationV5HeaderReject::StatementCommitmentLength);
@@ -853,6 +859,7 @@ mod tests {
         fan_in: u16,
         child_count: u16,
         subtree_tx_count: u32,
+        tree_arity: u16,
         expected_tx_count: usize,
         tree_levels: u16,
         root_level: u16,
@@ -920,7 +927,7 @@ mod tests {
             fan_in: case.fan_in,
             child_count: case.child_count,
             subtree_tx_count: case.subtree_tx_count,
-            tree_arity: case.fan_in,
+            tree_arity: case.tree_arity,
             tree_levels: case.tree_levels,
             root_level: case.root_level,
             shape_id: [0u8; 32],

@@ -15,6 +15,7 @@ def headerRejectJson : Option HeaderReject -> String
   | some HeaderReject.unsupportedProofFormat => "\"unsupported_proof_format\""
   | some HeaderReject.unsupportedPublicValuesEncoding =>
       "\"unsupported_public_values_encoding\""
+  | some HeaderReject.treeArityMismatch => "\"tree_arity_mismatch\""
   | some HeaderReject.statementCommitmentLength => "\"statement_commitment_length\""
   | some HeaderReject.statementCommitmentMismatch => "\"statement_commitment_mismatch\""
   | some HeaderReject.childCountOutOfRange => "\"child_count_out_of_range\""
@@ -40,6 +41,7 @@ def aggregationV5HeaderCaseJson (name : String) (input : HeaderInput) : String :
     ++ "      \"fan_in\": " ++ toString input.fanIn ++ ",\n"
     ++ "      \"child_count\": " ++ toString input.childCount ++ ",\n"
     ++ "      \"subtree_tx_count\": " ++ toString input.subtreeTxCount ++ ",\n"
+    ++ "      \"tree_arity\": " ++ toString input.treeArity ++ ",\n"
     ++ "      \"expected_tx_count\": " ++ toString input.expectedTxCount ++ ",\n"
     ++ "      \"tree_levels\": " ++ toString input.treeLevels ++ ",\n"
     ++ "      \"root_level\": " ++ toString input.rootLevel ++ ",\n"
@@ -80,6 +82,9 @@ def vectorJson : String :=
     ++ aggregationV5HeaderCaseJson
       "bad-public-values-encoding-rejected"
       { validLeafSingletonHeader with publicValuesEncoding := 1 } ++ ",\n"
+    ++ aggregationV5HeaderCaseJson
+      "tree-arity-mismatch-rejected"
+      { validLeafSingletonHeader with treeArity := 3 } ++ ",\n"
     ++ aggregationV5HeaderCaseJson
       "bad-commitment-length-rejected"
       { validLeafSingletonHeader with statementCommitmentLen := 47 } ++ ",\n"

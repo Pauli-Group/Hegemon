@@ -178,6 +178,7 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/RpcAdmission.lean
   lake env lean Hegemon/Native/GenerateRpcAdmissionVectors.lean
   lake env lean Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean
+  lake env lean Hegemon/Native/GeneratePreHeavyWorkResourceBoundSurfaceVectors.lean
   lake env lean Hegemon/Native/DaSidecarReplayBinding.lean
   lake env lean Hegemon/Native/RawIngressSidecarReplayRecoverability.lean
   lake env lean Hegemon/Native/CanonicalPublicationRefinement.lean
@@ -247,6 +248,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/ProofSystemBoundary.lean
   lake env lean Hegemon/Transaction/ProofWrapperAdmission.lean
   lake env lean Hegemon/Transaction/GenerateProofWrapperAdmissionVectors.lean
+  lake env lean Hegemon/Transaction/ProofWrapperWire.lean
+  lake env lean Hegemon/Transaction/GenerateProofWrapperWireVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodBalanceBoundary.lean
   lake env lean Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean
   lake env lean Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean

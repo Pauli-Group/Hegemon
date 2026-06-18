@@ -49,6 +49,8 @@ pub struct CommitmentNullifierLists {
 }
 
 const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
+const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize = 699_404;
+const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 522_159;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlockProofPolicyInput {
@@ -547,6 +549,8 @@ struct RecursiveBlockArtifactAdmissionInput {
     expected_kind: ProofArtifactKind,
     envelope_kind: ProofArtifactKind,
     verifier_profile_matches: bool,
+    artifact_bytes_len: usize,
+    max_artifact_bytes: usize,
     artifact_decoded: bool,
     header_version_matches: bool,
     tx_count_matches: bool,
@@ -558,6 +562,7 @@ struct RecursiveBlockArtifactAdmissionInput {
 enum RecursiveBlockArtifactAdmissionRejection {
     ArtifactKindMismatch,
     VerifierProfileMismatch,
+    ArtifactTooLarge,
     ArtifactDecodeFailed,
     HeaderVersionMismatch,
     TxCountMismatch,
@@ -571,6 +576,7 @@ impl RecursiveBlockArtifactAdmissionRejection {
         match self {
             Self::ArtifactKindMismatch => "artifact_kind_mismatch",
             Self::VerifierProfileMismatch => "verifier_profile_mismatch",
+            Self::ArtifactTooLarge => "artifact_too_large",
             Self::ArtifactDecodeFailed => "artifact_decode_failed",
             Self::HeaderVersionMismatch => "header_version_mismatch",
             Self::TxCountMismatch => "tx_count_mismatch",
@@ -588,6 +594,9 @@ fn evaluate_recursive_block_artifact_admission(
     }
     if !input.verifier_profile_matches {
         return Err(RecursiveBlockArtifactAdmissionRejection::VerifierProfileMismatch);
+    }
+    if input.artifact_bytes_len > input.max_artifact_bytes {
+        return Err(RecursiveBlockArtifactAdmissionRejection::ArtifactTooLarge);
     }
     if !input.artifact_decoded {
         return Err(RecursiveBlockArtifactAdmissionRejection::ArtifactDecodeFailed);
@@ -612,10 +621,17 @@ fn recursive_block_admission_input_for_predecode(
     envelope: &ProofEnvelope,
     verifier_profile_matches: bool,
 ) -> RecursiveBlockArtifactAdmissionInput {
+    let max_artifact_bytes = match expected_kind {
+        ProofArtifactKind::RecursiveBlockV1 => RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES,
+        ProofArtifactKind::RecursiveBlockV2 => RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES,
+        _ => 0,
+    };
     RecursiveBlockArtifactAdmissionInput {
         expected_kind,
         envelope_kind: envelope.kind,
         verifier_profile_matches,
+        artifact_bytes_len: envelope.artifact_bytes.len(),
+        max_artifact_bytes,
         artifact_decoded: true,
         header_version_matches: true,
         tx_count_matches: true,
@@ -656,6 +672,12 @@ fn recursive_block_admission_error(
             };
             ProofError::AggregationProofInputsMismatch(format!(
                 "{label} requires the {version} verifier profile"
+            ))
+        }
+        RecursiveBlockArtifactAdmissionRejection::ArtifactTooLarge => {
+            ProofError::AggregationProofInputsMismatch(format!(
+                "{label} artifact size {} exceeds {}",
+                input.artifact_bytes_len, input.max_artifact_bytes
             ))
         }
         RecursiveBlockArtifactAdmissionRejection::ArtifactDecodeFailed => {
@@ -2203,6 +2225,7 @@ enum ProvenBatchBindingRejection {
     StatementCommitmentMismatch,
     DaRootMismatch,
     DaChunkCountZero,
+    MissingRecursiveBlockArtifact,
     ArtifactKindMismatch,
     ArtifactVerifierProfileMismatch,
     RecursiveBlockReceiptRootPayload,
@@ -2217,6 +2240,7 @@ impl ProvenBatchBindingRejection {
             Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
             Self::DaRootMismatch => "da_root_mismatch",
             Self::DaChunkCountZero => "da_chunk_count_zero",
+            Self::MissingRecursiveBlockArtifact => "missing_recursive_block_artifact",
             Self::ArtifactKindMismatch => "artifact_kind_mismatch",
             Self::ArtifactVerifierProfileMismatch => "artifact_verifier_profile_mismatch",
             Self::RecursiveBlockReceiptRootPayload => "recursive_block_receipt_root_payload",
@@ -2243,6 +2267,11 @@ fn evaluate_proven_batch_binding(
     }
     if input.da_chunk_count == 0 {
         return Err(ProvenBatchBindingRejection::DaChunkCountZero);
+    }
+    if matches!(input.proven_batch_mode, ProvenBatchMode::RecursiveBlock)
+        && input.artifact_kind.is_none()
+    {
+        return Err(ProvenBatchBindingRejection::MissingRecursiveBlockArtifact);
     }
     if let Some(artifact_kind) = input.artifact_kind {
         if artifact_kind != input.proof_kind {
@@ -2312,6 +2341,11 @@ where
         ProvenBatchBindingRejection::DaChunkCountZero => ProofError::ProvenBatchBindingMismatch(
             "proven batch DA chunk count must be non-zero".to_string(),
         ),
+        ProvenBatchBindingRejection::MissingRecursiveBlockArtifact => {
+            ProofError::ProvenBatchBindingMismatch(
+                "recursive block proven batch requires block artifact".to_string(),
+            )
+        }
         ProvenBatchBindingRejection::ArtifactKindMismatch => {
             let envelope = block_artifact.expect("artifact kind mismatch requires artifact");
             ProofError::ProvenBatchBindingMismatch(format!(
@@ -3119,6 +3153,8 @@ mod tests {
         expected_kind: String,
         envelope_kind: String,
         verifier_profile_matches: bool,
+        artifact_bytes_len: usize,
+        max_artifact_bytes: usize,
         artifact_decoded: bool,
         header_version_matches: bool,
         tx_count_matches: bool,
@@ -3252,6 +3288,8 @@ mod tests {
         statement_hash_cases: Vec<LeanStatementHashCase>,
         #[allow(dead_code)]
         public_inputs_digest_cases: Vec<serde_json::Value>,
+        #[allow(dead_code)]
+        proof_digest_cases: Vec<serde_json::Value>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -4361,6 +4399,8 @@ mod tests {
             expected_kind: parse_lean_proof_artifact_kind(&case.expected_kind),
             envelope_kind: parse_lean_proof_artifact_kind(&case.envelope_kind),
             verifier_profile_matches: case.verifier_profile_matches,
+            artifact_bytes_len: case.artifact_bytes_len,
+            max_artifact_bytes: case.max_artifact_bytes,
             artifact_decoded: case.artifact_decoded,
             header_version_matches: case.header_version_matches,
             tx_count_matches: case.tx_count_matches,
@@ -4744,6 +4784,24 @@ mod tests {
             validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
                 .expect_err("artifact kind mismatch must fail");
         assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn proven_batch_binding_rejects_missing_recursive_block_artifact() {
+        let (block, expected_commitment, _) = block_for_proven_batch_binding();
+        let batch = block.proven_batch.clone().expect("batch");
+
+        let err = validate_proven_batch_binding(&block, &batch, &expected_commitment, None)
+            .expect_err("recursive block binding must require block artifact");
+        match err {
+            ProofError::ProvenBatchBindingMismatch(message) => {
+                assert!(
+                    message.contains("requires block artifact"),
+                    "unexpected proven-batch binding error: {message}"
+                );
+            }
+            other => panic!("unexpected proven-batch binding error: {other:?}"),
+        }
     }
 
     #[test]
@@ -5485,6 +5543,55 @@ mod tests {
             &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
         )
         .expect("prove recursive_block_v2 artifact")
+    }
+
+    fn oversized_recursive_block_envelope(kind: ProofArtifactKind) -> ProofEnvelope {
+        let (verifier_profile, max_len) = match kind {
+            ProofArtifactKind::RecursiveBlockV1 => (
+                backend_recursive_block_profile_v1(),
+                RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES,
+            ),
+            ProofArtifactKind::RecursiveBlockV2 => (
+                backend_recursive_block_profile_v2(),
+                RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES,
+            ),
+            other => panic!("unexpected recursive block kind {}", other.label()),
+        };
+        ProofEnvelope {
+            kind,
+            verifier_profile,
+            artifact_bytes: vec![0xa5; max_len + 1],
+        }
+    }
+
+    #[test]
+    fn recursive_block_v1_artifact_rejects_oversized_bytes_before_deserialize() {
+        let envelope = oversized_recursive_block_envelope(ProofArtifactKind::RecursiveBlockV1);
+        let admission = recursive_block_admission_input_for_predecode(
+            ProofArtifactKind::RecursiveBlockV1,
+            &envelope,
+            envelope.verifier_profile == backend_recursive_block_profile_v1(),
+        );
+        let err = evaluate_recursive_block_artifact_admission(
+            recursive_block_decode_admission_input(admission),
+        )
+        .expect_err("oversized recursive_block_v1 must reject before decode");
+        assert_eq!(err.label(), "artifact_too_large");
+    }
+
+    #[test]
+    fn recursive_block_v2_artifact_rejects_oversized_bytes_before_deserialize() {
+        let envelope = oversized_recursive_block_envelope(ProofArtifactKind::RecursiveBlockV2);
+        let admission = recursive_block_admission_input_for_predecode(
+            ProofArtifactKind::RecursiveBlockV2,
+            &envelope,
+            envelope.verifier_profile == backend_recursive_block_profile_v2(),
+        );
+        let err = evaluate_recursive_block_artifact_admission(
+            recursive_block_decode_admission_input(admission),
+        )
+        .expect_err("oversized recursive_block_v2 must reject before decode");
+        assert_eq!(err.label(), "artifact_too_large");
     }
 
     #[test]

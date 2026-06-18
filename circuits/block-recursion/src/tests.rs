@@ -6,6 +6,10 @@ use crate::relation::{
     debug_step_witness_validation_reason_from_words_with_limb_count_v1,
     debug_step_witness_validation_v1,
 };
+use crate::tree_v2::{
+    verify_block_recursive_v2_surface_with_versioned_artifact_cap,
+    verify_block_recursive_v2_with_versioned_artifact_cap,
+};
 
 use super::{
     compose_recursive_segment_statements_v1, derive_tree_projection_point_v2,
@@ -103,6 +107,7 @@ struct LeanRecursiveBlockV2VerifierSurfaceCase {
     mutation: String,
     public_matches: bool,
     proof_width_matches: bool,
+    versioned_cap_matches: bool,
     supported_tx_count: bool,
     header_matches: bool,
     proof_trace_decodes: bool,
@@ -918,6 +923,7 @@ fn verify_lean_recursive_block_v2_verifier_surface_case(
 ) {
     let modeled_surface_valid = case.public_matches
         && case.proof_width_matches
+        && case.versioned_cap_matches
         && case.supported_tx_count
         && case.header_matches
         && case.proof_trace_decodes
@@ -945,7 +951,16 @@ fn verify_lean_recursive_block_v2_verifier_surface_case(
     }
 
     let (artifact, expected_public) = recursive_block_v2_surface_fixture_for_case(case);
-    let result = verify_block_recursive_v2_surface(&artifact, &expected_public);
+    let versioned_artifact_bytes = if case.versioned_cap_matches {
+        recursive_block_artifact_bytes_v2()
+    } else {
+        recursive_block_artifact_bytes_v2() + 1
+    };
+    let result = verify_block_recursive_v2_surface_with_versioned_artifact_cap(
+        &artifact,
+        &expected_public,
+        versioned_artifact_bytes,
+    );
     assert_eq!(
         result.is_ok(),
         case.expected_surface_valid,
@@ -983,7 +998,11 @@ fn verify_lean_recursive_block_v2_verifier_surface_case(
         assert!(surface.canonical_proof_len <= surface.projected_proof_bytes);
     }
 
-    let full_result = verify_block_recursive_v2(&artifact, &expected_public);
+    let full_result = verify_block_recursive_v2_with_versioned_artifact_cap(
+        &artifact,
+        &expected_public,
+        versioned_artifact_bytes,
+    );
     assert_eq!(
         full_result.is_ok(),
         case.expected_full_valid,
@@ -1015,6 +1034,7 @@ fn recursive_block_v2_surface_fixture_for_case(
         "proof_width_mismatch" => {
             artifact.artifact.proof_bytes.pop();
         }
+        "versioned_cap_mismatch" => {}
         "unsupported_tx_count" => {
             artifact.public.tx_count = 0;
             expected_public.tx_count = 0;
@@ -1068,6 +1088,10 @@ fn recursive_block_v2_surface_error_label(error: &BlockRecursionError) -> &'stat
             what: "recursive_block_v2 projected proof bytes",
             ..
         } => "proof_projected_width_mismatch",
+        BlockRecursionError::WidthMismatch {
+            what: "recursive_block_v2 versioned artifact bytes",
+            ..
+        } => "versioned_cap_mismatch",
         BlockRecursionError::InvalidLength {
             what: "recursive_block_v2 tx_count",
             ..

@@ -2272,6 +2272,74 @@ theorem accepted_materialized_transfer_publication_from_smallwood_native_policy_
         present
         policyAccepted⟩
 
+theorem smallwood_public_statement_export_yields_native_live_public_asset_isolation_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields :
+      Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {candidateWrapper :
+      Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      Hegemon.Transaction.SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      Hegemon.Transaction.SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      Hegemon.Transaction.AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {policyInput : StablecoinPolicyAuthorizationInput}
+    {productionPayload : StablecoinMintExceptionPayload}
+    (smallwoodExport :
+      SmallWoodPublicStatementVerifierExportFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface) :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      (nativeStablecoinLivePolicyAuthorizes policyInput productionPayload) := by
+  exact
+    smallwood_public_statement_export_yields_public_asset_isolation_certificate
+      smallwoodExport
+
 structure MaterializedTransferNoTheftImplementationResidualAssumptions where
   parserAndCodecProjectionEquivalence : Prop
   materializedRowsFeedTransactionNew : Prop

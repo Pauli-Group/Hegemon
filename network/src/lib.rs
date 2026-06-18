@@ -398,9 +398,9 @@ impl SecureChannel {
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, NetworkError> {
         let (nonce_bytes, next_nonce) =
             nonce_step(self.recv_nonce).ok_or(NetworkError::Encryption)?;
-        self.recv_nonce = next_nonce;
         let nonce = Nonce::from_slice(&nonce_bytes);
-        self.recv_cipher
+        let plaintext = self
+            .recv_cipher
             .decrypt(
                 nonce,
                 Payload {
@@ -408,7 +408,9 @@ impl SecureChannel {
                     aad: &self.aad,
                 },
             )
-            .map_err(|_| NetworkError::Encryption)
+            .map_err(|_| NetworkError::Encryption)?;
+        self.recv_nonce = next_nonce;
+        Ok(plaintext)
     }
 }
 
@@ -593,6 +595,7 @@ mod tests {
         key_schedule_cases: Vec<LeanKeyScheduleCase>,
         role_cases: Vec<LeanRoleCase>,
         nonce_cases: Vec<LeanNonceCase>,
+        open_admission_cases: Vec<LeanOpenAdmissionCase>,
     }
 
     #[derive(Deserialize)]
@@ -631,6 +634,21 @@ mod tests {
         expected_next_counter: Option<String>,
     }
 
+    #[derive(Deserialize)]
+    struct LeanOpenAdmissionCase {
+        name: String,
+        role: String,
+        recv_counter: String,
+        observed_slot: String,
+        observed_nonce_hex: String,
+        authenticated: bool,
+        expected_accepted: bool,
+        expected_slot: String,
+        expected_nonce_hex: String,
+        expected_next_recv_counter: String,
+        expected_preserves_state: bool,
+    }
+
     fn decode_hex(value: &str) -> Vec<u8> {
         let trimmed = value.strip_prefix("0x").unwrap_or(value);
         hex::decode(trimmed).expect("hex vector")
@@ -641,6 +659,14 @@ mod tests {
             "initiator" => ChannelRole::Initiator,
             "responder" => ChannelRole::Responder,
             other => panic!("unknown role {other}"),
+        }
+    }
+
+    fn slot_from_str(value: &str) -> ChannelKeySlot {
+        match value {
+            "initiator_to_responder" => ChannelKeySlot::InitiatorToResponder,
+            "responder_to_initiator" => ChannelKeySlot::ResponderToInitiator,
+            other => panic!("unknown slot {other}"),
         }
     }
 
@@ -660,7 +686,7 @@ mod tests {
         let contents = std::fs::read_to_string(path).expect("read Lean network vectors");
         let vectors: LeanNetworkSecureChannelVectorFile =
             serde_json::from_str(&contents).expect("parse Lean network vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
 
         for case in vectors.key_schedule_cases {
             let offer = decode_hex(&case.offer_hex);
@@ -794,6 +820,104 @@ mod tests {
                 other => panic!("{} counter mismatch: {other:?}", case.name),
             }
         }
+
+        for case in vectors.open_admission_cases {
+            let role = role_from_str(&case.role);
+            let recv_counter = case.recv_counter.parse::<u64>().expect("recv counter u64");
+            let observed_slot = slot_from_str(&case.observed_slot);
+            let observed_nonce = decode_hex(&case.observed_nonce_hex);
+            let (_, expected_recv_slot) = channel_key_slots(role);
+            let expected_nonce = nonce_from_u64(recv_counter).to_vec();
+            let expected_accepted = recv_counter.checked_add(1).is_some_and(|_| {
+                observed_slot == expected_recv_slot
+                    && observed_nonce == expected_nonce
+                    && case.authenticated
+            });
+            let expected_next_recv_counter = if expected_accepted {
+                recv_counter + 1
+            } else {
+                recv_counter
+            };
+
+            assert_eq!(
+                expected_accepted, case.expected_accepted,
+                "{} accept",
+                case.name
+            );
+            assert_eq!(
+                slot_name(expected_recv_slot),
+                case.expected_slot,
+                "{} slot",
+                case.name
+            );
+            assert_eq!(
+                expected_nonce,
+                decode_hex(&case.expected_nonce_hex),
+                "{} nonce",
+                case.name
+            );
+            assert_eq!(
+                expected_next_recv_counter,
+                case.expected_next_recv_counter
+                    .parse::<u64>()
+                    .expect("next recv counter u64"),
+                "{} next counter",
+                case.name
+            );
+            assert_eq!(
+                expected_next_recv_counter == recv_counter,
+                case.expected_preserves_state,
+                "{} preserves state",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn secure_channel_decrypt_failure_preserves_receive_nonce() {
+        let material = derive_session_material(
+            b"offer",
+            b"acceptance",
+            b"confirmation",
+            &[1u8; 32],
+            &[2u8; 32],
+        );
+        let mut sender = SecureChannel::new(material, ChannelRole::Initiator).unwrap();
+        let mut receiver = SecureChannel::new(material, ChannelRole::Responder).unwrap();
+
+        let frame = sender.encrypt(b"first").unwrap();
+        let mut tampered = frame.clone();
+        tampered[0] ^= 0x01;
+
+        assert_eq!(receiver.recv_nonce, 0);
+        assert!(receiver.decrypt(&tampered).is_err());
+        assert_eq!(receiver.recv_nonce, 0);
+        assert_eq!(receiver.decrypt(&frame).unwrap(), b"first");
+        assert_eq!(receiver.recv_nonce, 1);
+    }
+
+    #[test]
+    fn secure_channel_future_frame_failure_preserves_receive_nonce() {
+        let material = derive_session_material(
+            b"offer",
+            b"acceptance",
+            b"confirmation",
+            &[3u8; 32],
+            &[4u8; 32],
+        );
+        let mut sender = SecureChannel::new(material, ChannelRole::Initiator).unwrap();
+        let mut receiver = SecureChannel::new(material, ChannelRole::Responder).unwrap();
+
+        let first = sender.encrypt(b"first").unwrap();
+        let second = sender.encrypt(b"second").unwrap();
+
+        assert_eq!(receiver.recv_nonce, 0);
+        assert!(receiver.decrypt(&second).is_err());
+        assert_eq!(receiver.recv_nonce, 0);
+        assert_eq!(receiver.decrypt(&first).unwrap(), b"first");
+        assert_eq!(receiver.recv_nonce, 1);
+        assert_eq!(receiver.decrypt(&second).unwrap(), b"second");
+        assert_eq!(receiver.recv_nonce, 2);
     }
 
     #[test]
@@ -806,9 +930,6 @@ mod tests {
         let (expected_ciphertext, expected_shared_secret) = public_key.encapsulate(&seed);
 
         assert_eq!(ciphertext.to_bytes(), expected_ciphertext.to_bytes());
-        assert_eq!(
-            shared_secret.as_bytes(),
-            expected_shared_secret.as_bytes()
-        );
+        assert_eq!(shared_secret.as_bytes(), expected_shared_secret.as_bytes());
     }
 }

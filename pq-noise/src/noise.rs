@@ -64,7 +64,6 @@ impl NoiseCipher {
     /// Decrypt a message
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
         let (nonce_bytes, next_nonce) = nonce_step(self.recv_nonce)?;
-        self.recv_nonce = next_nonce;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload {
@@ -72,9 +71,12 @@ impl NoiseCipher {
             aad: &self.aad,
         };
 
-        self.recv_cipher
+        let plaintext = self
+            .recv_cipher
             .decrypt(nonce, payload)
-            .map_err(|e| PqNoiseError::Encryption(format!("decryption failed: {}", e)))
+            .map_err(|e| PqNoiseError::Encryption(format!("decryption failed: {}", e)))?;
+        self.recv_nonce = next_nonce;
+        Ok(plaintext)
     }
 
     /// Get the current send nonce (for debugging/testing)
@@ -222,5 +224,99 @@ mod tests {
 
         cipher.encrypt(b"message 2").unwrap();
         assert_eq!(cipher.send_nonce(), 2);
+    }
+
+    #[test]
+    fn decrypt_failure_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [1u8; 32],
+            responder_to_initiator: [2u8; 32],
+            session_aad: [3u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let first_plaintext = receiver.decrypt(&first).expect("first decrypt");
+        assert_eq!(first_plaintext, b"first");
+        assert_eq!(receiver.recv_nonce(), 1);
+
+        let duplicate = receiver.decrypt(&first);
+        assert!(
+            duplicate.is_err(),
+            "duplicate frame must fail authentication"
+        );
+        assert_eq!(
+            receiver.recv_nonce(),
+            1,
+            "failed duplicate must not consume the next receive nonce"
+        );
+
+        let second = sender.encrypt(b"second").expect("second frame");
+        let second_plaintext = receiver
+            .decrypt(&second)
+            .expect("next frame after duplicate rejection");
+        assert_eq!(second_plaintext, b"second");
+        assert_eq!(receiver.recv_nonce(), 2);
+    }
+
+    #[test]
+    fn future_frame_failure_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [7u8; 32],
+            responder_to_initiator: [8u8; 32],
+            session_aad: [9u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let second = sender.encrypt(b"second").expect("second frame");
+
+        let future = receiver.decrypt(&second);
+        assert!(future.is_err(), "future frame must fail authentication");
+        assert_eq!(
+            receiver.recv_nonce(),
+            0,
+            "failed future frame must not advance the receive nonce"
+        );
+
+        let first_plaintext = receiver
+            .decrypt(&first)
+            .expect("current frame after future rejection");
+        assert_eq!(first_plaintext, b"first");
+        assert_eq!(receiver.recv_nonce(), 1);
+    }
+
+    #[test]
+    fn stale_replay_after_multiple_frames_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [10u8; 32],
+            responder_to_initiator: [11u8; 32],
+            session_aad: [12u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let stale = sender.encrypt(b"second").expect("second frame");
+        let third = sender.encrypt(b"third").expect("third frame");
+
+        assert_eq!(receiver.decrypt(&first).unwrap(), b"first");
+        assert_eq!(receiver.decrypt(&stale).unwrap(), b"second");
+        assert_eq!(receiver.decrypt(&third).unwrap(), b"third");
+        assert_eq!(receiver.recv_nonce(), 3);
+
+        let rejected = receiver.decrypt(&stale);
+        assert!(rejected.is_err(), "stale frame must fail authentication");
+        assert_eq!(
+            receiver.recv_nonce(),
+            3,
+            "failed stale replay must not advance the receive nonce"
+        );
+
+        let current = sender.encrypt(b"fourth").expect("fourth frame");
+        assert_eq!(receiver.decrypt(&current).unwrap(), b"fourth");
+        assert_eq!(receiver.recv_nonce(), 4);
     }
 }

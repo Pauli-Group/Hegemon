@@ -9,6 +9,8 @@ def rejectionJson : Option CiReleaseGateReject -> String
   | none => "null"
   | some CiReleaseGateReject.dependencyAuditMissing =>
       "\"dependency_audit_missing\""
+  | some CiReleaseGateReject.dependencyAuditWaiverGateMissing =>
+      "\"dependency_audit_waiver_gate_missing\""
   | some CiReleaseGateReject.formalCoreMissing =>
       "\"formal_core_missing\""
   | some CiReleaseGateReject.securityAdversarialMissing =>
@@ -31,6 +33,8 @@ def rejectionJson : Option CiReleaseGateReject -> String
       "\"tag_release_native_backend_review_missing\""
   | some CiReleaseGateReject.tagReleaseNativeBackendPostureMissing =>
       "\"tag_release_native_backend_posture_missing\""
+  | some CiReleaseGateReject.branchProtectionRulesetMissing =>
+      "\"branch_protection_ruleset_missing\""
 
 def ciReleaseGateCaseJson
     (name : String)
@@ -39,6 +43,8 @@ def ciReleaseGateCaseJson
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"dependency_audit_job\": "
     ++ boolJson input.dependencyAuditJob ++ ",\n"
+    ++ "      \"dependency_audit_waiver_gate_step\": "
+    ++ boolJson input.dependencyAuditWaiverGateStep ++ ",\n"
     ++ "      \"formal_core_job\": "
     ++ boolJson input.formalCoreJob ++ ",\n"
     ++ "      \"security_adversarial_job\": "
@@ -59,6 +65,8 @@ def ciReleaseGateCaseJson
     ++ boolJson input.tagReleaseNativeBackendReviewStep ++ ",\n"
     ++ "      \"tag_release_native_backend_posture_step\": "
     ++ boolJson input.tagReleaseNativeBackendPostureStep ++ ",\n"
+    ++ "      \"branch_protection_ruleset_evidence\": "
+    ++ boolJson input.branchProtectionRulesetEvidence ++ ",\n"
     ++ "      \"expected_valid\": "
     ++ boolJson (ciReleaseGateAccepts input) ++ ",\n"
     ++ "      \"expected_rejection\": "
@@ -67,12 +75,15 @@ def ciReleaseGateCaseJson
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"ci_release_gate_cases\": [\n"
     ++ ciReleaseGateCaseJson "complete-ci-release-gate-accepts"
       completeCiReleaseGate ++ ",\n"
     ++ ciReleaseGateCaseJson "dependency-audit-missing-rejects"
       missingDependencyAuditJob ++ ",\n"
+    ++ ciReleaseGateCaseJson
+      "dependency-audit-waiver-gate-missing-rejects"
+      missingDependencyAuditWaiverGateStep ++ ",\n"
     ++ ciReleaseGateCaseJson "formal-core-missing-rejects"
       missingFormalCoreJob ++ ",\n"
     ++ ciReleaseGateCaseJson "security-adversarial-missing-rejects"
@@ -97,9 +108,13 @@ def vectorJson : String :=
     ++ ciReleaseGateCaseJson
       "tag-release-native-backend-posture-missing-rejects"
       missingTagReleaseNativeBackendPostureStep ++ ",\n"
+    ++ ciReleaseGateCaseJson
+      "branch-protection-ruleset-missing-rejects"
+      missingBranchProtectionRulesetEvidence ++ ",\n"
     ++ ciReleaseGateCaseJson "dependency-audit-precedes-all-missing"
       {
         dependencyAuditJob := false,
+        dependencyAuditWaiverGateStep := false,
         formalCoreJob := false,
         securityAdversarialJob := false,
         nativeBackendSecurityJob := false,
@@ -109,7 +124,8 @@ def vectorJson : String :=
         releaseBuildNeedsNativeBackendSecurity := false,
         releaseBinaryAuditStep := false,
         tagReleaseNativeBackendReviewStep := false,
-        tagReleaseNativeBackendPostureStep := false
+        tagReleaseNativeBackendPostureStep := false,
+        branchProtectionRulesetEvidence := false
       } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"

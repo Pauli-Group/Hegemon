@@ -207,6 +207,64 @@ structure AuthorizedStablecoinMintExceptionSurface
       statementFields.stablecoinIssuanceSign
       statementFields.stablecoinIssuanceMagnitude = true
 
+structure PublicAssetIsolationCertificate
+    (publicFields : PublicInputBinding.PublicFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (slots : List BalanceSlot)
+    (livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes) : Prop where
+  publicAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nonNativeNoExceptionZero :
+    ∀ {assetId : Nat},
+      assetId ≠ Hegemon.Transaction.nativeAsset ->
+      (publicFields.stablecoinEnabled ≠ 1
+        ∨ assetId ≠ publicFields.stablecoinAsset) ->
+      slotDelta assetId slots = 0
+  nonNativeNonzeroRequiresPublicException :
+    ∀ {assetId : Nat},
+      assetId ≠ Hegemon.Transaction.nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+      publicFields.stablecoinEnabled = 1
+        ∧ assetId = publicFields.stablecoinAsset
+  authorizedStablecoinExceptionSurface :
+    ∀ {assetId : Nat},
+      assetId ≠ Hegemon.Transaction.nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+      livePolicyAuthorizes
+        (stablecoinMintExceptionPayload
+          publicFields
+          assetId
+          (slotDelta assetId slots)) ->
+      AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        (slotDelta assetId slots)
+        livePolicyAuthorizes
+  unauthorizedStablecoinExceptionSurfaceImpossible :
+    ∀ {assetId : Nat},
+      assetId ≠ Hegemon.Transaction.nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+      ¬ livePolicyAuthorizes
+        (stablecoinMintExceptionPayload
+          publicFields
+          assetId
+          (slotDelta assetId slots)) ->
+      ¬ AuthorizedStablecoinMintExceptionSurface
+        publicFields
+        bound
+        statementFields
+        bindingFields
+        assetId
+        (slotDelta assetId slots)
+        livePolicyAuthorizes
+
 structure CanonicalTxStatementSurface
     (wrapper : ProofWrapperInput)
     (shape : PublicInputShape)
@@ -2130,6 +2188,24 @@ theorem canonical_statement_balance_soundness_non_native_nonzero_public_stableco
       nonNative
       publicNonzero
 
+theorem public_authorized_asset_delta_value_non_native_no_exception_zero
+    {publicFields : PublicInputBinding.PublicFields}
+    {assetId : Nat}
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (noPublicException :
+      publicFields.stablecoinEnabled ≠ 1
+        ∨ assetId ≠ publicFields.stablecoinAsset) :
+    publicAuthorizedAssetDeltaValue publicFields assetId = 0 := by
+  by_cases native : assetId = Hegemon.Transaction.nativeAsset
+  · exact False.elim (nonNative native)
+  · by_cases enabled : publicFields.stablecoinEnabled = 1
+    · cases noPublicException with
+      | inl disabled =>
+          exact False.elim (disabled enabled)
+      | inr notSelected =>
+          simp [publicAuthorizedAssetDeltaValue, native, enabled, notSelected]
+    · simp [publicAuthorizedAssetDeltaValue, native, enabled]
+
 theorem canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
@@ -2284,6 +2360,97 @@ theorem canonical_statement_balance_soundness_authorized_stablecoin_mint_excepti
     stablecoin_mint_exception_authorized_payload_bound_to_statement
       exceptionSurface
       authorized
+
+theorem canonical_statement_balance_soundness_public_asset_isolation_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      livePolicyAuthorizes := by
+  exact
+    { publicAuthorizedDeltas := by
+        intro assetId
+        exact
+          canonical_statement_balance_soundness_public_authorized_asset_delta_value
+            surface
+            balanceSound
+      nonNativeNoExceptionZero := by
+        intro assetId nonNative noPublicException
+        have deltaEq :
+            slotDelta assetId slots =
+              publicAuthorizedAssetDeltaValue publicFields assetId :=
+          canonical_statement_balance_soundness_public_authorized_asset_delta_value
+            surface
+            balanceSound
+        have publicZero :
+            publicAuthorizedAssetDeltaValue publicFields assetId = 0 :=
+          public_authorized_asset_delta_value_non_native_no_exception_zero
+            nonNative
+            noPublicException
+        rw [deltaEq, publicZero]
+      nonNativeNonzeroRequiresPublicException := by
+        intro assetId nonNative nonzero
+        exact
+          canonical_statement_balance_soundness_non_native_nonzero_public_stablecoin_exception
+            surface
+            balanceSound
+            nonNative
+            nonzero
+      authorizedStablecoinExceptionSurface := by
+        intro assetId nonNative nonzero authorized
+        exact
+          canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface
+            surface
+            balanceSound
+            nonNative
+            nonzero
+            authorized
+      unauthorizedStablecoinExceptionSurfaceImpossible := by
+        intro assetId _ _ notAuthorized
+        exact
+          authorized_stablecoin_mint_exception_surface_no_unauthorized_payload
+            notAuthorized }
 
 theorem deployed_soundness_implies_accepted_transaction_soundness_assumption
     {wrapper : ProofWrapperInput}

@@ -52,6 +52,8 @@ structure AcceptedReleasePostureFacts
     evaluateCiReleaseGate surface.ciReleaseGate = Except.ok ()
   dependencyAuditJob :
     surface.ciReleaseGate.dependencyAuditJob = true
+  dependencyAuditWaiverGateStep :
+    surface.ciReleaseGate.dependencyAuditWaiverGateStep = true
   formalCoreJob :
     surface.ciReleaseGate.formalCoreJob = true
   securityAdversarialJob :
@@ -72,6 +74,8 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.tagReleaseNativeBackendReviewStep = true
   tagReleaseNativeBackendPostureStep :
     surface.ciReleaseGate.tagReleaseNativeBackendPostureStep = true
+  branchProtectionRulesetEvidence :
+    surface.ciReleaseGate.branchProtectionRulesetEvidence = true
   nativeBackendPostureAccepted :
     evaluateReleasePosture surface.nativeBackendPosture = Except.ok ()
   nativeBackendPosturePreconditions :
@@ -86,12 +90,51 @@ structure DependencyAuditExplicitWaiverCertificate
   everyFindingHasExplicitValidWaiver :
     ∀ finding, finding ∈ input.findings →
       findingHasValidWaiver input.waivers finding = true
+  everyFindingHasExplicitCurrentReviewedWaiver :
+    ∀ finding, finding ∈ input.findings →
+      ∃ waiver, waiver ∈ input.waivers
+        ∧ waiver.id = finding.id
+        ∧ waiver.package = finding.package
+        ∧ waiver.version = finding.version
+        ∧ waiver.kind = finding.kind
+        ∧ waiver.hasTracking = true
+        ∧ waiver.hasReason = true
+        ∧ waiver.hasOwner = true
+        ∧ waiver.hasRemediation = true
+        ∧ waiver.hasReviewDate = true
+        ∧ waiver.notExpired = true
   everyWaiverIsValid :
     ∀ waiver, waiver ∈ input.waivers →
       waiverIsValid waiver = true
+  everyWaiverHasCurrentReviewPolicy :
+    ∀ waiver, waiver ∈ input.waivers →
+      waiverHasIdentityFields waiver = true
+        ∧ waiver.hasTracking = true
+        ∧ waiver.hasReason = true
+        ∧ waiver.hasOwner = true
+        ∧ waiver.hasRemediation = true
+        ∧ waiver.hasReviewDate = true
+        ∧ waiver.notExpired = true
+  everyWaiverHasReleaseMetadata :
+    ∀ waiver, waiver ∈ input.waivers →
+      waiverHasReleaseMetadata waiver = true
+  everyWaiverHasReleaseMetadataFields :
+    ∀ waiver, waiver ∈ input.waivers →
+      waiver.hasTracking = true
+        ∧ waiver.hasReason = true
+        ∧ waiver.hasOwner = true
+        ∧ waiver.hasRemediation = true
+        ∧ waiver.hasReviewDate = true
   everyWaiverMatchesLiveFinding :
     ∀ waiver, waiver ∈ input.waivers →
       waiverMatchesAnyFinding input.findings waiver = true
+  everyWaiverHasLiveExactFinding :
+    ∀ waiver, waiver ∈ input.waivers →
+      ∃ finding, finding ∈ input.findings
+        ∧ waiver.id = finding.id
+        ∧ waiver.package = finding.package
+        ∧ waiver.version = finding.version
+        ∧ waiver.kind = finding.kind
 
 structure PqReleaseResidualCertificate
     (input : PqBinaryAuditInput) : Prop where
@@ -187,22 +230,25 @@ theorem accepted_release_posture_exposes_all_release_gates
     binaryScanClean := pqFacts.right.right,
     ciReleaseGateAccepted := accepted.ciReleaseGateAccepted,
     dependencyAuditJob := ciFacts.left,
-    formalCoreJob := ciFacts.right.left,
-    securityAdversarialJob := ciFacts.right.right.left,
-    nativeBackendSecurityJob := ciFacts.right.right.right.left,
-    releaseBuildJob := ciFacts.right.right.right.right.left,
+    dependencyAuditWaiverGateStep := ciFacts.right.left,
+    formalCoreJob := ciFacts.right.right.left,
+    securityAdversarialJob := ciFacts.right.right.right.left,
+    nativeBackendSecurityJob := ciFacts.right.right.right.right.left,
+    releaseBuildJob := ciFacts.right.right.right.right.right.left,
     releaseBuildNeedsSecurityGates :=
-      ciFacts.right.right.right.right.right.left,
-    releaseBuildNeedsSecurityAdversarial :=
       ciFacts.right.right.right.right.right.right.left,
-    releaseBuildNeedsNativeBackendSecurity :=
+    releaseBuildNeedsSecurityAdversarial :=
       ciFacts.right.right.right.right.right.right.right.left,
-    releaseBinaryAuditStep :=
+    releaseBuildNeedsNativeBackendSecurity :=
       ciFacts.right.right.right.right.right.right.right.right.left,
-    tagReleaseNativeBackendReviewStep :=
+    releaseBinaryAuditStep :=
       ciFacts.right.right.right.right.right.right.right.right.right.left,
+    tagReleaseNativeBackendReviewStep :=
+      ciFacts.right.right.right.right.right.right.right.right.right.right.left,
     tagReleaseNativeBackendPostureStep :=
-      ciFacts.right.right.right.right.right.right.right.right.right.right,
+      ciFacts.right.right.right.right.right.right.right.right.right.right.right.left,
+    branchProtectionRulesetEvidence :=
+      ciFacts.right.right.right.right.right.right.right.right.right.right.right.right,
     nativeBackendPostureAccepted :=
       accepted.nativeBackendPostureAccepted,
     nativeBackendPosturePreconditions :=
@@ -237,14 +283,40 @@ theorem accepted_release_posture_with_native_accepted_mode_yields_production_gat
         exact accepted_dependency_audit_finding_has_explicit_valid_waiver
           accepted.dependencyAuditAccepted
           present,
+      everyFindingHasExplicitCurrentReviewedWaiver := by
+        intro finding present
+        exact
+          accepted_dependency_audit_finding_has_explicit_current_reviewed_waiver
+            accepted.dependencyAuditAccepted
+            present,
       everyWaiverIsValid := by
         intro waiver present
         exact accepted_dependency_audit_waiver_is_valid
           accepted.dependencyAuditAccepted
           present,
+      everyWaiverHasCurrentReviewPolicy := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_has_current_review_policy
+          accepted.dependencyAuditAccepted
+          present,
+      everyWaiverHasReleaseMetadata := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_has_release_metadata
+          accepted.dependencyAuditAccepted
+          present,
+      everyWaiverHasReleaseMetadataFields := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_release_metadata_fields
+          accepted.dependencyAuditAccepted
+          present,
       everyWaiverMatchesLiveFinding := by
         intro waiver present
         exact accepted_dependency_audit_waiver_matches_live_finding
+          accepted.dependencyAuditAccepted
+          present,
+      everyWaiverHasLiveExactFinding := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_has_live_exact_finding
           accepted.dependencyAuditAccepted
           present
     },
@@ -269,6 +341,147 @@ theorem accepted_release_posture_with_native_accepted_mode_yields_production_gat
         releaseFacts.nativeBackendPosturePreconditions
     }
   }
+
+theorem production_release_gate_certificate_exposes_dependency_waiver_accounting
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    evaluateDependencyAudit surface.dependencyAudit = Except.ok ()
+      ∧ dependencyAuditPreconditions surface.dependencyAudit = true
+      ∧ (∀ finding, finding ∈ surface.dependencyAudit.findings →
+          findingHasValidWaiver surface.dependencyAudit.waivers finding = true)
+      ∧ (∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+          waiverIsValid waiver = true)
+      ∧ (∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+          waiverHasReleaseMetadata waiver = true)
+      ∧ (∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+          waiverMatchesAnyFinding surface.dependencyAudit.findings waiver =
+            true) := by
+  exact
+    ⟨certificate.dependencyWaiverGate.auditAccepted,
+      certificate.dependencyWaiverGate.auditPreconditions,
+      certificate.dependencyWaiverGate.everyFindingHasExplicitValidWaiver,
+      certificate.dependencyWaiverGate.everyWaiverIsValid,
+      certificate.dependencyWaiverGate.everyWaiverHasReleaseMetadata,
+      certificate.dependencyWaiverGate.everyWaiverMatchesLiveFinding⟩
+
+theorem production_release_gate_certificate_exposes_dependency_waiver_metadata_fields
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    ∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+      waiver.hasTracking = true
+        ∧ waiver.hasReason = true
+        ∧ waiver.hasOwner = true
+        ∧ waiver.hasRemediation = true
+        ∧ waiver.hasReviewDate = true := by
+  exact
+    certificate.dependencyWaiverGate.everyWaiverHasReleaseMetadataFields
+
+theorem production_release_gate_certificate_exposes_current_review_policy
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    (∀ finding, finding ∈ surface.dependencyAudit.findings →
+      ∃ waiver, waiver ∈ surface.dependencyAudit.waivers
+        ∧ waiver.id = finding.id
+        ∧ waiver.package = finding.package
+        ∧ waiver.version = finding.version
+        ∧ waiver.kind = finding.kind
+        ∧ waiver.hasTracking = true
+        ∧ waiver.hasReason = true
+        ∧ waiver.hasOwner = true
+        ∧ waiver.hasRemediation = true
+        ∧ waiver.hasReviewDate = true
+        ∧ waiver.notExpired = true)
+      ∧ (∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+        waiverHasIdentityFields waiver = true
+          ∧ waiver.hasTracking = true
+          ∧ waiver.hasReason = true
+          ∧ waiver.hasOwner = true
+          ∧ waiver.hasRemediation = true
+          ∧ waiver.hasReviewDate = true
+          ∧ waiver.notExpired = true) := by
+  exact
+    ⟨certificate.dependencyWaiverGate.everyFindingHasExplicitCurrentReviewedWaiver,
+      certificate.dependencyWaiverGate.everyWaiverHasCurrentReviewPolicy⟩
+
+theorem production_release_gate_certificate_exposes_live_waiver_exactness
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    ∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+      ∃ finding, finding ∈ surface.dependencyAudit.findings
+        ∧ waiver.id = finding.id
+        ∧ waiver.package = finding.package
+        ∧ waiver.version = finding.version
+        ∧ waiver.kind = finding.kind := by
+  exact certificate.dependencyWaiverGate.everyWaiverHasLiveExactFinding
+
+theorem production_release_gate_certificate_exposes_dependency_audit_ci_binding
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    evaluateDependencyAudit surface.dependencyAudit = Except.ok ()
+      ∧ dependencyAuditPreconditions surface.dependencyAudit = true
+      ∧ evaluateCiReleaseGate surface.ciReleaseGate = Except.ok ()
+      ∧ surface.ciReleaseGate.dependencyAuditJob = true
+      ∧ surface.ciReleaseGate.dependencyAuditWaiverGateStep = true
+      ∧ surface.ciReleaseGate.releaseBuildJob = true
+      ∧ surface.ciReleaseGate.releaseBuildNeedsSecurityGates = true := by
+  exact
+    ⟨certificate.dependencyWaiverGate.auditAccepted,
+      certificate.dependencyWaiverGate.auditPreconditions,
+      certificate.releaseFacts.ciReleaseGateAccepted,
+      certificate.releaseFacts.dependencyAuditJob,
+      certificate.releaseFacts.dependencyAuditWaiverGateStep,
+        certificate.releaseFacts.releaseBuildJob,
+        certificate.releaseFacts.releaseBuildNeedsSecurityGates⟩
+
+theorem production_release_gate_certificate_binds_dependency_audit_to_ci_release_gate
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    evaluateDependencyAudit surface.dependencyAudit = Except.ok ()
+      ∧ dependencyAuditPreconditions surface.dependencyAudit = true
+      ∧ (∀ finding, finding ∈ surface.dependencyAudit.findings →
+        ∃ waiver, waiver ∈ surface.dependencyAudit.waivers
+          ∧ waiver.id = finding.id
+          ∧ waiver.package = finding.package
+          ∧ waiver.version = finding.version
+          ∧ waiver.kind = finding.kind
+          ∧ waiver.hasTracking = true
+          ∧ waiver.hasReason = true
+          ∧ waiver.hasOwner = true
+          ∧ waiver.hasRemediation = true
+          ∧ waiver.hasReviewDate = true
+          ∧ waiver.notExpired = true)
+      ∧ (∀ waiver, waiver ∈ surface.dependencyAudit.waivers →
+        ∃ finding, finding ∈ surface.dependencyAudit.findings
+          ∧ waiver.id = finding.id
+          ∧ waiver.package = finding.package
+          ∧ waiver.version = finding.version
+          ∧ waiver.kind = finding.kind)
+      ∧ evaluateCiReleaseGate surface.ciReleaseGate = Except.ok ()
+      ∧ surface.ciReleaseGate.dependencyAuditJob = true
+      ∧ surface.ciReleaseGate.dependencyAuditWaiverGateStep = true
+      ∧ surface.ciReleaseGate.releaseBuildJob = true
+      ∧ surface.ciReleaseGate.releaseBuildNeedsSecurityGates = true := by
+  exact
+    ⟨certificate.dependencyWaiverGate.auditAccepted,
+      certificate.dependencyWaiverGate.auditPreconditions,
+      certificate.dependencyWaiverGate.everyFindingHasExplicitCurrentReviewedWaiver,
+      certificate.dependencyWaiverGate.everyWaiverHasLiveExactFinding,
+      certificate.releaseFacts.ciReleaseGateAccepted,
+      certificate.releaseFacts.dependencyAuditJob,
+      certificate.releaseFacts.dependencyAuditWaiverGateStep,
+      certificate.releaseFacts.releaseBuildJob,
+      certificate.releaseFacts.releaseBuildNeedsSecurityGates⟩
+
+theorem production_release_gate_certificate_requires_native_backend_accepted_mode
+    {surface : ReleasePostureSurface}
+    (certificate : ProductionReleaseGateCertificate surface) :
+    surface.nativeBackendPosture.requireAccepted = true
+      ∧ acceptedPreconditions surface.nativeBackendPosture = true
+      ∧ releasePosturePreconditions surface.nativeBackendPosture = true := by
+  exact
+    ⟨certificate.nativeBackendResidualGate.acceptedModeRequired,
+      certificate.nativeBackendResidualGate.acceptedPreconditionsHold,
+      certificate.nativeBackendResidualGate.posturePreconditionsHold⟩
 
 end ReleasePostureCertificate
 end Release

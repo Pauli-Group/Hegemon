@@ -170,6 +170,8 @@ def vectorJson : String :=
       { validCandidateArtifact with proofModeRecursiveBlock := false } ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "wrong-proof-kind-rejected"
       { validCandidateArtifact with proofKindRecursiveBlockV2 := false } ++ ",\n"
+    ++ candidateArtifactAdmissionCaseJson "custom-proof-kind-rejected"
+      customProofKindCandidateArtifact ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "verifier-profile-mismatch-rejected"
       { validCandidateArtifact with verifierProfileMatches := false } ++ ",\n"
     ++ candidateArtifactAdmissionCaseJson "commitment-proof-present-rejected"

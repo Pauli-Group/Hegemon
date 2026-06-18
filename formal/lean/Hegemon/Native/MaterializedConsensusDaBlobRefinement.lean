@@ -146,6 +146,72 @@ structure TransactionNewFeedsConsensusDaBlob
   blobBytesEq :
     blobBytes = Consensus.DaRoot.daBlob payloads
 
+structure MixedMaterializedDaProjectionRow where
+  consensusTransaction : Option MaterializedConsensusTransaction
+  bridgeReplayKey : Option Digest
+deriving DecidableEq, Repr
+
+def materializedConsensusTransactionsFromRows
+    (rows : List MixedMaterializedDaProjectionRow) :
+    List MaterializedConsensusTransaction :=
+  rows.filterMap (fun row => row.consensusTransaction)
+
+def materializedBridgeReplayKeysFromRows
+    (rows : List MixedMaterializedDaProjectionRow) : List Digest :=
+  rows.filterMap (fun row => row.bridgeReplayKey)
+
+def materializedConsensusDaPayloadsFromRows
+    (rows : List MixedMaterializedDaProjectionRow) :
+    List Consensus.DaRoot.TxDaPayload :=
+  (materializedConsensusTransactionsFromRows rows).map consensusDaPayload
+
+def materializedConsensusDaBlobFromRows
+    (rows : List MixedMaterializedDaProjectionRow) : List Byte :=
+  Consensus.DaRoot.daBlob (materializedConsensusDaPayloadsFromRows rows)
+
+structure TransferFilteredBridgeReplayDaBlobSeparationFacts
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (rows : List MixedMaterializedDaProjectionRow)
+    (transactions : List MaterializedConsensusTransaction)
+    (bridgeReplayRows : List Digest)
+    (blobBytes : List Byte) : Prop where
+  consensusTransactionsFromRows :
+    transactions = materializedConsensusTransactionsFromRows rows
+  bridgeReplayRowsFromRows :
+    bridgeReplayRows = materializedBridgeReplayKeysFromRows rows
+  projectedBridgeReplayCountMatchesRows :
+    wireOutput.projectedBridgeReplayRowCount = bridgeReplayRows.length
+  blobBytesEq :
+    blobBytes = Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)
+  bridgeReplayRowsExcludedFromDaBlob :
+    ∀ (alternateBridgeReplayRows : List Digest),
+      (fun _rows => blobBytes) alternateBridgeReplayRows =
+        Consensus.DaRoot.daBlob (transactions.map consensusDaPayload)
+
+theorem bridge_replay_rows_excluded_from_transfer_filtered_da_blob
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (rows : List MixedMaterializedDaProjectionRow)
+    (projectedBridgeReplayCountMatchesRows :
+      wireOutput.projectedBridgeReplayRowCount =
+        (materializedBridgeReplayKeysFromRows rows).length) :
+    TransferFilteredBridgeReplayDaBlobSeparationFacts
+      wireOutput
+      rows
+      (materializedConsensusTransactionsFromRows rows)
+      (materializedBridgeReplayKeysFromRows rows)
+      (materializedConsensusDaBlobFromRows rows) := by
+  exact
+    {
+      consensusTransactionsFromRows := rfl,
+      bridgeReplayRowsFromRows := rfl,
+      projectedBridgeReplayCountMatchesRows :=
+        projectedBridgeReplayCountMatchesRows,
+      blobBytesEq := rfl,
+      bridgeReplayRowsExcludedFromDaBlob := by
+        intro alternateBridgeReplayRows
+        rfl
+    }
+
 def CiphertextRowsFitU32
     (ciphertexts : List (List Byte)) : Prop :=
   ciphertexts.length < u32Bound
@@ -359,6 +425,160 @@ structure MaterializedConsensusDaBlobRefinementFacts
     final.ledger.spentNullifiers.Nodup
       ∧ final.ledger.consumedBridgeReplays.Nodup
 
+structure BridgeReplayDaBlobSeparationFacts
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (final : NativeLedgerTreeReplayState)
+    (daPayloads : List Consensus.DaRoot.TxDaPayload)
+    (blobBytes : List Byte) : Prop where
+  consensusDaBlobBytes :
+    blobBytes = Consensus.DaRoot.daBlob daPayloads
+  finalBridgeReplayRowsUnique :
+    final.ledger.consumedBridgeReplays.Nodup
+  projectedBridgeReplayRowCountExcluded :
+    (fun _projectedBridgeReplayRowCount => blobBytes)
+      wireOutput.projectedBridgeReplayRowCount =
+        Consensus.DaRoot.daBlob daPayloads
+  bridgeReplayRowsExcluded :
+    ∀ (alternateBridgeReplayRows : List Digest),
+      (fun _rows => blobBytes) alternateBridgeReplayRows =
+        Consensus.DaRoot.daBlob daPayloads
+
+theorem concrete_consensus_da_blob_independent_of_bridge_replay_rows
+    (transactions : List MaterializedConsensusTransaction)
+    (leftBridgeReplayRows rightBridgeReplayRows : List Digest) :
+    (fun _rows =>
+      Consensus.DaRoot.daBlob (transactions.map consensusDaPayload))
+        leftBridgeReplayRows =
+      (fun _rows =>
+        Consensus.DaRoot.daBlob (transactions.map consensusDaPayload))
+          rightBridgeReplayRows := by
+  rfl
+
+theorem materialized_consensus_da_blob_refinement_separates_bridge_replay_rows
+    {surface : RawIngressSidecarReplaySurface}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {shape : PublicInputShape}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daPayloads : List Consensus.DaRoot.TxDaPayload}
+    {blobBytes : List Byte}
+    (facts :
+      MaterializedConsensusDaBlobRefinementFacts
+        surface
+        blockActionDecode
+        wireOutput
+        semanticFields
+        initial
+        final
+        blocks
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        actions
+        payloads
+        transactions
+        daPayloads
+        blobBytes) :
+    BridgeReplayDaBlobSeparationFacts
+      wireOutput
+      final
+      daPayloads
+      blobBytes := by
+  exact
+    { consensusDaBlobBytes := facts.blobBytesEq
+      finalBridgeReplayRowsUnique := facts.finalReplaySetsUnique.2
+      projectedBridgeReplayRowCountExcluded := by
+        simpa using facts.blobBytesEq
+      bridgeReplayRowsExcluded := by
+        intro alternateBridgeReplayRows
+        simpa using facts.blobBytesEq }
+
+theorem materialized_consensus_da_blob_refinement_exposes_transfer_filtered_bridge_replay_separation
+    {surface : RawIngressSidecarReplaySurface}
+    {blockActionDecode : BlockActionDecodeInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {shape : PublicInputShape}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daPayloads : List Consensus.DaRoot.TxDaPayload}
+    {blobBytes : List Byte}
+    {rows : List MixedMaterializedDaProjectionRow}
+    {bridgeReplayRows : List Digest}
+    (facts :
+      MaterializedConsensusDaBlobRefinementFacts
+        surface
+        blockActionDecode
+        wireOutput
+        semanticFields
+        initial
+        final
+        blocks
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        actions
+        payloads
+        transactions
+        daPayloads
+        blobBytes)
+    (transactionsFromRows :
+      transactions = materializedConsensusTransactionsFromRows rows)
+    (bridgeReplayRowsFromRows :
+      bridgeReplayRows = materializedBridgeReplayKeysFromRows rows)
+    (daPayloadsFromTransactions :
+      daPayloads = transactions.map consensusDaPayload)
+    (projectedBridgeReplayCountMatchesRows :
+      wireOutput.projectedBridgeReplayRowCount = bridgeReplayRows.length) :
+    TransferFilteredBridgeReplayDaBlobSeparationFacts
+      wireOutput
+      rows
+      transactions
+      bridgeReplayRows
+      blobBytes
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  have blobEq :
+      blobBytes =
+        Consensus.DaRoot.daBlob (transactions.map consensusDaPayload) := by
+    calc
+      blobBytes = Consensus.DaRoot.daBlob daPayloads :=
+        facts.blobBytesEq
+      _ = Consensus.DaRoot.daBlob
+            (transactions.map consensusDaPayload) := by
+        rw [daPayloadsFromTransactions]
+  exact
+    ⟨{
+      consensusTransactionsFromRows := transactionsFromRows,
+      bridgeReplayRowsFromRows := bridgeReplayRowsFromRows,
+      projectedBridgeReplayCountMatchesRows :=
+        projectedBridgeReplayCountMatchesRows,
+      blobBytesEq := blobEq,
+      bridgeReplayRowsExcludedFromDaBlob := by
+        intro alternateBridgeReplayRows
+        simpa using blobEq
+    },
+    facts.finalReplaySetsUnique.2⟩
+
 theorem materialized_rows_feed_transaction_new_at
     {actions : List MaterializedTransferActionRow}
     {payloads : List MaterializedTransferPayloadRow}
@@ -435,6 +655,82 @@ theorem transaction_new_feeds_concrete_consensus_da_blob
   injection mappedAt with payloadEq
   subst payload
   exact { ciphertextsFromTransaction := rfl }
+
+def sampleTransferConsensusTransaction : MaterializedConsensusTransaction :=
+  {
+    nullifiers := [101],
+    commitments := [202],
+    ciphertextHashes := [303],
+    ciphertexts := [[1, 2, 3, 4]],
+    balanceTag := 404,
+    circuitVersion := 1,
+    cryptoVersion := 1
+  }
+
+def sampleBridgeReplayDigest : Digest :=
+  909
+
+def sampleBridgeFirstDaProjectionRows :
+    List MixedMaterializedDaProjectionRow :=
+  [
+    {
+      consensusTransaction := none,
+      bridgeReplayKey := some sampleBridgeReplayDigest
+    },
+    {
+      consensusTransaction := some sampleTransferConsensusTransaction,
+      bridgeReplayKey := none
+    }
+  ]
+
+def sampleTransferFirstDaProjectionRows :
+    List MixedMaterializedDaProjectionRow :=
+  [
+    {
+      consensusTransaction := some sampleTransferConsensusTransaction,
+      bridgeReplayKey := none
+    },
+    {
+      consensusTransaction := none,
+      bridgeReplayKey := some sampleBridgeReplayDigest
+    }
+  ]
+
+def sampleMixedWireReplayOutput : ActionWireReplayProjectionOutput :=
+  {
+    projectedActionCount := 2,
+    projectedCiphertextRowCount := 1,
+    projectedBridgeReplayRowCount := 1
+  }
+
+theorem bridge_first_transfer_filtered_da_blob_ignores_bridge_replay_row :
+    materializedConsensusDaBlobFromRows sampleBridgeFirstDaProjectionRows =
+      Consensus.DaRoot.daBlob [consensusDaPayload sampleTransferConsensusTransaction] := by
+  rfl
+
+theorem transfer_first_and_bridge_first_filtered_da_blobs_equal :
+    materializedConsensusDaBlobFromRows sampleTransferFirstDaProjectionRows =
+      materializedConsensusDaBlobFromRows sampleBridgeFirstDaProjectionRows := by
+  rfl
+
+theorem bridge_first_transfer_filtered_bridge_replay_da_blob_certificate :
+    TransferFilteredBridgeReplayDaBlobSeparationFacts
+      sampleMixedWireReplayOutput
+      sampleBridgeFirstDaProjectionRows
+      [sampleTransferConsensusTransaction]
+      [sampleBridgeReplayDigest]
+      (Consensus.DaRoot.daBlob
+        [consensusDaPayload sampleTransferConsensusTransaction]) := by
+  exact
+    {
+      consensusTransactionsFromRows := rfl,
+      bridgeReplayRowsFromRows := rfl,
+      projectedBridgeReplayCountMatchesRows := rfl,
+      blobBytesEq := rfl,
+      bridgeReplayRowsExcludedFromDaBlob := by
+        intro alternateBridgeReplayRows
+        rfl
+    }
 
 theorem raw_ingress_production_projection_lifts_transfer_filter_facts
     {surface : RawIngressSidecarReplaySurface}
@@ -2198,6 +2494,211 @@ structure MaterializedTransferHighestStandardCoreReviewFacts
   privacyBoundary : privacyBoundary
   admissionSafety : admissionSafety
 
+theorem materialized_transfer_core_review_exposes_ledger_integrity_bundle
+    {noCounterfeiting
+      acceptedLedgerReplay
+      commitmentRootPublication
+      noDoubleSpend
+      bridgeReplayUnique
+      activeInputNoTheft
+      totalInputAuthorization
+      smallwoodVerifierExport
+      authorizedPerAssetDelta
+      authorizedStablecoinException
+      nativeStablecoinPolicyLive
+      consensusDaBlobRefinement
+      txLeafStatementArtifact
+      txLeafNativeStatementArtifact
+      txLeafCiphertextPublication
+      statementCiphertextVectorPublication
+      sidecarMaterialization
+      privacyBoundary
+      admissionSafety : Prop}
+    (review :
+      MaterializedTransferHighestStandardCoreReviewFacts
+        noCounterfeiting
+        acceptedLedgerReplay
+        commitmentRootPublication
+        noDoubleSpend
+        bridgeReplayUnique
+        activeInputNoTheft
+        totalInputAuthorization
+        smallwoodVerifierExport
+        authorizedPerAssetDelta
+        authorizedStablecoinException
+        nativeStablecoinPolicyLive
+        consensusDaBlobRefinement
+        txLeafStatementArtifact
+        txLeafNativeStatementArtifact
+        txLeafCiphertextPublication
+        statementCiphertextVectorPublication
+        sidecarMaterialization
+        privacyBoundary
+        admissionSafety) :
+    noCounterfeiting
+      ∧ acceptedLedgerReplay
+      ∧ commitmentRootPublication
+      ∧ noDoubleSpend
+      ∧ bridgeReplayUnique
+      ∧ activeInputNoTheft
+      ∧ totalInputAuthorization
+      ∧ authorizedPerAssetDelta
+      ∧ authorizedStablecoinException
+      ∧ nativeStablecoinPolicyLive := by
+  exact
+    ⟨review.noCounterfeiting,
+      review.acceptedLedgerReplay,
+      review.commitmentRootPublication,
+      review.noDoubleSpend,
+      review.bridgeReplayUnique,
+      review.activeInputNoTheft,
+      review.totalInputAuthorization,
+      review.authorizedPerAssetDelta,
+      review.authorizedStablecoinException,
+      review.nativeStablecoinPolicyLive⟩
+
+theorem materialized_transfer_core_review_exposes_statement_da_privacy_admission_bundle
+    {noCounterfeiting
+      acceptedLedgerReplay
+      commitmentRootPublication
+      noDoubleSpend
+      bridgeReplayUnique
+      activeInputNoTheft
+      totalInputAuthorization
+      smallwoodVerifierExport
+      authorizedPerAssetDelta
+      authorizedStablecoinException
+      nativeStablecoinPolicyLive
+      consensusDaBlobRefinement
+      txLeafStatementArtifact
+      txLeafNativeStatementArtifact
+      txLeafCiphertextPublication
+      statementCiphertextVectorPublication
+      sidecarMaterialization
+      privacyBoundary
+      admissionSafety : Prop}
+    (review :
+      MaterializedTransferHighestStandardCoreReviewFacts
+        noCounterfeiting
+        acceptedLedgerReplay
+        commitmentRootPublication
+        noDoubleSpend
+        bridgeReplayUnique
+        activeInputNoTheft
+        totalInputAuthorization
+        smallwoodVerifierExport
+        authorizedPerAssetDelta
+        authorizedStablecoinException
+        nativeStablecoinPolicyLive
+        consensusDaBlobRefinement
+        txLeafStatementArtifact
+        txLeafNativeStatementArtifact
+        txLeafCiphertextPublication
+        statementCiphertextVectorPublication
+        sidecarMaterialization
+        privacyBoundary
+        admissionSafety) :
+    smallwoodVerifierExport
+      ∧ consensusDaBlobRefinement
+      ∧ txLeafStatementArtifact
+      ∧ txLeafNativeStatementArtifact
+      ∧ txLeafCiphertextPublication
+      ∧ statementCiphertextVectorPublication
+      ∧ sidecarMaterialization
+      ∧ privacyBoundary
+      ∧ admissionSafety := by
+  exact
+    ⟨review.smallwoodVerifierExport,
+      review.consensusDaBlobRefinement,
+      review.txLeafStatementArtifact,
+      review.txLeafNativeStatementArtifact,
+      review.txLeafCiphertextPublication,
+      review.statementCiphertextVectorPublication,
+      review.sidecarMaterialization,
+      review.privacyBoundary,
+      review.admissionSafety⟩
+
+theorem materialized_transfer_core_review_exposes_full_security_boundary_bundle
+    {noCounterfeiting
+      acceptedLedgerReplay
+      commitmentRootPublication
+      noDoubleSpend
+      bridgeReplayUnique
+      activeInputNoTheft
+      totalInputAuthorization
+      smallwoodVerifierExport
+      authorizedPerAssetDelta
+      authorizedStablecoinException
+      nativeStablecoinPolicyLive
+      consensusDaBlobRefinement
+      txLeafStatementArtifact
+      txLeafNativeStatementArtifact
+      txLeafCiphertextPublication
+      statementCiphertextVectorPublication
+      sidecarMaterialization
+      privacyBoundary
+      admissionSafety : Prop}
+    (review :
+      MaterializedTransferHighestStandardCoreReviewFacts
+        noCounterfeiting
+        acceptedLedgerReplay
+        commitmentRootPublication
+        noDoubleSpend
+        bridgeReplayUnique
+        activeInputNoTheft
+        totalInputAuthorization
+        smallwoodVerifierExport
+        authorizedPerAssetDelta
+        authorizedStablecoinException
+        nativeStablecoinPolicyLive
+        consensusDaBlobRefinement
+        txLeafStatementArtifact
+        txLeafNativeStatementArtifact
+        txLeafCiphertextPublication
+        statementCiphertextVectorPublication
+        sidecarMaterialization
+        privacyBoundary
+        admissionSafety) :
+    noCounterfeiting
+      ∧ acceptedLedgerReplay
+      ∧ commitmentRootPublication
+      ∧ noDoubleSpend
+      ∧ bridgeReplayUnique
+      ∧ activeInputNoTheft
+      ∧ totalInputAuthorization
+      ∧ smallwoodVerifierExport
+      ∧ authorizedPerAssetDelta
+      ∧ authorizedStablecoinException
+      ∧ nativeStablecoinPolicyLive
+      ∧ consensusDaBlobRefinement
+      ∧ txLeafStatementArtifact
+      ∧ txLeafNativeStatementArtifact
+      ∧ txLeafCiphertextPublication
+      ∧ statementCiphertextVectorPublication
+      ∧ sidecarMaterialization
+      ∧ privacyBoundary
+      ∧ admissionSafety := by
+  exact
+    ⟨review.noCounterfeiting,
+      review.acceptedLedgerReplay,
+      review.commitmentRootPublication,
+      review.noDoubleSpend,
+      review.bridgeReplayUnique,
+      review.activeInputNoTheft,
+      review.totalInputAuthorization,
+      review.smallwoodVerifierExport,
+      review.authorizedPerAssetDelta,
+      review.authorizedStablecoinException,
+      review.nativeStablecoinPolicyLive,
+      review.consensusDaBlobRefinement,
+      review.txLeafStatementArtifact,
+      review.txLeafNativeStatementArtifact,
+      review.txLeafCiphertextPublication,
+      review.statementCiphertextVectorPublication,
+      review.sidecarMaterialization,
+      review.privacyBoundary,
+      review.admissionSafety⟩
+
 theorem accepted_materialized_transfer_end_to_end_boundary_exposes_highest_standard_core_review
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : ExactDecodeInput}
@@ -2615,6 +3116,83 @@ variable {canonicalRows :
   PendingActionByteReplayRowCountBinding.PendingActionCanonicalFieldRows}
 variable {depth historyLimit : Nat}
 
+theorem materialized_transfer_end_to_end_boundary_exposes_public_asset_isolation_certificate
+    (boundary :
+      AcceptedMaterializedTransferEndToEndSecurityBoundaryFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        payload
+        transferKey
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId
+        index
+        activeFlag
+        publicNullifier
+        witness
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        policyInput
+        productionPayload
+        validation
+        validationSummary
+        actions
+        payloads
+        transactions
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game) :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      (nativeStablecoinLivePolicyAuthorizes policyInput productionPayload) := by
+  exact
+    smallwood_public_statement_export_yields_native_live_public_asset_isolation_certificate
+      boundary.smallwoodVerifierExport
+
 structure MaterializedTransferLedgerIntegrityEndToEndReviewFacts
     (boundary :
       AcceptedMaterializedTransferEndToEndSecurityBoundaryFacts
@@ -2961,6 +3539,16 @@ structure MaterializedTransferLedgerIntegrityEndToEndReviewFacts
         bindingFields
         bindingBytes
         merkleRoot)
+  publicAssetIsolation :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      (nativeStablecoinLivePolicyAuthorizes
+        policyInput
+        productionPayload)
   commitmentNullifierIntegrity :
     RawIngressCommitmentTreeNullifierIntegrityCertificate
       surface
@@ -3203,6 +3791,9 @@ theorem materialized_transfer_end_to_end_boundary_with_commitment_tree_nullifier
       coreReview :=
         accepted_materialized_transfer_end_to_end_boundary_exposes_highest_standard_core_review
           boundary,
+      publicAssetIsolation :=
+        materialized_transfer_end_to_end_boundary_exposes_public_asset_isolation_certificate
+          boundary,
       commitmentNullifierIntegrity := integrity,
       replayedSupply := integrity.replayedSupply,
       commitmentRootPublished := integrity.commitmentRootPublished,
@@ -3222,6 +3813,467 @@ theorem materialized_transfer_end_to_end_boundary_with_commitment_tree_nullifier
       privacyBoundary := boundary.privacyBoundary,
       admissionSafety := boundary.admissionSafety
     }
+
+theorem materialized_transfer_ledger_integrity_review_exposes_exact_replay_row_bundle
+    {boundary :
+      AcceptedMaterializedTransferEndToEndSecurityBoundaryFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        payload
+        transferKey
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId
+        index
+        activeFlag
+        publicNullifier
+        witness
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        policyInput
+        productionPayload
+        validation
+        validationSummary
+        actions
+        payloads
+        transactions
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game}
+    {integrity :
+      RawIngressCommitmentTreeNullifierIntegrityCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows
+        depth
+        historyLimit}
+    (review :
+      MaterializedTransferLedgerIntegrityEndToEndReviewFacts
+        boundary
+        integrity) :
+    expectedNativeSupplyAfter
+        initial.ledger.supply
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.supply
+      ∧ expectedCommitmentRootAfter
+        initial.commitmentRoot
+        (rawTreeReplayInputs blocks) =
+        some final.commitmentRoot
+      ∧ expectedNativeLeafCountAfter
+        initial.ledger.leafCount
+        (rawReplayInputs (rawDecodedBlocksFromTreeReplay blocks)) =
+        some final.ledger.leafCount
+      ∧ canonicalRows.commitmentRows =
+        PendingActionByteReplayRowCountBinding.projectedCommitmentRows
+          decodedRows
+      ∧ canonicalRows.nullifierRows =
+        PendingActionByteReplayRowCountBinding.projectedNullifierRows
+          decodedRows
+      ∧ canonicalRows.bridgeReplayRows =
+        PendingActionByteReplayRowCountBinding.projectedBridgeReplayRows
+          plannedRows
+      ∧ (CommitmentTreeContentRefinement.rawIngressAppendSummaries
+        depth
+        historyLimit
+        initial
+        decodedRows).length =
+        canonicalRows.commitmentRows.length
+      ∧ final.ledger.spentNullifiers.Nodup
+      ∧ final.ledger.consumedBridgeReplays.Nodup := by
+  exact
+    ⟨review.replayedSupply,
+      review.commitmentRootPublished,
+      review.leafCursorPublished,
+      review.exactCanonicalCommitmentRows,
+      review.exactCanonicalNullifierRows,
+      review.exactCanonicalBridgeReplayRows,
+      review.appendMutationRowsMatchCanonicalRows,
+      review.finalNullifierUniqueness,
+      review.finalReplayUniqueness⟩
+
+theorem materialized_transfer_ledger_integrity_review_exposes_public_asset_isolation_certificate
+    {boundary :
+      AcceptedMaterializedTransferEndToEndSecurityBoundaryFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        payload
+        transferKey
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId
+        index
+        activeFlag
+        publicNullifier
+        witness
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        policyInput
+        productionPayload
+        validation
+        validationSummary
+        actions
+        payloads
+        transactions
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game}
+    {integrity :
+      RawIngressCommitmentTreeNullifierIntegrityCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows
+        depth
+        historyLimit}
+    (review :
+      MaterializedTransferLedgerIntegrityEndToEndReviewFacts
+        boundary
+        integrity) :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      (nativeStablecoinLivePolicyAuthorizes
+        policyInput
+        productionPayload) := by
+  exact review.publicAssetIsolation
+
+theorem materialized_transfer_ledger_integrity_review_exposes_da_privacy_admission_bundle
+    {boundary :
+      AcceptedMaterializedTransferEndToEndSecurityBoundaryFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        payload
+        transferKey
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        assetId
+        index
+        activeFlag
+        publicNullifier
+        witness
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        policyInput
+        productionPayload
+        validation
+        validationSummary
+        actions
+        payloads
+        transactions
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game}
+    {integrity :
+      RawIngressCommitmentTreeNullifierIntegrityCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        materializedActionCount
+        materializedPayloadCount
+        decodedRows
+        validationRows
+        materializedRows
+        plannedRows
+        wireRows
+        canonicalRows
+        depth
+        historyLimit}
+    (review :
+      MaterializedTransferLedgerIntegrityEndToEndReviewFacts
+        boundary
+        integrity) :
+    MaterializedConsensusDaBlobRefinementFacts
+        surface
+        blockActionDecode
+        wireOutput
+        semanticFields
+        initial
+        final
+        blocks
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        actions
+        payloads
+        transactions
+        (transactions.map consensusDaPayload)
+        (Consensus.DaRoot.daBlob (transactions.map consensusDaPayload))
+      ∧ (txLeaf.ciphertextHashesMatch = true
+        ∧ txLeaf.ciphertextPayloadHashesMatch = true)
+      ∧ (shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+        ∧ bindingFields.ciphertextHashSeeds =
+          statementFields.ciphertextHashSeeds)
+      ∧ (surface.transferState.sidecarCiphertextsAvailable = true
+        ∧ surface.transferState.sidecarCiphertextSizesPresent = true
+        ∧ surface.transferState.sidecarCiphertextSizesMatch = true)
+      ∧ MaterializedSidecarOpenAssumptionPrivacyBoundary
+        surface
+        blockActionDecode
+        wireOutput
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game
+      ∧ AcceptedBlockAdmissionSafetyFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot := by
+  exact
+    ⟨review.coreReview.consensusDaBlobRefinement,
+      review.coreReview.txLeafCiphertextPublication,
+      review.coreReview.statementCiphertextVectorPublication,
+      review.coreReview.sidecarMaterialization,
+      review.privacyBoundary,
+      review.admissionSafety⟩
 
 structure MaterializedTransferCoreResidualAssumptions where
   arbitraryParserEquivalence : Prop

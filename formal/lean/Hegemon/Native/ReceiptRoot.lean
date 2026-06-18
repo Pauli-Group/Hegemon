@@ -1,9 +1,12 @@
 import Hegemon.Bytes
 import Hegemon.Native.TxLeafArtifact
+import Hegemon.Resource.BoundedRequestAdmission
 
 namespace Hegemon
 namespace Native
 namespace ReceiptRoot
+
+open Hegemon.Resource.BoundedRequestAdmission
 
 def digestWidth : Nat := 48
 def shortDigestWidth : Nat := 32
@@ -130,6 +133,105 @@ structure ReceiptRootScheduleFacts
     summary.foldCount = expectedFoldCount expectedLeafCount
   foldShapesExact :
     allFoldShapesExact summary.folds = true
+
+def receiptRootFoldCoeffCountTotal (fold : FoldSummary) : Nat :=
+  fold.rowCoeffCounts.foldl (fun total count => total + count) 0
+
+def receiptRootTotalRowCount (summary : ReceiptRootSummary) : Nat :=
+  summary.folds.foldl (fun total fold => total + fold.rowCount) 0
+
+def receiptRootTotalChallengeCount (summary : ReceiptRootSummary) : Nat :=
+  summary.folds.foldl (fun total fold => total + fold.challengeCount) 0
+
+def receiptRootTotalCoeffCount (summary : ReceiptRootSummary) : Nat :=
+  summary.folds.foldl
+    (fun total fold => total + receiptRootFoldCoeffCountTotal fold)
+    0
+
+def receiptRootDynamicItemCount (summary : ReceiptRootSummary) : Nat :=
+  summary.leafCount
+    + summary.foldCount
+    + receiptRootTotalRowCount summary
+    + receiptRootTotalChallengeCount summary
+
+def receiptRootAggregateBytes (summary : ReceiptRootSummary) : Nat :=
+  digestWidth * 3 * summary.leafCount
+    + 8 * receiptRootTotalChallengeCount summary
+    + 8 * receiptRootTotalCoeffCount summary
+
+def receiptRootWorkUnits (summary : ReceiptRootSummary) : Nat :=
+  receiptRootDynamicItemCount summary
+    + receiptRootTotalCoeffCount summary
+
+def receiptRootMaxItemBytes (_summary : ReceiptRootSummary) : Nat :=
+  max (digestWidth * 3) (max (foldChallengeCount * 8) (matrixCols * 8))
+
+def receiptRootArtifactResourceRequest
+    (artifact : List Byte)
+    (summary : ReceiptRootSummary) : ResourceRequest :=
+  {
+    rawBytes := artifact.length,
+    decodedBytes := artifact.length,
+    itemCount := receiptRootDynamicItemCount summary,
+    maxItemBytes := receiptRootMaxItemBytes summary,
+    aggregateBytes := receiptRootAggregateBytes summary,
+    workUnits := receiptRootWorkUnits summary
+  }
+
+structure ReceiptRootResourceFacts
+    (policy : ResourcePolicy)
+    (artifact : List Byte)
+    (summary : ReceiptRootSummary) : Prop where
+  boundedFacts :
+    AcceptedBoundedRequestFacts policy
+      (receiptRootArtifactResourceRequest artifact summary)
+  artifactRawBytesWithinCap :
+    ¬ policy.rawByteCap < artifact.length
+  artifactDecodedBytesWithinCap :
+    ¬ policy.decodedByteCap < artifact.length
+  dynamicItemCountWithinCap :
+    ¬ policy.itemCountCap < receiptRootDynamicItemCount summary
+  maxItemBytesWithinCap :
+    ¬ policy.itemByteCap < receiptRootMaxItemBytes summary
+  aggregateBytesWithinCap :
+    ¬ policy.aggregateByteCap < receiptRootAggregateBytes summary
+  workUnitsWithinCap :
+    ¬ policy.workUnitCap < receiptRootWorkUnits summary
+
+theorem accepted_receipt_root_resource_exposes_bounds
+    {policy : ResourcePolicy}
+    {artifact : List Byte}
+    {summary : ReceiptRootSummary}
+    (accepted :
+      evaluateBoundedRequest policy
+        (receiptRootArtifactResourceRequest artifact summary) = none) :
+    ReceiptRootResourceFacts policy artifact summary := by
+  let boundedFacts :=
+    accepted_bounded_request_exposes_all_caps
+      (policy := policy)
+      (request := receiptRootArtifactResourceRequest artifact summary)
+      accepted
+  exact {
+    boundedFacts := boundedFacts,
+    artifactRawBytesWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.rawBytesWithinCap,
+    artifactDecodedBytesWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.decodedBytesWithinCap,
+    dynamicItemCountWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.itemCountWithinCap,
+    maxItemBytesWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.itemBytesWithinCap,
+    aggregateBytesWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.aggregateBytesWithinCap,
+    workUnitsWithinCap := by
+      simpa [receiptRootArtifactResourceRequest] using
+        boundedFacts.workUnitsWithinCap
+  }
 
 theorem receipt_root_schedule_accepts_implies_facts
     {expectedLeafCount : Nat}

@@ -1627,19 +1627,18 @@ pub fn tx_leaf_public_tx_from_transaction_proof(
         .stark_public_inputs
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("transaction proof is missing serialized STARK inputs"))?;
-    let input_count = active_flag_count(&stark_inputs.input_flags)?;
     let output_count = active_flag_count(&stark_inputs.output_flags)?;
-    ensure!(
-        input_count <= proof.nullifiers.len(),
-        "transaction proof input flags exceed nullifier vector"
-    );
+    let nullifiers = compact_active_input_nullifiers_from_public_slots(
+        &stark_inputs.input_flags,
+        &proof.nullifiers,
+    )?;
     ensure!(
         output_count <= proof.commitments.len()
             && output_count <= proof.public_inputs.ciphertext_hashes.len(),
         "transaction proof output flags exceed commitment/ciphertext vectors"
     );
     Ok(TxLeafPublicTx {
-        nullifiers: proof.nullifiers[..input_count].to_vec(),
+        nullifiers,
         commitments: proof.commitments[..output_count].to_vec(),
         ciphertext_hashes: proof.public_inputs.ciphertext_hashes[..output_count].to_vec(),
         balance_tag: proof.public_inputs.balance_tag,
@@ -1756,10 +1755,8 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         stark_inputs.balance_slot_asset_ids.len(),
         BALANCE_SLOTS
     );
-    ensure!(
-        active_flag_count(&stark_inputs.input_flags)? == tx.nullifiers.len(),
-        "tx-leaf nullifier list length does not match active input flags"
-    );
+    let public_nullifier_slots =
+        materialize_tx_leaf_input_nullifier_slots(&stark_inputs.input_flags, &tx.nullifiers)?;
     ensure!(
         active_flag_count(&stark_inputs.output_flags)? == tx.commitments.len(),
         "tx-leaf commitment list length does not match active output flags"
@@ -1782,7 +1779,7 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         .copied()
         .map(|flag| Goldilocks::from_u64(u64::from(flag)))
         .collect();
-    for (slot, value) in tx.nullifiers.iter().enumerate() {
+    for (slot, value) in public_nullifier_slots.iter().enumerate() {
         public.nullifiers[slot] = bytes48_to_felts(value)
             .ok_or_else(|| anyhow::anyhow!("tx nullifier {} is non-canonical", slot))?;
     }
@@ -2046,10 +2043,10 @@ fn validate_tx_leaf_public_witness_with_expected_profile(
         witness.stark_public_inputs.stablecoin_issuance_sign <= 1,
         "tx-leaf stablecoin_issuance_sign must be binary"
     );
-    ensure!(
-        active_flag_count(&witness.stark_public_inputs.input_flags)? == witness.tx.nullifiers.len(),
-        "tx-leaf nullifier list length does not match active input flags"
-    );
+    materialize_tx_leaf_input_nullifier_slots(
+        &witness.stark_public_inputs.input_flags,
+        &witness.tx.nullifiers,
+    )?;
     ensure!(
         active_flag_count(&witness.stark_public_inputs.output_flags)?
             == witness.tx.commitments.len()
@@ -2184,6 +2181,8 @@ fn tx_statement_hash_from_tx_leaf_public(
     tx: &TxLeafPublicTx,
     stark_inputs: &SerializedStarkInputs,
 ) -> Result<[u8; 48]> {
+    let public_nullifier_slots =
+        materialize_tx_leaf_input_nullifier_slots(&stark_inputs.input_flags, &tx.nullifiers)?;
     let value_balance = decode_signed_magnitude(
         stark_inputs.value_balance_sign,
         stark_inputs.value_balance_magnitude,
@@ -2196,7 +2195,7 @@ fn tx_statement_hash_from_tx_leaf_public(
     )?;
     transaction_statement_hash_from_parts(
         &stark_inputs.merkle_root,
-        &tx.nullifiers,
+        &public_nullifier_slots,
         &tx.commitments,
         &tx.ciphertext_hashes,
         stark_inputs.fee,
@@ -2213,6 +2212,103 @@ fn tx_statement_hash_from_tx_leaf_public(
         stark_inputs.stablecoin_policy_version,
     )
     .map_err(|err| anyhow::anyhow!("failed to derive tx-leaf statement hash: {err}"))
+}
+
+fn is_zero_bytes48(value: &[u8; 48]) -> bool {
+    value.iter().all(|byte| *byte == 0)
+}
+
+fn materialize_tx_leaf_input_nullifier_slots(
+    input_flags: &[u8],
+    compact_nullifiers: &[[u8; 48]],
+) -> Result<Vec<[u8; 48]>> {
+    ensure!(
+        input_flags.len() <= MAX_INPUTS,
+        "tx-leaf input flag length {} exceeds {}",
+        input_flags.len(),
+        MAX_INPUTS
+    );
+    ensure!(
+        compact_nullifiers.len() <= MAX_INPUTS,
+        "tx-leaf nullifier length {} exceeds {}",
+        compact_nullifiers.len(),
+        MAX_INPUTS
+    );
+
+    let mut public_nullifiers = Vec::with_capacity(input_flags.len());
+    let mut next_compact = 0usize;
+    for (slot, flag) in input_flags.iter().copied().enumerate() {
+        match flag {
+            0 => public_nullifiers.push([0u8; 48]),
+            1 => {
+                let Some(nullifier) = compact_nullifiers.get(next_compact).copied() else {
+                    anyhow::bail!(
+                        "tx-leaf nullifier list length does not match active input flags"
+                    );
+                };
+                ensure!(
+                    !is_zero_bytes48(&nullifier),
+                    "tx-leaf active input {slot} has zero nullifier"
+                );
+                public_nullifiers.push(nullifier);
+                next_compact += 1;
+            }
+            _ => anyhow::bail!("tx-leaf input flags must be binary"),
+        }
+    }
+    ensure!(
+        next_compact == compact_nullifiers.len(),
+        "tx-leaf nullifier list length does not match active input flags"
+    );
+    Ok(public_nullifiers)
+}
+
+fn compact_active_input_nullifiers_from_public_slots(
+    input_flags: &[u8],
+    public_nullifiers: &[[u8; 48]],
+) -> Result<Vec<[u8; 48]>> {
+    ensure!(
+        input_flags.len() <= MAX_INPUTS,
+        "tx-leaf input flag length {} exceeds {}",
+        input_flags.len(),
+        MAX_INPUTS
+    );
+    ensure!(
+        public_nullifiers.len() <= MAX_INPUTS,
+        "transaction proof nullifier length {} exceeds {}",
+        public_nullifiers.len(),
+        MAX_INPUTS
+    );
+    ensure!(
+        input_flags.len() <= public_nullifiers.len(),
+        "transaction proof input flags exceed nullifier vector"
+    );
+
+    let mut compact = Vec::new();
+    for (slot, flag) in input_flags.iter().copied().enumerate() {
+        let nullifier = public_nullifiers[slot];
+        match flag {
+            0 => ensure!(
+                is_zero_bytes48(&nullifier),
+                "inactive input has non-zero nullifier"
+            ),
+            1 => {
+                ensure!(
+                    !is_zero_bytes48(&nullifier),
+                    "active input has zero nullifier"
+                );
+                compact.push(nullifier);
+            }
+            _ => anyhow::bail!("tx-leaf input flags must be binary"),
+        }
+    }
+    for nullifier in public_nullifiers.iter().skip(input_flags.len()) {
+        ensure!(
+            is_zero_bytes48(nullifier),
+            "nullifier slot outside serialized input flags must be zero"
+        );
+    }
+    Ok(compact)
 }
 
 fn active_flag_count(flags: &[u8]) -> Result<usize> {
@@ -5323,6 +5419,7 @@ mod tests {
         expected_valid: bool,
         expected_canonical_valid: bool,
         expected_summary: Option<LeanNativeTxLeafArtifactSummary>,
+        expected_resource_request: Option<LeanNativeTxLeafResourceRequest>,
     }
 
     #[derive(serde::Deserialize)]
@@ -5360,6 +5457,32 @@ mod tests {
     }
 
     #[derive(serde::Deserialize)]
+    struct LeanNativeTxLeafResourceRequest {
+        raw_bytes: usize,
+        decoded_bytes: usize,
+        item_count: usize,
+        max_item_bytes: usize,
+        aggregate_bytes: usize,
+        work_units: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanSmallwoodSpendAuthorizationVectorFile {
+        schema_version: u32,
+        #[serde(default)]
+        tx_leaf_input_projection_cases: Vec<LeanTxLeafInputProjectionCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanTxLeafInputProjectionCase {
+        name: String,
+        input_flags: Vec<u8>,
+        compact_nullifiers: Vec<u64>,
+        public_nullifiers: Vec<u64>,
+        expected_valid: bool,
+    }
+
+    #[derive(serde::Deserialize)]
     struct LeanNativeReceiptRootVectorFile {
         schema_version: u32,
         native_receipt_root_cases: Vec<LeanNativeReceiptRootCase>,
@@ -5373,6 +5496,7 @@ mod tests {
         expected_parse_valid: bool,
         expected_schedule_valid: bool,
         expected_summary: Option<LeanNativeReceiptRootSummary>,
+        expected_resource_request: Option<LeanNativeReceiptRootResourceRequest>,
     }
 
     #[derive(serde::Deserialize)]
@@ -5390,9 +5514,25 @@ mod tests {
         row_coeff_counts: Vec<usize>,
     }
 
+    #[derive(serde::Deserialize)]
+    struct LeanNativeReceiptRootResourceRequest {
+        raw_bytes: usize,
+        decoded_bytes: usize,
+        item_count: usize,
+        max_item_bytes: usize,
+        aggregate_bytes: usize,
+        work_units: usize,
+    }
+
     fn decode_lean_hex(value: &str) -> Vec<u8> {
         let hex = value.strip_prefix("0x").unwrap_or(value);
         hex::decode(hex).expect("Lean vector hex must decode")
+    }
+
+    fn bytes48_from_lean_digest(value: u64) -> [u8; 48] {
+        let mut out = [0u8; 48];
+        out[0..8].copy_from_slice(&value.to_be_bytes());
+        out
     }
 
     #[test]
@@ -5585,9 +5725,14 @@ mod tests {
             "stablecoin_issuance",
         )
         .unwrap();
+        let public_nullifier_slots = materialize_tx_leaf_input_nullifier_slots(
+            &stark_public_inputs.input_flags,
+            &tx.nullifiers,
+        )
+        .unwrap();
         let expected_statement_hash = transaction_statement_hash_from_parts(
             &stark_public_inputs.merkle_root,
-            &tx.nullifiers,
+            &public_nullifier_slots,
             &tx.commitments,
             &tx.ciphertext_hashes,
             stark_public_inputs.fee,
@@ -5618,6 +5763,86 @@ mod tests {
         )
         .unwrap();
         assert_eq!(native_receipt.statement_hash, expected_statement_hash);
+    }
+
+    #[test]
+    fn tx_leaf_statement_hash_uses_projected_input_slots() {
+        let nullifier = bytes48_from_lean_digest(0x4e46);
+        let tx = TxLeafPublicTx {
+            nullifiers: vec![nullifier],
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            balance_tag: [0u8; 48],
+            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+        };
+        let stark_public_inputs = SerializedStarkInputs {
+            input_flags: vec![0, 1],
+            output_flags: vec![0, 0],
+            fee: 0,
+            value_balance_sign: 0,
+            value_balance_magnitude: 0,
+            merkle_root: [0u8; 48],
+            balance_slot_asset_ids: vec![0, u64::MAX, u64::MAX, u64::MAX],
+            stablecoin_enabled: 0,
+            stablecoin_asset_id: 0,
+            stablecoin_policy_version: 0,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 0,
+            stablecoin_policy_hash: [0u8; 48],
+            stablecoin_oracle_commitment: [0u8; 48],
+            stablecoin_attestation_commitment: [0u8; 48],
+        };
+
+        let projected_hash =
+            tx_statement_hash_from_tx_leaf_public(&tx, &stark_public_inputs).unwrap();
+        let expected_public_slots = vec![[0u8; 48], nullifier];
+        let expected_hash = transaction_statement_hash_from_parts(
+            &stark_public_inputs.merkle_root,
+            &expected_public_slots,
+            &tx.commitments,
+            &tx.ciphertext_hashes,
+            stark_public_inputs.fee,
+            0,
+            &tx.balance_tag,
+            tx.version.circuit,
+            tx.version.crypto,
+            stark_public_inputs.stablecoin_enabled,
+            stark_public_inputs.stablecoin_asset_id,
+            &stark_public_inputs.stablecoin_policy_hash,
+            &stark_public_inputs.stablecoin_oracle_commitment,
+            &stark_public_inputs.stablecoin_attestation_commitment,
+            0,
+            stark_public_inputs.stablecoin_policy_version,
+        )
+        .unwrap();
+        let prefix_alias_hash = transaction_statement_hash_from_parts(
+            &stark_public_inputs.merkle_root,
+            &tx.nullifiers,
+            &tx.commitments,
+            &tx.ciphertext_hashes,
+            stark_public_inputs.fee,
+            0,
+            &tx.balance_tag,
+            tx.version.circuit,
+            tx.version.crypto,
+            stark_public_inputs.stablecoin_enabled,
+            stark_public_inputs.stablecoin_asset_id,
+            &stark_public_inputs.stablecoin_policy_hash,
+            &stark_public_inputs.stablecoin_oracle_commitment,
+            &stark_public_inputs.stablecoin_attestation_commitment,
+            0,
+            stark_public_inputs.stablecoin_policy_version,
+        )
+        .unwrap();
+
+        assert_eq!(projected_hash, expected_hash);
+        assert_ne!(projected_hash, prefix_alias_hash);
+
+        let p3_public_inputs =
+            transaction_public_inputs_p3_from_tx_leaf_public(&tx, &stark_public_inputs).unwrap();
+        p3_public_inputs.validate().unwrap();
+        assert_eq!(felts_to_bytes48(&p3_public_inputs.nullifiers[0]), [0u8; 48]);
+        assert_eq!(felts_to_bytes48(&p3_public_inputs.nullifiers[1]), nullifier);
     }
 
     #[test]
@@ -5927,18 +6152,14 @@ mod tests {
             }
         }
 
-        let tampered_receipt = native_tx_leaf_receipt_from_parts(
+        let err = native_tx_leaf_receipt_from_parts(
             &artifact.tx,
             &artifact.stark_public_inputs,
             &artifact.stark_proof,
             artifact.proof_backend,
             &native_backend_params(),
         )
-        .unwrap();
-        artifact.receipt = tampered_receipt.clone();
-        let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
-        let err = verify_native_tx_leaf_artifact_bytes(&artifact.tx, &tampered_receipt, &tampered)
-            .expect_err("active flag/vector count alias must reject");
+        .expect_err("active flag/vector count alias must fail before receipt construction");
         assert!(
             err.to_string().contains("nullifier list length"),
             "unexpected error: {err}"
@@ -5967,6 +6188,93 @@ mod tests {
                 .is_err(),
             "stablecoin payload drift must not verify against the original proof"
         );
+    }
+
+    #[test]
+    fn lean_generated_tx_leaf_input_projection_vectors_match_production_when_present() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS not set; skipping tx-leaf input projection vector check"
+            );
+            return;
+        };
+        let raw = fs::read(&path).expect("read Lean SmallWood spend-authorization vectors");
+        let vectors: LeanSmallwoodSpendAuthorizationVectorFile =
+            serde_json::from_slice(&raw).expect("parse Lean SmallWood spend-authorization vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.tx_leaf_input_projection_cases.is_empty(),
+            "Lean spend-authorization bundle must include tx-leaf input projection cases"
+        );
+
+        for case in vectors.tx_leaf_input_projection_cases {
+            let compact_nullifiers = case
+                .compact_nullifiers
+                .iter()
+                .copied()
+                .map(bytes48_from_lean_digest)
+                .collect::<Vec<_>>();
+            let expected_public_nullifiers = case
+                .public_nullifiers
+                .iter()
+                .copied()
+                .map(bytes48_from_lean_digest)
+                .collect::<Vec<_>>();
+            let projected =
+                materialize_tx_leaf_input_nullifier_slots(&case.input_flags, &compact_nullifiers);
+            let actual_valid = projected
+                .as_ref()
+                .map(|slots| slots == &expected_public_nullifiers)
+                .unwrap_or(false);
+            assert_eq!(
+                actual_valid, case.expected_valid,
+                "{}: tx-leaf input projection validity drifted from Lean spec: {:?}",
+                case.name, projected
+            );
+
+            if case.expected_valid {
+                let tx = TxLeafPublicTx {
+                    nullifiers: compact_nullifiers,
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    balance_tag: [0u8; 48],
+                    version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+                };
+                let stark_public_inputs = SerializedStarkInputs {
+                    input_flags: case.input_flags,
+                    output_flags: vec![0, 0],
+                    fee: 0,
+                    value_balance_sign: 0,
+                    value_balance_magnitude: 0,
+                    merkle_root: [0u8; 48],
+                    balance_slot_asset_ids: vec![0, u64::MAX, u64::MAX, u64::MAX],
+                    stablecoin_enabled: 0,
+                    stablecoin_asset_id: 0,
+                    stablecoin_policy_version: 0,
+                    stablecoin_issuance_sign: 0,
+                    stablecoin_issuance_magnitude: 0,
+                    stablecoin_policy_hash: [0u8; 48],
+                    stablecoin_oracle_commitment: [0u8; 48],
+                    stablecoin_attestation_commitment: [0u8; 48],
+                };
+                let p3_public_inputs =
+                    transaction_public_inputs_p3_from_tx_leaf_public(&tx, &stark_public_inputs)
+                        .expect("valid Lean projection case must materialize P3 inputs");
+                p3_public_inputs
+                    .validate()
+                    .expect("valid Lean projection case must satisfy P3 public-input shape");
+                let observed = p3_public_inputs
+                    .nullifiers
+                    .iter()
+                    .map(felts_to_bytes48)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    observed, expected_public_nullifiers,
+                    "{}: P3 public nullifier slots drifted from Lean projection",
+                    case.name
+                );
+            }
+        }
     }
 
     #[test]
@@ -6075,6 +6383,58 @@ mod tests {
                 "{}",
                 case.name
             );
+            let expected_resource = case
+                .expected_resource_request
+                .as_ref()
+                .expect("valid Lean vector must include resource request");
+            let dynamic_item_count = artifact.stark_public_inputs.input_flags.len()
+                + artifact.stark_public_inputs.output_flags.len()
+                + artifact.stark_public_inputs.balance_slot_asset_ids.len()
+                + artifact.tx.nullifiers.len()
+                + artifact.tx.commitments.len()
+                + artifact.tx.ciphertext_hashes.len()
+                + artifact.commitment.rows.len();
+            let row_coeff_count_total = row_coeff_counts.iter().copied().sum::<usize>();
+            let aggregate_bytes = artifact.stark_proof.len()
+                + 48 * (artifact.tx.nullifiers.len()
+                    + artifact.tx.commitments.len()
+                    + artifact.tx.ciphertext_hashes.len())
+                + 8 * row_coeff_count_total;
+            let work_units =
+                dynamic_item_count + row_coeff_count_total + artifact.stark_proof.len();
+            assert_eq!(
+                expected_resource.raw_bytes,
+                artifact_bytes.len(),
+                "{} tx-leaf raw-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.decoded_bytes,
+                artifact_bytes.len(),
+                "{} tx-leaf decoded-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.item_count, dynamic_item_count,
+                "{} tx-leaf item-count resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.max_item_bytes,
+                artifact.stark_proof.len(),
+                "{} tx-leaf max-item resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.aggregate_bytes, aggregate_bytes,
+                "{} tx-leaf aggregate-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.work_units, work_units,
+                "{} tx-leaf work-unit resource projection drifted from Lean spec",
+                case.name
+            );
             assert_eq!(
                 artifact.leaf.version, expected.leaf_version,
                 "{}",
@@ -6175,6 +6535,66 @@ mod tests {
                     case.name
                 );
             }
+            let expected_resource = case
+                .expected_resource_request
+                .as_ref()
+                .expect("valid Lean receipt-root vector must include resource request");
+            let total_row_count = artifact
+                .folds
+                .iter()
+                .map(|fold| fold.parent_rows.len())
+                .sum::<usize>();
+            let total_challenge_count = artifact
+                .folds
+                .iter()
+                .map(|fold| fold.challenges.len())
+                .sum::<usize>();
+            let total_coeff_count = artifact
+                .folds
+                .iter()
+                .flat_map(|fold| fold.parent_rows.iter())
+                .map(|row| row.coeffs.len())
+                .sum::<usize>();
+            let dynamic_item_count = artifact.leaves.len()
+                + artifact.folds.len()
+                + total_row_count
+                + total_challenge_count;
+            let max_item_bytes = (48 * 3).max((5 * 8).max(54 * 8));
+            let aggregate_bytes =
+                48 * 3 * artifact.leaves.len() + 8 * total_challenge_count + 8 * total_coeff_count;
+            let work_units = dynamic_item_count + total_coeff_count;
+            assert_eq!(
+                expected_resource.raw_bytes,
+                artifact_bytes.len(),
+                "{} receipt-root raw-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.decoded_bytes,
+                artifact_bytes.len(),
+                "{} receipt-root decoded-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.item_count, dynamic_item_count,
+                "{} receipt-root item-count resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.max_item_bytes, max_item_bytes,
+                "{} receipt-root max-item resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.aggregate_bytes, aggregate_bytes,
+                "{} receipt-root aggregate-byte resource projection drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                expected_resource.work_units, work_units,
+                "{} receipt-root work-unit resource projection drifted from Lean spec",
+                case.name
+            );
 
             let canonical = encode_receipt_root_artifact_bytes(&artifact);
             assert_eq!(canonical, artifact_bytes, "{}", case.name);

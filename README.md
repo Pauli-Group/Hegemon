@@ -106,6 +106,8 @@ Multi-asset conservation is implemented exactly as `METHODS.md §2` prescribes: 
 
 Post-quantum security hinges on the primitives cataloged in `DESIGN.md §1`: ML-DSA handles miner and protocol-authenticated envelope signatures, SLH-DSA anchors long-lived trust roots, and ML-KEM drives note/viewing key encryption, all exposed via the unified `crypto/` crate. Because the STARK proving stack in `circuits/transaction` and the note authorization flow rely only on hash-based commitments and lattice primitives, the pool stays quantum-safe—no elliptic curves or pairing-based assumptions remain for Shor’s algorithm to break, and symmetric/hash margins are sized conservatively rather than treated as a protocol cliff.
 
+Wallet note ciphertexts now have a theorem- and vector-checked chain-to-DA boundary: chain bytes remove only the canonical compact ML-KEM length field to form the DA hash preimage, and production parsers must reparse that projected DA form with the same public summary before `ciphertext_hash_bytes` is used.
+
 PoW seals and node-authenticated envelopes use the same PQ signing surface: ML-DSA-backed miner identities with hash-derived 32-byte ids. This keeps address encoding stable while aligning wallet and miner verification around lattice and hash-based primitives.
 
 These guarantees are not just prose: `circuits/formal` captures the nullifier uniqueness and MASP balance invariants in TLA+, and `circuits-bench` plus the `wallet-bench` suite publish the prover and client performance envelopes so reviewers can correlate the whitepaper claims with reproducible benchmarking and formal artifacts.

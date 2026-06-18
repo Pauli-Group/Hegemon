@@ -211,6 +211,21 @@ lean_exe gen_coinbase_action_payload_admission_vectors where
 lean_exe gen_coinbase_action_payload_scale_wire_vectors where
   root := `Hegemon.Native.GenerateCoinbaseActionPayloadScaleWireVectors
 
+lean_exe gen_outbound_bridge_action_payload_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateOutboundBridgeActionPayloadScaleWireVectors
+
+lean_exe gen_inbound_bridge_action_payload_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateInboundBridgeActionPayloadScaleWireVectors
+
+lean_exe gen_bridge_verifier_registration_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateBridgeVerifierRegistrationScaleWireVectors
+
+lean_exe gen_shielded_transfer_inline_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateShieldedTransferInlineScaleWireVectors
+
+lean_exe gen_shielded_transfer_sidecar_scale_wire_vectors where
+  root := `Hegemon.Native.GenerateShieldedTransferSidecarScaleWireVectors
+
 lean_exe gen_mineable_action_admission_vectors where
   root := `Hegemon.Native.GenerateMineableActionAdmissionVectors
 
@@ -231,6 +246,9 @@ lean_exe gen_resource_budget_admission_vectors where
 
 lean_exe gen_bounded_request_admission_vectors where
   root := `Hegemon.Resource.GenerateBoundedRequestAdmissionVectors
+
+lean_exe gen_preheavy_resource_bound_surface_vectors where
+  root := `Hegemon.Native.GeneratePreHeavyWorkResourceBoundSurfaceVectors
 
 lean_exe gen_rpc_admission_vectors where
   root := `Hegemon.Native.GenerateRpcAdmissionVectors
@@ -262,6 +280,9 @@ lean_exe gen_pq_noise_vectors where
 lean_exe gen_frame_resource_admission_vectors where
   root := `Hegemon.Network.GenerateFrameResourceAdmissionVectors
 
+lean_exe gen_peer_store_capacity_admission_vectors where
+  root := `Hegemon.Network.GeneratePeerStoreCapacityAdmissionVectors
+
 lean_exe gen_queue_resource_admission_vectors where
   root := `Hegemon.Network.GenerateQueueResourceAdmissionVectors
 
@@ -270,6 +291,9 @@ lean_exe gen_note_ciphertext_wire_vectors where
 
 lean_exe gen_wallet_output_batch_vectors where
   root := `Hegemon.Privacy.GenerateWalletOutputBatchVectors
+
+lean_exe gen_ciphertext_archive_boundary_vectors where
+  root := `Hegemon.Privacy.GenerateCiphertextArchiveBoundaryVectors
 
 lean_exe gen_native_tx_leaf_artifact_vectors where
   root := `Hegemon.Native.GenerateTxLeafArtifactVectors
@@ -312,6 +336,9 @@ lean_exe gen_proof_statement_binding_vectors where
 
 lean_exe gen_proof_wrapper_admission_vectors where
   root := `Hegemon.Transaction.GenerateProofWrapperAdmissionVectors
+
+lean_exe gen_proof_wrapper_wire_vectors where
+  root := `Hegemon.Transaction.GenerateProofWrapperWireVectors
 
 lean_exe gen_statement_hash_vectors where
   root := `Hegemon.Transaction.GenerateStatementHashVectors

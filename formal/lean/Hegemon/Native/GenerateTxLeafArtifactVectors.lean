@@ -1,7 +1,8 @@
-import Hegemon.Native.TxLeafArtifact
+import Hegemon.Native.TxLeafArtifactProjectionRefinement
 
 open Hegemon
 open Hegemon.Native.TxLeafArtifact
+open Hegemon.Native.TxLeafArtifactProjectionRefinement
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -40,10 +41,26 @@ def txLeafSummaryJson (summary : TxLeafSummary) : String :=
     ++ "        \"proof_backend\": " ++ toString summary.proofBackend ++ "\n"
     ++ "      }"
 
+def resourceRequestJson (request : Hegemon.Resource.BoundedRequestAdmission.ResourceRequest) :
+    String :=
+  "{ \"raw_bytes\": " ++ toString request.rawBytes
+    ++ ", \"decoded_bytes\": " ++ toString request.decodedBytes
+    ++ ", \"item_count\": " ++ toString request.itemCount
+    ++ ", \"max_item_bytes\": " ++ toString request.maxItemBytes
+    ++ ", \"aggregate_bytes\": " ++ toString request.aggregateBytes
+    ++ ", \"work_units\": " ++ toString request.workUnits
+    ++ " }"
+
 def summaryFieldJson (summary : Option TxLeafSummary) : String :=
   match summary with
   | none => "null"
   | some value => txLeafSummaryJson value
+
+def resourceFieldJson (artifact : List Byte) (summary : Option TxLeafSummary) : String :=
+  match summary with
+  | none => "null"
+  | some value =>
+      resourceRequestJson (txLeafArtifactResourceRequest artifact value)
 
 def txLeafCaseJson (name : String) (artifact : List Byte) : String :=
   let summary := parseNativeTxLeafArtifact artifact
@@ -53,7 +70,9 @@ def txLeafCaseJson (name : String) (artifact : List Byte) : String :=
     ++ "      \"artifact_hex\": \"" ++ hexBytes artifact ++ "\",\n"
     ++ "      \"expected_valid\": " ++ boolJson summary.isSome ++ ",\n"
     ++ "      \"expected_canonical_valid\": " ++ boolJson strictSummary.isSome ++ ",\n"
-    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ "\n"
+    ++ "      \"expected_summary\": " ++ summaryFieldJson summary ++ ",\n"
+    ++ "      \"expected_resource_request\": "
+    ++ resourceFieldJson artifact summary ++ "\n"
     ++ "    }"
 
 def vectorJson : String :=

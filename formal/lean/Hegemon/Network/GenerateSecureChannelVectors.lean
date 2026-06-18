@@ -67,6 +67,31 @@ def nonceCaseJson (name : String) (counter : Nat) : String :=
     ++ "      \"expected_next_counter\": " ++ nullableNatStringJson next ++ "\n"
     ++ "    }"
 
+def openAdmissionCaseJson
+    (name : String)
+    (state : ChannelState)
+    (observedSlot : KeySlot)
+    (observedNonce : List Byte)
+    (authenticated : Bool) :
+    String :=
+  let result :=
+    openFrameWithObservedWire state observedSlot observedNonce authenticated
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"role\": " ++ roleJson state.role ++ ",\n"
+    ++ "      \"recv_counter\": \"" ++ toString state.recvCounter ++ "\",\n"
+    ++ "      \"observed_slot\": " ++ keySlotJson observedSlot ++ ",\n"
+    ++ "      \"observed_nonce_hex\": \"" ++ hexBytes observedNonce ++ "\",\n"
+    ++ "      \"authenticated\": " ++ boolJson authenticated ++ ",\n"
+    ++ "      \"expected_accepted\": " ++ boolJson result.accepted ++ ",\n"
+    ++ "      \"expected_slot\": " ++ keySlotJson result.slot ++ ",\n"
+    ++ "      \"expected_nonce_hex\": \"" ++ hexBytes result.nonce ++ "\",\n"
+    ++ "      \"expected_next_recv_counter\": \""
+      ++ toString result.next.recvCounter ++ "\",\n"
+    ++ "      \"expected_preserves_state\": "
+      ++ boolJson (result.next == state) ++ "\n"
+    ++ "    }"
+
 def alternateInput : KeyScheduleInput := {
   offer := patternedBytes 3 7,
   acceptance := patternedBytes 5 29,
@@ -77,7 +102,7 @@ def alternateInput : KeyScheduleInput := {
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"key_schedule_cases\": [\n"
     ++ keyScheduleCaseJson "patterned-handshake" sampleInput ++ ",\n"
     ++ keyScheduleCaseJson "alternate-handshake" alternateInput ++ "\n"
@@ -92,6 +117,44 @@ def vectorJson : String :=
     ++ nonceCaseJson "pattern" 72623859790382856 ++ ",\n"
     ++ nonceCaseJson "max-minus-one" (u64Max - 1) ++ ",\n"
     ++ nonceCaseJson "max-rejected" u64Max ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"open_admission_cases\": [\n"
+    ++ openAdmissionCaseJson
+        "current-authenticated-accepted"
+        (initialState Role.responder)
+        (recvSlot Role.responder)
+        (nonceFromCounter 0)
+        true ++ ",\n"
+    ++ openAdmissionCaseJson
+        "current-authentication-failure-preserves-state"
+        (initialState Role.responder)
+        (recvSlot Role.responder)
+        (nonceFromCounter 0)
+        false ++ ",\n"
+    ++ openAdmissionCaseJson
+        "duplicate-after-first-preserves-state"
+        responderAfterFirstOpen
+        (recvSlot Role.responder)
+        (nonceFromCounter 0)
+        true ++ ",\n"
+    ++ openAdmissionCaseJson
+        "future-before-current-preserves-state"
+        (initialState Role.responder)
+        (recvSlot Role.responder)
+        (nonceFromCounter 1)
+        true ++ ",\n"
+    ++ openAdmissionCaseJson
+        "wrong-slot-preserves-state"
+        (initialState Role.responder)
+        (sendSlot Role.responder)
+        (nonceFromCounter 0)
+        true ++ ",\n"
+    ++ openAdmissionCaseJson
+        "recv-overflow-preserves-state"
+        { role := Role.responder, sendCounter := 0, recvCounter := u64Max }
+        (recvSlot Role.responder)
+        (nonceFromCounter u64Max)
+        true ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

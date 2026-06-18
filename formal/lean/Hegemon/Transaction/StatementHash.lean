@@ -159,6 +159,16 @@ def serializedPublicInputsPostcard (fields : SerializedPublicInputsFields) : Lis
 def publicInputsDigestPreimage (fields : SerializedPublicInputsFields) : List Byte :=
   publicInputsDigestDomain ++ serializedPublicInputsPostcard fields
 
+def proofDigestDomain : List Byte := asciiBytes "tx-proof-digest-v1"
+
+structure ProofDigestFields where
+  backendWireId : Nat
+  proofBytes : List Byte
+deriving DecidableEq, Repr
+
+def proofDigestPreimage (fields : ProofDigestFields) : List Byte :=
+  proofDigestDomain ++ [byte fields.backendWireId] ++ fields.proofBytes
+
 def validFields : StatementFields :=
   { merkleRootSeed := 10
     nullifierSeeds := [20, 21]
@@ -224,9 +234,27 @@ def stablecoinSerializedPublicInputs : SerializedPublicInputsFields :=
     stablecoinOracleCommitmentSeed := 72
     stablecoinAttestationCommitmentSeed := 73 }
 
+def plonky3ProofDigestFields : ProofDigestFields :=
+  { backendWireId := 1
+    proofBytes := [0, 1, 2, 3, 255] }
+
+def smallwoodProofDigestFields : ProofDigestFields :=
+  { backendWireId := 2
+    proofBytes := [0, 1, 2, 3, 255] }
+
+def alternateProofBytesDigestFields : ProofDigestFields :=
+  { backendWireId := 2
+    proofBytes := [0, 1, 2, 4, 255] }
+
 def expectedPreimageLength : Nat := 600
 
 theorem statementHashDomain_length : statementHashDomain.length = 15 := by
+  decide
+
+theorem publicInputsDigestDomain_length : publicInputsDigestDomain.length = 26 := by
+  decide
+
+theorem proofDigestDomain_length : proofDigestDomain.length = 18 := by
   decide
 
 theorem digestBytes_length (seed : Nat) : (digestBytes seed).length = digestWidth := by
@@ -264,6 +292,29 @@ theorem paddedDigests_length {maxCount : Nat} {seeds : List Nat} {bytes : List B
 
 theorem i128le_length (value : Int) : (i128le value).length = 16 := by
   simp [i128le, u128le_length]
+
+theorem proofDigestPreimage_length (fields : ProofDigestFields) :
+    (proofDigestPreimage fields).length =
+      proofDigestDomain.length + 1 + fields.proofBytes.length := by
+  simp [proofDigestPreimage, Nat.add_comm, Nat.add_left_comm]
+
+theorem proofDigestPreimage_valid_plonky3_length :
+    (proofDigestPreimage plonky3ProofDigestFields).length = 24 := by
+  decide
+
+theorem proofDigestPreimage_valid_smallwood_length :
+    (proofDigestPreimage smallwoodProofDigestFields).length = 24 := by
+  decide
+
+theorem proofDigestPreimage_binds_backend_wire_id :
+    proofDigestPreimage plonky3ProofDigestFields !=
+      proofDigestPreimage smallwoodProofDigestFields := by
+  decide
+
+theorem proofDigestPreimage_binds_proof_bytes :
+    proofDigestPreimage smallwoodProofDigestFields !=
+      proofDigestPreimage alternateProofBytesDigestFields := by
+  decide
 
 theorem statementPreimage_length_of_some {fields : StatementFields} {bytes : List Byte}
     (h : statementPreimage fields = some bytes) :

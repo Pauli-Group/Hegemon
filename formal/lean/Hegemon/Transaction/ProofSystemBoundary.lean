@@ -2293,6 +2293,145 @@ structure CanonicalProofSystemProductionResidualCertificate
   merkleCommitmentHashSecurity :
     residuals.merkleCommitmentHashSecurity
 
+theorem packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {residuals : CanonicalProofSystemProductionResidualAssumptions}
+    (proofArtifactStatementCertificate :
+      CanonicalProofArtifactAdmissionStatementCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (noTheftBoundaryFacts :
+      CanonicalProofSystemNoTheftBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (wrapperCanonicalDecodeEquivalence :
+      residuals.wrapperCanonicalDecodeEquivalence)
+    (publicInputSerializationEquivalence :
+      residuals.publicInputSerializationEquivalence)
+    (statementHashCollisionResistance :
+      residuals.statementHashCollisionResistance)
+    (bindingTranscriptHashSoundness :
+      residuals.bindingTranscriptHashSoundness)
+    (deployedVerifierImplementationEquivalence :
+      residuals.deployedVerifierImplementationEquivalence)
+    (starkAirPcsSoundness :
+      residuals.starkAirPcsSoundness)
+    (witnessExtractionCompleteness :
+      residuals.witnessExtractionCompleteness)
+    (merkleCommitmentHashSecurity :
+      residuals.merkleCommitmentHashSecurity) :
+    CanonicalProofSystemProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      residuals := by
+  exact
+    {
+      proofArtifactStatementCertificate :=
+        proofArtifactStatementCertificate,
+      noTheftBoundaryFacts := noTheftBoundaryFacts,
+      canonicalBoundaryFacts := noTheftBoundaryFacts.fullBoundary,
+      spendBoundaryFacts := noTheftBoundaryFacts.spendBoundary,
+      balancePublicBoundaryFacts :=
+        noTheftBoundaryFacts.balancePublicBoundary,
+      coreStatementBinding :=
+        noTheftBoundaryFacts.fullBoundary.coreStatementBinding,
+      vectorBinding := noTheftBoundaryFacts.fullBoundary.vectorBinding,
+      inputSlotBoundaryFacts := by
+        intro index activeFlag publicNullifier witness slot
+        have slotFacts :=
+          canonical_boundary_facts_input_slot_bound_to_statement
+            noTheftBoundaryFacts.fullBoundary
+            slot
+        exact
+          {
+            boundaryFacts := noTheftBoundaryFacts.fullBoundary,
+            inputSlotFacts := slotFacts.left,
+            statementRootBinding := slotFacts.right.left,
+            bindingRootBinding := slotFacts.right.right.left,
+            statementSlot := slotFacts.right.right.right.left,
+            bindingSlot := slotFacts.right.right.right.right
+          },
+      outputSlotBoundaryFacts := by
+        intro index activeFlag publicCommitment publicCiphertextHash slot
+        have slotFacts :=
+          canonical_boundary_facts_output_slot_bound_to_statement
+            noTheftBoundaryFacts.fullBoundary
+            slot
+        exact
+          {
+            boundaryFacts := noTheftBoundaryFacts.fullBoundary,
+            outputSlotFacts := slotFacts.left,
+            statementSlot := slotFacts.right.left,
+            bindingSlot := slotFacts.right.right
+          },
+      witnessAuthorizedDeltas :=
+        noTheftBoundaryFacts.witnessAuthorizedDelta,
+      publicAuthorizedDeltas :=
+        noTheftBoundaryFacts.publicAuthorizedDelta,
+      nativeDeltaAuthorized :=
+        canonical_boundary_facts_native_delta
+          noTheftBoundaryFacts.fullBoundary,
+      nonNativeNonzeroExceptionSurface :=
+        noTheftBoundaryFacts.nonNativeNonzeroExceptionSurface,
+      wrapperCanonicalDecodeEquivalence :=
+        wrapperCanonicalDecodeEquivalence,
+      publicInputSerializationEquivalence :=
+        publicInputSerializationEquivalence,
+      statementHashCollisionResistance :=
+        statementHashCollisionResistance,
+      bindingTranscriptHashSoundness :=
+        bindingTranscriptHashSoundness,
+      deployedVerifierImplementationEquivalence :=
+        deployedVerifierImplementationEquivalence,
+      starkAirPcsSoundness := starkAirPcsSoundness,
+      witnessExtractionCompleteness := witnessExtractionCompleteness,
+      merkleCommitmentHashSecurity := merkleCommitmentHashSecurity
+    }
+
 theorem accepted_canonical_surface_with_split_soundness_and_residuals_imply_proof_system_production_residual_certificate
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

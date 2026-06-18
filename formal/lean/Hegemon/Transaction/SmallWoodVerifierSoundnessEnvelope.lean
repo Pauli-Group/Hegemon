@@ -229,6 +229,101 @@ structure SmallWoodPublicStatementVerifierExportFacts
           assetId
           (slotDelta assetId slots)
 
+theorem smallwood_public_statement_export_yields_public_asset_isolation_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (exportFacts :
+      SmallWoodPublicStatementVerifierExportFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface) :
+    PublicAssetIsolationCertificate
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      slots
+      livePolicyAuthorizes := by
+  exact
+    { publicAuthorizedDeltas := by
+        intro assetId
+        exact exportFacts.noTheftAndPublicConservation.right.left
+      nonNativeNoExceptionZero := by
+        intro assetId nonNative noPublicException
+        have publicZero :
+            publicAuthorizedAssetDeltaValue publicFields assetId = 0 :=
+          public_authorized_asset_delta_value_non_native_no_exception_zero
+            nonNative
+            noPublicException
+        rw [exportFacts.noTheftAndPublicConservation.right.left, publicZero]
+      nonNativeNonzeroRequiresPublicException := by
+        intro assetId nonNative nonzero
+        have publicNonzero :
+            publicAuthorizedAssetDeltaValue publicFields assetId ≠ 0 := by
+          intro publicZero
+          apply nonzero
+          rw [exportFacts.noTheftAndPublicConservation.right.left, publicZero]
+        exact
+          public_authorized_asset_delta_value_non_native_nonzero_requires_stablecoin_exception
+            nonNative
+            publicNonzero
+      authorizedStablecoinExceptionSurface := by
+        intro assetId nonNative nonzero authorized
+        exact
+          stablecoin_mint_exception_authorized_payload_bound_to_statement
+            (exportFacts.nonNativeNonzeroStablecoinException
+              nonNative
+              nonzero)
+            authorized
+      unauthorizedStablecoinExceptionSurfaceImpossible := by
+        intro assetId _ _ notAuthorized
+        exact
+          authorized_stablecoin_mint_exception_surface_no_unauthorized_payload
+            notAuthorized }
+
 structure SmallWoodFormalSoundnessReviewCertificate
     (wrapper : ProofWrapperInput)
     (shape : PublicInputShape)
@@ -335,6 +430,31 @@ structure SmallWoodProofSystemResidualAssumptions where
   merkleAndCommitmentHashSecurity : Prop
   witnessExtractionCompleteness : Prop
   verifierImplementationEquivalence : Prop
+
+def canonicalProductionResidualsFromSmallWood
+    (wrapperCanonicalDecodeEquivalence : Prop)
+    (publicInputSerializationEquivalence : Prop)
+    (statementHashCollisionResistance : Prop)
+    (residuals : SmallWoodProofSystemResidualAssumptions) :
+    CanonicalProofSystemProductionResidualAssumptions :=
+  {
+    wrapperCanonicalDecodeEquivalence :=
+      wrapperCanonicalDecodeEquivalence,
+    publicInputSerializationEquivalence :=
+      publicInputSerializationEquivalence,
+    statementHashCollisionResistance := statementHashCollisionResistance,
+    bindingTranscriptHashSoundness :=
+      residuals.transcriptHashRandomOracle,
+    deployedVerifierImplementationEquivalence :=
+      residuals.verifierImplementationEquivalence,
+    starkAirPcsSoundness :=
+      residuals.starkAirConstraintSoundness
+        ∧ residuals.pcsOpeningBinding,
+    witnessExtractionCompleteness :=
+      residuals.witnessExtractionCompleteness,
+    merkleCommitmentHashSecurity :=
+      residuals.merkleAndCommitmentHashSecurity
+  }
 
 structure SmallWoodResidualVerifierExportCanonicalSoundnessCertificate
     (wrapper : ProofWrapperInput)
@@ -491,6 +611,303 @@ structure SmallWoodResidualVerifierExportCanonicalSoundnessCertificate
   witnessExtractionCompleteness :
     residuals.witnessExtractionCompleteness
   verifierImplementationEquivalence :
+    residuals.verifierImplementationEquivalence
+
+structure SmallWoodProductionProofSystemReviewCertificate
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput)
+    (publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface)
+    (authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface)
+    (inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface)
+    (outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface)
+    (smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface)
+    (airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface)
+    (residuals : SmallWoodProofSystemResidualAssumptions)
+    (wrapperCanonicalDecodeEquivalence : Prop)
+    (publicInputSerializationEquivalence : Prop)
+    (statementHashCollisionResistance : Prop) : Prop where
+  smallwoodCanonicalSoundnessCertificate :
+    SmallWoodResidualVerifierExportCanonicalSoundnessCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+      residuals
+  canonicalProductionResidualCertificate :
+    CanonicalProofSystemProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      (canonicalProductionResidualsFromSmallWood
+        wrapperCanonicalDecodeEquivalence
+        publicInputSerializationEquivalence
+        statementHashCollisionResistance
+        residuals)
+  verifierExport :
+    SmallWoodPublicStatementVerifierExportFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+  proofArtifactStatementCertificate :
+    CanonicalProofArtifactAdmissionStatementCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots
+  proofSystemNoTheftBoundaryFacts :
+    CanonicalProofSystemNoTheftBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  publicStatementFacts :
+    SmallWoodPublicStatementBinding.SmallWoodPublicStatementBindingFacts
+      publicStatement
+  spendAuthorized :
+    transactionSpendAuthorized shape merkleRoot spendWitnesses = true
+  publicAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nativeDeltaAuthorized :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness
+  nonNativeNonzeroStablecoinException :
+    ∀ {assetId : Nat},
+      assetId ≠ nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+        StablecoinMintExceptionSurface
+          publicFields
+          bound
+          statementFields
+          bindingFields
+          assetId
+          (slotDelta assetId slots)
+  wrapperCanonicalDecodeEquivalenceResidual :
+    wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalenceResidual :
+    publicInputSerializationEquivalence
+  statementHashCollisionResistanceResidual :
+    statementHashCollisionResistance
+  starkAirPcsResidual :
+    residuals.starkAirConstraintSoundness
+      ∧ residuals.pcsOpeningBinding
+  transcriptHashRandomOracleResidual :
+    residuals.transcriptHashRandomOracle
+  merkleAndCommitmentHashSecurityResidual :
+    residuals.merkleAndCommitmentHashSecurity
+  witnessExtractionCompletenessResidual :
+    residuals.witnessExtractionCompleteness
+  verifierImplementationEquivalenceResidual :
+    residuals.verifierImplementationEquivalence
+
+structure SmallWoodCompactProductionResidualCertificate
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput)
+    (publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface)
+    (authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface)
+    (inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface)
+    (outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface)
+    (smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface)
+    (airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface)
+    (residuals : SmallWoodProofSystemResidualAssumptions)
+    (wrapperCanonicalDecodeEquivalence : Prop)
+    (publicInputSerializationEquivalence : Prop)
+    (statementHashCollisionResistance : Prop) : Prop where
+  canonicalProductionResidualCertificate :
+    CanonicalProofSystemProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      (canonicalProductionResidualsFromSmallWood
+        wrapperCanonicalDecodeEquivalence
+        publicInputSerializationEquivalence
+        statementHashCollisionResistance
+        residuals)
+  verifierExport :
+    SmallWoodPublicStatementVerifierExportFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+  statementHashPreimage :
+    StatementHash.statementPreimage statementFields = some statementBytes
+  statementHashPreimageLength :
+    statementBytes.length = StatementHash.expectedPreimageLength
+  proofBindingMessage :
+    ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  publicInputBinding :
+    PublicInputBinding.bindPublicInputs publicFields serializedFields =
+      some bound
+  publicInputBindingValid :
+    PublicInputBinding.validBinding publicFields serializedFields = true
+  proofWrapperAccepted :
+    proofWrapperAccepts wrapper = true
+  proofWrapperPreconditions :
+    proofWrapperPreconditions wrapper = true
+  proofWrapperSurface :
+    acceptedProofWrapperSurface wrapper
+  proofWrapperMetadataProjectionSurface :
+    acceptedProofWrapperMetadataProjectionSurface
+      (metadataProjectionFromAdmissionInput wrapper)
+  spendAuthorized :
+    transactionSpendAuthorized shape merkleRoot spendWitnesses = true
+  publicAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nativeDeltaAuthorized :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness
+  nonNativeNonzeroStablecoinException :
+    ∀ {assetId : Nat},
+      assetId ≠ nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+        StablecoinMintExceptionSurface
+          publicFields
+          bound
+          statementFields
+          bindingFields
+          assetId
+          (slotDelta assetId slots)
+  wrapperCanonicalDecodeEquivalenceResidual :
+    wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalenceResidual :
+    publicInputSerializationEquivalence
+  statementHashCollisionResistanceResidual :
+    statementHashCollisionResistance
+  starkAirPcsResidual :
+    residuals.starkAirConstraintSoundness
+      ∧ residuals.pcsOpeningBinding
+  transcriptHashRandomOracleResidual :
+    residuals.transcriptHashRandomOracle
+  merkleAndCommitmentHashSecurityResidual :
+    residuals.merkleAndCommitmentHashSecurity
+  witnessExtractionCompletenessResidual :
+    residuals.witnessExtractionCompleteness
+  verifierImplementationEquivalenceResidual :
     residuals.verifierImplementationEquivalence
 
 theorem accepted_candidate_wrapper_exposes_admission_facts
@@ -1265,6 +1682,377 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_re
       merkleAndCommitmentHashSecurity := merkleAndCommitmentHashSecurity,
       witnessExtractionCompleteness := witnessExtractionCompleteness,
       verifierImplementationEquivalence := verifierImplementationEquivalence
+    }
+
+theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_production_review_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {residuals : SmallWoodProofSystemResidualAssumptions}
+    {wrapperCanonicalDecodeEquivalence : Prop}
+    {publicInputSerializationEquivalence : Prop}
+    {statementHashCollisionResistance : Prop}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (candidateAccepted :
+      SmallWoodCandidateWrapperAdmission.wrapperAccepts
+        candidateWrapper = true)
+    (publicStatementAccepted :
+      SmallWoodPublicStatementBinding.acceptedSmallwoodPublicStatementBinding
+        publicStatement)
+    (publicStatementBytesMatch :
+      publicStatement.statementBytes = statementBytes)
+    (authAccepted :
+      SmallWoodSpendAuthorization.activeAuthLinkAccepted
+        authSurface = true)
+    (inputAccepted :
+      SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
+        inputSpendSurface = true)
+    (outputAccepted :
+      SmallWoodSpendAuthorization.activeOutputBindingAccepted
+        outputSurface = true)
+    (smallwoodBalanceAccepted :
+      SmallWoodBalanceBoundary.AcceptedSmallWoodBalanceConstraints
+        smallwoodBalanceSurface)
+    (airBalanceAccepted :
+      AirBalanceBoundary.AcceptedAirBalanceFinalRowConstraints
+        airBalanceSurface)
+    (wrapperCanonicalDecodeEquivalenceResidual :
+      wrapperCanonicalDecodeEquivalence)
+    (publicInputSerializationEquivalenceResidual :
+      publicInputSerializationEquivalence)
+    (statementHashCollisionResistanceResidual :
+      statementHashCollisionResistance)
+    (starkAirConstraintSoundness :
+      residuals.starkAirConstraintSoundness)
+    (pcsOpeningBinding :
+      residuals.pcsOpeningBinding)
+    (transcriptHashRandomOracle :
+      residuals.transcriptHashRandomOracle)
+    (merkleAndCommitmentHashSecurity :
+      residuals.merkleAndCommitmentHashSecurity)
+    (witnessExtractionCompleteness :
+      residuals.witnessExtractionCompleteness)
+    (verifierImplementationEquivalence :
+      residuals.verifierImplementationEquivalence) :
+    SmallWoodProductionProofSystemReviewCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+      residuals
+      wrapperCanonicalDecodeEquivalence
+      publicInputSerializationEquivalence
+      statementHashCollisionResistance := by
+  have smallwoodCertificate :
+      SmallWoodResidualVerifierExportCanonicalSoundnessCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        residuals :=
+    accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_canonical_soundness_certificate
+      surface
+      spendSound
+      balanceSound
+      candidateAccepted
+      publicStatementAccepted
+      publicStatementBytesMatch
+      authAccepted
+      inputAccepted
+      outputAccepted
+      smallwoodBalanceAccepted
+      airBalanceAccepted
+      starkAirConstraintSoundness
+      pcsOpeningBinding
+      transcriptHashRandomOracle
+      merkleAndCommitmentHashSecurity
+      witnessExtractionCompleteness
+      verifierImplementationEquivalence
+  have canonicalProductionCertificate :
+      CanonicalProofSystemProductionResidualCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        (canonicalProductionResidualsFromSmallWood
+          wrapperCanonicalDecodeEquivalence
+          publicInputSerializationEquivalence
+          statementHashCollisionResistance
+          residuals) :=
+    packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate
+      smallwoodCertificate.proofArtifactStatementCertificate
+      smallwoodCertificate.proofSystemNoTheftBoundaryFacts
+      wrapperCanonicalDecodeEquivalenceResidual
+      publicInputSerializationEquivalenceResidual
+      statementHashCollisionResistanceResidual
+      transcriptHashRandomOracle
+      verifierImplementationEquivalence
+      ⟨starkAirConstraintSoundness, pcsOpeningBinding⟩
+      witnessExtractionCompleteness
+      merkleAndCommitmentHashSecurity
+  exact
+    {
+      smallwoodCanonicalSoundnessCertificate := smallwoodCertificate,
+      canonicalProductionResidualCertificate :=
+        canonicalProductionCertificate,
+      verifierExport := smallwoodCertificate.verifierExport,
+      proofArtifactStatementCertificate :=
+        smallwoodCertificate.proofArtifactStatementCertificate,
+      proofSystemNoTheftBoundaryFacts :=
+        smallwoodCertificate.proofSystemNoTheftBoundaryFacts,
+      publicStatementFacts := smallwoodCertificate.publicStatementFacts,
+      spendAuthorized := smallwoodCertificate.spendAuthorized,
+      publicAuthorizedDeltas := smallwoodCertificate.publicAuthorizedDeltas,
+      nativeDeltaAuthorized := smallwoodCertificate.nativeDeltaAuthorized,
+      nonNativeNonzeroStablecoinException :=
+        smallwoodCertificate.nonNativeNonzeroStablecoinException,
+      wrapperCanonicalDecodeEquivalenceResidual :=
+        wrapperCanonicalDecodeEquivalenceResidual,
+      publicInputSerializationEquivalenceResidual :=
+        publicInputSerializationEquivalenceResidual,
+      statementHashCollisionResistanceResidual :=
+        statementHashCollisionResistanceResidual,
+      starkAirPcsResidual :=
+        ⟨starkAirConstraintSoundness, pcsOpeningBinding⟩,
+      transcriptHashRandomOracleResidual :=
+        transcriptHashRandomOracle,
+      merkleAndCommitmentHashSecurityResidual :=
+        merkleAndCommitmentHashSecurity,
+      witnessExtractionCompletenessResidual :=
+        witnessExtractionCompleteness,
+      verifierImplementationEquivalenceResidual :=
+        verifierImplementationEquivalence
+    }
+
+theorem smallwood_production_review_certificate_projects_compact_residual_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {residuals : SmallWoodProofSystemResidualAssumptions}
+    {wrapperCanonicalDecodeEquivalence : Prop}
+    {publicInputSerializationEquivalence : Prop}
+    {statementHashCollisionResistance : Prop}
+    (reviewCertificate :
+      SmallWoodProductionProofSystemReviewCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        residuals
+        wrapperCanonicalDecodeEquivalence
+        publicInputSerializationEquivalence
+        statementHashCollisionResistance) :
+    SmallWoodCompactProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+      residuals
+      wrapperCanonicalDecodeEquivalence
+      publicInputSerializationEquivalence
+      statementHashCollisionResistance := by
+  exact
+    {
+      canonicalProductionResidualCertificate :=
+        reviewCertificate.canonicalProductionResidualCertificate,
+      verifierExport := reviewCertificate.verifierExport,
+      statementHashPreimage :=
+        reviewCertificate.proofArtifactStatementCertificate.statementPreimage,
+      statementHashPreimageLength :=
+        reviewCertificate.proofArtifactStatementCertificate.statementLength,
+      proofBindingMessage :=
+        reviewCertificate.proofArtifactStatementCertificate.bindingMessage,
+      publicInputBinding :=
+        reviewCertificate.proofArtifactStatementCertificate.canonicalSurface.publicBinding,
+      publicInputBindingValid :=
+        reviewCertificate.proofArtifactStatementCertificate.publicBindingValid,
+      proofWrapperAccepted :=
+        reviewCertificate.proofArtifactStatementCertificate.canonicalSurface.accepted,
+      proofWrapperPreconditions :=
+        reviewCertificate.proofArtifactStatementCertificate.wrapperPreconditions,
+      proofWrapperSurface :=
+        reviewCertificate.proofArtifactStatementCertificate.wrapperSurface,
+      proofWrapperMetadataProjectionSurface :=
+        reviewCertificate.proofArtifactStatementCertificate.metadataProjectionSurface,
+      spendAuthorized := reviewCertificate.spendAuthorized,
+      publicAuthorizedDeltas := reviewCertificate.publicAuthorizedDeltas,
+      nativeDeltaAuthorized := reviewCertificate.nativeDeltaAuthorized,
+      nonNativeNonzeroStablecoinException :=
+        reviewCertificate.nonNativeNonzeroStablecoinException,
+      wrapperCanonicalDecodeEquivalenceResidual :=
+        reviewCertificate.wrapperCanonicalDecodeEquivalenceResidual,
+      publicInputSerializationEquivalenceResidual :=
+        reviewCertificate.publicInputSerializationEquivalenceResidual,
+      statementHashCollisionResistanceResidual :=
+        reviewCertificate.statementHashCollisionResistanceResidual,
+      starkAirPcsResidual := reviewCertificate.starkAirPcsResidual,
+      transcriptHashRandomOracleResidual :=
+        reviewCertificate.transcriptHashRandomOracleResidual,
+      merkleAndCommitmentHashSecurityResidual :=
+        reviewCertificate.merkleAndCommitmentHashSecurityResidual,
+      witnessExtractionCompletenessResidual :=
+        reviewCertificate.witnessExtractionCompletenessResidual,
+      verifierImplementationEquivalenceResidual :=
+        reviewCertificate.verifierImplementationEquivalenceResidual
     }
 
 end SmallWoodVerifierSoundnessEnvelope

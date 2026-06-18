@@ -9,6 +9,22 @@ from pathlib import Path
 
 
 REQUIRED_WAIVER_FIELDS = ("id", "package", "version", "kind")
+REQUIRED_WAIVER_FLAGS = (
+    "not_expired",
+    "has_tracking",
+    "has_reason",
+    "has_owner",
+    "has_remediation",
+    "has_review_date",
+)
+REQUIRED_CASES = {
+    "exact-waiver-accepts",
+    "missing-tracking-rejects",
+    "missing-id-rejects",
+    "version-mismatch-rejects",
+    "multi-finding-exact-waivers-accepts",
+    "unused-waiver-rejects",
+}
 
 
 def non_empty(value: object) -> bool:
@@ -18,9 +34,7 @@ def non_empty(value: object) -> bool:
 def waiver_is_valid(waiver: dict) -> bool:
     return (
         all(non_empty(waiver.get(field)) for field in REQUIRED_WAIVER_FIELDS)
-        and bool(waiver.get("not_expired"))
-        and bool(waiver.get("has_tracking"))
-        and bool(waiver.get("has_reason"))
+        and all(bool(waiver.get(flag)) for flag in REQUIRED_WAIVER_FLAGS)
     )
 
 
@@ -86,6 +100,10 @@ def main() -> int:
                 f"{name}: rejection drifted from Lean: {actual_rejection!r} != "
                 f"{case['expected_rejection']!r}"
             )
+
+    missing_cases = sorted(REQUIRED_CASES - names)
+    if missing_cases:
+        raise SystemExit("missing required dependency audit cases: " + ", ".join(missing_cases))
 
     print(json.dumps({"passed": True, "cases": len(cases)}, sort_keys=True))
     return 0

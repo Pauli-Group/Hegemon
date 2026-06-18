@@ -46,18 +46,19 @@ def evaluateReceiptMintReplay
     Except.error ReceiptMintReplayReject.receiptNotVerified
   else if input.receiptPayloadMatches = false then
     Except.error ReceiptMintReplayReject.receiptPayloadMismatch
+  else if input.replayKey ∈ input.replayState.consumed then
+    Except.error ReceiptMintReplayReject.replayAlreadyConsumed
+  else if input.mintAuthorized = false then
+    Except.error ReceiptMintReplayReject.mintNotAuthorized
+  else if input.amountMatchesReceipt = false then
+    Except.error ReceiptMintReplayReject.amountDoesNotMatchReceipt
+  else if input.amountWithinBound = false then
+    Except.error ReceiptMintReplayReject.amountOutOfBounds
   else
     match input.replayState.importOne input.replayKey with
     | none => Except.error ReceiptMintReplayReject.replayAlreadyConsumed
     | some nextReplayState =>
-        if input.mintAuthorized = false then
-          Except.error ReceiptMintReplayReject.mintNotAuthorized
-        else if input.amountMatchesReceipt = false then
-          Except.error ReceiptMintReplayReject.amountDoesNotMatchReceipt
-        else if input.amountWithinBound = false then
-          Except.error ReceiptMintReplayReject.amountOutOfBounds
-        else
-          Except.ok { nextReplayState := nextReplayState }
+        Except.ok { nextReplayState := nextReplayState }
 
 def receiptMintReplayAccepts
     (input : ReceiptMintReplayInput) : Bool :=
@@ -74,17 +75,28 @@ def receiptMintReplayRejection
 
 def receiptMintReplayPreconditions
     (input : ReceiptMintReplayInput) : Bool :=
-  input.inboundBridgeMint
-    && input.stateDeltasAbsent
-    && input.receiptEnvelopePresent
-    && input.receiptVerified
-    && input.receiptPayloadMatches
-    && (match input.replayState.importOne input.replayKey with
-        | none => false
-        | some _ => true)
-    && input.mintAuthorized
-    && input.amountMatchesReceipt
-    && input.amountWithinBound
+  if input.inboundBridgeMint = false then
+    false
+  else if input.stateDeltasAbsent = false then
+    false
+  else if input.receiptEnvelopePresent = false then
+    false
+  else if input.receiptVerified = false then
+    false
+  else if input.receiptPayloadMatches = false then
+    false
+  else if input.replayKey ∈ input.replayState.consumed then
+    false
+  else if input.mintAuthorized = false then
+    false
+  else if input.amountMatchesReceipt = false then
+    false
+  else if input.amountWithinBound = false then
+    false
+  else
+    match input.replayState.importOne input.replayKey with
+    | none => false
+    | some _ => true
 
 def ReceiptMintReplayFacts
     (input : ReceiptMintReplayInput)
@@ -100,26 +112,104 @@ def ReceiptMintReplayFacts
     ∧ input.amountMatchesReceipt = true
     ∧ input.amountWithinBound = true
 
+structure ReceiptMintReplayOneShotAuthorizationCertificate
+    (input : ReceiptMintReplayInput)
+    (accepted : ReceiptMintReplayAccepted) : Prop where
+  policyFacts :
+    ReceiptMintReplayFacts input accepted
+  inboundBridgeMint :
+    input.inboundBridgeMint = true
+  directStateDeltasAbsent :
+    input.stateDeltasAbsent = true
+  receiptEnvelopePresent :
+    input.receiptEnvelopePresent = true
+  receiptVerified :
+    input.receiptVerified = true
+  receiptPayloadMatches :
+    input.receiptPayloadMatches = true
+  replayFreshBeforeImport :
+    input.replayKey ∉ input.replayState.consumed
+  replayImportHandoff :
+    input.replayState.importOne input.replayKey =
+      some accepted.nextReplayState
+  mintAuthorized :
+    input.mintAuthorized = true
+  amountMatchesReceipt :
+    input.amountMatchesReceipt = true
+  amountWithinBound :
+    input.amountWithinBound = true
+  replayImported :
+    input.replayKey ∈ accepted.nextReplayState.consumed
+  duplicateReplayRejected :
+    accepted.nextReplayState.importOne input.replayKey = none
+
 theorem accepts_iff_receipt_mint_replay_preconditions
     (input : ReceiptMintReplayInput) :
     receiptMintReplayAccepts input = true ↔
       receiptMintReplayPreconditions input = true := by
-  cases input with
-  | mk inboundBridgeMint stateDeltasAbsent receiptEnvelopePresent
-      receiptVerified receiptPayloadMatches replayState replayKey
-      mintAuthorized amountMatchesReceipt amountWithinBound =>
-      unfold receiptMintReplayAccepts receiptMintReplayPreconditions
-      unfold evaluateReceiptMintReplay
-      cases inboundBridgeMint <;>
-        cases stateDeltasAbsent <;>
-        cases receiptEnvelopePresent <;>
-        cases receiptVerified <;>
-        cases receiptPayloadMatches <;>
-        cases himport : replayState.importOne replayKey <;>
-        cases mintAuthorized <;>
-        cases amountMatchesReceipt <;>
-        cases amountWithinBound <;>
-        simp
+  unfold receiptMintReplayAccepts
+    receiptMintReplayPreconditions
+    evaluateReceiptMintReplay
+  by_cases inbound : input.inboundBridgeMint = false
+  · simp [inbound]
+  · by_cases noDelta : input.stateDeltasAbsent = false
+    · simp [inbound, noDelta]
+    · by_cases present : input.receiptEnvelopePresent = false
+      · simp [inbound, noDelta, present]
+      · by_cases verified : input.receiptVerified = false
+        · simp [inbound, noDelta, present, verified]
+        · by_cases payload : input.receiptPayloadMatches = false
+          · simp [inbound, noDelta, present, verified, payload]
+          · by_cases consumed : input.replayKey ∈ input.replayState.consumed
+            · simp [inbound, noDelta, present, verified, payload, consumed]
+            · by_cases authorized : input.mintAuthorized = false
+              · simp [
+                  inbound,
+                  noDelta,
+                  present,
+                  verified,
+                  payload,
+                  consumed,
+                  authorized
+                ]
+              · by_cases amount :
+                  input.amountMatchesReceipt = false
+                · simp [
+                    inbound,
+                    noDelta,
+                    present,
+                    verified,
+                    payload,
+                    consumed,
+                    authorized,
+                    amount
+                  ]
+                · by_cases bound :
+                    input.amountWithinBound = false
+                  · simp [
+                      inbound,
+                      noDelta,
+                      present,
+                      verified,
+                      payload,
+                      consumed,
+                      authorized,
+                      amount,
+                      bound
+                    ]
+                  · cases imported :
+                      input.replayState.importOne input.replayKey <;>
+                    simp [
+                      inbound,
+                      noDelta,
+                      present,
+                      verified,
+                      payload,
+                      consumed,
+                      authorized,
+                      amount,
+                      bound
+                    ]
 
 theorem receipt_not_verified_rejects_before_replay_or_mint
     {input : ReceiptMintReplayInput}
@@ -131,6 +221,15 @@ theorem receipt_not_verified_rejects_before_replay_or_mint
       Except.error ReceiptMintReplayReject.receiptNotVerified := by
   unfold evaluateReceiptMintReplay
   simp [inbound, noDelta, present, notVerified]
+
+theorem direct_state_delta_mint_rejects_before_receipt_replay_or_authorization
+    {input : ReceiptMintReplayInput}
+    (inbound : input.inboundBridgeMint = true)
+    (stateDeltaMintPresent : input.stateDeltasAbsent = false) :
+    evaluateReceiptMintReplay input =
+      Except.error ReceiptMintReplayReject.stateDeltaMintPresent := by
+  unfold evaluateReceiptMintReplay
+  simp [inbound, stateDeltaMintPresent]
 
 theorem receipt_payload_mismatch_rejects_before_replay
     {input : ReceiptMintReplayInput}
@@ -154,12 +253,8 @@ theorem consumed_replay_key_rejects
     (consumed : input.replayKey ∈ input.replayState.consumed) :
     evaluateReceiptMintReplay input =
       Except.error ReceiptMintReplayReject.replayAlreadyConsumed := by
-  have duplicate :
-      input.replayState.importOne input.replayKey = none := by
-    unfold ReplayState.importOne
-    simp [consumed]
   unfold evaluateReceiptMintReplay
-  simp [inbound, noDelta, present, verified, payload, duplicate]
+  simp [inbound, noDelta, present, verified, payload, consumed]
 
 theorem consumed_replay_key_precedes_mint_authorization
     {input : ReceiptMintReplayInput}
@@ -180,6 +275,20 @@ theorem consumed_replay_key_precedes_mint_authorization
     payload
     consumed
 
+theorem mint_not_authorized_rejects_before_fresh_replay_import
+    {input : ReceiptMintReplayInput}
+    (inbound : input.inboundBridgeMint = true)
+    (noDelta : input.stateDeltasAbsent = true)
+    (present : input.receiptEnvelopePresent = true)
+    (verified : input.receiptVerified = true)
+    (payload : input.receiptPayloadMatches = true)
+    (fresh : input.replayKey ∉ input.replayState.consumed)
+    (unauthorized : input.mintAuthorized = false) :
+    evaluateReceiptMintReplay input =
+      Except.error ReceiptMintReplayReject.mintNotAuthorized := by
+  unfold evaluateReceiptMintReplay
+  simp [inbound, noDelta, present, verified, payload, fresh, unauthorized]
+
 theorem mint_not_authorized_rejects_after_verified_fresh_replay
     {input : ReceiptMintReplayInput}
     {nextReplayState : ReplayState}
@@ -194,8 +303,22 @@ theorem mint_not_authorized_rejects_after_verified_fresh_replay
     (unauthorized : input.mintAuthorized = false) :
     evaluateReceiptMintReplay input =
       Except.error ReceiptMintReplayReject.mintNotAuthorized := by
-  unfold evaluateReceiptMintReplay
-  simp [inbound, noDelta, present, verified, payload, fresh, unauthorized]
+  have notConsumed : input.replayKey ∉ input.replayState.consumed := by
+    intro consumed
+    have duplicate :
+        input.replayState.importOne input.replayKey = none := by
+      unfold ReplayState.importOne
+      simp [consumed]
+    rw [fresh] at duplicate
+    contradiction
+  exact mint_not_authorized_rejects_before_fresh_replay_import
+    inbound
+    noDelta
+    present
+    verified
+    payload
+    notConsumed
+    unauthorized
 
 theorem amount_mismatch_rejects_after_authorization
     {input : ReceiptMintReplayInput}
@@ -212,6 +335,14 @@ theorem amount_mismatch_rejects_after_authorization
     (amountMismatch : input.amountMatchesReceipt = false) :
     evaluateReceiptMintReplay input =
       Except.error ReceiptMintReplayReject.amountDoesNotMatchReceipt := by
+  have notConsumed : input.replayKey ∉ input.replayState.consumed := by
+    intro consumed
+    have duplicate :
+        input.replayState.importOne input.replayKey = none := by
+      unfold ReplayState.importOne
+      simp [consumed]
+    rw [fresh] at duplicate
+    contradiction
   unfold evaluateReceiptMintReplay
   simp [
     inbound,
@@ -219,7 +350,7 @@ theorem amount_mismatch_rejects_after_authorization
     present,
     verified,
     payload,
-    fresh,
+    notConsumed,
     authorized,
     amountMismatch
   ]
@@ -240,6 +371,14 @@ theorem amount_out_of_bounds_rejects_after_amount_match
     (outOfBounds : input.amountWithinBound = false) :
     evaluateReceiptMintReplay input =
       Except.error ReceiptMintReplayReject.amountOutOfBounds := by
+  have notConsumed : input.replayKey ∉ input.replayState.consumed := by
+    intro consumed
+    have duplicate :
+        input.replayState.importOne input.replayKey = none := by
+      unfold ReplayState.importOne
+      simp [consumed]
+    rw [fresh] at duplicate
+    contradiction
   unfold evaluateReceiptMintReplay
   simp [
     inbound,
@@ -247,7 +386,7 @@ theorem amount_out_of_bounds_rejects_after_amount_match
     present,
     verified,
     payload,
-    fresh,
+    notConsumed,
     authorized,
     amountMatches,
     outOfBounds
@@ -268,11 +407,12 @@ theorem accepted_implies_receipt_mint_replay_facts
         cases receiptEnvelopePresent <;>
         cases receiptVerified <;>
         cases receiptPayloadMatches <;>
-        cases himport : replayState.importOne replayKey <;>
         cases mintAuthorized <;>
         cases amountMatchesReceipt <;>
         cases amountWithinBound <;>
-        simp [himport, ReceiptMintReplayFacts] at ok ⊢
+        by_cases consumed : replayKey ∈ replayState.consumed <;>
+        cases himport : replayState.importOne replayKey <;>
+        simp [consumed, himport, ReceiptMintReplayFacts] at ok ⊢
       subst accepted
       rfl
 
@@ -291,6 +431,73 @@ theorem accepted_prevents_replay_again
     accepted.nextReplayState.importOne input.replayKey = none := by
   have facts := accepted_implies_receipt_mint_replay_facts ok
   exact import_prevents_reimport facts.right.right.right.right.right.left
+
+theorem accepted_exposes_verified_authorized_amount_and_one_shot_replay
+    {input : ReceiptMintReplayInput}
+    {accepted : ReceiptMintReplayAccepted}
+    (ok : evaluateReceiptMintReplay input = Except.ok accepted) :
+    input.inboundBridgeMint = true
+      ∧ input.stateDeltasAbsent = true
+      ∧ input.receiptEnvelopePresent = true
+      ∧ input.receiptVerified = true
+      ∧ input.receiptPayloadMatches = true
+      ∧ input.mintAuthorized = true
+      ∧ input.amountMatchesReceipt = true
+      ∧ input.amountWithinBound = true
+      ∧ input.replayState.importOne input.replayKey =
+        some accepted.nextReplayState
+      ∧ input.replayKey ∈ accepted.nextReplayState.consumed
+      ∧ accepted.nextReplayState.importOne input.replayKey = none := by
+  have facts := accepted_implies_receipt_mint_replay_facts ok
+  exact
+    ⟨facts.left,
+      facts.right.left,
+      facts.right.right.left,
+      facts.right.right.right.left,
+      facts.right.right.right.right.left,
+      facts.right.right.right.right.right.right.left,
+      facts.right.right.right.right.right.right.right.left,
+      facts.right.right.right.right.right.right.right.right,
+      facts.right.right.right.right.right.left,
+      accepted_imports_replay_key ok,
+      accepted_prevents_replay_again ok⟩
+
+theorem accepted_binds_authorized_mint_exception_to_one_shot_replay_key
+    {input : ReceiptMintReplayInput}
+    {accepted : ReceiptMintReplayAccepted}
+    (ok : evaluateReceiptMintReplay input = Except.ok accepted) :
+    ReceiptMintReplayOneShotAuthorizationCertificate input accepted := by
+  have facts := accepted_implies_receipt_mint_replay_facts ok
+  have replayFresh :
+      input.replayKey ∉ input.replayState.consumed := by
+    intro consumed
+    have duplicate :
+        input.replayState.importOne input.replayKey = none := by
+      unfold ReplayState.importOne
+      simp [consumed]
+    rw [facts.right.right.right.right.right.left] at duplicate
+    contradiction
+  exact
+    {
+      policyFacts := facts,
+      inboundBridgeMint := facts.left,
+      directStateDeltasAbsent := facts.right.left,
+      receiptEnvelopePresent := facts.right.right.left,
+      receiptVerified := facts.right.right.right.left,
+      receiptPayloadMatches :=
+        facts.right.right.right.right.left,
+      replayFreshBeforeImport := replayFresh,
+      replayImportHandoff :=
+        facts.right.right.right.right.right.left,
+      mintAuthorized :=
+        facts.right.right.right.right.right.right.left,
+      amountMatchesReceipt :=
+        facts.right.right.right.right.right.right.right.left,
+      amountWithinBound :=
+        facts.right.right.right.right.right.right.right.right,
+      replayImported := accepted_imports_replay_key ok,
+      duplicateReplayRejected := accepted_prevents_replay_again ok
+    }
 
 def validInput : ReceiptMintReplayInput :=
   {

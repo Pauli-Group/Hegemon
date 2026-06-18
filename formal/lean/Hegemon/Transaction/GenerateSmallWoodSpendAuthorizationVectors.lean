@@ -4,6 +4,8 @@ namespace Hegemon
 namespace Transaction
 namespace SmallWoodSpendAuthorization
 
+open Hegemon.Transaction.SpendAuthorization
+
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
 
@@ -74,6 +76,21 @@ def spendBoundaryCaseJson
     ++ boolJson surface.merklePathAccepted ++ ",\n"
     ++ "      \"expected_valid\": "
     ++ boolJson (activeInputSpendBoundaryAccepted surface) ++ "\n"
+    ++ "    }"
+
+def txLeafInputProjectionCaseJson
+    (name : String)
+    (surface : TxLeafInputProjectionSurface) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"input_flags\": "
+    ++ natListJson surface.inputFlags ++ ",\n"
+    ++ "      \"compact_nullifiers\": "
+    ++ natListJson surface.compactNullifiers ++ ",\n"
+    ++ "      \"public_nullifiers\": "
+    ++ natListJson surface.publicNullifiers ++ ",\n"
+    ++ "      \"expected_valid\": "
+    ++ boolJson (txLeafInputProjectionAccepted surface) ++ "\n"
     ++ "    }"
 
 def outputBindingCaseJson
@@ -176,6 +193,29 @@ def inactiveBoundaryNullifierRowNonzero : ActiveInputSpendBoundarySurface :=
 def boundaryMalformedFlag : ActiveInputSpendBoundarySurface :=
   { activeBoundaryValid with activeFlag := 2 }
 
+def txLeafProjectionPrefixValid : TxLeafInputProjectionSurface :=
+  sampleTxLeafInputProjectionPrefix
+
+def txLeafProjectionHoleValid : TxLeafInputProjectionSurface :=
+  sampleTxLeafInputProjectionHole
+
+def txLeafProjectionPrefixAliasRejected : TxLeafInputProjectionSurface :=
+  { txLeafProjectionHoleValid with publicNullifiers := [22, 0] }
+
+def txLeafProjectionActiveZeroRejected : TxLeafInputProjectionSurface :=
+  { txLeafProjectionPrefixValid with
+    compactNullifiers := [0],
+    publicNullifiers := [0, 0] }
+
+def txLeafProjectionMissingCompactRejected : TxLeafInputProjectionSurface :=
+  { txLeafProjectionPrefixValid with compactNullifiers := [] }
+
+def txLeafProjectionExtraCompactRejected : TxLeafInputProjectionSurface :=
+  { txLeafProjectionPrefixValid with compactNullifiers := [11, 12] }
+
+def txLeafProjectionMalformedFlagRejected : TxLeafInputProjectionSurface :=
+  { txLeafProjectionPrefixValid with inputFlags := [2, 0] }
+
 def outputBindingValid : ActiveOutputBindingSurface :=
   sampleActiveOutputBindingSurface
 
@@ -244,6 +284,29 @@ def vectorJson : String :=
     ++ spendBoundaryCaseJson
       "boundary-malformed-active-flag-rejected"
       boundaryMalformedFlag ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"tx_leaf_input_projection_cases\": [\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-prefix-active-valid"
+      txLeafProjectionPrefixValid ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-nonprefix-active-valid"
+      txLeafProjectionHoleValid ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-prefix-alias-rejected"
+      txLeafProjectionPrefixAliasRejected ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-active-zero-nullifier-rejected"
+      txLeafProjectionActiveZeroRejected ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-missing-compact-nullifier-rejected"
+      txLeafProjectionMissingCompactRejected ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-extra-compact-nullifier-rejected"
+      txLeafProjectionExtraCompactRejected ++ ",\n"
+    ++ txLeafInputProjectionCaseJson
+      "tx-leaf-malformed-input-flag-rejected"
+      txLeafProjectionMalformedFlagRejected ++ "\n"
     ++ "  ],\n"
     ++ "  \"smallwood_output_binding_cases\": [\n"
     ++ outputBindingCaseJson

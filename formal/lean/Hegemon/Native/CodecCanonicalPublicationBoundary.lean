@@ -1,6 +1,11 @@
+import Hegemon.Native.BridgeVerifierRegistrationScaleWire
 import Hegemon.Native.CoinbaseActionPayloadScaleWire
+import Hegemon.Native.InboundBridgeActionPayloadScaleWire
+import Hegemon.Native.OutboundBridgeActionPayloadScaleWire
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.PendingActionScaleWire
+import Hegemon.Native.ShieldedTransferInlineScaleWire
+import Hegemon.Native.ShieldedTransferSidecarScaleWire
 
 namespace Hegemon
 namespace Native
@@ -15,11 +20,16 @@ open Hegemon.Native.CanonicalPublicationRefinement
 open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
+open Hegemon.Native.BridgeVerifierRegistrationScaleWire
 open Hegemon.Native.CoinbaseActionPayloadScaleWire
+open Hegemon.Native.InboundBridgeActionPayloadScaleWire
+open Hegemon.Native.OutboundBridgeActionPayloadScaleWire
 open Hegemon.Native.PendingActionByteParserRefinement
 open Hegemon.Native.PendingActionBytePublicationRefinement
 open Hegemon.Native.PendingActionReload
 open Hegemon.Native.PendingActionScaleWire
+open Hegemon.Native.ShieldedTransferInlineScaleWire
+open Hegemon.Native.ShieldedTransferSidecarScaleWire
 open Hegemon.Native.StorageDurabilityAdmission
 open Hegemon.Native.ActionWireReplayProjectionAdmission
 
@@ -608,6 +618,12 @@ structure BoundedCanonicalCodecGateCertificate
     (metadataDecode : NativeMetadataDecodeInput)
     (pendingWire : PendingActionScaleWireInput)
     (coinbaseWire : CoinbaseActionPayloadScaleWireInput)
+    (inlineTransferWire : ShieldedTransferInlineScaleWireInput)
+    (sidecarTransferWire : ShieldedTransferSidecarScaleWireInput)
+    (outboundBridgeWire : OutboundBridgeActionPayloadScaleWireInput)
+    (inboundBridgeWire : InboundBridgeActionPayloadScaleWireInput)
+    (bridgeVerifierRegistrationWire :
+      BridgeVerifierRegistrationScaleWireInput)
     (pendingDecode : ExactDecodeInput)
     (blockActionDecode : BlockActionDecodeInput)
     (pendingReload : PendingActionReloadInput)
@@ -650,6 +666,37 @@ structure BoundedCanonicalCodecGateCertificate
   coinbaseConcreteWireExactDecode :
     exactDecodeAccepts
       (exactDecodeInputOfCoinbaseActionPayloadScaleWire coinbaseWire) = true
+  inlineTransferWireFacts :
+    AcceptedShieldedTransferInlineScaleWireFacts inlineTransferWire
+  inlineTransferConcreteWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfShieldedTransferInlineScaleWire
+        inlineTransferWire) = true
+  sidecarTransferWireFacts :
+    AcceptedShieldedTransferSidecarScaleWireFacts sidecarTransferWire
+  sidecarTransferConcreteWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfShieldedTransferSidecarScaleWire
+        sidecarTransferWire) = true
+  outboundBridgeWireFacts :
+    AcceptedOutboundBridgeActionPayloadScaleWireFacts outboundBridgeWire
+  outboundBridgeConcreteWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfOutboundBridgeActionPayloadScaleWire
+        outboundBridgeWire) = true
+  inboundBridgeWireFacts :
+    AcceptedInboundBridgeActionPayloadScaleWireFacts inboundBridgeWire
+  inboundBridgeConcreteWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfInboundBridgeActionPayloadScaleWire
+        inboundBridgeWire) = true
+  bridgeVerifierRegistrationWireFacts :
+    AcceptedBridgeVerifierRegistrationScaleWireFacts
+      bridgeVerifierRegistrationWire
+  bridgeVerifierRegistrationConcreteWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfBridgeVerifierRegistrationScaleWire
+        bridgeVerifierRegistrationWire) = true
   metadataOrdering :
     NativeMetadataDecodeFacts metadataDecode
   metadataCurrentFirst :
@@ -678,6 +725,12 @@ theorem accepted_bounded_canonical_codec_gate_certificate
     {metadataDecode : NativeMetadataDecodeInput}
     {pendingWire : PendingActionScaleWireInput}
     {coinbaseWire : CoinbaseActionPayloadScaleWireInput}
+    {inlineTransferWire : ShieldedTransferInlineScaleWireInput}
+    {sidecarTransferWire : ShieldedTransferSidecarScaleWireInput}
+    {outboundBridgeWire : OutboundBridgeActionPayloadScaleWireInput}
+    {inboundBridgeWire : InboundBridgeActionPayloadScaleWireInput}
+    {bridgeVerifierRegistrationWire :
+      BridgeVerifierRegistrationScaleWireInput}
     {pendingDecode : ExactDecodeInput}
     {blockActionDecode : BlockActionDecodeInput}
     {pendingReload : PendingActionReloadInput}
@@ -713,6 +766,17 @@ theorem accepted_bounded_canonical_codec_gate_certificate
       pendingActionScaleWireAccepts pendingWire = true)
     (coinbaseWireAccepted :
       coinbaseActionPayloadScaleWireAccepts coinbaseWire = true)
+    (inlineTransferWireAccepted :
+      shieldedTransferInlineScaleWireAccepts inlineTransferWire = true)
+    (sidecarTransferWireAccepted :
+      shieldedTransferSidecarScaleWireAccepts sidecarTransferWire = true)
+    (outboundBridgeWireAccepted :
+      outboundBridgeActionPayloadScaleWireAccepts outboundBridgeWire = true)
+    (inboundBridgeWireAccepted :
+      inboundBridgeActionPayloadScaleWireAccepts inboundBridgeWire = true)
+    (bridgeVerifierRegistrationWireAccepted :
+      bridgeVerifierRegistrationScaleWireAccepts
+        bridgeVerifierRegistrationWire = true)
     (pendingDecodeIsConcreteWire :
       pendingDecode = exactDecodeInputOfScaleWire pendingWire) :
     BoundedCanonicalCodecGateCertificate
@@ -720,6 +784,11 @@ theorem accepted_bounded_canonical_codec_gate_certificate
       metadataDecode
       pendingWire
       coinbaseWire
+      inlineTransferWire
+      sidecarTransferWire
+      outboundBridgeWire
+      inboundBridgeWire
+      bridgeVerifierRegistrationWire
       pendingDecode
       blockActionDecode
       pendingReload
@@ -749,6 +818,57 @@ theorem accepted_bounded_canonical_codec_gate_certificate
         (exactDecodeInputOfCoinbaseActionPayloadScaleWire coinbaseWire) = true :=
     accepted_coinbase_action_payload_scale_wire_exact_decode
       coinbaseWireAccepted
+  have inlineTransferWireFacts :
+      AcceptedShieldedTransferInlineScaleWireFacts inlineTransferWire :=
+    shielded_transfer_inline_scale_wire_acceptance_exposes_facts
+      inlineTransferWireAccepted
+  have inlineTransferConcreteExact :
+      exactDecodeAccepts
+        (exactDecodeInputOfShieldedTransferInlineScaleWire
+          inlineTransferWire) = true :=
+    accepted_shielded_transfer_inline_scale_wire_exact_decode
+      inlineTransferWireAccepted
+  have sidecarTransferWireFacts :
+      AcceptedShieldedTransferSidecarScaleWireFacts sidecarTransferWire :=
+    shielded_transfer_sidecar_scale_wire_acceptance_exposes_facts
+      sidecarTransferWireAccepted
+  have sidecarTransferConcreteExact :
+      exactDecodeAccepts
+        (exactDecodeInputOfShieldedTransferSidecarScaleWire
+          sidecarTransferWire) = true :=
+    accepted_shielded_transfer_sidecar_scale_wire_exact_decode
+      sidecarTransferWireAccepted
+  have outboundBridgeWireFacts :
+      AcceptedOutboundBridgeActionPayloadScaleWireFacts outboundBridgeWire :=
+    outbound_bridge_action_payload_scale_wire_acceptance_exposes_facts
+      outboundBridgeWireAccepted
+  have outboundBridgeConcreteExact :
+      exactDecodeAccepts
+        (exactDecodeInputOfOutboundBridgeActionPayloadScaleWire
+          outboundBridgeWire) = true :=
+    accepted_outbound_bridge_action_payload_scale_wire_exact_decode
+      outboundBridgeWireAccepted
+  have inboundBridgeWireFacts :
+      AcceptedInboundBridgeActionPayloadScaleWireFacts inboundBridgeWire :=
+    inbound_bridge_action_payload_scale_wire_acceptance_exposes_facts
+      inboundBridgeWireAccepted
+  have inboundBridgeConcreteExact :
+      exactDecodeAccepts
+        (exactDecodeInputOfInboundBridgeActionPayloadScaleWire
+          inboundBridgeWire) = true :=
+    accepted_inbound_bridge_action_payload_scale_wire_exact_decode
+      inboundBridgeWireAccepted
+  have bridgeVerifierRegistrationWireFacts :
+      AcceptedBridgeVerifierRegistrationScaleWireFacts
+        bridgeVerifierRegistrationWire :=
+    bridge_verifier_registration_scale_wire_acceptance_exposes_facts
+      bridgeVerifierRegistrationWireAccepted
+  have bridgeVerifierRegistrationConcreteExact :
+      exactDecodeAccepts
+        (exactDecodeInputOfBridgeVerifierRegistrationScaleWire
+          bridgeVerifierRegistrationWire) = true :=
+    accepted_bridge_verifier_registration_scale_wire_exact_decode
+      bridgeVerifierRegistrationWireAccepted
   refine
     { metadataPublication := metadataPublication
       pendingWireFacts := pendingWireFacts
@@ -756,6 +876,18 @@ theorem accepted_bounded_canonical_codec_gate_certificate
       pendingConcreteWireExactDecode := pendingConcreteExact
       coinbaseWireFacts := coinbaseWireFacts
       coinbaseConcreteWireExactDecode := coinbaseConcreteExact
+      inlineTransferWireFacts := inlineTransferWireFacts
+      inlineTransferConcreteWireExactDecode := inlineTransferConcreteExact
+      sidecarTransferWireFacts := sidecarTransferWireFacts
+      sidecarTransferConcreteWireExactDecode := sidecarTransferConcreteExact
+      outboundBridgeWireFacts := outboundBridgeWireFacts
+      outboundBridgeConcreteWireExactDecode := outboundBridgeConcreteExact
+      inboundBridgeWireFacts := inboundBridgeWireFacts
+      inboundBridgeConcreteWireExactDecode := inboundBridgeConcreteExact
+      bridgeVerifierRegistrationWireFacts :=
+        bridgeVerifierRegistrationWireFacts
+      bridgeVerifierRegistrationConcreteWireExactDecode :=
+        bridgeVerifierRegistrationConcreteExact
       metadataOrdering := metadataPublication.metadataDecodeFacts
       metadataCurrentFirst :=
         metadataPublication.currentMetadataExactDecodePrecedesLegacy
@@ -770,6 +902,378 @@ theorem accepted_bounded_canonical_codec_gate_certificate
     exact pendingConcreteExact
   · exact metadataPublication.pendingExactDecodeBeforePublication.2.1
   · exact metadataPublication.pendingExactDecodeBeforePublication.2.2
+
+structure BoundedCanonicalCodecProductionBindingFacts
+    (syncDecode : SyncDecodeInput)
+    (metadataDecode : NativeMetadataDecodeInput)
+    (pendingWire : PendingActionScaleWireInput)
+    (coinbaseWire : CoinbaseActionPayloadScaleWireInput)
+    (inlineTransferWire : ShieldedTransferInlineScaleWireInput)
+    (sidecarTransferWire : ShieldedTransferSidecarScaleWireInput)
+    (outboundBridgeWire : OutboundBridgeActionPayloadScaleWireInput)
+    (inboundBridgeWire : InboundBridgeActionPayloadScaleWireInput)
+    (bridgeVerifierRegistrationWire :
+      BridgeVerifierRegistrationScaleWireInput)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (pendingReload : PendingActionReloadInput)
+    (actionHash : AdmissionInput)
+    (wireProjection : ActionWireReplayProjectionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock) : Prop where
+  boundedCodecGate :
+    BoundedCanonicalCodecGateCertificate
+      syncDecode
+      metadataDecode
+      pendingWire
+      coinbaseWire
+      inlineTransferWire
+      sidecarTransferWire
+      outboundBridgeWire
+      inboundBridgeWire
+      bridgeVerifierRegistrationWire
+      pendingDecode
+      blockActionDecode
+      pendingReload
+      actionHash
+      wireProjection
+      wireOutput
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+  pendingDecodeIsConcreteWire :
+    pendingDecode = exactDecodeInputOfScaleWire pendingWire
+  pendingPublicationExactDecode :
+    exactDecodeAccepts pendingDecode = true
+  pendingPublicationFullConsumption :
+    pendingDecode.consumedAllBytes = true
+  pendingPublicationCanonicalReencode :
+    pendingDecode.canonicalReencodeMatches = true
+  blockActionCountMatchesBeforePublication :
+    actionCountMatches blockActionDecode = true
+  blockActionPayloadsExactBeforePublication :
+    blockActionDecode.everyActionDecodesExactly = true
+  blockActionDeclaredEqualsDecodedPayloads :
+    blockActionDecode.declaredTxCount =
+      blockActionDecode.actualActionPayloadCount
+  decodedPayloadRowsEqualPublishedWireRows :
+    wireOutput.projectedActionCount =
+      blockActionDecode.actualActionPayloadCount
+  declaredRowsEqualPublishedWireRows :
+    wireOutput.projectedActionCount =
+      blockActionDecode.declaredTxCount
+  pendingWireExactDecode :
+    exactDecodeAccepts (exactDecodeInputOfScaleWire pendingWire) = true
+  pendingWireFullConsumption :
+    pendingWire.consumedAllBytes = true
+  pendingWireCanonicalReencode :
+    pendingWire.canonicalReencodeMatches = true
+  coinbaseWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfCoinbaseActionPayloadScaleWire coinbaseWire) = true
+  coinbaseWireFullConsumption :
+    coinbaseWire.consumedAllBytes = true
+  coinbaseWireCanonicalReencode :
+    coinbaseWire.canonicalReencodeMatches = true
+  inlineTransferWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfShieldedTransferInlineScaleWire
+        inlineTransferWire) = true
+  inlineTransferWireFullConsumption :
+    inlineTransferWire.consumedAllBytes = true
+  inlineTransferWireCanonicalReencode :
+    inlineTransferWire.canonicalReencodeMatches = true
+  sidecarTransferWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfShieldedTransferSidecarScaleWire
+        sidecarTransferWire) = true
+  sidecarTransferWireFullConsumption :
+    sidecarTransferWire.consumedAllBytes = true
+  sidecarTransferWireCanonicalReencode :
+    sidecarTransferWire.canonicalReencodeMatches = true
+  outboundBridgeWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfOutboundBridgeActionPayloadScaleWire
+        outboundBridgeWire) = true
+  outboundBridgeWireFullConsumption :
+    outboundBridgeWire.consumedAllBytes = true
+  outboundBridgeWireCanonicalReencode :
+    outboundBridgeWire.canonicalReencodeMatches = true
+  inboundBridgeWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfInboundBridgeActionPayloadScaleWire
+        inboundBridgeWire) = true
+  inboundBridgeWireFullConsumption :
+    inboundBridgeWire.consumedAllBytes = true
+  inboundBridgeWireCanonicalReencode :
+    inboundBridgeWire.canonicalReencodeMatches = true
+  bridgeVerifierRegistrationWireExactDecode :
+    exactDecodeAccepts
+      (exactDecodeInputOfBridgeVerifierRegistrationScaleWire
+        bridgeVerifierRegistrationWire) = true
+  bridgeVerifierRegistrationWireFullConsumption :
+    bridgeVerifierRegistrationWire.consumedAllBytes = true
+  bridgeVerifierRegistrationWireCanonicalReencode :
+    bridgeVerifierRegistrationWire.canonicalReencodeMatches = true
+  metadataCurrentBeforeLegacy :
+    exactDecodeAccepts metadataDecode.currentExact = true ->
+      evaluateNativeMetadataDecode metadataDecode =
+        Except.ok NativeMetadataDecodeSource.current
+  metadataLegacyFallbackOnlyAfterCurrentRejected :
+    exactDecodeAccepts metadataDecode.currentExact = false ->
+      exactDecodeAccepts metadataDecode.legacyExact = true ->
+        evaluateNativeMetadataDecode metadataDecode =
+          Except.ok NativeMetadataDecodeSource.legacy
+  metadataBothDecodersRejectFailClosed :
+    exactDecodeAccepts metadataDecode.currentExact = false ->
+      exactDecodeAccepts metadataDecode.legacyExact = false ->
+        evaluateNativeMetadataDecode metadataDecode =
+          Except.error NativeMetadataDecodeReject.currentAndLegacyRejected
+
+theorem bounded_canonical_codec_gate_certificate_exposes_production_binding
+    {syncDecode : SyncDecodeInput}
+    {metadataDecode : NativeMetadataDecodeInput}
+    {pendingWire : PendingActionScaleWireInput}
+    {coinbaseWire : CoinbaseActionPayloadScaleWireInput}
+    {inlineTransferWire : ShieldedTransferInlineScaleWireInput}
+    {sidecarTransferWire : ShieldedTransferSidecarScaleWireInput}
+    {outboundBridgeWire : OutboundBridgeActionPayloadScaleWireInput}
+    {inboundBridgeWire : InboundBridgeActionPayloadScaleWireInput}
+    {bridgeVerifierRegistrationWire :
+      BridgeVerifierRegistrationScaleWireInput}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {pendingReload : PendingActionReloadInput}
+    {actionHash : AdmissionInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (certificate :
+      BoundedCanonicalCodecGateCertificate
+        syncDecode
+        metadataDecode
+        pendingWire
+        coinbaseWire
+        inlineTransferWire
+        sidecarTransferWire
+        outboundBridgeWire
+        inboundBridgeWire
+        bridgeVerifierRegistrationWire
+        pendingDecode
+        blockActionDecode
+        pendingReload
+        actionHash
+        wireProjection
+        wireOutput
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks) :
+    BoundedCanonicalCodecProductionBindingFacts
+      syncDecode
+      metadataDecode
+      pendingWire
+      coinbaseWire
+      inlineTransferWire
+      sidecarTransferWire
+      outboundBridgeWire
+      inboundBridgeWire
+      bridgeVerifierRegistrationWire
+      pendingDecode
+      blockActionDecode
+      pendingReload
+      actionHash
+      wireProjection
+      wireOutput
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks :=
+  {
+    boundedCodecGate := certificate,
+    pendingDecodeIsConcreteWire := certificate.pendingDecodeIsConcreteWire,
+    pendingPublicationExactDecode :=
+      certificate.pendingPublicationUsesConcreteWireDecode,
+    pendingPublicationFullConsumption :=
+      certificate.pendingPublicationFullConsumption,
+    pendingPublicationCanonicalReencode :=
+      certificate.pendingPublicationCanonicalReencode,
+    blockActionCountMatchesBeforePublication :=
+      certificate.metadataPublication.blockActionExactDecodeBeforePublication.1,
+    blockActionPayloadsExactBeforePublication :=
+      certificate.metadataPublication.blockActionExactDecodeBeforePublication.2,
+    blockActionDeclaredEqualsDecodedPayloads :=
+      (certificate.metadataPublication.codecCanonicalNonMalleability.canonicalPublicationBoundary).declaredActionCountMatchesDecodedPayloads,
+    decodedPayloadRowsEqualPublishedWireRows :=
+      (certificate.metadataPublication.codecCanonicalNonMalleability.canonicalPublicationBoundary).wireRowsMatchDecodedPayloads,
+    declaredRowsEqualPublishedWireRows :=
+      (certificate.metadataPublication.codecCanonicalNonMalleability.canonicalPublicationBoundary).wireRowsMatchDeclaredActionCount,
+    pendingWireExactDecode := certificate.pendingConcreteWireExactDecode,
+    pendingWireFullConsumption :=
+      certificate.pendingWireFacts.consumedAllBytes,
+    pendingWireCanonicalReencode :=
+      certificate.pendingWireFacts.canonicalReencodeMatches,
+    coinbaseWireExactDecode := certificate.coinbaseConcreteWireExactDecode,
+    coinbaseWireFullConsumption :=
+      certificate.coinbaseWireFacts.consumedAllBytes,
+    coinbaseWireCanonicalReencode :=
+      certificate.coinbaseWireFacts.canonicalReencodeMatches,
+    inlineTransferWireExactDecode :=
+      certificate.inlineTransferConcreteWireExactDecode,
+    inlineTransferWireFullConsumption :=
+      certificate.inlineTransferWireFacts.consumedAllBytes,
+    inlineTransferWireCanonicalReencode :=
+      certificate.inlineTransferWireFacts.canonicalReencodeMatches,
+    sidecarTransferWireExactDecode :=
+      certificate.sidecarTransferConcreteWireExactDecode,
+    sidecarTransferWireFullConsumption :=
+      certificate.sidecarTransferWireFacts.consumedAllBytes,
+    sidecarTransferWireCanonicalReencode :=
+      certificate.sidecarTransferWireFacts.canonicalReencodeMatches,
+    outboundBridgeWireExactDecode :=
+      certificate.outboundBridgeConcreteWireExactDecode,
+    outboundBridgeWireFullConsumption :=
+      certificate.outboundBridgeWireFacts.consumedAllBytes,
+    outboundBridgeWireCanonicalReencode :=
+      certificate.outboundBridgeWireFacts.canonicalReencodeMatches,
+    inboundBridgeWireExactDecode :=
+      certificate.inboundBridgeConcreteWireExactDecode,
+    inboundBridgeWireFullConsumption :=
+      certificate.inboundBridgeWireFacts.consumedAllBytes,
+    inboundBridgeWireCanonicalReencode :=
+      certificate.inboundBridgeWireFacts.canonicalReencodeMatches,
+    bridgeVerifierRegistrationWireExactDecode :=
+      certificate.bridgeVerifierRegistrationConcreteWireExactDecode,
+    bridgeVerifierRegistrationWireFullConsumption :=
+      certificate.bridgeVerifierRegistrationWireFacts.consumedAllBytes,
+    bridgeVerifierRegistrationWireCanonicalReencode :=
+      (certificate.bridgeVerifierRegistrationWireFacts).canonicalReencodeMatches,
+    metadataCurrentBeforeLegacy := certificate.metadataCurrentFirst,
+    metadataLegacyFallbackOnlyAfterCurrentRejected :=
+      certificate.metadataLegacyFallbackOnlyAfterCurrentRejected,
+    metadataBothDecodersRejectFailClosed :=
+      certificate.metadataBothDecodersRejectFailClosed
+  }
+
+theorem accepted_bounded_canonical_codec_gate_binds_production_wires
+    {syncDecode : SyncDecodeInput}
+    {metadataDecode : NativeMetadataDecodeInput}
+    {pendingWire : PendingActionScaleWireInput}
+    {coinbaseWire : CoinbaseActionPayloadScaleWireInput}
+    {inlineTransferWire : ShieldedTransferInlineScaleWireInput}
+    {sidecarTransferWire : ShieldedTransferSidecarScaleWireInput}
+    {outboundBridgeWire : OutboundBridgeActionPayloadScaleWireInput}
+    {inboundBridgeWire : InboundBridgeActionPayloadScaleWireInput}
+    {bridgeVerifierRegistrationWire :
+      BridgeVerifierRegistrationScaleWireInput}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {pendingReload : PendingActionReloadInput}
+    {actionHash : AdmissionInput}
+    {wireProjection : ActionWireReplayProjectionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    (metadataPublication :
+      CodecCanonicalPublicationMetadataNonMalleabilityFacts
+        syncDecode
+        metadataDecode
+        pendingDecode
+        blockActionDecode
+        pendingReload
+        actionHash
+        wireProjection
+        wireOutput
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks)
+    (pendingWireAccepted :
+      pendingActionScaleWireAccepts pendingWire = true)
+    (coinbaseWireAccepted :
+      coinbaseActionPayloadScaleWireAccepts coinbaseWire = true)
+    (inlineTransferWireAccepted :
+      shieldedTransferInlineScaleWireAccepts inlineTransferWire = true)
+    (sidecarTransferWireAccepted :
+      shieldedTransferSidecarScaleWireAccepts sidecarTransferWire = true)
+    (outboundBridgeWireAccepted :
+      outboundBridgeActionPayloadScaleWireAccepts outboundBridgeWire = true)
+    (inboundBridgeWireAccepted :
+      inboundBridgeActionPayloadScaleWireAccepts inboundBridgeWire = true)
+    (bridgeVerifierRegistrationWireAccepted :
+      bridgeVerifierRegistrationScaleWireAccepts
+        bridgeVerifierRegistrationWire = true)
+    (pendingDecodeIsConcreteWire :
+      pendingDecode = exactDecodeInputOfScaleWire pendingWire) :
+    BoundedCanonicalCodecProductionBindingFacts
+      syncDecode
+      metadataDecode
+      pendingWire
+      coinbaseWire
+      inlineTransferWire
+      sidecarTransferWire
+      outboundBridgeWire
+      inboundBridgeWire
+      bridgeVerifierRegistrationWire
+      pendingDecode
+      blockActionDecode
+      pendingReload
+      actionHash
+      wireProjection
+      wireOutput
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks :=
+  bounded_canonical_codec_gate_certificate_exposes_production_binding
+    (accepted_bounded_canonical_codec_gate_certificate
+      metadataPublication
+      pendingWireAccepted
+      coinbaseWireAccepted
+      inlineTransferWireAccepted
+      sidecarTransferWireAccepted
+      outboundBridgeWireAccepted
+      inboundBridgeWireAccepted
+      bridgeVerifierRegistrationWireAccepted
+      pendingDecodeIsConcreteWire)
 
 end CodecCanonicalPublicationBoundary
 end Native

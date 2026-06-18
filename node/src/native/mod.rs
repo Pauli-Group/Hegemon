@@ -53,7 +53,8 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
+    ProofArtifactKind as PoolProofArtifactKind, ReceiptRootMetadata, ReceiptRootProofPayload,
+    StablecoinPolicyBinding, TxValidityReceipt, BLOCK_PROOF_BUNDLE_SCHEMA,
     DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
@@ -1313,6 +1314,19 @@ enum NativeTransferNullifierAdmissionState {
     AlreadyPending,
 }
 
+impl NativeTransferNullifierAdmissionState {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Zero => "zero",
+            Self::AlreadySpent => "already_spent",
+            Self::Duplicate => "duplicate",
+            Self::AlreadyPending => "already_pending",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeTransferStateAdmissionContext {
     Mempool,
@@ -1978,13 +1992,69 @@ enum NativeAtomicCommitManifestAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeStorageDurabilityOperation {
+    MinedBlockCommit,
+    CanonicalReorgCommit,
+    CanonicalIndexRepair,
+    NoncanonicalBlockRecord,
+    PendingActionStage,
+    CiphertextSidecarStage,
+    ProofSidecarStage,
+    GenesisBootstrap,
+    GenesisMarkerRepair,
+    StartupStagedCiphertextRepair,
+    StartupStagedProofRepair,
+    StartupPendingActionRepair,
+}
+
+impl NativeStorageDurabilityOperation {
+    fn label(self) -> &'static str {
+        match self {
+            Self::MinedBlockCommit => "mined_block_commit",
+            Self::CanonicalReorgCommit => "canonical_reorg_commit",
+            Self::CanonicalIndexRepair => "canonical_index_repair",
+            Self::NoncanonicalBlockRecord => "noncanonical_block_record",
+            Self::PendingActionStage => "pending_action_stage",
+            Self::CiphertextSidecarStage => "ciphertext_sidecar_stage",
+            Self::ProofSidecarStage => "proof_sidecar_stage",
+            Self::GenesisBootstrap => "genesis_bootstrap",
+            Self::GenesisMarkerRepair => "genesis_marker_repair",
+            Self::StartupStagedCiphertextRepair => "startup_staged_ciphertext_repair",
+            Self::StartupStagedProofRepair => "startup_staged_proof_repair",
+            Self::StartupPendingActionRepair => "startup_pending_action_repair",
+        }
+    }
+
+    #[cfg(test)]
+    fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "mined_block_commit" => Some(Self::MinedBlockCommit),
+            "canonical_reorg_commit" => Some(Self::CanonicalReorgCommit),
+            "canonical_index_repair" => Some(Self::CanonicalIndexRepair),
+            "noncanonical_block_record" => Some(Self::NoncanonicalBlockRecord),
+            "pending_action_stage" => Some(Self::PendingActionStage),
+            "ciphertext_sidecar_stage" => Some(Self::CiphertextSidecarStage),
+            "proof_sidecar_stage" => Some(Self::ProofSidecarStage),
+            "genesis_bootstrap" => Some(Self::GenesisBootstrap),
+            "genesis_marker_repair" => Some(Self::GenesisMarkerRepair),
+            "startup_staged_ciphertext_repair" => Some(Self::StartupStagedCiphertextRepair),
+            "startup_staged_proof_repair" => Some(Self::StartupStagedProofRepair),
+            "startup_pending_action_repair" => Some(Self::StartupPendingActionRepair),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeStorageDurabilityAdmissionInput {
+    operation_supported: bool,
     transaction_accepted: bool,
     durability_flushed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeStorageDurabilityAdmissionRejection {
+    UnsupportedOperation,
     TransactionRejected,
     DurabilityFlushFailed,
 }
@@ -1992,6 +2062,7 @@ enum NativeStorageDurabilityAdmissionRejection {
 impl NativeStorageDurabilityAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
+            Self::UnsupportedOperation => "unsupported_operation",
             Self::TransactionRejected => "transaction_rejected",
             Self::DurabilityFlushFailed => "durability_flush_failed",
         }
@@ -3061,7 +3132,10 @@ impl NativeNode {
         }
 
         self.commit_mined_block_atomically(&actions, &pending_action_effects, &meta)?;
-        self.flush_native_durability_barrier("native mined block commit")?;
+        self.flush_native_durability_barrier(
+            "native mined block commit",
+            NativeStorageDurabilityOperation::MinedBlockCommit,
+        )?;
         self.forget_prepared_mining_actions(work);
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
@@ -3158,12 +3232,19 @@ impl NativeNode {
             )
         })?;
         persist_block_record(&self.block_tree, meta)?;
-        self.flush_native_durability_barrier("noncanonical native block record")?;
+        self.flush_native_durability_barrier(
+            "noncanonical native block record",
+            NativeStorageDurabilityOperation::NoncanonicalBlockRecord,
+        )?;
         Ok(())
     }
 
-    fn flush_native_durability_barrier(&self, context: &'static str) -> Result<()> {
-        flush_native_db_durability_barrier(&self.db, context)
+    fn flush_native_durability_barrier(
+        &self,
+        context: &'static str,
+        operation: NativeStorageDurabilityOperation,
+    ) -> Result<()> {
+        flush_native_db_durability_barrier(&self.db, context, operation)
     }
 
     fn broadcast_block_announce(&self, meta: &NativeBlockMeta) {
@@ -3440,7 +3521,10 @@ impl NativeNode {
             &pending_entries,
             &new_state.best,
         )?;
-        self.flush_native_durability_barrier("native canonical reorg commit")?;
+        self.flush_native_durability_barrier(
+            "native canonical reorg commit",
+            NativeStorageDurabilityOperation::CanonicalReorgCommit,
+        )?;
 
         new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
         for meta in new_chain.iter().skip(1) {
@@ -3654,7 +3738,10 @@ impl NativeNode {
             );
         repair_result
             .map_err(|err| anyhow!("atomic native canonical index repair failed: {err}"))?;
-        self.flush_native_durability_barrier("native canonical index repair")?;
+        self.flush_native_durability_barrier(
+            "native canonical index repair",
+            NativeStorageDurabilityOperation::CanonicalIndexRepair,
+        )?;
         Ok(())
     }
 
@@ -4028,16 +4115,35 @@ impl NativeNode {
     fn ciphertext_entries_page(&self, page: NativePagination) -> Result<(Vec<Value>, u64)> {
         use base64::Engine;
 
+        let leaf_count = self.state.read().commitment_tree.leaf_count();
         let mut entries = Vec::new();
+        let mut expected_index = 0u64;
         let mut total = 0u64;
         for item in self.ciphertext_archive_tree.iter() {
             let (index, value) = decode_wallet_ciphertext_row(item)?;
+            if index != expected_index {
+                return Err(anyhow!(
+                    "native ciphertext archive index gap: expected {}, got {}",
+                    expected_index,
+                    index
+                ));
+            }
+            if index >= leaf_count {
+                return Err(anyhow!(
+                    "native ciphertext archive index {} exceeds commitment leaf_count {}",
+                    index,
+                    leaf_count
+                ));
+            }
             if index >= page.start && entries.len() < page.limit as usize {
                 entries.push(json!({
                     "index": index,
                     "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_slice()),
                 }));
             }
+            expected_index = expected_index
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("native ciphertext archive index overflow"))?;
             total = total
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("native ciphertext archive count overflow"))?;
@@ -4276,7 +4382,10 @@ impl NativeNode {
             validate_pending_action_against_mempool_state(&state, &pending)?;
             self.action_tree
                 .insert(pending.tx_hash.as_slice(), pending.encode())?;
-            self.flush_native_durability_barrier("native pending action stage")?;
+            self.flush_native_durability_barrier(
+                "native pending action stage",
+                NativeStorageDurabilityOperation::PendingActionStage,
+            )?;
             state
                 .pending_actions
                 .insert(pending.tx_hash, pending.clone());
@@ -4341,7 +4450,10 @@ impl NativeNode {
                 "size": size,
             }));
         }
-        self.flush_native_durability_barrier("native staged ciphertext upload")?;
+        self.flush_native_durability_barrier(
+            "native staged ciphertext upload",
+            NativeStorageDurabilityOperation::CiphertextSidecarStage,
+        )?;
         publish_staged_ciphertexts(&mut state, staged_ciphertexts);
         Ok(Value::Array(results))
     }
@@ -4378,6 +4490,12 @@ impl NativeNode {
                 NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
                 "proof item proof",
             )?;
+            validate_staged_proof_byte_budget(
+                &staged_proofs,
+                &binding_hash_key,
+                proof.len(),
+                MAX_NATIVE_STAGED_PROOF_BYTES,
+            )?;
             evaluate_native_proof_sidecar_decoded_admission(
                 NativeProofSidecarDecodedAdmissionInput {
                     proof_bytes: proof.len(),
@@ -4396,12 +4514,6 @@ impl NativeNode {
                 replaces_existing: staged_proofs.contains_key(&binding_hash_key),
             })
             .map_err(native_sidecar_upload_admission_error)?;
-            validate_staged_proof_byte_budget(
-                &staged_proofs,
-                &binding_hash_key,
-                proof.len(),
-                MAX_NATIVE_STAGED_PROOF_BYTES,
-            )?;
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
             self.da_proof_tree
                 .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
@@ -4412,7 +4524,10 @@ impl NativeNode {
                 "size": size,
             }));
         }
-        self.flush_native_durability_barrier("native staged proof upload")?;
+        self.flush_native_durability_barrier(
+            "native staged proof upload",
+            NativeStorageDurabilityOperation::ProofSidecarStage,
+        )?;
         publish_staged_proofs(&mut state, staged_proofs);
         Ok(Value::Array(results))
     }
@@ -5549,7 +5664,11 @@ fn load_best_or_genesis(
     let genesis = genesis_meta(pow_bits)?;
     persist_block(meta_tree, height_tree, block_tree, &genesis)?;
     meta_tree.insert(META_GENESIS_KEY, genesis.hash.as_slice())?;
-    flush_native_db_durability_barrier(db, "native genesis bootstrap")?;
+    flush_native_db_durability_barrier(
+        db,
+        "native genesis bootstrap",
+        NativeStorageDurabilityOperation::GenesisBootstrap,
+    )?;
     Ok(genesis)
 }
 
@@ -6125,7 +6244,11 @@ fn validate_loaded_block_indexes(
 
     if admission.repair_missing_genesis_marker {
         meta_tree.insert(META_GENESIS_KEY, expected_genesis.hash.as_slice())?;
-        flush_native_db_durability_barrier(db, "native genesis marker repair")?;
+        flush_native_db_durability_barrier(
+            db,
+            "native genesis marker repair",
+            NativeStorageDurabilityOperation::GenesisMarkerRepair,
+        )?;
     }
     for index in 0..chain.len() {
         let parent = if index == 0 {
@@ -6268,7 +6391,11 @@ fn load_staged_sizes_with_limits(
         tree.remove(key)?;
     }
     if removed_stale_entries {
-        flush_native_db_durability_barrier(db, "native startup staged ciphertext repair")?;
+        flush_native_db_durability_barrier(
+            db,
+            "native startup staged ciphertext repair",
+            NativeStorageDurabilityOperation::StartupStagedCiphertextRepair,
+        )?;
     }
     Ok(entries)
 }
@@ -6358,7 +6485,11 @@ fn load_staged_proofs_with_limits(
         tree.remove(key)?;
     }
     if removed_stale_entries {
-        flush_native_db_durability_barrier(db, "native startup staged proof repair")?;
+        flush_native_db_durability_barrier(
+            db,
+            "native startup staged proof repair",
+            NativeStorageDurabilityOperation::StartupStagedProofRepair,
+        )?;
     }
     Ok(entries)
 }
@@ -6501,7 +6632,11 @@ fn build_validated_startup_state_with_limits(
                 format!("remove invalid persisted pending action {}", hex32(&hash))
             })?;
         }
-        flush_native_db_durability_barrier(db, "native startup pending action repair")?;
+        flush_native_db_durability_barrier(
+            db,
+            "native startup pending action repair",
+            NativeStorageDurabilityOperation::StartupPendingActionRepair,
+        )?;
     }
     Ok(state)
 }
@@ -7431,8 +7566,18 @@ fn mempool_transfer_nullifier_admission_state(
     action: &PendingAction,
 ) -> NativeTransferNullifierAdmissionState {
     let mut nullifier_state = shielded_nullifier_state_for_mempool(state);
+    mempool_transfer_nullifier_admission_state_from_nullifiers(
+        &mut nullifier_state,
+        &action.nullifiers,
+    )
+}
+
+fn mempool_transfer_nullifier_admission_state_from_nullifiers(
+    nullifier_state: &mut NullifierState,
+    nullifiers: &[[u8; 48]],
+) -> NativeTransferNullifierAdmissionState {
     let mut action_seen = BTreeSet::new();
-    for nullifier in &action.nullifiers {
+    for nullifier in nullifiers {
         let duplicate_in_action = !action_seen.insert(*nullifier);
         match nullifier_state.stage(*nullifier) {
             Ok(()) => {}
@@ -7455,7 +7600,14 @@ fn block_transfer_nullifier_admission_state(
     nullifier_state: &mut NullifierState,
     action: &PendingAction,
 ) -> NativeTransferNullifierAdmissionState {
-    for nullifier in &action.nullifiers {
+    block_transfer_nullifier_admission_state_from_nullifiers(nullifier_state, &action.nullifiers)
+}
+
+fn block_transfer_nullifier_admission_state_from_nullifiers(
+    nullifier_state: &mut NullifierState,
+    nullifiers: &[[u8; 48]],
+) -> NativeTransferNullifierAdmissionState {
+    for nullifier in nullifiers {
         match nullifier_state.import_one(*nullifier) {
             Ok(()) => {}
             Err(NullifierReject::Zero) => return NativeTransferNullifierAdmissionState::Zero,
@@ -9256,20 +9408,20 @@ fn evaluate_native_bridge_mint_replay_policy(
         Err(NativeBridgeMintReplayPolicyRejection::ReceiptNotVerified)
     } else if !input.receipt_payload_matches {
         Err(NativeBridgeMintReplayPolicyRejection::ReceiptPayloadMismatch)
+    } else if input.replay_state.consumed().contains(&input.replay_key) {
+        Err(NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed)
+    } else if !input.mint_authorized {
+        Err(NativeBridgeMintReplayPolicyRejection::MintNotAuthorized)
+    } else if !input.amount_matches_receipt {
+        Err(NativeBridgeMintReplayPolicyRejection::AmountDoesNotMatchReceipt)
+    } else if !input.amount_within_bound {
+        Err(NativeBridgeMintReplayPolicyRejection::AmountOutOfBounds)
     } else {
         let mut next_replay_state = input.replay_state;
         next_replay_state
             .import_one(input.replay_key)
             .map_err(|_| NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed)?;
-        if !input.mint_authorized {
-            Err(NativeBridgeMintReplayPolicyRejection::MintNotAuthorized)
-        } else if !input.amount_matches_receipt {
-            Err(NativeBridgeMintReplayPolicyRejection::AmountDoesNotMatchReceipt)
-        } else if !input.amount_within_bound {
-            Err(NativeBridgeMintReplayPolicyRejection::AmountOutOfBounds)
-        } else {
-            Ok(next_replay_state)
-        }
+        Ok(next_replay_state)
     }
 }
 
@@ -10474,23 +10626,31 @@ fn native_noncanonical_block_record_manifest() -> NativeAtomicCommitManifestAdmi
     }
 }
 
-fn flush_native_db_durability_barrier(db: &sled::Db, context: &'static str) -> Result<()> {
+fn flush_native_db_durability_barrier(
+    db: &sled::Db,
+    context: &'static str,
+    operation: NativeStorageDurabilityOperation,
+) -> Result<()> {
     match db.flush() {
         Ok(flushed_bytes) => {
             evaluate_native_storage_durability_admission(NativeStorageDurabilityAdmissionInput {
+                operation_supported: true,
                 transaction_accepted: true,
                 durability_flushed: true,
             })
             .map_err(|rejection| native_storage_durability_admission_error(context, rejection))?;
             debug!(
                 context,
-                flushed_bytes, "native storage durability barrier accepted"
+                operation = operation.label(),
+                flushed_bytes,
+                "native storage durability barrier accepted"
             );
             Ok(())
         }
         Err(err) => {
             let rejection = evaluate_native_storage_durability_admission(
                 NativeStorageDurabilityAdmissionInput {
+                    operation_supported: true,
                     transaction_accepted: true,
                     durability_flushed: false,
                 },
@@ -10507,7 +10667,9 @@ fn flush_native_db_durability_barrier(db: &sled::Db, context: &'static str) -> R
 fn evaluate_native_storage_durability_admission(
     input: NativeStorageDurabilityAdmissionInput,
 ) -> Result<(), NativeStorageDurabilityAdmissionRejection> {
-    if !input.transaction_accepted {
+    if !input.operation_supported {
+        Err(NativeStorageDurabilityAdmissionRejection::UnsupportedOperation)
+    } else if !input.transaction_accepted {
         Err(NativeStorageDurabilityAdmissionRejection::TransactionRejected)
     } else if !input.durability_flushed {
         Err(NativeStorageDurabilityAdmissionRejection::DurabilityFlushFailed)
@@ -14179,6 +14341,15 @@ mod tests {
         candidate_artifact_verifier_profile_bytes: usize,
         candidate_artifact_receipt_root_option_tag_bytes: usize,
         candidate_artifact_receipt_root_none: bool,
+        candidate_artifact_receipt_root_proof_bytes: usize,
+        candidate_artifact_receipt_root_proof_compact_prefix_bytes: usize,
+        candidate_artifact_receipt_root_relation_id_bytes: usize,
+        candidate_artifact_receipt_root_shape_digest_bytes: usize,
+        candidate_artifact_receipt_root_leaf_count_bytes: usize,
+        candidate_artifact_receipt_root_fold_count_bytes: usize,
+        candidate_artifact_receipt_root_receipt_count: usize,
+        candidate_artifact_receipt_root_receipt_compact_prefix_bytes: usize,
+        candidate_artifact_receipt_root_receipt_element_bytes: usize,
         candidate_artifact_recursive_block_option_tag_bytes: usize,
         candidate_artifact_recursive_block_present: bool,
         candidate_artifact_recursive_proof_bytes: usize,
@@ -14202,6 +14373,7 @@ mod tests {
     struct LeanStorageDurabilityAdmissionCase {
         name: String,
         operation: String,
+        operation_supported: bool,
         transaction_accepted: bool,
         durability_flushed: bool,
         expected_valid: bool,
@@ -14427,6 +14599,7 @@ mod tests {
     struct LeanTransferStateAdmissionVectorFile {
         schema_version: u32,
         transfer_state_admission_cases: Vec<LeanTransferStateAdmissionCase>,
+        transfer_nullifier_row_cases: Vec<LeanTransferNullifierRowCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14443,6 +14616,17 @@ mod tests {
         sidecar_ciphertext_sizes_match: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanTransferNullifierRowCase {
+        name: String,
+        spent_nullifiers: Vec<String>,
+        pending_nullifiers: Vec<String>,
+        action_nullifiers: Vec<String>,
+        expected_mempool_nullifier_state: String,
+        expected_block_nullifier_state: String,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14946,6 +15130,176 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanOutboundBridgeActionPayloadScaleWireVectorFile {
+        schema_version: u32,
+        outbound_bridge_action_payload_scale_wire_cases:
+            Vec<LeanOutboundBridgeActionPayloadScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanOutboundBridgeActionPayloadScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        destination_chain_id_bytes: usize,
+        app_family_id_bytes: usize,
+        payload_compact_prefix_bytes: usize,
+        payload_bytes: usize,
+        payload_compact_prefix_canonical: bool,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanInboundBridgeActionPayloadScaleWireVectorFile {
+        schema_version: u32,
+        inbound_bridge_action_payload_scale_wire_cases:
+            Vec<LeanInboundBridgeActionPayloadScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanInboundBridgeActionPayloadScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        source_chain_id_bytes: usize,
+        source_message_nonce_bytes: usize,
+        verifier_program_hash_bytes: usize,
+        proof_receipt_compact_prefix_bytes: usize,
+        proof_receipt_bytes: usize,
+        proof_receipt_compact_prefix_canonical: bool,
+        message_source_chain_id_bytes: usize,
+        message_destination_chain_id_bytes: usize,
+        message_app_family_id_bytes: usize,
+        message_nonce_bytes: usize,
+        message_source_height_bytes: usize,
+        message_payload_hash_bytes: usize,
+        message_payload_compact_prefix_bytes: usize,
+        message_payload_bytes: usize,
+        message_payload_compact_prefix_canonical: bool,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeVerifierRegistrationScaleWireVectorFile {
+        schema_version: u32,
+        bridge_verifier_registration_scale_wire_cases:
+            Vec<LeanBridgeVerifierRegistrationScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeVerifierRegistrationScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        source_chain_id_bytes: usize,
+        verifier_program_hash_bytes: usize,
+        rules_hash_bytes: usize,
+        enabled_at_height_bytes: usize,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanShieldedTransferInlineScaleWireVectorFile {
+        schema_version: u32,
+        shielded_transfer_inline_scale_wire_cases: Vec<LeanShieldedTransferInlineScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanShieldedTransferInlineScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        proof_compact_prefix_bytes: usize,
+        proof_bytes: usize,
+        proof_compact_prefix_canonical: bool,
+        commitment_compact_prefix_bytes: usize,
+        commitment_count: usize,
+        commitment_element_bytes: usize,
+        commitment_compact_prefix_canonical: bool,
+        ciphertext_compact_prefix_bytes: usize,
+        ciphertext_count: usize,
+        encrypted_note_ciphertext_bytes: usize,
+        kem_ciphertext_compact_prefix_bytes: usize,
+        kem_ciphertext_bytes: usize,
+        ciphertext_compact_prefix_canonical: bool,
+        kem_ciphertext_compact_prefix_canonical: bool,
+        anchor_bytes: usize,
+        balance_slot_count: usize,
+        balance_slot_bytes: usize,
+        binding_hash_bytes: usize,
+        stablecoin_option_tag_bytes: usize,
+        stablecoin_some_payload_bytes: usize,
+        fee_bytes: usize,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanShieldedTransferSidecarScaleWireVectorFile {
+        schema_version: u32,
+        shielded_transfer_sidecar_scale_wire_cases: Vec<LeanShieldedTransferSidecarScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanShieldedTransferSidecarScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        proof_compact_prefix_bytes: usize,
+        proof_bytes: usize,
+        proof_compact_prefix_canonical: bool,
+        commitment_compact_prefix_bytes: usize,
+        commitment_count: usize,
+        commitment_element_bytes: usize,
+        commitment_compact_prefix_canonical: bool,
+        ciphertext_hash_compact_prefix_bytes: usize,
+        ciphertext_hash_count: usize,
+        ciphertext_hash_element_bytes: usize,
+        ciphertext_hash_compact_prefix_canonical: bool,
+        ciphertext_size_compact_prefix_bytes: usize,
+        ciphertext_size_count: usize,
+        ciphertext_size_element_bytes: usize,
+        ciphertext_size_compact_prefix_canonical: bool,
+        anchor_bytes: usize,
+        balance_slot_count: usize,
+        balance_slot_bytes: usize,
+        binding_hash_bytes: usize,
+        stablecoin_option_tag_bytes: usize,
+        stablecoin_some_payload_bytes: usize,
+        fee_bytes: usize,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanResourceBudgetAdmissionVectorFile {
         schema_version: u32,
         mempool_budget_cases: Vec<LeanMempoolBudgetCase>,
@@ -15001,6 +15355,33 @@ mod tests {
         max_bytes: usize,
         expected_total_bytes: usize,
         expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPreHeavyResourceBoundSurfaceVectorFile {
+        schema_version: u32,
+        staged_proof_upload_preheavy_cases: Vec<LeanStagedProofUploadPreHeavyCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanStagedProofUploadPreHeavyCase {
+        name: String,
+        binding_hash_present: bool,
+        binding_hash_valid: bool,
+        proof_present: bool,
+        staged_bytes: usize,
+        existing_bytes: usize,
+        proof_bytes: usize,
+        max_bytes: usize,
+        expected_total_bytes: usize,
+        decoded_proof_bytes: usize,
+        decoded_max_proof_bytes: usize,
+        proof_binding_hash_matches_key: bool,
+        expected_valid: bool,
+        expected_rejection_stage: Option<String>,
         expected_rejection: Option<String>,
     }
 
@@ -16842,6 +17223,106 @@ mod tests {
             .contains("native commitment archive index gap"));
     }
 
+    fn seed_native_commitment_leaf_count(node: &NativeNode, leaf_count: u64) {
+        let mut state = node.state.write();
+        for index in 0..leaf_count {
+            state
+                .commitment_tree
+                .append([index as u8; 48])
+                .expect("append test commitment leaf");
+        }
+    }
+
+    fn insert_test_ciphertext_archive_indices(node: &NativeNode, indices: &[u64]) {
+        for index in indices {
+            node.ciphertext_archive_tree
+                .insert(
+                    index.to_be_bytes(),
+                    vec![*index as u8; MIN_NATIVE_WALLET_CIPHERTEXT_BYTES],
+                )
+                .expect("insert test ciphertext archive row");
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanCiphertextArchiveBoundaryVectorFile {
+        schema_version: u32,
+        ciphertext_archive_boundary_cases: Vec<LeanCiphertextArchiveBoundaryCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanCiphertextArchiveBoundaryCase {
+        name: String,
+        leaf_count: u64,
+        archive_indices: Vec<u64>,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    #[test]
+    fn lean_generated_ciphertext_archive_boundary_vectors_match_native_rpc() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean ciphertext archive vectors");
+        let vectors: LeanCiphertextArchiveBoundaryVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean ciphertext archive vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            vectors.ciphertext_archive_boundary_cases.len() >= 6,
+            "expected archive gap and leaf-count boundary coverage"
+        );
+
+        for case in &vectors.ciphertext_archive_boundary_cases {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false))
+                .expect("node");
+            seed_native_commitment_leaf_count(&node, case.leaf_count);
+            insert_test_ciphertext_archive_indices(&node, &case.archive_indices);
+
+            let result = node.wallet_ciphertexts(json!({"start": 0, "limit": 1024}));
+            if case.expected_valid {
+                let response = result.unwrap_or_else(|err| {
+                    panic!(
+                        "Lean ciphertext archive boundary case {} rejected: {err}",
+                        case.name
+                    )
+                });
+                assert_eq!(
+                    response["total"],
+                    json!(case.archive_indices.len() as u64),
+                    "native ciphertext archive total drifted from Lean case {}",
+                    case.name
+                );
+            } else {
+                let err = match result {
+                    Ok(_) => panic!(
+                        "Lean ciphertext archive boundary case {} expected rejection",
+                        case.name
+                    ),
+                    Err(err) => err,
+                };
+                let err = err.to_string();
+                match case.expected_error.as_deref() {
+                    Some("index_gap") => {
+                        assert!(err.contains("native ciphertext archive index gap"), "{err}")
+                    }
+                    Some("index_beyond_leaf_count") => {
+                        assert!(err.contains("exceeds commitment leaf_count"), "{err}")
+                    }
+                    other => panic!(
+                        "unexpected Lean expected_error for {}: {other:?}",
+                        case.name
+                    ),
+                }
+            }
+        }
+    }
+
     #[test]
     fn wallet_ciphertexts_rejects_malformed_archive_key() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -16887,6 +17368,36 @@ mod tests {
         assert!(oversize_err
             .to_string()
             .contains("native ciphertext archive value exceeds max"));
+    }
+
+    #[test]
+    fn wallet_ciphertexts_rejects_archive_index_gap() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        seed_native_commitment_leaf_count(&node, 2);
+        insert_test_ciphertext_archive_indices(&node, &[1]);
+
+        let err = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
+            .expect_err("gapped ciphertext archive must reject wallet RPC");
+        assert!(err
+            .to_string()
+            .contains("native ciphertext archive index gap"));
+    }
+
+    #[test]
+    fn wallet_ciphertexts_rejects_archive_index_beyond_leaf_count() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        seed_native_commitment_leaf_count(&node, 1);
+        insert_test_ciphertext_archive_indices(&node, &[0, 1]);
+
+        let err = node
+            .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
+            .expect_err("ciphertext archive beyond leaf_count must reject wallet RPC");
+        assert!(err.to_string().contains("exceeds commitment leaf_count"));
     }
 
     #[test]
@@ -18081,6 +18592,36 @@ mod tests {
             }))
             .expect_err("empty proof must reject after metadata admission");
         assert!(err.to_string().contains("must be non-empty"));
+    }
+
+    #[test]
+    fn submit_proofs_rejects_staged_byte_budget_before_binding_decode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        node.state.write().staged_proofs.insert(
+            "existing".to_owned(),
+            vec![0u8; MAX_NATIVE_STAGED_PROOF_BYTES],
+        );
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [{
+                    "binding_hash": format!("0x{}", "11".repeat(64)),
+                    "proof": "0xaa",
+                }]
+            }))
+            .expect_err("staged byte budget must reject before artifact binding decode");
+        let err = err.to_string();
+        assert!(
+            err.contains("staged proof byte budget"),
+            "unexpected staged proof upload error: {err}"
+        );
+        assert!(
+            !err.contains("proof binding hash"),
+            "oversized staged proof upload reached proof binding decode: {err}"
+        );
+        assert_eq!(node.da_proof_tree.len(), 0);
     }
 
     #[test]
@@ -20441,6 +20982,24 @@ mod tests {
         if case.candidate_artifact_none {
             0
         } else {
+            let receipt_root_payload_len = if case.candidate_artifact_receipt_root_none {
+                0
+            } else {
+                case.candidate_artifact_receipt_root_proof_compact_prefix_bytes
+                    + case.candidate_artifact_receipt_root_proof_bytes
+                    + case.candidate_artifact_receipt_root_relation_id_bytes
+                    + case.candidate_artifact_receipt_root_shape_digest_bytes
+                    + case.candidate_artifact_receipt_root_leaf_count_bytes
+                    + case.candidate_artifact_receipt_root_fold_count_bytes
+                    + case.candidate_artifact_receipt_root_receipt_compact_prefix_bytes
+                    + case.candidate_artifact_receipt_root_receipt_count
+                        * case.candidate_artifact_receipt_root_receipt_element_bytes
+            };
+            let recursive_block_payload_len = if case.candidate_artifact_recursive_block_present {
+                1 + case.candidate_artifact_recursive_proof_bytes
+            } else {
+                0
+            };
             1 + 4
                 + case.candidate_artifact_tx_statements_commitment_bytes
                 + case.candidate_artifact_da_root_bytes
@@ -20450,8 +21009,9 @@ mod tests {
                 + case.candidate_artifact_proof_kind_bytes
                 + case.candidate_artifact_verifier_profile_bytes
                 + case.candidate_artifact_receipt_root_option_tag_bytes
+                + receipt_root_payload_len
                 + case.candidate_artifact_recursive_block_option_tag_bytes
-                + (1 + case.candidate_artifact_recursive_proof_bytes)
+                + recursive_block_payload_len
         }
     }
 
@@ -20558,6 +21118,58 @@ mod tests {
                     received_ms: 9,
                 }
             }
+            "valid_candidate_artifact_some_receipt_root_slice" => {
+                let artifact = CandidateArtifact {
+                    version: BLOCK_PROOF_BUNDLE_SCHEMA,
+                    tx_count: 1,
+                    tx_statements_commitment: [0x15u8; 48],
+                    da_root: [0x16u8; 48],
+                    da_chunk_count: 1,
+                    commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+                    proof_mode: BlockProofMode::ReceiptRoot,
+                    proof_kind: PoolProofArtifactKind::ReceiptRoot,
+                    verifier_profile: [0x17u8; 48],
+                    receipt_root: Some(ReceiptRootProofPayload {
+                        root_proof: protocol_shielded_pool::types::StarkProof {
+                            data: vec![0x21, 0x22, 0x23],
+                        },
+                        metadata: ReceiptRootMetadata {
+                            relation_id: [0x24u8; 32],
+                            shape_digest: [0x25u8; 32],
+                            leaf_count: 1,
+                            fold_count: 0,
+                        },
+                        receipts: vec![TxValidityReceipt {
+                            statement_hash: [0x31u8; 48],
+                            proof_digest: [0x32u8; 48],
+                            public_inputs_digest: [0x33u8; 48],
+                            verifier_profile: [0x34u8; 48],
+                        }],
+                    }),
+                    recursive_block: None,
+                };
+                PendingAction {
+                    tx_hash: [14u8; 32],
+                    binding: KernelVersionBinding {
+                        circuit: 0,
+                        crypto: 0,
+                    },
+                    family_id: FAMILY_SHIELDED_POOL,
+                    action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+                    anchor: [0u8; 48],
+                    nullifiers: Vec::new(),
+                    commitments: Vec::new(),
+                    ciphertext_hashes: Vec::new(),
+                    ciphertext_sizes: Vec::new(),
+                    public_args: SubmitCandidateArtifactArgs {
+                        payload: artifact.clone(),
+                    }
+                    .encode(),
+                    fee: 0,
+                    candidate_artifact: Some(artifact),
+                    received_ms: 10,
+                }
+            }
             other => panic!("no valid PendingAction fixture for {other}"),
         }
     }
@@ -20584,13 +21196,24 @@ mod tests {
             && case.candidate_artifact_proof_kind_bytes == 1
             && case.candidate_artifact_verifier_profile_bytes == 48
             && case.candidate_artifact_receipt_root_option_tag_bytes == 1
-            && case.candidate_artifact_recursive_block_option_tag_bytes == 1
-            && case.candidate_artifact_receipt_root_none
-            && case.candidate_artifact_recursive_block_present;
+            && case.candidate_artifact_recursive_block_option_tag_bytes == 1;
+        let receipt_root_payload_ok = case.candidate_artifact_receipt_root_none
+            || (case.candidate_artifact_receipt_root_proof_compact_prefix_bytes == 1
+                && case.candidate_artifact_receipt_root_relation_id_bytes == 32
+                && case.candidate_artifact_receipt_root_shape_digest_bytes == 32
+                && case.candidate_artifact_receipt_root_leaf_count_bytes == 4
+                && case.candidate_artifact_receipt_root_fold_count_bytes == 4
+                && case.candidate_artifact_receipt_root_receipt_compact_prefix_bytes == 1
+                && case.candidate_artifact_receipt_root_receipt_element_bytes == 192);
+        let candidate_artifact_optional_payload_ok = !case.candidate_artifact_receipt_root_none
+            || case.candidate_artifact_recursive_block_present;
         let expected_candidate_payload_len = expected_candidate_artifact_payload_len(case);
         let candidate_payload_ok = case.candidate_artifact_payload_bytes
             == expected_candidate_payload_len
-            && (case.candidate_artifact_none || candidate_artifact_some_fields_ok);
+            && (case.candidate_artifact_none
+                || (candidate_artifact_some_fields_ok
+                    && receipt_root_payload_ok
+                    && candidate_artifact_optional_payload_ok));
         let expected_len = expected_pending_action_encoded_len(case);
         let lean_predicate_accepts = fixed_fields_ok
             && vector_elements_ok
@@ -20668,6 +21291,32 @@ mod tests {
                     artifact.receipt_root.is_none(),
                     case.candidate_artifact_receipt_root_none
                 );
+                if let Some(receipt_root) = artifact.receipt_root.as_ref() {
+                    assert_eq!(
+                        receipt_root.root_proof.data.len(),
+                        case.candidate_artifact_receipt_root_proof_bytes
+                    );
+                    assert_eq!(
+                        receipt_root.metadata.relation_id.len(),
+                        case.candidate_artifact_receipt_root_relation_id_bytes
+                    );
+                    assert_eq!(
+                        receipt_root.metadata.shape_digest.len(),
+                        case.candidate_artifact_receipt_root_shape_digest_bytes
+                    );
+                    assert_eq!(case.candidate_artifact_receipt_root_leaf_count_bytes, 4);
+                    assert_eq!(case.candidate_artifact_receipt_root_fold_count_bytes, 4);
+                    assert_eq!(
+                        receipt_root.receipts.len(),
+                        case.candidate_artifact_receipt_root_receipt_count
+                    );
+                    for receipt in &receipt_root.receipts {
+                        assert_eq!(
+                            receipt.encoded_size(),
+                            case.candidate_artifact_receipt_root_receipt_element_bytes
+                        );
+                    }
+                }
                 assert_eq!(
                     artifact.recursive_block.is_some(),
                     case.candidate_artifact_recursive_block_present
@@ -20696,7 +21345,7 @@ mod tests {
             .expect("read generated Lean storage durability admission vectors");
         let vectors: LeanStorageDurabilityAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean storage durability admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.storage_durability_admission_cases.is_empty(),
             "Lean storage durability admission cases must not be empty"
@@ -20710,33 +21359,25 @@ mod tests {
     }
 
     fn verify_lean_storage_durability_admission_case(case: &LeanStorageDurabilityAdmissionCase) {
-        assert!(
-            matches!(
-                case.operation.as_str(),
-                "mined_block_commit"
-                    | "canonical_reorg_commit"
-                    | "canonical_index_repair"
-                    | "noncanonical_block_record"
-                    | "pending_action_stage"
-                    | "ciphertext_sidecar_stage"
-                    | "proof_sidecar_stage"
-                    | "genesis_bootstrap"
-                    | "genesis_marker_repair"
-                    | "startup_staged_ciphertext_repair"
-                    | "startup_staged_proof_repair"
-                    | "startup_pending_action_repair"
-            ),
-            "unknown Lean storage durability operation {}",
-            case.operation
-        );
+        let operation = NativeStorageDurabilityOperation::from_label(&case.operation);
         assert_eq!(
-            case.transaction_accepted && case.durability_flushed,
+            operation.is_some(),
+            case.operation_supported,
+            "{} Lean storage durability operation support drifted from production parser",
+            case.name
+        );
+        if let Some(operation) = operation {
+            assert_eq!(operation.label(), case.operation);
+        }
+        assert_eq!(
+            case.operation_supported && case.transaction_accepted && case.durability_flushed,
             case.expected_valid,
             "{} Lean storage durability predicate fields disagree with expected validity",
             case.name
         );
         let actual =
             evaluate_native_storage_durability_admission(NativeStorageDurabilityAdmissionInput {
+                operation_supported: case.operation_supported,
                 transaction_accepted: case.transaction_accepted,
                 durability_flushed: case.durability_flushed,
             });
@@ -21428,16 +22069,24 @@ mod tests {
             .expect("read generated Lean transfer state admission vectors");
         let vectors: LeanTransferStateAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean transfer state admission vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.transfer_state_admission_cases.is_empty(),
             "Lean transfer state admission cases must not be empty"
+        );
+        assert!(
+            !vectors.transfer_nullifier_row_cases.is_empty(),
+            "Lean transfer nullifier row cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
         for case in &vectors.transfer_state_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_transfer_state_admission_case(case);
+        }
+        for case in &vectors.transfer_nullifier_row_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_transfer_nullifier_row_case(case);
         }
     }
 
@@ -21466,6 +22115,62 @@ mod tests {
             "{} native transfer state admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_transfer_nullifier_row_case(case: &LeanTransferNullifierRowCase) {
+        let spent_nullifiers = parse_lean_nullifier_set(&case.spent_nullifiers, &case.name);
+        let pending_nullifiers = parse_lean_nullifier_set(&case.pending_nullifiers, &case.name);
+        let action_nullifiers = parse_lean_nullifier_vec(&case.action_nullifiers, &case.name);
+
+        let mut mempool_state =
+            NullifierState::new(spent_nullifiers.clone(), pending_nullifiers.clone());
+        let actual_mempool = mempool_transfer_nullifier_admission_state_from_nullifiers(
+            &mut mempool_state,
+            &action_nullifiers,
+        )
+        .label()
+        .to_owned();
+        assert_eq!(
+            actual_mempool, case.expected_mempool_nullifier_state,
+            "{} mempool nullifier row admission drifted from Lean spec",
+            case.name
+        );
+
+        let mut block_state = NullifierState::new(spent_nullifiers, pending_nullifiers);
+        let actual_block = block_transfer_nullifier_admission_state_from_nullifiers(
+            &mut block_state,
+            &action_nullifiers,
+        )
+        .label()
+        .to_owned();
+        assert_eq!(
+            actual_block, case.expected_block_nullifier_state,
+            "{} block nullifier row admission drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn parse_lean_nullifier_set(values: &[String], case_name: &str) -> BTreeSet<[u8; 48]> {
+        let mut out = BTreeSet::new();
+        for value in values {
+            let parsed = parse_hex48(value)
+                .unwrap_or_else(|| panic!("{case_name} has invalid 48-byte nullifier {value}"));
+            assert!(
+                out.insert(parsed),
+                "{case_name} repeats initial nullifier {value}"
+            );
+        }
+        out
+    }
+
+    fn parse_lean_nullifier_vec(values: &[String], case_name: &str) -> Vec<[u8; 48]> {
+        values
+            .iter()
+            .map(|value| {
+                parse_hex48(value)
+                    .unwrap_or_else(|| panic!("{case_name} has invalid 48-byte nullifier {value}"))
+            })
+            .collect()
     }
 
     #[test]
@@ -23349,6 +24054,813 @@ mod tests {
     }
 
     #[test]
+    fn lean_generated_outbound_bridge_action_payload_scale_wire_vectors_match_production() {
+        let Ok(path) =
+            std::env::var("HEGEMON_LEAN_OUTBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_OUTBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean outbound bridge action payload SCALE wire vectors");
+        let vectors: LeanOutboundBridgeActionPayloadScaleWireVectorFile =
+            serde_json::from_str(&raw)
+                .expect("parse generated Lean outbound bridge action payload SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .outbound_bridge_action_payload_scale_wire_cases
+                .is_empty(),
+            "Lean outbound bridge action payload SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.outbound_bridge_action_payload_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_outbound_bridge_action_payload_scale_wire_case(case);
+        }
+    }
+
+    fn expected_outbound_bridge_action_payload_scale_wire_fixture(
+        case: &LeanOutboundBridgeActionPayloadScaleWireCase,
+    ) -> OutboundBridgeArgsV1 {
+        let (destination_chain_id, app_family_id, payload) = match case.fixture.as_str() {
+            "valid_short_payload" => ([1u8; 32], 7u16, vec![0xaa, 0xbb, 0xcc]),
+            "valid_empty_payload" => ([2u8; 32], 9u16, Vec::new()),
+            other => panic!("no valid OutboundBridgeArgsV1 fixture for {other}"),
+        };
+        OutboundBridgeArgsV1 {
+            destination_chain_id,
+            app_family_id,
+            payload,
+        }
+    }
+
+    fn expected_outbound_bridge_action_payload_encoded_len(
+        case: &LeanOutboundBridgeActionPayloadScaleWireCase,
+    ) -> usize {
+        case.destination_chain_id_bytes
+            + case.app_family_id_bytes
+            + case.payload_compact_prefix_bytes
+            + case.payload_bytes
+    }
+
+    fn verify_lean_outbound_bridge_action_payload_scale_wire_case(
+        case: &LeanOutboundBridgeActionPayloadScaleWireCase,
+    ) {
+        let fixed_fields_ok =
+            case.destination_chain_id_bytes == 32 && case.app_family_id_bytes == 2;
+        let expected_len = expected_outbound_bridge_action_payload_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && case.payload_compact_prefix_canonical
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean outbound bridge SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_outbound_bridge_action_payload_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production OutboundBridgeArgsV1::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<OutboundBridgeArgsV1>(
+            &raw,
+            "Lean outbound bridge action payload SCALE wire",
+        );
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production OutboundBridgeArgsV1 exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production OutboundBridgeArgsV1 exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            assert_eq!(
+                args.destination_chain_id.len(),
+                case.destination_chain_id_bytes
+            );
+            assert_eq!(
+                std::mem::size_of_val(&args.app_family_id),
+                case.app_family_id_bytes
+            );
+            assert_eq!(args.payload.len(), case.payload_bytes);
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
+    fn lean_generated_inbound_bridge_action_payload_scale_wire_vectors_match_production() {
+        let Ok(path) =
+            std::env::var("HEGEMON_LEAN_INBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_INBOUND_BRIDGE_ACTION_PAYLOAD_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean inbound bridge action payload SCALE wire vectors");
+        let vectors: LeanInboundBridgeActionPayloadScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean inbound bridge action payload SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .inbound_bridge_action_payload_scale_wire_cases
+                .is_empty(),
+            "Lean inbound bridge action payload SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.inbound_bridge_action_payload_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_inbound_bridge_action_payload_scale_wire_case(case);
+        }
+    }
+
+    fn expected_inbound_bridge_action_payload_scale_wire_fixture(
+        case: &LeanInboundBridgeActionPayloadScaleWireCase,
+    ) -> InboundBridgeArgsV1 {
+        match case.fixture.as_str() {
+            "valid_short_receipt_payload" => InboundBridgeArgsV1 {
+                source_chain_id: [1u8; 32],
+                source_message_nonce: 42,
+                verifier_program_hash: [3u8; 32],
+                proof_receipt: vec![0xaa, 0xbb],
+                message: BridgeMessageV1 {
+                    source_chain_id: [1u8; 32],
+                    destination_chain_id: [4u8; 32],
+                    app_family_id: 7,
+                    message_nonce: 42,
+                    source_height: 99,
+                    payload_hash: [5u8; 48],
+                    payload: vec![0xcc, 0xdd, 0xee],
+                },
+            },
+            "valid_empty_receipt_payload" => InboundBridgeArgsV1 {
+                source_chain_id: [2u8; 32],
+                source_message_nonce: 0,
+                verifier_program_hash: [6u8; 32],
+                proof_receipt: Vec::new(),
+                message: BridgeMessageV1 {
+                    source_chain_id: [2u8; 32],
+                    destination_chain_id: [8u8; 32],
+                    app_family_id: 9,
+                    message_nonce: 0,
+                    source_height: 0,
+                    payload_hash: [9u8; 48],
+                    payload: Vec::new(),
+                },
+            },
+            other => panic!("no valid InboundBridgeArgsV1 fixture for {other}"),
+        }
+    }
+
+    fn expected_inbound_bridge_action_payload_encoded_len(
+        case: &LeanInboundBridgeActionPayloadScaleWireCase,
+    ) -> usize {
+        case.source_chain_id_bytes
+            + case.source_message_nonce_bytes
+            + case.verifier_program_hash_bytes
+            + case.proof_receipt_compact_prefix_bytes
+            + case.proof_receipt_bytes
+            + case.message_source_chain_id_bytes
+            + case.message_destination_chain_id_bytes
+            + case.message_app_family_id_bytes
+            + case.message_nonce_bytes
+            + case.message_source_height_bytes
+            + case.message_payload_hash_bytes
+            + case.message_payload_compact_prefix_bytes
+            + case.message_payload_bytes
+    }
+
+    fn verify_lean_inbound_bridge_action_payload_scale_wire_case(
+        case: &LeanInboundBridgeActionPayloadScaleWireCase,
+    ) {
+        let fixed_fields_ok = case.source_chain_id_bytes == 32
+            && case.source_message_nonce_bytes == 16
+            && case.verifier_program_hash_bytes == 32
+            && case.message_source_chain_id_bytes == 32
+            && case.message_destination_chain_id_bytes == 32
+            && case.message_app_family_id_bytes == 2
+            && case.message_nonce_bytes == 16
+            && case.message_source_height_bytes == 8
+            && case.message_payload_hash_bytes == 48;
+        let expected_len = expected_inbound_bridge_action_payload_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && case.proof_receipt_compact_prefix_canonical
+            && case.message_payload_compact_prefix_canonical
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean inbound bridge SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_inbound_bridge_action_payload_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production InboundBridgeArgsV1::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<InboundBridgeArgsV1>(
+            &raw,
+            "Lean inbound bridge action payload SCALE wire",
+        );
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production InboundBridgeArgsV1 exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production InboundBridgeArgsV1 exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            assert_eq!(args.source_chain_id.len(), case.source_chain_id_bytes);
+            assert_eq!(
+                std::mem::size_of_val(&args.source_message_nonce),
+                case.source_message_nonce_bytes
+            );
+            assert_eq!(
+                args.verifier_program_hash.len(),
+                case.verifier_program_hash_bytes
+            );
+            assert_eq!(args.proof_receipt.len(), case.proof_receipt_bytes);
+            assert_eq!(
+                args.message.source_chain_id.len(),
+                case.message_source_chain_id_bytes
+            );
+            assert_eq!(
+                args.message.destination_chain_id.len(),
+                case.message_destination_chain_id_bytes
+            );
+            assert_eq!(
+                std::mem::size_of_val(&args.message.app_family_id),
+                case.message_app_family_id_bytes
+            );
+            assert_eq!(
+                std::mem::size_of_val(&args.message.message_nonce),
+                case.message_nonce_bytes
+            );
+            assert_eq!(
+                std::mem::size_of_val(&args.message.source_height),
+                case.message_source_height_bytes
+            );
+            assert_eq!(
+                args.message.payload_hash.len(),
+                case.message_payload_hash_bytes
+            );
+            assert_eq!(args.message.payload.len(), case.message_payload_bytes);
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
+    fn lean_generated_bridge_verifier_registration_scale_wire_vectors_match_production() {
+        let Ok(path) =
+            std::env::var("HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge verifier registration SCALE wire vectors");
+        let vectors: LeanBridgeVerifierRegistrationScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge verifier registration SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .bridge_verifier_registration_scale_wire_cases
+                .is_empty(),
+            "Lean bridge verifier registration SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_verifier_registration_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_verifier_registration_scale_wire_case(case);
+        }
+    }
+
+    fn expected_bridge_verifier_registration_scale_wire_fixture(
+        case: &LeanBridgeVerifierRegistrationScaleWireCase,
+    ) -> BridgeVerifierRegistrationV1 {
+        match case.fixture.as_str() {
+            "valid_registration" => BridgeVerifierRegistrationV1 {
+                source_chain_id: [1u8; 32],
+                verifier_program_hash: [2u8; 32],
+                rules_hash: [3u8; 32],
+                enabled_at_height: 42,
+            },
+            other => panic!("no valid BridgeVerifierRegistrationV1 fixture for {other}"),
+        }
+    }
+
+    fn expected_bridge_verifier_registration_encoded_len(
+        case: &LeanBridgeVerifierRegistrationScaleWireCase,
+    ) -> usize {
+        case.source_chain_id_bytes
+            + case.verifier_program_hash_bytes
+            + case.rules_hash_bytes
+            + case.enabled_at_height_bytes
+    }
+
+    fn verify_lean_bridge_verifier_registration_scale_wire_case(
+        case: &LeanBridgeVerifierRegistrationScaleWireCase,
+    ) {
+        let fixed_fields_ok = case.source_chain_id_bytes == 32
+            && case.verifier_program_hash_bytes == 32
+            && case.rules_hash_bytes == 32
+            && case.enabled_at_height_bytes == 8;
+        let expected_len = expected_bridge_verifier_registration_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean bridge verifier registration SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_bridge_verifier_registration_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production BridgeVerifierRegistrationV1::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<BridgeVerifierRegistrationV1>(
+            &raw,
+            "Lean bridge verifier registration SCALE wire",
+        );
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production BridgeVerifierRegistrationV1 exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production BridgeVerifierRegistrationV1 exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            assert_eq!(args.source_chain_id.len(), case.source_chain_id_bytes);
+            assert_eq!(
+                args.verifier_program_hash.len(),
+                case.verifier_program_hash_bytes
+            );
+            assert_eq!(args.rules_hash.len(), case.rules_hash_bytes);
+            assert_eq!(
+                std::mem::size_of_val(&args.enabled_at_height),
+                case.enabled_at_height_bytes
+            );
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
+    fn lean_generated_shielded_transfer_inline_scale_wire_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_SHIELDED_TRANSFER_INLINE_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean shielded transfer inline SCALE wire vectors");
+        let vectors: LeanShieldedTransferInlineScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean shielded transfer inline SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.shielded_transfer_inline_scale_wire_cases.is_empty(),
+            "Lean shielded transfer inline SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.shielded_transfer_inline_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_shielded_transfer_inline_scale_wire_case(case);
+        }
+    }
+
+    fn expected_shielded_transfer_inline_scale_wire_fixture(
+        case: &LeanShieldedTransferInlineScaleWireCase,
+    ) -> ShieldedTransferInlineArgs {
+        match case.fixture.as_str() {
+            "valid_one_output_inline" => ShieldedTransferInlineArgs {
+                proof: vec![1, 2, 3],
+                commitments: vec![[4u8; 48]],
+                ciphertexts: vec![protocol_shielded_pool::types::EncryptedNote {
+                    ciphertext: [5u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+                    kem_ciphertext: vec![6u8; 32],
+                }],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, 1, 2, 3],
+                binding_hash: [8u8; 64],
+                stablecoin: None,
+                fee: 9,
+            },
+            "valid_empty_inline" => ShieldedTransferInlineArgs {
+                proof: Vec::new(),
+                commitments: Vec::new(),
+                ciphertexts: Vec::new(),
+                anchor: [1u8; 48],
+                balance_slot_asset_ids: [0, 0, 0, 0],
+                binding_hash: [2u8; 64],
+                stablecoin: None,
+                fee: 0,
+            },
+            "valid_stablecoin_inline" => ShieldedTransferInlineArgs {
+                proof: vec![1, 2, 3],
+                commitments: vec![[4u8; 48]],
+                ciphertexts: vec![protocol_shielded_pool::types::EncryptedNote {
+                    ciphertext: [5u8; protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE],
+                    kem_ciphertext: vec![6u8; 32],
+                }],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, 1, 2, 3],
+                binding_hash: [8u8; 64],
+                stablecoin: Some(StablecoinPolicyBinding {
+                    asset_id: 11,
+                    policy_hash: [12u8; 48],
+                    oracle_commitment: [13u8; 48],
+                    attestation_commitment: [14u8; 48],
+                    issuance_delta: 15,
+                    policy_version: 16,
+                }),
+                fee: 9,
+            },
+            other => panic!("no valid ShieldedTransferInlineArgs fixture for {other}"),
+        }
+    }
+
+    fn expected_shielded_transfer_inline_encoded_len(
+        case: &LeanShieldedTransferInlineScaleWireCase,
+    ) -> usize {
+        case.proof_compact_prefix_bytes
+            + case.proof_bytes
+            + case.commitment_compact_prefix_bytes
+            + case.commitment_count * case.commitment_element_bytes
+            + case.ciphertext_compact_prefix_bytes
+            + case.ciphertext_count
+                * (case.encrypted_note_ciphertext_bytes
+                    + case.kem_ciphertext_compact_prefix_bytes
+                    + case.kem_ciphertext_bytes)
+            + case.anchor_bytes
+            + case.balance_slot_bytes
+            + case.binding_hash_bytes
+            + case.stablecoin_option_tag_bytes
+            + case.stablecoin_some_payload_bytes
+            + case.fee_bytes
+    }
+
+    fn verify_lean_shielded_transfer_inline_scale_wire_case(
+        case: &LeanShieldedTransferInlineScaleWireCase,
+    ) {
+        let fixed_fields_ok = case.commitment_element_bytes == 48
+            && case.encrypted_note_ciphertext_bytes
+                == protocol_shielded_pool::types::ENCRYPTED_NOTE_SIZE
+            && case.anchor_bytes == 48
+            && case.balance_slot_count == transaction_core::constants::BALANCE_SLOTS
+            && case.balance_slot_bytes == transaction_core::constants::BALANCE_SLOTS * 8
+            && case.binding_hash_bytes == 64
+            && case.stablecoin_option_tag_bytes == 1
+            && case.fee_bytes == 8;
+        let compact_prefixes_ok = case.proof_compact_prefix_canonical
+            && case.commitment_compact_prefix_canonical
+            && case.ciphertext_compact_prefix_canonical
+            && case.kem_ciphertext_compact_prefix_canonical;
+        let expected_len = expected_shielded_transfer_inline_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && compact_prefixes_ok
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean shielded transfer inline SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_shielded_transfer_inline_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production ShieldedTransferInlineArgs::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<ShieldedTransferInlineArgs>(
+            &raw,
+            "Lean shielded transfer inline SCALE wire",
+        );
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production ShieldedTransferInlineArgs exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production ShieldedTransferInlineArgs exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            assert_eq!(args.proof.len(), case.proof_bytes);
+            assert_eq!(args.commitments.len(), case.commitment_count);
+            assert_eq!(args.ciphertexts.len(), case.ciphertext_count);
+            for commitment in &args.commitments {
+                assert_eq!(commitment.len(), case.commitment_element_bytes);
+            }
+            for note in &args.ciphertexts {
+                assert_eq!(note.ciphertext.len(), case.encrypted_note_ciphertext_bytes);
+                assert_eq!(note.kem_ciphertext.len(), case.kem_ciphertext_bytes);
+            }
+            assert_eq!(args.anchor.len(), case.anchor_bytes);
+            assert_eq!(args.balance_slot_asset_ids.len(), case.balance_slot_count);
+            assert_eq!(case.balance_slot_bytes, case.balance_slot_count * 8);
+            assert_eq!(args.binding_hash.len(), case.binding_hash_bytes);
+            assert_eq!(
+                args.stablecoin.is_some(),
+                case.stablecoin_some_payload_bytes > 0
+            );
+            assert_eq!(std::mem::size_of_val(&args.fee), case.fee_bytes);
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
+    fn lean_generated_shielded_transfer_sidecar_scale_wire_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_SHIELDED_TRANSFER_SIDECAR_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean shielded transfer sidecar SCALE wire vectors");
+        let vectors: LeanShieldedTransferSidecarScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean shielded transfer sidecar SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .shielded_transfer_sidecar_scale_wire_cases
+                .is_empty(),
+            "Lean shielded transfer sidecar SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.shielded_transfer_sidecar_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_shielded_transfer_sidecar_scale_wire_case(case);
+        }
+    }
+
+    fn expected_shielded_transfer_sidecar_scale_wire_fixture(
+        case: &LeanShieldedTransferSidecarScaleWireCase,
+    ) -> ShieldedTransferSidecarArgs {
+        match case.fixture.as_str() {
+            "valid_one_output_sidecar" => ShieldedTransferSidecarArgs {
+                proof: vec![1, 2, 3],
+                commitments: vec![[4u8; 48]],
+                ciphertext_hashes: vec![[5u8; 48]],
+                ciphertext_sizes: vec![6],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, 1, 2, 3],
+                binding_hash: [8u8; 64],
+                stablecoin: None,
+                fee: 9,
+            },
+            "valid_empty_sidecar" => ShieldedTransferSidecarArgs {
+                proof: Vec::new(),
+                commitments: Vec::new(),
+                ciphertext_hashes: Vec::new(),
+                ciphertext_sizes: Vec::new(),
+                anchor: [1u8; 48],
+                balance_slot_asset_ids: [0, 0, 0, 0],
+                binding_hash: [2u8; 64],
+                stablecoin: None,
+                fee: 0,
+            },
+            "valid_stablecoin_sidecar" => ShieldedTransferSidecarArgs {
+                proof: vec![1, 2, 3],
+                commitments: vec![[4u8; 48]],
+                ciphertext_hashes: vec![[5u8; 48]],
+                ciphertext_sizes: vec![6],
+                anchor: [7u8; 48],
+                balance_slot_asset_ids: [0, 1, 2, 3],
+                binding_hash: [8u8; 64],
+                stablecoin: Some(StablecoinPolicyBinding {
+                    asset_id: 11,
+                    policy_hash: [12u8; 48],
+                    oracle_commitment: [13u8; 48],
+                    attestation_commitment: [14u8; 48],
+                    issuance_delta: 15,
+                    policy_version: 16,
+                }),
+                fee: 9,
+            },
+            other => panic!("no valid ShieldedTransferSidecarArgs fixture for {other}"),
+        }
+    }
+
+    fn expected_shielded_transfer_sidecar_encoded_len(
+        case: &LeanShieldedTransferSidecarScaleWireCase,
+    ) -> usize {
+        case.proof_compact_prefix_bytes
+            + case.proof_bytes
+            + case.commitment_compact_prefix_bytes
+            + case.commitment_count * case.commitment_element_bytes
+            + case.ciphertext_hash_compact_prefix_bytes
+            + case.ciphertext_hash_count * case.ciphertext_hash_element_bytes
+            + case.ciphertext_size_compact_prefix_bytes
+            + case.ciphertext_size_count * case.ciphertext_size_element_bytes
+            + case.anchor_bytes
+            + case.balance_slot_bytes
+            + case.binding_hash_bytes
+            + case.stablecoin_option_tag_bytes
+            + case.stablecoin_some_payload_bytes
+            + case.fee_bytes
+    }
+
+    fn verify_lean_shielded_transfer_sidecar_scale_wire_case(
+        case: &LeanShieldedTransferSidecarScaleWireCase,
+    ) {
+        let fixed_fields_ok = case.commitment_element_bytes == 48
+            && case.ciphertext_hash_element_bytes == 48
+            && case.ciphertext_size_element_bytes == 4
+            && case.anchor_bytes == 48
+            && case.balance_slot_count == transaction_core::constants::BALANCE_SLOTS
+            && case.balance_slot_bytes == transaction_core::constants::BALANCE_SLOTS * 8
+            && case.binding_hash_bytes == 64
+            && case.stablecoin_option_tag_bytes == 1
+            && case.fee_bytes == 8;
+        let compact_prefixes_ok = case.proof_compact_prefix_canonical
+            && case.commitment_compact_prefix_canonical
+            && case.ciphertext_hash_compact_prefix_canonical
+            && case.ciphertext_size_compact_prefix_canonical;
+        let expected_len = expected_shielded_transfer_sidecar_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && compact_prefixes_ok
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean shielded transfer sidecar SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_shielded_transfer_sidecar_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production ShieldedTransferSidecarArgs::encode",
+                case.name
+            );
+        }
+
+        let actual = decode_scale_exact::<ShieldedTransferSidecarArgs>(
+            &raw,
+            "Lean shielded transfer sidecar SCALE wire",
+        );
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} production ShieldedTransferSidecarArgs exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production ShieldedTransferSidecarArgs exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        if let Ok(args) = actual {
+            assert_eq!(args.proof.len(), case.proof_bytes);
+            assert_eq!(args.commitments.len(), case.commitment_count);
+            assert_eq!(args.ciphertext_hashes.len(), case.ciphertext_hash_count);
+            assert_eq!(args.ciphertext_sizes.len(), case.ciphertext_size_count);
+            for commitment in &args.commitments {
+                assert_eq!(commitment.len(), case.commitment_element_bytes);
+            }
+            for ciphertext_hash in &args.ciphertext_hashes {
+                assert_eq!(ciphertext_hash.len(), case.ciphertext_hash_element_bytes);
+            }
+            for ciphertext_size in &args.ciphertext_sizes {
+                assert_eq!(
+                    std::mem::size_of_val(ciphertext_size),
+                    case.ciphertext_size_element_bytes
+                );
+            }
+            assert_eq!(args.anchor.len(), case.anchor_bytes);
+            assert_eq!(args.balance_slot_asset_ids.len(), case.balance_slot_count);
+            assert_eq!(case.balance_slot_bytes, case.balance_slot_count * 8);
+            assert_eq!(args.binding_hash.len(), case.binding_hash_bytes);
+            assert_eq!(
+                args.stablecoin.is_some(),
+                case.stablecoin_some_payload_bytes > 0
+            );
+            assert_eq!(std::mem::size_of_val(&args.fee), case.fee_bytes);
+            assert_eq!(args.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
     fn lean_generated_resource_budget_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_RESOURCE_BUDGET_ADMISSION_VECTORS") else {
             eprintln!(
@@ -23490,6 +25002,96 @@ mod tests {
         assert_eq!(
             actual_rejection, case.expected_rejection,
             "{} native staged-proof budget admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_preheavy_resource_bound_surface_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS not set; skipping generated Lean pre-heavy resource-bound surface vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean pre-heavy resource-bound surface vectors");
+        let vectors: LeanPreHeavyResourceBoundSurfaceVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean pre-heavy resource-bound surface vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.staged_proof_upload_preheavy_cases.is_empty(),
+            "Lean staged-proof pre-heavy cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.staged_proof_upload_preheavy_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_staged_proof_upload_preheavy_case(case);
+        }
+    }
+
+    fn verify_lean_staged_proof_upload_preheavy_case(case: &LeanStagedProofUploadPreHeavyCase) {
+        let metadata_input = NativeProofSidecarMetadataAdmissionInput {
+            binding_hash_present: case.binding_hash_present,
+            binding_hash_valid: case.binding_hash_valid,
+            proof_present: case.proof_present,
+        };
+        let budget_input = NativeStagedProofByteBudgetAdmissionInput {
+            staged_bytes: case.staged_bytes,
+            existing_bytes: case.existing_bytes,
+            proof_bytes: case.proof_bytes,
+            max_bytes: case.max_bytes,
+        };
+        let total = case
+            .staged_bytes
+            .saturating_sub(case.existing_bytes)
+            .saturating_add(case.proof_bytes);
+        assert_eq!(
+            total, case.expected_total_bytes,
+            "{} native staged-proof pre-heavy total drifted from Lean spec",
+            case.name
+        );
+        let decoded_input = NativeProofSidecarDecodedAdmissionInput {
+            proof_bytes: case.decoded_proof_bytes,
+            max_proof_bytes: case.decoded_max_proof_bytes,
+            proof_binding_hash_matches_key: case.proof_binding_hash_matches_key,
+        };
+
+        let (actual_stage, actual_rejection) =
+            match evaluate_native_proof_sidecar_metadata_admission(metadata_input) {
+                Err(rejection) => (
+                    Some("metadata".to_owned()),
+                    Some(rejection.label().to_owned()),
+                ),
+                Ok(()) => match evaluate_native_staged_proof_byte_budget_admission(budget_input) {
+                    Err(rejection) => (
+                        Some("staged_proof_budget".to_owned()),
+                        Some(rejection.label().to_owned()),
+                    ),
+                    Ok(_) => match evaluate_native_proof_sidecar_decoded_admission(decoded_input) {
+                        Err(rejection) => (
+                            Some("decoded".to_owned()),
+                            Some(rejection.label().to_owned()),
+                        ),
+                        Ok(()) => (None, None),
+                    },
+                },
+            };
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native staged-proof pre-heavy validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_stage, case.expected_rejection_stage,
+            "{} native staged-proof pre-heavy rejection stage drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native staged-proof pre-heavy rejection label drifted from Lean spec",
             case.name
         );
     }
@@ -26061,6 +27663,56 @@ mod tests {
     }
 
     #[test]
+    fn transfer_nullifier_row_derivation_distinguishes_pending_and_action_duplicates() {
+        let nullifier = [47u8; 48];
+        let mut pending = BTreeSet::new();
+        pending.insert(nullifier);
+
+        let mut mempool_with_prior_pending = NullifierState::new(BTreeSet::new(), pending.clone());
+        assert_eq!(
+            mempool_transfer_nullifier_admission_state_from_nullifiers(
+                &mut mempool_with_prior_pending,
+                &[nullifier, nullifier],
+            ),
+            NativeTransferNullifierAdmissionState::AlreadyPending
+        );
+
+        let mut mempool_without_prior_pending = NullifierState::default();
+        assert_eq!(
+            mempool_transfer_nullifier_admission_state_from_nullifiers(
+                &mut mempool_without_prior_pending,
+                &[nullifier, nullifier],
+            ),
+            NativeTransferNullifierAdmissionState::Duplicate
+        );
+
+        let mut block_with_prior_pending = NullifierState::new(BTreeSet::new(), pending);
+        assert_eq!(
+            block_transfer_nullifier_admission_state_from_nullifiers(
+                &mut block_with_prior_pending,
+                &[nullifier],
+            ),
+            NativeTransferNullifierAdmissionState::Valid
+        );
+
+        let mut block_working_state = NullifierState::default();
+        assert_eq!(
+            block_transfer_nullifier_admission_state_from_nullifiers(
+                &mut block_working_state,
+                &[nullifier],
+            ),
+            NativeTransferNullifierAdmissionState::Valid
+        );
+        assert_eq!(
+            block_transfer_nullifier_admission_state_from_nullifiers(
+                &mut block_working_state,
+                &[nullifier],
+            ),
+            NativeTransferNullifierAdmissionState::Duplicate
+        );
+    }
+
+    #[test]
     fn action_state_effect_rejects_duplicate_before_memory_mutation() {
         let pow_bits = 0x207f_ffff;
         let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -26359,6 +28011,195 @@ mod tests {
             consensus::types::da_root(std::slice::from_ref(&tx), native_da_params())
                 .expect("consensus DA root"),
             state_da::da_root(&expected_blob, native_da_params()).expect("expected DA root")
+        );
+    }
+
+    #[test]
+    fn materialized_sidecar_da_blob_excludes_inbound_bridge_replay_rows() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [82u8; 48], [83u8; 48], 0);
+        let inbound = test_inbound_bridge_action(b"da blob replay separation");
+        let inbound_replay_key = bridge_inbound_replay_key_from_action(&inbound)
+            .expect("project inbound bridge replay key")
+            .expect("inbound bridge replay key");
+        assert_eq!(
+            bridge_inbound_replay_key_from_action(&transfer).expect("transfer replay projection"),
+            None
+        );
+
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        insert_test_sidecar_ciphertext(&da_ciphertext_tree, &transfer);
+        let actions = vec![transfer.clone(), inbound.clone()];
+
+        let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &actions)
+            .expect("materialize mixed sidecar/bridge payloads");
+        assert_eq!(materialized.len(), actions.len());
+        let transfer_payload = materialized.first().expect("transfer payload");
+        let inbound_payload = materialized.get(1).expect("inbound bridge payload");
+        assert_eq!(
+            transfer_payload.ciphertexts.len(),
+            transfer.ciphertext_hashes.len()
+        );
+        assert_eq!(transfer_payload.replay_key, None);
+        assert!(inbound_payload.ciphertexts.is_empty());
+        assert_eq!(inbound_payload.replay_key, Some(inbound_replay_key));
+
+        let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &actions)
+            .expect("plan mixed sidecar/bridge effects");
+        assert_eq!(planned.len(), actions.len());
+        let transfer_effect = planned.first().expect("transfer effect");
+        let inbound_effect = planned.get(1).expect("inbound bridge effect");
+        assert_eq!(transfer_effect.ciphertexts, transfer_payload.ciphertexts);
+        assert_eq!(transfer_effect.replay_key, None);
+        assert!(inbound_effect.ciphertexts.is_empty());
+        assert_eq!(inbound_effect.replay_key, Some(inbound_replay_key));
+
+        let projection = admit_native_action_wire_replay_projection(
+            "mixed sidecar DA blob bridge replay separation",
+            &actions,
+            &planned,
+        )
+        .expect("project mixed sidecar/bridge replay rows");
+        assert_eq!(projection.projected_action_count, actions.len());
+        assert_eq!(
+            projection.projected_ciphertext_row_count,
+            transfer.ciphertext_hashes.len()
+        );
+        assert_eq!(projection.projected_bridge_replay_row_count, 1);
+
+        let sidecar_only_payload = materialize_native_action_payloads(
+            &da_ciphertext_tree,
+            std::slice::from_ref(&transfer),
+        )
+        .expect("materialize transfer-only payload")
+        .pop()
+        .expect("one transfer-only payload");
+        assert_eq!(
+            sidecar_only_payload.ciphertexts,
+            transfer_payload.ciphertexts
+        );
+        assert_eq!(sidecar_only_payload.replay_key, None);
+
+        let (mixed_tx, _mixed_artifact) =
+            consensus_tx_and_artifact_from_action(&transfer, transfer_payload)
+                .expect("mixed transfer consensus transaction");
+        let (sidecar_only_tx, _sidecar_only_artifact) =
+            consensus_tx_and_artifact_from_action(&transfer, &sidecar_only_payload)
+                .expect("transfer-only consensus transaction");
+        assert_eq!(mixed_tx.nullifiers, sidecar_only_tx.nullifiers);
+        assert_eq!(mixed_tx.commitments, sidecar_only_tx.commitments);
+        assert_eq!(
+            mixed_tx.ciphertext_hashes,
+            sidecar_only_tx.ciphertext_hashes
+        );
+        assert_eq!(mixed_tx.ciphertexts, sidecar_only_tx.ciphertexts);
+
+        let inbound_tx_err = consensus_tx_and_artifact_from_action(&inbound, inbound_payload)
+            .expect_err("inbound bridge replay rows must not become DA transactions");
+        assert!(
+            inbound_tx_err
+                .to_string()
+                .contains("action is not a shielded transfer"),
+            "unexpected inbound bridge transaction error: {inbound_tx_err}"
+        );
+
+        assert_eq!(
+            consensus::types::build_da_blob(std::slice::from_ref(&mixed_tx)),
+            consensus::types::build_da_blob(std::slice::from_ref(&sidecar_only_tx))
+        );
+        assert_eq!(
+            consensus::types::da_root(std::slice::from_ref(&mixed_tx), native_da_params())
+                .expect("mixed consensus DA root"),
+            consensus::types::da_root(std::slice::from_ref(&sidecar_only_tx), native_da_params())
+                .expect("transfer-only consensus DA root")
+        );
+    }
+
+    #[test]
+    fn materialized_sidecar_da_blob_bridge_first_excludes_replay_rows() {
+        let pow_bits = 0x207f_ffff;
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let transfer = test_sidecar_transfer_action(anchor, [84u8; 48], [85u8; 48], 0);
+        let inbound = test_inbound_bridge_action(b"bridge first da blob replay separation");
+        let inbound_replay_key = bridge_inbound_replay_key_from_action(&inbound)
+            .expect("project inbound bridge replay key")
+            .expect("inbound bridge replay key");
+
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        insert_test_sidecar_ciphertext(&da_ciphertext_tree, &transfer);
+        let actions = vec![inbound.clone(), transfer.clone()];
+
+        let materialized = materialize_native_action_payloads(&da_ciphertext_tree, &actions)
+            .expect("materialize bridge-first mixed payloads");
+        assert_eq!(materialized.len(), actions.len());
+        let inbound_payload = materialized.first().expect("inbound bridge payload");
+        let transfer_payload = materialized.get(1).expect("transfer payload");
+        assert!(inbound_payload.ciphertexts.is_empty());
+        assert_eq!(inbound_payload.replay_key, Some(inbound_replay_key));
+        assert_eq!(
+            transfer_payload.ciphertexts.len(),
+            transfer.ciphertext_hashes.len()
+        );
+        assert_eq!(transfer_payload.replay_key, None);
+
+        let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &actions)
+            .expect("plan bridge-first mixed effects");
+        assert_eq!(planned.len(), actions.len());
+        let inbound_effect = planned.first().expect("inbound bridge effect");
+        let transfer_effect = planned.get(1).expect("transfer effect");
+        assert!(inbound_effect.ciphertexts.is_empty());
+        assert_eq!(inbound_effect.replay_key, Some(inbound_replay_key));
+        assert_eq!(transfer_effect.ciphertexts, transfer_payload.ciphertexts);
+        assert_eq!(transfer_effect.replay_key, None);
+
+        let projection = admit_native_action_wire_replay_projection(
+            "bridge-first sidecar DA blob replay separation",
+            &actions,
+            &planned,
+        )
+        .expect("project bridge-first sidecar/bridge replay rows");
+        assert_eq!(projection.projected_action_count, actions.len());
+        assert_eq!(
+            projection.projected_ciphertext_row_count,
+            transfer.ciphertext_hashes.len()
+        );
+        assert_eq!(projection.projected_bridge_replay_row_count, 1);
+
+        let inbound_tx_err = consensus_tx_and_artifact_from_action(&inbound, inbound_payload)
+            .expect_err("bridge-first inbound replay rows must not become DA transactions");
+        assert!(
+            inbound_tx_err
+                .to_string()
+                .contains("action is not a shielded transfer"),
+            "unexpected inbound bridge transaction error: {inbound_tx_err}"
+        );
+
+        let sidecar_only_payload = materialize_native_action_payloads(
+            &da_ciphertext_tree,
+            std::slice::from_ref(&transfer),
+        )
+        .expect("materialize transfer-only payload")
+        .pop()
+        .expect("one transfer-only payload");
+        let (mixed_tx, _mixed_artifact) =
+            consensus_tx_and_artifact_from_action(&transfer, transfer_payload)
+                .expect("bridge-first mixed transfer consensus transaction");
+        let (sidecar_only_tx, _sidecar_only_artifact) =
+            consensus_tx_and_artifact_from_action(&transfer, &sidecar_only_payload)
+                .expect("transfer-only consensus transaction");
+        assert_eq!(mixed_tx.ciphertexts, sidecar_only_tx.ciphertexts);
+        assert_eq!(
+            consensus::types::build_da_blob(std::slice::from_ref(&mixed_tx)),
+            consensus::types::build_da_blob(std::slice::from_ref(&sidecar_only_tx))
+        );
+        assert_eq!(
+            consensus::types::da_root(std::slice::from_ref(&mixed_tx), native_da_params())
+                .expect("bridge-first mixed consensus DA root"),
+            consensus::types::da_root(std::slice::from_ref(&sidecar_only_tx), native_da_params())
+                .expect("transfer-only consensus DA root")
         );
     }
 
@@ -28103,6 +29944,16 @@ mod tests {
     }
 
     #[test]
+    fn candidate_artifact_rejects_custom_proof_kind_route() {
+        let mut artifact = test_candidate_artifact(1);
+        artifact.proof_kind = PoolProofArtifactKind::Custom([0x42u8; 16]);
+
+        let err = validate_candidate_artifact(&artifact)
+            .expect_err("native candidate artifacts must reject custom proof artifact routes");
+        assert!(err.to_string().contains("recursive_block_v2"));
+    }
+
+    #[test]
     fn candidate_artifact_rejects_zero_tx_count() {
         let artifact = test_candidate_artifact(0);
 
@@ -28721,6 +30572,57 @@ mod tests {
         .expect_err("receipt/message mismatch must reject through mint policy");
         assert!(err.to_string().contains("payload mismatch"));
         assert!(err.to_string().contains("receipt_payload_mismatch"));
+    }
+
+    #[test]
+    fn bridge_mint_policy_authorization_precedes_fresh_replay_import() {
+        let replay_key = [0x4du8; 48];
+        let replay_state = InboundReplayState::new(BTreeSet::new(), BTreeSet::from([replay_key]));
+        let input = NativeBridgeMintReplayPolicyInput {
+            inbound_bridge_mint: true,
+            state_deltas_absent: true,
+            receipt_envelope_present: true,
+            receipt_verified: true,
+            receipt_payload_matches: true,
+            replay_state: replay_state.clone(),
+            replay_key,
+            mint_authorized: false,
+            amount_matches_receipt: true,
+            amount_within_bound: true,
+        };
+
+        let rejection = evaluate_native_bridge_mint_replay_policy(input)
+            .expect_err("disabled mint authorization must reject before replay import");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintReplayPolicyRejection::MintNotAuthorized
+        );
+        assert!(replay_state.pending().contains(&replay_key));
+        assert!(!replay_state.consumed().contains(&replay_key));
+    }
+
+    #[test]
+    fn bridge_mint_policy_consumed_replay_still_precedes_authorization() {
+        let replay_key = [0x5eu8; 48];
+        let input = NativeBridgeMintReplayPolicyInput {
+            inbound_bridge_mint: true,
+            state_deltas_absent: true,
+            receipt_envelope_present: true,
+            receipt_verified: true,
+            receipt_payload_matches: true,
+            replay_state: InboundReplayState::new(BTreeSet::from([replay_key]), BTreeSet::new()),
+            replay_key,
+            mint_authorized: false,
+            amount_matches_receipt: true,
+            amount_within_bound: true,
+        };
+
+        let rejection = evaluate_native_bridge_mint_replay_policy(input)
+            .expect_err("consumed replay key must reject before disabled authorization");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
+pub const RECURSIVE_BLOCK_ARTIFACT_BYTES_V2: usize = 522_159;
 pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 1000;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
@@ -2319,9 +2320,41 @@ pub fn verify_block_recursive_v2(
     Ok(expected_public.clone())
 }
 
+pub(crate) fn verify_block_recursive_v2_with_versioned_artifact_cap(
+    artifact: &RecursiveBlockArtifactV2,
+    expected_public: &RecursiveBlockPublicV2,
+    versioned_artifact_bytes: usize,
+) -> Result<RecursiveBlockPublicV2, BlockRecursionError> {
+    let surface = verify_block_recursive_v2_surface_with_versioned_artifact_cap(
+        artifact,
+        expected_public,
+        versioned_artifact_bytes,
+    )?;
+    verify_tree_child_v2(
+        surface.expected_profile,
+        surface.expected_kind,
+        surface.expected_level,
+        &surface.expected_statement,
+        &surface.canonical_proof_bytes,
+    )?;
+    Ok(expected_public.clone())
+}
+
 pub fn verify_block_recursive_v2_surface(
     artifact: &RecursiveBlockArtifactV2,
     expected_public: &RecursiveBlockPublicV2,
+) -> Result<RecursiveBlockV2VerifierSurface, BlockRecursionError> {
+    verify_block_recursive_v2_surface_with_versioned_artifact_cap(
+        artifact,
+        expected_public,
+        RECURSIVE_BLOCK_ARTIFACT_BYTES_V2,
+    )
+}
+
+pub(crate) fn verify_block_recursive_v2_surface_with_versioned_artifact_cap(
+    artifact: &RecursiveBlockArtifactV2,
+    expected_public: &RecursiveBlockPublicV2,
+    versioned_artifact_bytes: usize,
 ) -> Result<RecursiveBlockV2VerifierSurface, BlockRecursionError> {
     if artifact.public != *expected_public {
         return Err(BlockRecursionError::InvalidField(
@@ -2334,6 +2367,15 @@ pub fn verify_block_recursive_v2_surface(
             what: "recursive_block_v2 proof bytes",
             expected: cap,
             actual: artifact.artifact.proof_bytes.len(),
+        });
+    }
+    let actual_artifact_bytes =
+        RECURSIVE_BLOCK_HEADER_BYTES_V2 + cap + recursive_block_public_bytes_v2();
+    if actual_artifact_bytes != versioned_artifact_bytes {
+        return Err(BlockRecursionError::WidthMismatch {
+            what: "recursive_block_v2 versioned artifact bytes",
+            expected: versioned_artifact_bytes,
+            actual: actual_artifact_bytes,
         });
     }
     let expected_kind = expected_root_terminal_kind_v2(expected_public.tx_count)?;

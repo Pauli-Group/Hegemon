@@ -16,6 +16,7 @@ def artifactRejectJson : Option ArtifactReject -> String
   | none => "null"
   | some ArtifactReject.artifactKindMismatch => "\"artifact_kind_mismatch\""
   | some ArtifactReject.verifierProfileMismatch => "\"verifier_profile_mismatch\""
+  | some ArtifactReject.artifactTooLarge => "\"artifact_too_large\""
   | some ArtifactReject.artifactDecodeFailed => "\"artifact_decode_failed\""
   | some ArtifactReject.headerVersionMismatch => "\"header_version_mismatch\""
   | some ArtifactReject.txCountMismatch => "\"tx_count_mismatch\""
@@ -34,6 +35,8 @@ def artifactCaseJson (name : String) (input : ArtifactAdmissionInput) : String :
     ++ "      \"envelope_kind\": \"" ++ artifactKindJson input.envelopeKind ++ "\",\n"
     ++ "      \"verifier_profile_matches\": "
     ++ boolJson input.verifierProfileMatches ++ ",\n"
+    ++ "      \"artifact_bytes_len\": " ++ toString input.artifactBytesLen ++ ",\n"
+    ++ "      \"max_artifact_bytes\": " ++ toString input.maxArtifactBytes ++ ",\n"
     ++ "      \"artifact_decoded\": " ++ boolJson input.artifactDecoded ++ ",\n"
     ++ "      \"header_version_matches\": " ++ boolJson input.headerVersionMatches ++ ",\n"
     ++ "      \"tx_count_matches\": " ++ boolJson input.txCountMatches ++ ",\n"
@@ -63,6 +66,14 @@ def vectorJson : String :=
       { validV2Artifact with envelopeKind := ArtifactKind.receiptRoot } ++ ",\n"
     ++ artifactCaseJson "profile-mismatch-rejected"
       { validV2Artifact with verifierProfileMatches := false } ++ ",\n"
+    ++ artifactCaseJson "artifact-exact-limit-accepted"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes
+      } ++ ",\n"
+    ++ artifactCaseJson "artifact-too-large-rejected"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes + 1
+      } ++ ",\n"
     ++ artifactCaseJson "decode-failed-rejected"
       { validV2Artifact with artifactDecoded := false } ++ ",\n"
     ++ artifactCaseJson "header-version-mismatch-rejected"
@@ -76,6 +87,11 @@ def vectorJson : String :=
     ++ artifactCaseJson "kind-precedes-decode-failure"
       { validV2Artifact with
         envelopeKind := ArtifactKind.receiptRoot,
+        artifactDecoded := false
+      } ++ ",\n"
+    ++ artifactCaseJson "artifact-too-large-precedes-decode-failure"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes + 1,
         artifactDecoded := false
       } ++ "\n"
     ++ "  ],\n"

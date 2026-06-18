@@ -3,6 +3,7 @@ namespace Transaction
 
 def nativeAsset : Nat := 0
 def paddingAsset : Nat := 18446744073709551615
+def paddingFieldAsset : Nat := 4294967294
 def balanceSlotCount : Nat := 4
 
 structure NoteSummary where
@@ -112,6 +113,7 @@ def stablecoinRules (binding : StablecoinBinding) (slots : List BalanceSlot) : B
   if binding.enabled then
     (binding.assetId != nativeAsset)
       && (binding.assetId != paddingAsset)
+      && (binding.assetId != paddingFieldAsset)
       && intEq (slotDelta binding.assetId slots) binding.issuanceDelta
       && allNonNativeZero
           (slots.map fun slot =>
@@ -254,6 +256,17 @@ theorem validBalance_stablecoin_selected_delta
   unfold stablecoinRules at rules
   simp [stablecoinEnabled] at rules
   exact intEq_true_eq rules.left.right
+
+theorem validBalance_stablecoin_padding_field_alias_rejected
+    {witness : BalanceWitness} {slots : List BalanceSlot}
+    (slotsEq : balanceSlots witness = some slots)
+    (valid : validBalance witness = true)
+    (stablecoinEnabled : witness.stablecoin.enabled = true) :
+    witness.stablecoin.assetId ≠ paddingFieldAsset := by
+  intro alias
+  have rules := validBalance_stablecoin_rules slotsEq valid
+  unfold stablecoinRules at rules
+  simp [stablecoinEnabled, alias] at rules
 
 theorem validBalance_stablecoin_non_selected_non_native_delta_zero
     {witness : BalanceWitness} {slots : List BalanceSlot} {assetId : Nat}

@@ -7,8 +7,21 @@ namespace Wallet
 namespace NoteCiphertextWire
 
 def chainCiphertextSize : Nat := 579
+def noteEncryptionVersion : Nat := 3
 def mlKemCiphertextLen : Nat := 1568
 def cryptoSuiteGamma : Nat := 3
+def noteCiphertextKemRandomnessLen : Nat := 32
+def noteCiphertextAeadKeyLen : Nat := 32
+def noteCiphertextAeadNonceLen : Nat := 12
+def noteCiphertextAeadTagLen : Nat := 16
+def noteCiphertextPlaintextPayloadLen : Nat := 112
+def noteCiphertextMetadataAadLen : Nat := 7
+def walletAeadKdfDomainTag : List Byte :=
+  asciiBytes "wallet-aead"
+def noteAeadPayloadLabel : List Byte :=
+  asciiBytes "note-aead"
+def memoAeadPayloadLabel : List Byte :=
+  asciiBytes "memo-aead"
 
 def chainCompactKemLen : List Byte :=
   u16le (mlKemCiphertextLen * 4 + 1)
@@ -48,6 +61,9 @@ def readU16 : List Byte -> Option (Nat × List Byte) :=
 
 def readU32 : List Byte -> Option (Nat × List Byte) :=
   readNat 4
+
+def productionAadBytes (summary : NoteCiphertextSummary) : List Byte :=
+  [summary.version] ++ u16le summary.cryptoSuite ++ u32le summary.diversifierIndex
 
 def lastOrZero : List Byte -> Byte
   | [] => 0
@@ -119,15 +135,21 @@ def parseChainContainer (input : List Byte) : Option NoteCiphertextSummary := do
   let rest4 ← skipBytes notePayloadLen rest3
   let (memoPayloadLen, rest5) ← readU32 rest4
   let rest6 ← skipBytes memoPayloadLen rest5
-  if cryptoSuite = cryptoSuiteGamma && rest6.all (fun byteValue => byteValue = 0) then
-    some {
-      version,
-      cryptoSuite,
-      diversifierIndex,
-      kemLen := mlKemCiphertextLen,
-      notePayloadLen,
-      memoPayloadLen
-    }
+  if version = noteEncryptionVersion then
+    if cryptoSuite = cryptoSuiteGamma then
+      if rest6.all (fun byteValue => byteValue = 0) then
+        some {
+          version,
+          cryptoSuite,
+          diversifierIndex,
+          kemLen := mlKemCiphertextLen,
+          notePayloadLen,
+          memoPayloadLen
+        }
+      else
+        none
+    else
+      none
   else
     none
 
@@ -344,6 +366,23 @@ def chainNonzeroPaddingWire : List Byte :=
 def daNonzeroPaddingWire : List Byte :=
   chainNonzeroPaddingContainer ++ sampleKemCiphertext
 
+def chainWrongVersionContainer : List Byte :=
+  let headBytes :=
+    [4]
+      ++ u16le cryptoSuiteGamma
+      ++ u32le 7
+      ++ u32le sampleNotePayload.length
+      ++ sampleNotePayload
+      ++ u32le sampleMemoPayload.length
+      ++ sampleMemoPayload;
+  headBytes ++ List.replicate (chainCiphertextSize - headBytes.length) 0
+
+def chainWrongVersionWire : List Byte :=
+  chainWrongVersionContainer ++ chainCompactKemLen ++ sampleKemCiphertext
+
+def daWrongVersionWire : List Byte :=
+  chainWrongVersionContainer ++ sampleKemCiphertext
+
 def chainNoncanonicalCompactWire : List Byte :=
   validChainContainer
     ++ u32le (mlKemCiphertextLen * 4 + 2)
@@ -391,6 +430,20 @@ theorem alternate_chain_da_projection :
       some alternateValidChainDaBytes := by
   decide
 
+theorem valid_chain_da_projection_parses_as_da_same_summary :
+    ∃ daBytes,
+      projectChainDaBytes validChainWire = some daBytes
+        ∧ parseDaNoteCiphertext daBytes =
+          parseChainNoteCiphertext validChainWire := by
+  exact ⟨validChainDaBytes, by decide, by decide⟩
+
+theorem alternate_chain_da_projection_parses_as_da_same_summary :
+    ∃ daBytes,
+      projectChainDaBytes alternateValidChainWire = some daBytes
+        ∧ parseDaNoteCiphertext daBytes =
+          parseChainNoteCiphertext alternateValidChainWire := by
+  exact ⟨alternateValidChainDaBytes, by decide, by decide⟩
+
 theorem valid_chain_da_projection_length :
     validChainDaBytes.length =
       chainCiphertextSize + mlKemCiphertextLen := by
@@ -422,6 +475,10 @@ theorem chain_nonzero_padding_rejects :
     parseChainNoteCiphertext chainNonzeroPaddingWire = none := by
   decide
 
+theorem chain_wrong_version_rejects :
+    parseChainNoteCiphertext chainWrongVersionWire = none := by
+  decide
+
 theorem chain_noncanonical_compact_kem_length_rejects :
     parseChainNoteCiphertext chainNoncanonicalCompactWire = none := by
   decide
@@ -448,6 +505,10 @@ theorem da_memo_overrun_rejects :
 
 theorem da_nonzero_padding_rejects :
     parseDaNoteCiphertext daNonzeroPaddingWire = none := by
+  decide
+
+theorem da_wrong_version_rejects :
+    parseDaNoteCiphertext daWrongVersionWire = none := by
   decide
 
 theorem da_truncated_kem_rejects :
@@ -581,13 +642,68 @@ theorem parsed_chain_container_has_gamma_suite_and_fixed_kem
                               simp [skipMemoEq] at parsed
                           | some rest6 =>
                               simp [skipMemoEq] at parsed
-                              by_cases accepted :
-                                  cryptoSuite = cryptoSuiteGamma
-                                    ∧ ∀ byteValue, byteValue ∈ rest6 -> byteValue = 0
-                              · simp [accepted] at parsed
-                                cases parsed.right
-                                exact ⟨rfl, rfl⟩
-                              · simp [accepted] at parsed
+                              by_cases versionMatches :
+                                  version = noteEncryptionVersion
+                              · by_cases suiteMatches : cryptoSuite = cryptoSuiteGamma
+                                · simp [versionMatches, suiteMatches] at parsed
+                                  rw [← parsed.right]
+                                  exact ⟨rfl, rfl⟩
+                                · simp [versionMatches, suiteMatches] at parsed
+                              · simp [versionMatches] at parsed
+
+theorem parsed_chain_container_has_supported_version
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseChainContainer input = some summary) :
+    summary.version = noteEncryptionVersion := by
+  unfold parseChainContainer at parsed
+  cases readU8Eq : readU8 input with
+  | none =>
+      simp [readU8Eq] at parsed
+  | some versionRest =>
+      rcases versionRest with ⟨version, rest0⟩
+      simp [readU8Eq] at parsed
+      cases readSuiteEq : readU16 rest0 with
+      | none =>
+          simp [readSuiteEq] at parsed
+      | some suiteRest =>
+          rcases suiteRest with ⟨cryptoSuite, rest1⟩
+          simp [readSuiteEq] at parsed
+          cases readDivEq : readU32 rest1 with
+          | none =>
+              simp [readDivEq] at parsed
+          | some diversifierRest =>
+              rcases diversifierRest with ⟨diversifierIndex, rest2⟩
+              simp [readDivEq] at parsed
+              cases readNoteEq : readU32 rest2 with
+              | none =>
+                  simp [readNoteEq] at parsed
+              | some noteRest =>
+                  rcases noteRest with ⟨notePayloadLen, rest3⟩
+                  simp [readNoteEq] at parsed
+                  cases skipNoteEq : skipBytes notePayloadLen rest3 with
+                  | none =>
+                      simp [skipNoteEq] at parsed
+                  | some rest4 =>
+                      simp [skipNoteEq] at parsed
+                      cases readMemoEq : readU32 rest4 with
+                      | none =>
+                          simp [readMemoEq] at parsed
+                      | some memoRest =>
+                          rcases memoRest with ⟨memoPayloadLen, rest5⟩
+                          simp [readMemoEq] at parsed
+                          cases skipMemoEq : skipBytes memoPayloadLen rest5 with
+                          | none =>
+                              simp [skipMemoEq] at parsed
+                          | some rest6 =>
+                              simp [skipMemoEq] at parsed
+                              by_cases versionMatches :
+                                  version = noteEncryptionVersion
+                              · by_cases suiteMatches : cryptoSuite = cryptoSuiteGamma
+                                · simp [versionMatches, suiteMatches] at parsed
+                                  rw [← parsed.right]
+                                · simp [versionMatches, suiteMatches] at parsed
+                              · simp [versionMatches] at parsed
 
 theorem parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem
     {input : List Byte}
@@ -658,6 +774,77 @@ theorem parsed_da_ciphertext_has_gamma_suite_and_fixed_kem
                   simp at parsed
                   cases parsed
                   exact parsed_chain_container_has_gamma_suite_and_fixed_kem
+                    parsedContainer
+              | cons _ _ =>
+                  simp at parsed
+
+theorem parsed_chain_ciphertext_has_supported_version
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    summary.version = noteEncryptionVersion := by
+  unfold parseChainNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      simp [takeEq] at parsed
+      cases parsedContainer : parseChainContainer container with
+      | none =>
+          simp [parsedContainer] at parsed
+      | some containerSummary =>
+          simp [parsedContainer] at parsed
+          cases compactEq : parseCompactLen rest0 with
+          | none =>
+              simp [compactEq] at parsed
+          | some kemRest =>
+              rcases kemRest with ⟨kemLen, rest1⟩
+              simp [compactEq] at parsed
+              by_cases kemMatches : kemLen = mlKemCiphertextLen
+              · subst kemLen
+                cases skipKemEq : skipBytes mlKemCiphertextLen rest1 with
+                | none =>
+                    simp [skipKemEq] at parsed
+                | some rest2 =>
+                    simp [skipKemEq] at parsed
+                    cases rest2 with
+                    | nil =>
+                        simp at parsed
+                        cases parsed
+                        exact parsed_chain_container_has_supported_version
+                          parsedContainer
+                    | cons _ _ =>
+                        simp at parsed
+              · simp [kemMatches] at parsed
+
+theorem parsed_da_ciphertext_has_supported_version
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseDaNoteCiphertext input = some summary) :
+    summary.version = noteEncryptionVersion := by
+  unfold parseDaNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      simp [takeEq] at parsed
+      cases parsedContainer : parseChainContainer container with
+      | none =>
+          simp [parsedContainer] at parsed
+      | some containerSummary =>
+          simp [parsedContainer] at parsed
+          cases skipKemEq : skipBytes mlKemCiphertextLen rest0 with
+          | none =>
+              simp [skipKemEq] at parsed
+          | some rest1 =>
+              simp [skipKemEq] at parsed
+              cases rest1 with
+              | nil =>
+                  simp at parsed
+                  cases parsed
+                  exact parsed_chain_container_has_supported_version
                     parsedContainer
               | cons _ _ =>
                   simp at parsed
@@ -784,6 +971,337 @@ theorem parsed_chain_ciphertext_has_projected_da_bytes_of_bounded
     decide
   rw [wireLength, compactBytes]
   omega
+
+structure ChainDaProjectionBoundaryFacts
+    (chainWire daBytes : List Byte)
+    (summary : NoteCiphertextSummary) : Prop where
+  parsedChainWire :
+    parseChainNoteCiphertext chainWire = some summary
+  projectedDaBytes :
+    projectChainDaBytes chainWire = some daBytes
+  projectedDaParsesAsSameSummary :
+    parseDaNoteCiphertext daBytes = some summary
+  fixedChainWireLength :
+    chainWire.length =
+      chainCiphertextSize + chainCompactKemLen.length + mlKemCiphertextLen
+  fixedDaPreimageLength :
+    daBytes.length = chainCiphertextSize + mlKemCiphertextLen
+  supportedVersion :
+    summary.version = noteEncryptionVersion
+  chainAndDaFormat :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen
+
+structure ChainDaHashCommitmentBoundaryFacts
+    (chainWire daBytes publicCiphertextHash : List Byte)
+    (summary : NoteCiphertextSummary)
+    (ciphertextHashMatches : List Byte -> List Byte -> Prop) : Prop where
+  projectionBoundary :
+    ChainDaProjectionBoundaryFacts chainWire daBytes summary
+  ciphertextHashCommitsToDaBytes :
+    ciphertextHashMatches daBytes publicCiphertextHash
+
+structure NoteCiphertextProductionWireProfile
+    (summary : NoteCiphertextSummary) : Prop where
+  supportedVersion :
+    summary.version = noteEncryptionVersion
+  gammaSuiteAndFixedKem :
+    summary.cryptoSuite = cryptoSuiteGamma
+      ∧ summary.kemLen = mlKemCiphertextLen
+  chainCiphertextSizePinned :
+    chainCiphertextSize = 579
+  chainCompactKemLenCanonical :
+    chainCompactKemLen = u16le (mlKemCiphertextLen * 4 + 1)
+  kemRandomnessLenPinned :
+    noteCiphertextKemRandomnessLen = 32
+  aeadKeyLenPinned :
+    noteCiphertextAeadKeyLen = 32
+  aeadNonceLenPinned :
+    noteCiphertextAeadNonceLen = 12
+  aeadTagLenPinned :
+    noteCiphertextAeadTagLen = 16
+  plaintextPayloadLenPinned :
+    noteCiphertextPlaintextPayloadLen = 112
+  walletAeadKdfDomainTagPinned :
+    walletAeadKdfDomainTag = asciiBytes "wallet-aead"
+  noteAeadPayloadLabelPinned :
+    noteAeadPayloadLabel = asciiBytes "note-aead"
+  memoAeadPayloadLabelPinned :
+    memoAeadPayloadLabel = asciiBytes "memo-aead"
+  noteAndMemoPayloadLabelsDistinct :
+    noteAeadPayloadLabel ≠ memoAeadPayloadLabel
+  productionAadLength :
+    (productionAadBytes summary).length = noteCiphertextMetadataAadLen
+
+structure NoteCiphertextMalformedFailClosedFacts : Prop where
+  cryptoTruncatedAfterKemRejected :
+    parseCryptoNoteCiphertext cryptoTruncatedWire = none
+  cryptoTrailingByteRejected :
+    parseCryptoNoteCiphertext cryptoTrailingWire = none
+  chainMemoOverrunRejected :
+    parseChainNoteCiphertext chainMemoOverrunWire = none
+  chainNonzeroPaddingRejected :
+    parseChainNoteCiphertext chainNonzeroPaddingWire = none
+  chainWrongVersionRejected :
+    parseChainNoteCiphertext chainWrongVersionWire = none
+  chainNoncanonicalCompactKemLengthRejected :
+    parseChainNoteCiphertext chainNoncanonicalCompactWire = none
+  chainTrailingByteRejected :
+    parseChainNoteCiphertext chainTrailingWire = none
+  chainNoncanonicalDaProjectionRejected :
+    projectChainDaBytes chainNoncanonicalCompactWire = none
+  chainTrailingDaProjectionRejected :
+    projectChainDaBytes chainTrailingWire = none
+  daMemoOverrunRejected :
+    parseDaNoteCiphertext daMemoOverrunWire = none
+  daNonzeroPaddingRejected :
+    parseDaNoteCiphertext daNonzeroPaddingWire = none
+  daWrongVersionRejected :
+    parseDaNoteCiphertext daWrongVersionWire = none
+  daTruncatedKemRejected :
+    parseDaNoteCiphertext daTruncatedWire = none
+  daTrailingByteRejected :
+    parseDaNoteCiphertext daTrailingWire = none
+
+theorem note_ciphertext_wire_malformed_fixtures_fail_closed :
+    NoteCiphertextMalformedFailClosedFacts := by
+  exact {
+    cryptoTruncatedAfterKemRejected :=
+      crypto_truncated_after_kem_rejects
+    cryptoTrailingByteRejected :=
+      crypto_trailing_byte_rejects
+    chainMemoOverrunRejected :=
+      chain_memo_overrun_rejects
+    chainNonzeroPaddingRejected :=
+      chain_nonzero_padding_rejects
+    chainWrongVersionRejected :=
+      chain_wrong_version_rejects
+    chainNoncanonicalCompactKemLengthRejected :=
+      chain_noncanonical_compact_kem_length_rejects
+    chainTrailingByteRejected :=
+      chain_trailing_byte_rejects
+    chainNoncanonicalDaProjectionRejected :=
+      chain_noncanonical_compact_kem_length_da_projection_rejects
+    chainTrailingDaProjectionRejected :=
+      chain_trailing_byte_da_projection_rejects
+    daMemoOverrunRejected :=
+      da_memo_overrun_rejects
+    daNonzeroPaddingRejected :=
+      da_nonzero_padding_rejects
+    daWrongVersionRejected :=
+      da_wrong_version_rejects
+    daTruncatedKemRejected :=
+      da_truncated_kem_rejects
+    daTrailingByteRejected :=
+      da_trailing_byte_rejects
+  }
+
+theorem parsed_chain_ciphertext_binds_production_wire_profile
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    NoteCiphertextProductionWireProfile summary := by
+  exact {
+    supportedVersion :=
+      parsed_chain_ciphertext_has_supported_version parsed
+    gammaSuiteAndFixedKem :=
+      parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem parsed
+    chainCiphertextSizePinned := by rfl
+    chainCompactKemLenCanonical := by rfl
+    kemRandomnessLenPinned := by rfl
+    aeadKeyLenPinned := by rfl
+    aeadNonceLenPinned := by rfl
+    aeadTagLenPinned := by rfl
+    plaintextPayloadLenPinned := by rfl
+    walletAeadKdfDomainTagPinned := by rfl
+    noteAeadPayloadLabelPinned := by rfl
+    memoAeadPayloadLabelPinned := by rfl
+    noteAndMemoPayloadLabelsDistinct := by decide
+    productionAadLength := by
+      simp [
+        productionAadBytes,
+        noteCiphertextMetadataAadLen,
+        u16le_length,
+        u32le_length
+      ]
+  }
+
+theorem parse_da_note_ciphertext_of_container_and_fixed_kem
+    {container kemBytes : List Byte}
+    {summary : NoteCiphertextSummary}
+    (containerLength : container.length = chainCiphertextSize)
+    (kemLength : kemBytes.length = mlKemCiphertextLen)
+    (parsedContainer : parseChainContainer container = some summary) :
+    parseDaNoteCiphertext (container ++ kemBytes) = some summary := by
+  have kemDrop :
+      kemBytes.drop mlKemCiphertextLen = [] := by
+    rw [← kemLength]
+    simp
+  unfold parseDaNoteCiphertext
+  simp [
+    takeBytes,
+    skipBytes,
+    containerLength,
+    kemLength,
+    kemDrop,
+    parsedContainer
+  ]
+
+theorem parsed_chain_ciphertext_projected_da_parses_same_summary_of_bounded
+    {input : List Byte}
+    {summary : NoteCiphertextSummary}
+    (bounded : bytesBounded input)
+    (parsed : parseChainNoteCiphertext input = some summary) :
+    ∃ daBytes,
+      projectChainDaBytes input = some daBytes
+        ∧ parseDaNoteCiphertext daBytes = some summary
+        ∧ daBytes.length = chainCiphertextSize + mlKemCiphertextLen := by
+  unfold parseChainNoteCiphertext at parsed
+  cases takeEq : takeBytes chainCiphertextSize input with
+  | none =>
+      simp [takeEq] at parsed
+  | some containerRest =>
+      rcases containerRest with ⟨container, rest0⟩
+      have inputLen := takeBytes_some_length takeEq
+      have containerEq : input.take chainCiphertextSize = container := by
+        unfold takeBytes at takeEq
+        split at takeEq
+        · simp at takeEq
+          exact takeEq.left
+        · cases takeEq
+      have containerLen : container.length = chainCiphertextSize :=
+        takeBytes_some_taken_length takeEq
+      have rest0Bounded := takeBytes_some_rest_bounded bounded takeEq
+      simp [takeEq] at parsed
+      cases parsedContainer : parseChainContainer container with
+      | none =>
+          simp [parsedContainer] at parsed
+      | some containerSummary =>
+          simp [parsedContainer] at parsed
+          cases compactEq : parseCompactLen rest0 with
+          | none =>
+              simp [compactEq] at parsed
+          | some kemRest =>
+              rcases kemRest with ⟨kemLen, rest1⟩
+              simp [compactEq] at parsed
+              by_cases kemMatches : kemLen = mlKemCiphertextLen
+              · subst kemLen
+                cases skipEq : skipBytes mlKemCiphertextLen rest1 with
+                | none =>
+                    simp [skipEq] at parsed
+                | some rest2 =>
+                    simp [skipEq] at parsed
+                    cases rest2 with
+                    | nil =>
+                        simp at parsed
+                        cases parsed
+                        let daBytes :=
+                          input.take chainCiphertextSize
+                            ++ input.drop
+                              (chainCiphertextSize + chainCompactKemLen.length)
+                        have parsedChainAgain :
+                            parseChainNoteCiphertext input =
+                              some summary := by
+                          unfold parseChainNoteCiphertext
+                          simp [takeEq, parsedContainer, compactEq, skipEq]
+                        have projected :
+                            projectChainDaBytes input = some daBytes := by
+                          unfold projectChainDaBytes
+                          simp [parsedChainAgain, daBytes]
+                        have compactBytes :
+                            chainCompactKemLen.length = 2 := by
+                          decide
+                        have wireLength :
+                            input.length =
+                              chainCiphertextSize
+                                + chainCompactKemLen.length
+                                + mlKemCiphertextLen :=
+                          parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+                            bounded
+                            parsedChainAgain
+                        have daLen :
+                            daBytes.length =
+                              chainCiphertextSize + mlKemCiphertextLen := by
+                          unfold daBytes
+                          rw [List.length_append, List.length_take, List.length_drop]
+                          rw [wireLength, compactBytes]
+                          omega
+                        have kemPartLen :
+                            (input.drop
+                              (chainCiphertextSize
+                                + chainCompactKemLen.length)).length =
+                              mlKemCiphertextLen := by
+                          rw [List.length_drop, wireLength, compactBytes]
+                          omega
+                        have parsedDa :
+                            parseDaNoteCiphertext daBytes =
+                              some summary := by
+                          unfold daBytes
+                          rw [containerEq]
+                          exact
+                            parse_da_note_ciphertext_of_container_and_fixed_kem
+                              containerLen
+                              kemPartLen
+                              parsedContainer
+                        exact ⟨daBytes, projected, parsedDa, daLen⟩
+                    | cons _ _ =>
+                        simp at parsed
+              · simp [kemMatches] at parsed
+
+theorem accepted_chain_ciphertext_binds_da_projection_boundary_of_bounded
+    {input daBytes : List Byte}
+    {summary : NoteCiphertextSummary}
+    (bounded : bytesBounded input)
+    (parsed : parseChainNoteCiphertext input = some summary)
+    (projected : projectChainDaBytes input = some daBytes) :
+    ChainDaProjectionBoundaryFacts input daBytes summary := by
+  rcases
+      parsed_chain_ciphertext_projected_da_parses_same_summary_of_bounded
+        bounded
+        parsed with
+    ⟨projectedDaBytes, projectedEq, parsedDa, daLen⟩
+  have daBytesEq : daBytes = projectedDaBytes := by
+    rw [projected] at projectedEq
+    cases projectedEq
+    rfl
+  subst daBytes
+  exact {
+    parsedChainWire := parsed
+    projectedDaBytes := projectedEq
+    projectedDaParsesAsSameSummary := parsedDa
+    fixedChainWireLength :=
+      parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
+        bounded
+        parsed
+    fixedDaPreimageLength := daLen
+    supportedVersion :=
+      parsed_chain_ciphertext_has_supported_version parsed
+    chainAndDaFormat :=
+      parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem parsed
+  }
+
+theorem accepted_chain_ciphertext_binds_da_hash_preimage_of_bounded
+    {input daBytes publicCiphertextHash : List Byte}
+    {summary : NoteCiphertextSummary}
+    {ciphertextHashMatches : List Byte -> List Byte -> Prop}
+    (bounded : bytesBounded input)
+    (parsed : parseChainNoteCiphertext input = some summary)
+    (projected : projectChainDaBytes input = some daBytes)
+    (hashMatches : ciphertextHashMatches daBytes publicCiphertextHash) :
+    ChainDaHashCommitmentBoundaryFacts
+      input
+      daBytes
+      publicCiphertextHash
+      summary
+      ciphertextHashMatches := by
+  exact {
+    projectionBoundary :=
+      accepted_chain_ciphertext_binds_da_projection_boundary_of_bounded
+        bounded
+        parsed
+        projected
+    ciphertextHashCommitsToDaBytes := hashMatches
+  }
 
 end NoteCiphertextWire
 end Wallet

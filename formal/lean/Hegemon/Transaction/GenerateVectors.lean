@@ -87,6 +87,26 @@ def vectorJson : String :=
           fee := 5
           valueBalance := 0
           stablecoin := { enabled := true, assetId := 0, issuanceDelta := 0, policyVersion := 1 } } ++ ",\n"
+    ++ balanceCaseJson "stablecoin-padding-field-alias-rejected"
+        { inputs := [{ assetId := 0, value := 5 }]
+          outputs := [{ assetId := paddingFieldAsset, value := 5 }]
+          fee := 5
+          valueBalance := 0
+          stablecoin :=
+            { enabled := true
+              assetId := paddingFieldAsset
+              issuanceDelta := -5
+              policyVersion := 1 } } ++ ",\n"
+    ++ balanceCaseJson "stablecoin-padding-asset-rejected"
+        { inputs := [{ assetId := 0, value := 5 }]
+          outputs := [{ assetId := paddingAsset, value := 5 }]
+          fee := 5
+          valueBalance := 0
+          stablecoin :=
+            { enabled := true
+              assetId := paddingAsset
+              issuanceDelta := -5
+              policyVersion := 1 } } ++ ",\n"
     ++ balanceCaseJson "too-many-assets-overflows"
         { inputs := [{ assetId := 1, value := 1 }, { assetId := 2, value := 1 }]
           outputs := [{ assetId := 3, value := 1 }, { assetId := 4, value := 1 }]

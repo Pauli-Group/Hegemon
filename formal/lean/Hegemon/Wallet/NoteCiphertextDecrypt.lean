@@ -28,6 +28,8 @@ structure ChainCiphertextDecryptBoundaryFacts
   chainFormat :
     summary.cryptoSuite = cryptoSuiteGamma
       ∧ summary.kemLen = mlKemCiphertextLen
+  supportedVersion :
+    summary.version = noteEncryptionVersion
   fixedChainWireLength :
     wire.length =
       chainCiphertextSize + chainCompactKemLen.length + mlKemCiphertextLen
@@ -35,12 +37,87 @@ structure ChainCiphertextDecryptBoundaryFacts
     ∃ daBytes,
       projectChainDaBytes wire = some daBytes
         ∧ daBytes.length = chainCiphertextSize + mlKemCiphertextLen
+  projectedDaParsesAsSameSummary :
+    ∃ daBytes,
+      projectChainDaBytes wire = some daBytes
+        ∧ parseDaNoteCiphertext daBytes = some summary
+        ∧ daBytes.length = chainCiphertextSize + mlKemCiphertextLen
   metadataMatches :
     summary.version = material.version
       ∧ summary.cryptoSuite = material.cryptoSuite
       ∧ summary.diversifierIndex = material.diversifierIndex
   cryptoAuthenticatesAccepted :
     cryptoAuthenticates = true
+
+structure NoteCiphertextPrimitiveResidualAssumptions where
+  mlKemIndCcaSecurity : Prop
+  aeadCiphertextSecurity : Prop
+  walletKdfDomainSeparation : Prop
+  encryptionRngFreshness : Prop
+
+structure ChainCiphertextDecryptDaHashResidualCertificate
+    (wire daBytes publicCiphertextHash : List Byte)
+    (summary : NoteCiphertextSummary)
+    (material : DecryptMaterialSummary)
+    (cryptoAuthenticates : Bool)
+    (ciphertextHashMatches : List Byte -> List Byte -> Prop)
+    (residuals : NoteCiphertextPrimitiveResidualAssumptions) :
+    Prop where
+  decryptBoundary :
+    ChainCiphertextDecryptBoundaryFacts
+      wire
+      summary
+      material
+      cryptoAuthenticates
+  daHashBoundary :
+    ChainDaHashCommitmentBoundaryFacts
+      wire
+      daBytes
+      publicCiphertextHash
+      summary
+      ciphertextHashMatches
+  mlKemIndCcaSecurity :
+    residuals.mlKemIndCcaSecurity
+  aeadCiphertextSecurity :
+    residuals.aeadCiphertextSecurity
+  walletKdfDomainSeparation :
+    residuals.walletKdfDomainSeparation
+  encryptionRngFreshness :
+    residuals.encryptionRngFreshness
+
+def productionAadBytesFromMaterial
+    (material : DecryptMaterialSummary) : List Byte :=
+  [material.version]
+    ++ u16le material.cryptoSuite
+    ++ u32le material.diversifierIndex
+
+structure ChainCiphertextProductionDecryptEquivalenceFacts
+    (wire daBytes publicCiphertextHash : List Byte)
+    (summary : NoteCiphertextSummary)
+    (material : DecryptMaterialSummary)
+    (cryptoAuthenticates : Bool)
+    (ciphertextHashMatches : List Byte -> List Byte -> Prop)
+    (residuals : NoteCiphertextPrimitiveResidualAssumptions) :
+    Prop where
+  decryptDaHashResidualCertificate :
+    ChainCiphertextDecryptDaHashResidualCertificate
+      wire
+      daBytes
+      publicCiphertextHash
+      summary
+      material
+      cryptoAuthenticates
+      ciphertextHashMatches
+      residuals
+  productionWireProfile :
+    NoteCiphertextProductionWireProfile summary
+  productionAadMatchesDecryptMaterial :
+    productionAadBytes summary = productionAadBytesFromMaterial material
+  productionAadLength :
+    (productionAadBytesFromMaterial material).length =
+      noteCiphertextMetadataAadLen
+  malformedCiphertextsFailClosed :
+    NoteCiphertextMalformedFailClosedFacts
 
 inductive DecryptRejection where
   | versionMismatch
@@ -218,6 +295,8 @@ theorem accepted_chain_ciphertext_decrypt_binds_wire_parser_metadata
     parsedChainWire := parsed
     chainFormat :=
       parsed_chain_ciphertext_has_gamma_suite_and_fixed_kem parsed
+    supportedVersion :=
+      parsed_chain_ciphertext_has_supported_version parsed
     fixedChainWireLength :=
       parsed_chain_ciphertext_has_fixed_wire_length_of_bounded
         bounded
@@ -226,12 +305,128 @@ theorem accepted_chain_ciphertext_decrypt_binds_wire_parser_metadata
       parsed_chain_ciphertext_has_projected_da_bytes_of_bounded
         bounded
         parsed
+    projectedDaParsesAsSameSummary :=
+      parsed_chain_ciphertext_projected_da_parses_same_summary_of_bounded
+        bounded
+        parsed
     metadataMatches :=
       ⟨decryptFacts.left,
         decryptFacts.right.left,
         decryptFacts.right.right.left⟩
     cryptoAuthenticatesAccepted :=
       decryptFacts.right.right.right
+  }
+
+theorem accepted_chain_ciphertext_decrypt_binds_da_hash_and_residuals
+    {wire daBytes publicCiphertextHash : List Byte}
+    {summary : NoteCiphertextSummary}
+    {material : DecryptMaterialSummary}
+    {cryptoAuthenticates : Bool}
+    {ciphertextHashMatches : List Byte -> List Byte -> Prop}
+    {residuals : NoteCiphertextPrimitiveResidualAssumptions}
+    (bounded : bytesBounded wire)
+    (parsed : parseChainNoteCiphertext wire = some summary)
+    (projected : projectChainDaBytes wire = some daBytes)
+    (accepted :
+      evaluateDecrypt
+        {
+          ciphertext := summary,
+          material := material,
+          cryptoAuthenticates := cryptoAuthenticates
+        } = none)
+    (hashMatches : ciphertextHashMatches daBytes publicCiphertextHash)
+    (mlKemAssumption : residuals.mlKemIndCcaSecurity)
+    (aeadAssumption : residuals.aeadCiphertextSecurity)
+    (kdfAssumption : residuals.walletKdfDomainSeparation)
+    (rngAssumption : residuals.encryptionRngFreshness) :
+    ChainCiphertextDecryptDaHashResidualCertificate
+      wire
+      daBytes
+      publicCiphertextHash
+      summary
+      material
+      cryptoAuthenticates
+      ciphertextHashMatches
+      residuals := by
+  exact {
+    decryptBoundary :=
+      accepted_chain_ciphertext_decrypt_binds_wire_parser_metadata
+        bounded
+        parsed
+        accepted
+    daHashBoundary :=
+      accepted_chain_ciphertext_binds_da_hash_preimage_of_bounded
+        bounded
+        parsed
+        projected
+        hashMatches
+    mlKemIndCcaSecurity := mlKemAssumption
+    aeadCiphertextSecurity := aeadAssumption
+    walletKdfDomainSeparation := kdfAssumption
+    encryptionRngFreshness := rngAssumption
+  }
+
+theorem accepted_chain_ciphertext_decrypt_binds_production_serialization_profile
+    {wire daBytes publicCiphertextHash : List Byte}
+    {summary : NoteCiphertextSummary}
+    {material : DecryptMaterialSummary}
+    {cryptoAuthenticates : Bool}
+    {ciphertextHashMatches : List Byte -> List Byte -> Prop}
+    {residuals : NoteCiphertextPrimitiveResidualAssumptions}
+    (bounded : bytesBounded wire)
+    (parsed : parseChainNoteCiphertext wire = some summary)
+    (projected : projectChainDaBytes wire = some daBytes)
+    (accepted :
+      evaluateDecrypt
+        {
+          ciphertext := summary,
+          material := material,
+          cryptoAuthenticates := cryptoAuthenticates
+        } = none)
+    (hashMatches : ciphertextHashMatches daBytes publicCiphertextHash)
+    (mlKemAssumption : residuals.mlKemIndCcaSecurity)
+    (aeadAssumption : residuals.aeadCiphertextSecurity)
+    (kdfAssumption : residuals.walletKdfDomainSeparation)
+    (rngAssumption : residuals.encryptionRngFreshness) :
+    ChainCiphertextProductionDecryptEquivalenceFacts
+      wire
+      daBytes
+      publicCiphertextHash
+      summary
+      material
+      cryptoAuthenticates
+      ciphertextHashMatches
+      residuals := by
+  have decryptFacts :=
+    decrypt_success_implies_metadata_matches accepted
+  rcases decryptFacts with
+    ⟨versionMatches, suiteMatches, diversifierMatches, _cryptoAccepted⟩
+  exact {
+    decryptDaHashResidualCertificate :=
+      accepted_chain_ciphertext_decrypt_binds_da_hash_and_residuals
+        bounded
+        parsed
+        projected
+        accepted
+        hashMatches
+        mlKemAssumption
+        aeadAssumption
+        kdfAssumption
+        rngAssumption
+    productionWireProfile :=
+      parsed_chain_ciphertext_binds_production_wire_profile parsed
+    productionAadMatchesDecryptMaterial := by
+      unfold productionAadBytes productionAadBytesFromMaterial
+      rw [versionMatches, suiteMatches, diversifierMatches]
+    productionAadLength := by
+      simp [
+        productionAadBytesFromMaterial,
+        noteCiphertextMetadataAadLen,
+        u16le_length,
+        u32le_length
+      ]
+    malformedCiphertextsFailClosed :=
+      note_ciphertext_wire_malformed_fixtures_fail_closed
   }
 
 end NoteCiphertextDecrypt

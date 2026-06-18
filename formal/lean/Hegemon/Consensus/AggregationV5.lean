@@ -15,6 +15,7 @@ inductive HeaderReject where
   | unsupportedVersion
   | unsupportedProofFormat
   | unsupportedPublicValuesEncoding
+  | treeArityMismatch
   | statementCommitmentLength
   | statementCommitmentMismatch
   | childCountOutOfRange
@@ -35,6 +36,7 @@ structure HeaderInput where
   fanIn : Nat
   childCount : Nat
   subtreeTxCount : Nat
+  treeArity : Nat
   expectedTxCount : Nat
   treeLevels : Nat
   rootLevel : Nat
@@ -92,6 +94,8 @@ def evaluateHeader (input : HeaderInput) : Option HeaderReject :=
     some HeaderReject.unsupportedProofFormat
   else if input.publicValuesEncoding != publicValuesEncodingV2 then
     some HeaderReject.unsupportedPublicValuesEncoding
+  else if input.treeArity != mergeFanInFloor input.configuredMergeFanIn then
+    some HeaderReject.treeArityMismatch
   else if input.statementCommitmentLen != statementCommitmentBytes then
     some HeaderReject.statementCommitmentLength
   else if input.statementCommitmentMatches = false then
@@ -139,6 +143,7 @@ def validLeafSingletonHeader : HeaderInput :=
     fanIn := 1,
     childCount := 1,
     subtreeTxCount := 1,
+    treeArity := 2,
     expectedTxCount := 1,
     treeLevels := 1,
     rootLevel := 0,
@@ -159,6 +164,7 @@ def validMergeHeader : HeaderInput :=
     fanIn := 2,
     childCount := 2,
     subtreeTxCount := 4,
+    treeArity := 2,
     expectedTxCount := 4,
     treeLevels := 3,
     rootLevel := 2,
@@ -192,6 +198,11 @@ theorem rejects_bad_proof_format :
 theorem rejects_bad_public_values_encoding :
     evaluateHeader { validLeafSingletonHeader with publicValuesEncoding := 1 } =
       some HeaderReject.unsupportedPublicValuesEncoding := by
+  decide
+
+theorem rejects_tree_arity_mismatch :
+    evaluateHeader { validLeafSingletonHeader with treeArity := 3 } =
+      some HeaderReject.treeArityMismatch := by
   decide
 
 theorem rejects_statement_commitment_length :

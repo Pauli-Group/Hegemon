@@ -117,6 +117,10 @@ def vectorJson : String :=
       { baseMintReplayInput with replayState := consumedReplayState } ++ ",\n"
     ++ caseJson "mint-not-authorized-rejected"
       { baseMintReplayInput with mintAuthorized := false } ++ ",\n"
+    ++ caseJson "mint-authorization-precedes-fresh-replay-import"
+      { baseMintReplayInput with
+          replayState := pendingReplayState,
+          mintAuthorized := false } ++ ",\n"
     ++ caseJson "amount-mismatch-rejected"
       { baseMintReplayInput with amountMatchesReceipt := false } ++ ",\n"
     ++ caseJson "amount-out-of-bounds-rejected"

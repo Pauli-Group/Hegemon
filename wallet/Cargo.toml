@@ -40,6 +40,7 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+p3-field = { workspace = true }
 predicates = "3"
 tempfile = "3"
 proptest = "1"

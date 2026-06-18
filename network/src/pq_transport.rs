@@ -323,7 +323,7 @@ mod tests {
         let Some(vectors) = read_pq_wrapper_vectors() else {
             return;
         };
-        assert_eq!(vectors.schema_version, 4);
+        assert_eq!(vectors.schema_version, 8);
 
         let mut matched_cases = 0usize;
         for case in vectors

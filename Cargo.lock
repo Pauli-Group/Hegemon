@@ -5184,6 +5184,7 @@ dependencies = [
  "futures",
  "hex",
  "jsonrpsee",
+ "p3-field",
  "parity-scale-codec",
  "predicates",
  "proptest",

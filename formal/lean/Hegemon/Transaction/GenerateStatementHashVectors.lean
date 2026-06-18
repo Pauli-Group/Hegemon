@@ -38,6 +38,18 @@ def serializedPublicInputsDigestCaseJson
     ++ "      \"expected_valid\": true\n"
     ++ "    }"
 
+def proofDigestCaseJson
+    (name : String)
+    (fields : ProofDigestFields) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"backend_wire_id\": " ++ toString fields.backendWireId ++ ",\n"
+    ++ "      \"proof_bytes_hex\": \"" ++ hexBytes fields.proofBytes ++ "\",\n"
+    ++ "      \"expected_preimage_hex\": \""
+    ++ hexBytes (proofDigestPreimage fields) ++ "\",\n"
+    ++ "      \"expected_valid\": true\n"
+    ++ "    }"
+
 def statementHashCaseJson (name : String) (fields : StatementFields) : String :=
   let preimage := statementPreimage fields
   "    {\n"
@@ -91,6 +103,14 @@ def vectorJson : String :=
         validSerializedPublicInputs ++ ",\n"
     ++ serializedPublicInputsDigestCaseJson "stablecoin-public-inputs-digest"
         stablecoinSerializedPublicInputs ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"proof_digest_cases\": [\n"
+    ++ proofDigestCaseJson "plonky3-proof-digest"
+        plonky3ProofDigestFields ++ ",\n"
+    ++ proofDigestCaseJson "smallwood-proof-digest-binds-backend"
+        smallwoodProofDigestFields ++ ",\n"
+    ++ proofDigestCaseJson "smallwood-proof-digest-binds-proof-bytes"
+        alternateProofBytesDigestFields ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

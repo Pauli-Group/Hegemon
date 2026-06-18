@@ -10,6 +10,7 @@ from pathlib import Path
 
 REJECTION_NAMES = {
     "dependency_audit_missing",
+    "dependency_audit_waiver_gate_missing",
     "formal_core_missing",
     "security_adversarial_missing",
     "native_backend_security_missing",
@@ -20,12 +21,23 @@ REJECTION_NAMES = {
     "release_binary_audit_missing",
     "tag_release_native_backend_review_missing",
     "tag_release_native_backend_posture_missing",
+    "branch_protection_ruleset_missing",
+}
+
+REQUIRED_RULESET_CHECKS = {
+    "dependency-audit",
+    "formal-core",
+    "security-adversarial",
+    "native-backend-security",
+    "release-build",
 }
 
 
 def evaluate(case: dict) -> tuple[bool, str | None]:
     if not case["dependency_audit_job"]:
         return False, "dependency_audit_missing"
+    if not case["dependency_audit_waiver_gate_step"]:
+        return False, "dependency_audit_waiver_gate_missing"
     if not case["formal_core_job"]:
         return False, "formal_core_missing"
     if not case["security_adversarial_job"]:
@@ -46,13 +58,15 @@ def evaluate(case: dict) -> tuple[bool, str | None]:
         return False, "tag_release_native_backend_review_missing"
     if not case["tag_release_native_backend_posture_step"]:
         return False, "tag_release_native_backend_posture_missing"
+    if not case["branch_protection_ruleset_evidence"]:
+        return False, "branch_protection_ruleset_missing"
     return True, None
 
 
 def check_vectors(path: Path) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("schema_version") != 1:
-        raise SystemExit("schema_version must be 1")
+    if data.get("schema_version") != 2:
+        raise SystemExit("schema_version must be 2")
     cases = data.get("ci_release_gate_cases")
     if not isinstance(cases, list) or not cases:
         raise SystemExit("ci_release_gate_cases must be a non-empty list")
@@ -60,6 +74,7 @@ def check_vectors(path: Path) -> None:
         name = case.get("name", "<unnamed>")
         for field in (
             "dependency_audit_job",
+            "dependency_audit_waiver_gate_step",
             "formal_core_job",
             "security_adversarial_job",
             "native_backend_security_job",
@@ -70,6 +85,7 @@ def check_vectors(path: Path) -> None:
             "release_binary_audit_step",
             "tag_release_native_backend_review_step",
             "tag_release_native_backend_posture_step",
+            "branch_protection_ruleset_evidence",
             "expected_valid",
         ):
             if not isinstance(case.get(field), bool):
@@ -107,10 +123,15 @@ def require_contains(name: str, text: str, needle: str) -> None:
 def check_ci_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
     release_build = job_block(workflow, "release-build")
-    job_block(workflow, "dependency-audit")
+    dependency_audit = job_block(workflow, "dependency-audit")
     job_block(workflow, "formal-core")
     job_block(workflow, "security-adversarial")
     job_block(workflow, "native-backend-security")
+    require_contains(
+        "dependency-audit waiver gate",
+        dependency_audit,
+        "./scripts/dependency-audit-gate.sh",
+    )
     require_contains("release-build needs dependency-audit", release_build, "- dependency-audit")
     require_contains("release-build needs formal-core", release_build, "- formal-core")
     require_contains(
@@ -163,11 +184,59 @@ def check_release_workflow(path: Path) -> None:
     print(f"tag release workflow gate passed: {path}")
 
 
+def _collect_required_status_checks(data: object) -> set[str]:
+    contexts: set[str] = set()
+    if not isinstance(data, dict):
+        return contexts
+    direct = data.get("required_status_checks")
+    if isinstance(direct, list):
+        for item in direct:
+            if isinstance(item, str):
+                contexts.add(item)
+            elif isinstance(item, dict) and isinstance(item.get("context"), str):
+                contexts.add(item["context"])
+    for rule in data.get("rules", []):
+        if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+            continue
+        params = rule.get("parameters", {})
+        if not isinstance(params, dict):
+            continue
+        for item in params.get("required_status_checks", []):
+            if isinstance(item, str):
+                contexts.add(item)
+            elif isinstance(item, dict) and isinstance(item.get("context"), str):
+                contexts.add(item["context"])
+    return contexts
+
+
+def check_ruleset_export(path: Path) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if data.get("schema_version") != 1:
+        raise SystemExit("ruleset export schema_version must be 1")
+    if data.get("target") != "branch":
+        raise SystemExit("ruleset export target must be branch")
+    if data.get("enforcement") != "active":
+        raise SystemExit("ruleset export enforcement must be active")
+    conditions = data.get("conditions", {})
+    ref_name = conditions.get("ref_name", {}) if isinstance(conditions, dict) else {}
+    includes = set(ref_name.get("include", [])) if isinstance(ref_name, dict) else set()
+    if "~DEFAULT_BRANCH" not in includes and "refs/heads/main" not in includes:
+        raise SystemExit("ruleset export must include the default branch or main")
+    contexts = _collect_required_status_checks(data)
+    missing = sorted(REQUIRED_RULESET_CHECKS - contexts)
+    if missing:
+        raise SystemExit(
+            "ruleset export missing required status checks: " + ", ".join(missing)
+        )
+    print(f"branch protection ruleset gate passed: {path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("vectors", type=Path)
     parser.add_argument("--ci-workflow", type=Path)
     parser.add_argument("--release-workflow", type=Path)
+    parser.add_argument("--ruleset-export", type=Path)
     args = parser.parse_args()
 
     check_vectors(args.vectors)
@@ -175,6 +244,8 @@ def main() -> None:
         check_ci_workflow(args.ci_workflow)
     if args.release_workflow is not None:
         check_release_workflow(args.release_workflow)
+    if args.ruleset_export is not None:
+        check_ruleset_export(args.ruleset_export)
 
 
 if __name__ == "__main__":

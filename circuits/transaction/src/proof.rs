@@ -552,11 +552,21 @@ pub fn transaction_proof_digest_from_parts(
     backend: TxProofBackend,
     proof_bytes: &[u8],
 ) -> [u8; 48] {
+    blake3_384(&transaction_proof_digest_preimage_from_parts(
+        backend,
+        proof_bytes,
+    ))
+}
+
+pub fn transaction_proof_digest_preimage_from_parts(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+) -> Vec<u8> {
     let mut message = Vec::with_capacity(TX_PROOF_DIGEST_DOMAIN.len() + proof_bytes.len() + 1);
     message.extend_from_slice(TX_PROOF_DIGEST_DOMAIN);
     message.push(backend.wire_id());
     message.extend_from_slice(proof_bytes);
-    blake3_384(&message)
+    message
 }
 
 pub fn transaction_public_inputs_digest_from_serialized(
@@ -1119,6 +1129,15 @@ pub(crate) fn verify_balance_slots(
     use crate::constants::NATIVE_ASSET_ID;
     use crate::public_inputs::BalanceSlot;
 
+    validate_serialized_balance_slot_asset_ids(&proof.public_inputs.balance_slots)?;
+    if proof.public_inputs.stablecoin.enabled
+        && !is_canonical_asset_id(proof.public_inputs.stablecoin.asset_id)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "stablecoin asset id must be canonical",
+        ));
+    }
+
     if proof.public_inputs.balance_slots.len() != proof.balance_slots.len() {
         return Err(TransactionCircuitError::ConstraintViolation(
             "balance slot count mismatch",
@@ -1263,6 +1282,7 @@ mod tests {
         schema_version: u32,
         statement_hash_cases: Vec<LeanStatementHashCase>,
         public_inputs_digest_cases: Vec<LeanPublicInputsDigestCase>,
+        proof_digest_cases: Vec<LeanProofDigestCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1316,10 +1336,41 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanProofDigestCase {
+        name: String,
+        backend_wire_id: u8,
+        proof_bytes_hex: String,
+        expected_preimage_hex: String,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanProofWrapperAdmissionVectorFile {
         schema_version: u32,
         proof_wrapper_admission_cases: Vec<LeanProofWrapperAdmissionCase>,
         proof_wrapper_metadata_projection_cases: Vec<LeanProofWrapperMetadataProjectionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperWireVectorFile {
+        schema_version: u32,
+        transaction_proof_wrapper_wire_cases: Vec<LeanProofWrapperWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperWireCase {
+        name: String,
+        raw_hex: String,
+        canonical_hex: String,
+        expected_len: usize,
+        parser_accepts: bool,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1553,6 +1604,36 @@ mod tests {
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(serialized),
         }
+    }
+
+    fn load_proof_wrapper_wire_vectors() -> LeanProofWrapperWireVectorFile {
+        if let Ok(path) = std::env::var("HEGEMON_LEAN_PROOF_WRAPPER_WIRE_VECTORS") {
+            let raw = std::fs::read_to_string(&path)
+                .unwrap_or_else(|err| panic!("read Lean proof-wrapper wire vectors {path}: {err}"));
+            return serde_json::from_str(&raw).unwrap_or_else(|err| {
+                panic!("parse Lean proof-wrapper wire vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_proof_wrapper_wire_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run Lean proof-wrapper wire generator: {err}"));
+        assert!(
+            output.status.success(),
+            "Lean proof-wrapper wire generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout)
+            .expect("parse generated Lean proof-wrapper wire vectors")
     }
 
     #[test]
@@ -1854,6 +1935,105 @@ mod tests {
                     .push(7);
             }
             other => panic!("unknown proof-wrapper metadata projection mutation: {other}"),
+        }
+    }
+
+    #[test]
+    fn lean_generated_transaction_proof_wrapper_wire_vectors_match_production() {
+        let vectors = load_proof_wrapper_wire_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.transaction_proof_wrapper_wire_cases.is_empty(),
+            "Lean proof-wrapper wire bundle must contain at least one case"
+        );
+
+        let expected_dummy = bincode::serialize(&dummy_proof()).expect("encode dummy proof");
+        let mut names = BTreeSet::new();
+        for case in &vectors.transaction_proof_wrapper_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_proof_wrapper_wire_case(case, &expected_dummy);
+        }
+    }
+
+    fn verify_lean_proof_wrapper_wire_case(case: &LeanProofWrapperWireCase, expected_dummy: &[u8]) {
+        let raw = decode_hex_bytes(&case.raw_hex);
+        let canonical = decode_hex_bytes(&case.canonical_hex);
+        assert_eq!(
+            raw.len(),
+            case.expected_len,
+            "{} Lean raw byte length drifted",
+            case.name
+        );
+
+        if case.name == "valid-dummy-proof-wrapper" {
+            assert_eq!(
+                raw, expected_dummy,
+                "{} Lean canonical bincode fixture drifted from production dummy proof",
+                case.name
+            );
+        }
+
+        let actual = decode_transaction_proof_bytes_exact(&raw);
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} exact transaction proof wrapper decode validity drifted from Lean spec: {actual:?}",
+            case.name
+        );
+
+        match actual {
+            Ok(decoded) => {
+                assert!(
+                    case.parser_accepts
+                        && case.consumed_all_bytes
+                        && case.canonical_reencode_matches,
+                    "{} Lean marked a valid production wrapper without all codec gates",
+                    case.name
+                );
+                let reencoded = bincode::serialize(&decoded).expect("reencode proof wrapper");
+                assert_eq!(
+                    reencoded, canonical,
+                    "{} decoded proof wrapper reencoded to non-Lean canonical bytes",
+                    case.name
+                );
+                assert_eq!(
+                    raw, canonical,
+                    "{} accepted proof wrapper raw bytes must be canonical",
+                    case.name
+                );
+            }
+            Err(err) => {
+                let actual_rejection = proof_wrapper_wire_rejection_label(&err);
+                assert_eq!(
+                    Some(actual_rejection.as_str()),
+                    case.expected_rejection.as_deref(),
+                    "{} exact transaction proof wrapper rejection label drifted: {err:?}",
+                    case.name
+                );
+                if case.parser_accepts && !case.consumed_all_bytes {
+                    assert!(
+                        raw.starts_with(&canonical),
+                        "{} trailing fixture must carry the canonical prefix",
+                        case.name
+                    );
+                    assert!(
+                        raw.len() > canonical.len(),
+                        "{} trailing fixture must extend canonical bytes",
+                        case.name
+                    );
+                }
+            }
+        }
+    }
+
+    fn proof_wrapper_wire_rejection_label(err: &TransactionCircuitError) -> String {
+        let message = err.to_string();
+        if message.contains("trailing bytes") {
+            "trailing_bytes".to_string()
+        } else if message.contains("canonical serialization") {
+            "non_canonical_encoding".to_string()
+        } else {
+            "parser_rejected".to_string()
         }
     }
 
@@ -2195,6 +2375,51 @@ mod tests {
     }
 
     #[test]
+    fn balance_slot_verifier_rejects_stablecoin_padding_field_alias_exception() {
+        let mut proof = wrapper_admissible_dummy_proof();
+        let alias = crate::constants::BALANCE_SLOT_PADDING_FIELD_ID;
+        proof.public_inputs.stablecoin = StablecoinPolicyBinding {
+            enabled: true,
+            asset_id: alias,
+            policy_hash: [0u8; 48],
+            oracle_commitment: [0u8; 48],
+            attestation_commitment: [0u8; 48],
+            issuance_delta: -5,
+            policy_version: 1,
+        };
+        proof.public_inputs.balance_slots = vec![
+            BalanceSlot {
+                asset_id: crate::constants::NATIVE_ASSET_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: alias,
+                delta: -5,
+            },
+            BalanceSlot {
+                asset_id: crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+            BalanceSlot {
+                asset_id: crate::constants::BALANCE_SLOT_PADDING_ASSET_ID,
+                delta: 0,
+            },
+        ];
+        proof.balance_slots = proof.public_inputs.balance_slots.clone();
+        proof.public_inputs.balance_tag =
+            balance_commitment_bytes(0, &proof.public_inputs.balance_slots)
+                .expect("test balance tag");
+
+        let err = verify_balance_slots(&proof)
+            .expect_err("padding field alias cannot be an authorized mint asset");
+        assert!(
+            err.to_string()
+                .contains("balance slot assets must be canonical"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
     fn smallwood_verification_uses_wrapper_admission() {
         let verifying_key = VerifyingKey {
             max_inputs: MAX_INPUTS,
@@ -2252,6 +2477,10 @@ mod tests {
         assert!(
             !vectors.public_inputs_digest_cases.is_empty(),
             "Lean public-input digest cases must not be empty"
+        );
+        assert!(
+            !vectors.proof_digest_cases.is_empty(),
+            "Lean proof digest cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
@@ -2357,6 +2586,36 @@ mod tests {
                         .expect("public-input digest"),
                     blake3_384(&actual_preimage),
                     "{} public-input digest hash drifted from checked preimage",
+                    case.name
+                );
+            }
+        }
+
+        let mut proof_digest_names = BTreeSet::new();
+        for case in &vectors.proof_digest_cases {
+            assert!(proof_digest_names.insert(case.name.clone()));
+            let backend = TxProofBackend::try_from(case.backend_wire_id);
+            assert_eq!(
+                backend.is_ok(),
+                case.expected_valid,
+                "{} proof digest backend validity drifted from Lean spec: {backend:?}",
+                case.name
+            );
+            if case.expected_valid {
+                let backend = backend.expect("valid Lean proof digest backend");
+                let proof_bytes = decode_hex_bytes(&case.proof_bytes_hex);
+                let actual_preimage =
+                    transaction_proof_digest_preimage_from_parts(backend, &proof_bytes);
+                let expected_preimage = decode_hex_bytes(&case.expected_preimage_hex);
+                assert_eq!(
+                    actual_preimage, expected_preimage,
+                    "{} proof digest preimage drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    transaction_proof_digest_from_parts(backend, &proof_bytes),
+                    blake3_384(&actual_preimage),
+                    "{} proof digest hash drifted from checked preimage",
                     case.name
                 );
             }

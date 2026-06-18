@@ -103,6 +103,37 @@ impl NotePlaintext {
 /// Size of the ciphertext portion in chain format
 pub const CHAIN_CIPHERTEXT_SIZE: usize = 579;
 const NOTE_ENCRYPTION_VERSION: u8 = 3;
+pub const NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN: usize = 32;
+pub const NOTE_CIPHERTEXT_AEAD_KEY_LEN: usize = 32;
+pub const NOTE_CIPHERTEXT_AEAD_NONCE_LEN: usize = 12;
+pub const NOTE_CIPHERTEXT_AEAD_TAG_LEN: usize = 16;
+pub const NOTE_CIPHERTEXT_PLAINTEXT_PAYLOAD_LEN: usize = 112;
+pub const NOTE_CIPHERTEXT_METADATA_AAD_LEN: usize = 7;
+pub const NOTE_CIPHERTEXT_AEAD_KDF_DOMAIN: &[u8] = b"wallet-aead";
+pub const NOTE_CIPHERTEXT_NOTE_AEAD_LABEL: &[u8] = b"note-aead";
+pub const NOTE_CIPHERTEXT_MEMO_AEAD_LABEL: &[u8] = b"memo-aead";
+
+pub fn note_ciphertext_aad_bytes(
+    version: u8,
+    crypto_suite: u16,
+    diversifier_index: u32,
+) -> [u8; NOTE_CIPHERTEXT_METADATA_AAD_LEN] {
+    let mut aad = [0u8; NOTE_CIPHERTEXT_METADATA_AAD_LEN];
+    aad[0] = version;
+    aad[1..3].copy_from_slice(&crypto_suite.to_le_bytes());
+    aad[3..7].copy_from_slice(&diversifier_index.to_le_bytes());
+    aad
+}
+
+fn validate_note_ciphertext_version(version: u8) -> Result<(), WalletError> {
+    if version != NOTE_ENCRYPTION_VERSION {
+        return Err(WalletError::Serialization(format!(
+            "Unsupported note ciphertext version: expected {}, got {}",
+            NOTE_ENCRYPTION_VERSION, version
+        )));
+    }
+    Ok(())
+}
 
 pub(crate) fn expected_kem_ciphertext_len(crypto_suite: u16) -> Result<usize, WalletError> {
     match crypto_suite {
@@ -140,6 +171,7 @@ impl NoteCiphertext {
         }
 
         let version = ciphertext_bytes[0];
+        validate_note_ciphertext_version(version)?;
         let crypto_suite = u16::from_le_bytes(
             ciphertext_bytes[1..3]
                 .try_into()
@@ -223,6 +255,8 @@ impl NoteCiphertext {
     }
 
     fn build_ciphertext_container(&self) -> Result<[u8; CHAIN_CIPHERTEXT_SIZE], WalletError> {
+        validate_note_ciphertext_version(self.version)?;
+
         let mut ciphertext = [0u8; CHAIN_CIPHERTEXT_SIZE];
         let mut offset = 0;
 
@@ -383,7 +417,7 @@ impl NoteCiphertext {
         note: &NotePlaintext,
         rng: &mut R,
     ) -> Result<Self, WalletError> {
-        let mut kem_seed = [0u8; 32];
+        let mut kem_seed = [0u8; NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN];
         rng.fill_bytes(&mut kem_seed);
 
         let crypto_note = note.to_crypto();
@@ -433,7 +467,9 @@ impl NoteCiphertext {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, WalletError> {
         let crypto_ct =
             CryptoNoteCiphertext::from_bytes(bytes).map_err(|_| WalletError::DecryptionFailure)?;
-        Ok(Self::from_crypto(crypto_ct))
+        let ciphertext = Self::from_crypto(crypto_ct);
+        validate_note_ciphertext_version(ciphertext.version)?;
+        Ok(ciphertext)
     }
 
     fn to_crypto(&self) -> CryptoNoteCiphertext {
@@ -589,11 +625,45 @@ mod serde_bytes_vec {
 
 #[cfg(test)]
 mod tests {
+    use p3_field::PrimeField64;
     use rand::{rngs::StdRng, SeedableRng};
+    use serde::Deserialize;
+    use std::collections::BTreeSet;
 
     use crate::keys::{AddressKeyMaterial, RootSecret};
 
     use super::*;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNoteCommitmentInputVectorFile {
+        schema_version: u32,
+        note_domain_tag: u64,
+        note_commitment_input_cases: Vec<LeanNoteCommitmentInputCase>,
+        asset_id_cases: Vec<LeanAssetIdCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNoteCommitmentInputCase {
+        name: String,
+        value: u64,
+        asset_id: u64,
+        pk_recipient: Vec<u8>,
+        pk_auth: Vec<u8>,
+        rho: Vec<u8>,
+        r: Vec<u8>,
+        expected_inputs: Vec<u64>,
+        expected_input_count: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAssetIdCase {
+        name: String,
+        asset_id: u64,
+        expected_canonical: bool,
+    }
 
     fn sample_material_note_ciphertext(
         seed: u64,
@@ -624,6 +694,20 @@ mod tests {
         match result {
             Err(WalletError::DecryptionFailure) => {}
             other => panic!("expected DecryptionFailure, got {other:?}"),
+        }
+    }
+
+    fn assert_unsupported_note_ciphertext_version<T: std::fmt::Debug>(
+        result: Result<T, WalletError>,
+    ) {
+        match result {
+            Err(WalletError::Serialization(message)) => {
+                assert!(
+                    message.contains("Unsupported note ciphertext version"),
+                    "unexpected unsupported-version message: {message}"
+                );
+            }
+            other => panic!("expected unsupported note ciphertext version, got {other:?}"),
         }
     }
 
@@ -679,6 +763,160 @@ mod tests {
         assert_eq!(left.memo_payload.len(), right.memo_payload.len());
     }
 
+    fn encoded_note_payload_plaintext(
+        value: u64,
+        asset_id: u64,
+        rho: [u8; 32],
+        r: [u8; 32],
+        pk_recipient: [u8; 32],
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(NOTE_CIPHERTEXT_PLAINTEXT_PAYLOAD_LEN);
+        out.extend_from_slice(&value.to_le_bytes());
+        out.extend_from_slice(&asset_id.to_le_bytes());
+        out.extend_from_slice(&rho);
+        out.extend_from_slice(&r);
+        out.extend_from_slice(&pk_recipient);
+        assert_eq!(out.len(), NOTE_CIPHERTEXT_PLAINTEXT_PAYLOAD_LEN);
+        out
+    }
+
+    fn bytes32(name: &str, field: &str, bytes: &[u8]) -> [u8; 32] {
+        bytes.try_into().unwrap_or_else(|_| {
+            panic!(
+                "{name} {field} length drifted from wallet/circuit note plaintext width: {}",
+                bytes.len()
+            )
+        })
+    }
+
+    fn verify_lean_wallet_note_commitment_case(case: &LeanNoteCommitmentInputCase) {
+        let pk_recipient = bytes32(&case.name, "pk_recipient", &case.pk_recipient);
+        let pk_auth = bytes32(&case.name, "pk_auth", &case.pk_auth);
+        let rho = bytes32(&case.name, "rho", &case.rho);
+        let r = bytes32(&case.name, "r", &case.r);
+        let plaintext = NotePlaintext {
+            value: case.value,
+            asset_id: case.asset_id,
+            rho,
+            r,
+            memo: MemoPlaintext::new(b"wallet-local memo must not enter commitment".to_vec()),
+        };
+
+        let note_data = plaintext.to_note_data(pk_recipient, pk_auth);
+        assert_eq!(
+            note_data.value, case.value,
+            "{} wallet value export",
+            case.name
+        );
+        assert_eq!(
+            note_data.asset_id, case.asset_id,
+            "{} wallet asset export",
+            case.name
+        );
+        assert_eq!(
+            note_data.pk_recipient, pk_recipient,
+            "{} wallet recipient export",
+            case.name
+        );
+        assert_eq!(
+            note_data.pk_auth, pk_auth,
+            "{} wallet auth export",
+            case.name
+        );
+        assert_eq!(note_data.rho, rho, "{} wallet rho export", case.name);
+        assert_eq!(note_data.r, r, "{} wallet randomness export", case.name);
+
+        let actual = transaction_circuit::hashing_pq::note_commitment_inputs(
+            note_data.value,
+            note_data.asset_id,
+            &note_data.pk_recipient,
+            &note_data.rho,
+            &note_data.r,
+            &note_data.pk_auth,
+        )
+        .iter()
+        .map(|felt| felt.as_canonical_u64())
+        .collect::<Vec<_>>();
+        assert_eq!(
+            actual.len(),
+            case.expected_input_count,
+            "{} wallet note-commitment input count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual, case.expected_inputs,
+            "{} wallet note plaintext/material export no longer feeds Lean-specified commitment limbs",
+            case.name
+        );
+
+        let direct = transaction_circuit::hashing_pq::note_commitment(
+            case.value,
+            case.asset_id,
+            &case.pk_recipient,
+            &case.pk_auth,
+            &case.rho,
+            &case.r,
+        );
+        assert_eq!(
+            note_data.commitment(),
+            direct,
+            "{} wallet NoteData commitment must use the same exported plaintext fields",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_note_commitment_input_vectors_match_wallet_plaintext_note_data() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS not set; skipping wallet note plaintext vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean note-commitment vectors");
+        let vectors: LeanNoteCommitmentInputVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean note-commitment vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.note_domain_tag,
+            transaction_circuit::constants::NOTE_DOMAIN_TAG
+        );
+        assert!(
+            !vectors.note_commitment_input_cases.is_empty(),
+            "Lean note-commitment input cases must not be empty"
+        );
+        assert!(
+            !vectors.asset_id_cases.is_empty(),
+            "Lean asset-id cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.note_commitment_input_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_wallet_note_commitment_case(case);
+        }
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.asset_id_cases {
+            assert!(names.insert(case.name.clone()));
+            let note = NotePlaintext {
+                value: 1,
+                asset_id: case.asset_id,
+                rho: [3u8; 32],
+                r: [4u8; 32],
+                memo: MemoPlaintext::default(),
+            };
+            let note_data = note.to_note_data([1u8; 32], [2u8; 32]);
+            assert_eq!(
+                note_data.validate().is_ok(),
+                case.expected_canonical,
+                "{} wallet-exported NoteData asset canonicality drifted from Lean spec",
+                case.name
+            );
+        }
+    }
+
     #[test]
     fn encrypt_decrypt_round_trip() {
         let mut rng = StdRng::seed_from_u64(123);
@@ -692,6 +930,89 @@ mod tests {
         assert_eq!(recovered.value, note.value);
         assert_eq!(recovered.asset_id, note.asset_id);
         assert_eq!(recovered.memo.as_bytes(), note.memo.as_bytes());
+    }
+
+    #[test]
+    fn production_note_ciphertext_profile_constants_are_pinned() {
+        assert_eq!(NOTE_CIPHERTEXT_KEM_RANDOMNESS_LEN, 32);
+        assert_eq!(NOTE_CIPHERTEXT_AEAD_KEY_LEN, 32);
+        assert_eq!(NOTE_CIPHERTEXT_AEAD_NONCE_LEN, 12);
+        assert_eq!(NOTE_CIPHERTEXT_AEAD_TAG_LEN, 16);
+        assert_eq!(NOTE_CIPHERTEXT_PLAINTEXT_PAYLOAD_LEN, 112);
+        assert_eq!(NOTE_CIPHERTEXT_METADATA_AAD_LEN, 7);
+        assert_eq!(NOTE_CIPHERTEXT_AEAD_KDF_DOMAIN, b"wallet-aead");
+        assert_eq!(NOTE_CIPHERTEXT_NOTE_AEAD_LABEL, b"note-aead");
+        assert_eq!(NOTE_CIPHERTEXT_MEMO_AEAD_LABEL, b"memo-aead");
+        assert_ne!(
+            NOTE_CIPHERTEXT_NOTE_AEAD_LABEL,
+            NOTE_CIPHERTEXT_MEMO_AEAD_LABEL
+        );
+        assert_eq!(
+            note_ciphertext_aad_bytes(3, protocol_versioning::CRYPTO_SUITE_GAMMA, 7),
+            [3, 3, 0, 7, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn crypto_aad_authenticates_version_and_suite_metadata() {
+        let (material, _, ciphertext) = sample_material_note_ciphertext(875, b"aad");
+        let crypto = ciphertext.to_crypto();
+
+        let mut version_tampered = crypto.clone();
+        version_tampered.version = version_tampered.version.wrapping_add(1);
+        assert!(
+            version_tampered
+                .decrypt(
+                    material.secret_key(),
+                    material.pk_recipient,
+                    material.diversifier_index
+                )
+                .is_err(),
+            "crypto payload AAD must authenticate note ciphertext version"
+        );
+
+        let mut suite_tampered = crypto;
+        suite_tampered.crypto_suite = suite_tampered.crypto_suite.wrapping_add(1);
+        assert!(
+            suite_tampered
+                .decrypt(
+                    material.secret_key(),
+                    material.pk_recipient,
+                    material.diversifier_index
+                )
+                .is_err(),
+            "crypto payload AAD/KDF material must authenticate crypto suite"
+        );
+    }
+
+    #[test]
+    fn decrypt_rejects_same_length_note_memo_payload_swap() {
+        let mut rng = StdRng::seed_from_u64(876);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(0).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(
+            42,
+            7,
+            MemoPlaintext::new(encoded_note_payload_plaintext(
+                900,
+                2,
+                [17u8; 32],
+                [18u8; 32],
+                material.pk_recipient,
+            )),
+            &mut rng,
+        );
+        let mut ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        assert_eq!(
+            ciphertext.note_payload.len(),
+            ciphertext.memo_payload.len(),
+            "fixture must make note and memo AEAD payloads equal length"
+        );
+
+        std::mem::swap(&mut ciphertext.note_payload, &mut ciphertext.memo_payload);
+        assert_decryption_failure(ciphertext.decrypt(&material));
     }
 
     #[test]
@@ -836,6 +1157,28 @@ mod tests {
     fn empty_ciphertext_uses_current_version() {
         let empty = NoteCiphertext::empty();
         assert_eq!(empty.version, NOTE_ENCRYPTION_VERSION);
+    }
+
+    #[test]
+    fn note_ciphertext_version_gate_rejects_unsupported_wire_and_crypto_formats() {
+        let mut ciphertext = sample_ciphertext(799, b"version-gate");
+        let unsupported_version = NOTE_ENCRYPTION_VERSION.wrapping_add(1);
+
+        let mut chain_bytes = ciphertext.to_chain_bytes().unwrap();
+        chain_bytes[0] = unsupported_version;
+        assert_unsupported_note_ciphertext_version(NoteCiphertext::from_chain_bytes(&chain_bytes));
+
+        let mut da_bytes = ciphertext.to_da_bytes().unwrap();
+        da_bytes[0] = unsupported_version;
+        assert_unsupported_note_ciphertext_version(NoteCiphertext::from_da_bytes(&da_bytes));
+
+        let mut crypto_bytes = ciphertext.to_bytes();
+        crypto_bytes[0] = unsupported_version;
+        assert_unsupported_note_ciphertext_version(NoteCiphertext::from_bytes(&crypto_bytes));
+
+        ciphertext.version = unsupported_version;
+        assert_unsupported_note_ciphertext_version(ciphertext.to_chain_bytes());
+        assert_unsupported_note_ciphertext_version(ciphertext.to_da_bytes());
     }
 
     #[test]

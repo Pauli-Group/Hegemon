@@ -64,6 +64,7 @@ import Hegemon.Native.CodecAdmission
 import Hegemon.Native.CoinbaseActionPayloadAdmission
 import Hegemon.Native.CoinbaseActionPayloadScaleWire
 import Hegemon.Native.CoinbaseAccountingAdmission
+import Hegemon.Native.CoinbaseSupplyConservation
 import Hegemon.Native.CommitmentTreeMembershipRefinement
 import Hegemon.Native.CommitmentTreeContentRefinement
 import Hegemon.Native.CommitmentTreeRefinement
@@ -75,6 +76,9 @@ import Hegemon.Native.MinedBlockCommitPublication
 import Hegemon.Native.NativeBackendReleasePosture
 import Hegemon.Native.NativeBackendReviewPolicy
 import Hegemon.Native.NativePublicationRowEquivalence
+import Hegemon.Native.BridgeVerifierRegistrationScaleWire
+import Hegemon.Native.OutboundBridgeActionPayloadScaleWire
+import Hegemon.Native.InboundBridgeActionPayloadScaleWire
 import Hegemon.Native.PreHeavyWorkResourceBoundSurface
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.RecursiveArtifactContextAdmission
@@ -82,6 +86,8 @@ import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.Risc0ReleaseVerifier
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.DaSidecarReplayBinding
+import Hegemon.Native.ShieldedTransferInlineScaleWire
+import Hegemon.Native.ShieldedTransferSidecarScaleWire
 import Hegemon.Native.RawIngressSidecarReplayRecoverability
 import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.PendingActionScaleWire
@@ -117,6 +123,7 @@ import Hegemon.Native.WorkTemplateAdmission
 import Hegemon.Network.PqNoise
 import Hegemon.Network.PqNoiseHandshakeChannel
 import Hegemon.Network.FrameResourceAdmission
+import Hegemon.Network.PeerStoreCapacityAdmission
 import Hegemon.Network.QueueResourceAdmission
 import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
@@ -124,6 +131,7 @@ import Hegemon.Privacy.Observer
 import Hegemon.Privacy.NativeObserverSurface
 import Hegemon.Privacy.PqTransportPrivacyBoundary
 import Hegemon.Privacy.NativeSidecarObserverSurface
+import Hegemon.Privacy.CiphertextArchiveBoundary
 import Hegemon.Privacy.WalletOutputBatch
 import Hegemon.Resource.BoundedRequestAdmission
 import Hegemon.Release.CiReleaseGate
@@ -145,6 +153,7 @@ import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.ProofStatementBinding
 import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
+import Hegemon.Transaction.ProofWrapperWire
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
 import Hegemon.Transaction.SmallWoodPublicStatementBinding

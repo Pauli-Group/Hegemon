@@ -11,7 +11,8 @@ usage() {
 Usage: scripts/dependency-audit-gate.sh [--policy path] [--audit-json path] [--offline]
 
 Runs cargo audit and fails on every unwaived advisory or yanked crate. Waivers
-must name the advisory id, package, version, reason, tracking id, and expiry.
+must name the advisory id, package, version, reason, owner, review date,
+remediation plan, tracking id, and expiry.
 EOF
 }
 
@@ -69,6 +70,7 @@ fi
 
 python3 - "$AUDIT_JSON" "$POLICY" "$AUDIT_STATUS" <<'PY'
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -91,6 +93,20 @@ today = date.today()
 waivers = policy.get("waivers", [])
 if not isinstance(waivers, list):
     raise SystemExit("policy waivers must be a list")
+
+REQUIRED_WAIVER_FIELDS = (
+    "id",
+    "package",
+    "version",
+    "kind",
+    "expires",
+    "tracking",
+    "reason",
+    "owner",
+    "reviewed_at",
+    "remediation",
+)
+TRACKING_RE = re.compile(r"^DEP-\d{4}-\d{4}$")
 
 def advisory_id(kind, item):
     advisory = item.get("advisory") or {}
@@ -137,18 +153,30 @@ validated_waivers = []
 for index, waiver in enumerate(waivers):
     missing = [
         key
-        for key in ("id", "package", "version", "kind", "expires", "tracking", "reason")
+        for key in REQUIRED_WAIVER_FIELDS
         if not waiver.get(key)
     ]
     if missing:
         raise SystemExit(f"waiver #{index} is missing required fields: {', '.join(missing)}")
+    if not TRACKING_RE.fullmatch(waiver["tracking"]):
+        raise SystemExit(
+            f"waiver {waiver['id']} has invalid tracking id: {waiver['tracking']}"
+        )
     try:
         expiry = date.fromisoformat(waiver["expires"])
     except ValueError as exc:
         raise SystemExit(f"waiver {waiver['id']} has invalid expires date: {exc}")
+    try:
+        reviewed_at = date.fromisoformat(waiver["reviewed_at"])
+    except ValueError as exc:
+        raise SystemExit(f"waiver {waiver['id']} has invalid reviewed_at date: {exc}")
     if expiry < today:
         raise SystemExit(
             f"waiver {waiver['id']} for {waiver['package']} {waiver['version']} expired on {expiry}"
+        )
+    if reviewed_at > today:
+        raise SystemExit(
+            f"waiver {waiver['id']} review date {reviewed_at} is in the future"
         )
     validated_waivers.append(waiver)
 

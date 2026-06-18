@@ -22,6 +22,7 @@ inductive BindingReject where
   | statementCommitmentMismatch
   | daRootMismatch
   | daChunkCountZero
+  | missingRecursiveBlockArtifact
   | artifactKindMismatch
   | artifactVerifierProfileMismatch
   | recursiveBlockReceiptRootPayload
@@ -59,6 +60,8 @@ def evaluateBinding (input : BindingInput) : Option BindingReject :=
     some BindingReject.daRootMismatch
   else if input.daChunkCount = 0 then
     some BindingReject.daChunkCountZero
+  else if input.batchMode = BatchMode.recursiveBlock && input.hasArtifact = false then
+    some BindingReject.missingRecursiveBlockArtifact
   else if input.hasArtifact && input.artifactKind != input.proofKind then
     some BindingReject.artifactKindMismatch
   else if input.hasArtifact && input.artifactVerifierProfileMatches = false then
@@ -81,6 +84,8 @@ def bindingPreconditions (input : BindingInput) : Bool :=
   else if input.daRootMatches = false then
     false
   else if input.daChunkCount = 0 then
+    false
+  else if input.batchMode = BatchMode.recursiveBlock && input.hasArtifact = false then
     false
   else if input.hasArtifact && input.artifactKind != input.proofKind then
     false
@@ -107,7 +112,9 @@ theorem accepts_iff_binding_preconditions (input : BindingInput) :
       · rfl
       · exfalso
         exact hasArtifact hArtifactValue
-    simp [noArtifact]
+    by_cases recursive : input.batchMode = BatchMode.recursiveBlock
+    · simp [noArtifact, recursive] at *
+    · simp [noArtifact, recursive] at *
 
 def validRecursiveBlockV2 : BindingInput :=
   {
@@ -177,6 +184,11 @@ theorem rejects_da_chunk_count_zero :
       some BindingReject.daChunkCountZero := by
   decide
 
+theorem rejects_missing_recursive_block_artifact :
+    evaluateBinding { validRecursiveBlockV2 with hasArtifact := false } =
+      some BindingReject.missingRecursiveBlockArtifact := by
+  decide
+
 theorem rejects_artifact_kind_mismatch :
     evaluateBinding { validRecursiveBlockV2 with artifactKind := ArtifactKind.recursiveBlockV1 } =
       some BindingReject.artifactKindMismatch := by
@@ -192,11 +204,11 @@ theorem rejects_recursive_block_receipt_root_payload :
       some BindingReject.recursiveBlockReceiptRootPayload := by
   decide
 
-theorem skips_artifact_checks_when_no_artifact :
+theorem receipt_root_skips_block_artifact_checks :
     evaluateBinding
-      { validRecursiveBlockV2 with
+      { validReceiptRoot with
         hasArtifact := false,
-        artifactKind := ArtifactKind.receiptRoot,
+        artifactKind := ArtifactKind.recursiveBlockV2,
         artifactVerifierProfileMatches := false
       } = none := by
   decide

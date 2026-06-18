@@ -73,6 +73,52 @@ def candidateArtifactRecursiveBlockPayloadBytes
     ++ compactLen recursiveProof.length
     ++ recursiveProof.map byte
 
+def txValidityReceiptBytes
+    (statementHashValue proofDigestValue publicInputsDigestValue
+      verifierProfileValue : Nat) : List Byte :=
+  repeated 48 statementHashValue
+    ++ repeated 48 proofDigestValue
+    ++ repeated 48 publicInputsDigestValue
+    ++ repeated 48 verifierProfileValue
+
+def receiptRootProofPayloadBytes
+    (rootProof : List Nat)
+    (relationIdValue shapeDigestValue leafCount foldCount : Nat)
+    (receipts : List (List Byte)) : List Byte :=
+  compactLen rootProof.length
+    ++ rootProof.map byte
+    ++ repeated 32 relationIdValue
+    ++ repeated 32 shapeDigestValue
+    ++ u32le leafCount
+    ++ u32le foldCount
+    ++ compactLen receipts.length
+    ++ flattenBytes receipts
+
+def candidateArtifactReceiptRootPayloadBytes
+    (version txCount txStatementsCommitmentValue daRootValue daChunkCount
+      verifierProfileValue : Nat)
+    (rootProof : List Nat)
+    (relationIdValue shapeDigestValue leafCount foldCount : Nat)
+    (receipts : List (List Byte)) : List Byte :=
+  [byte version]
+    ++ u32le txCount
+    ++ repeated 48 txStatementsCommitmentValue
+    ++ repeated 48 daRootValue
+    ++ u32le daChunkCount
+    ++ compactLen 0
+    ++ [1]
+    ++ [2]
+    ++ repeated 48 verifierProfileValue
+    ++ [1]
+    ++ receiptRootProofPayloadBytes
+      rootProof
+      relationIdValue
+      shapeDigestValue
+      leafCount
+      foldCount
+      receipts
+    ++ [0]
+
 def someCandidatePendingActionBytes
     (txValue circuit crypto family action anchorValue : Nat)
     (nullifierValues commitmentValues ciphertextHashValues : List Nat)
@@ -120,6 +166,22 @@ def validCandidateSomeBytes : List Byte :=
     [] [] [] [] validCandidatePayloadBytes 0 9
     validCandidatePayloadBytes
 
+def validReceiptRootReceiptBytes : List Byte :=
+  txValidityReceiptBytes 0x31 0x32 0x33 0x34
+
+def validCandidateReceiptRootPayloadBytes : List Byte :=
+  candidateArtifactReceiptRootPayloadBytes
+    2 1 0x15 0x16 1 0x17
+    [0x21, 0x22, 0x23]
+    0x24 0x25 1 0
+    [validReceiptRootReceiptBytes]
+
+def validCandidateReceiptRootSomeBytes : List Byte :=
+  someCandidatePendingActionBytes
+    14 0 0 1 5 0
+    [] [] [] [] validCandidateReceiptRootPayloadBytes 0 10
+    validCandidateReceiptRootPayloadBytes
+
 def replaceAt : Nat -> Byte -> List Byte -> List Byte
   | _idx, _value, [] => []
   | 0, value, _head :: tail => value :: tail
@@ -164,6 +226,22 @@ def candidateSomeInvalidProofKindBytes : List Byte :=
 
 def candidateSomeRecursiveProofOverrunBytes : List Byte :=
   replaceAt 452 (byte (33 * 4)) validCandidateSomeBytes
+
+def candidateArtifactReceiptRootReceiptCountOffset
+    (rootProofLength : Nat) : Nat :=
+  1 + 4 + 48 + 48 + 4
+    + 1 + 1 + 1 + 48
+    + 1 + (compactLen rootProofLength).length + rootProofLength
+    + 32 + 32 + 4 + 4
+
+def candidateSomeReceiptRootReceiptCountOverrunBytes : List Byte :=
+  someCandidatePendingActionBytes
+    14 0 0 1 5 0
+    [] [] [] [] validCandidateReceiptRootPayloadBytes 0 10
+    (replaceAt
+      (candidateArtifactReceiptRootReceiptCountOffset 3)
+      (byte (2 * 4))
+      validCandidateReceiptRootPayloadBytes)
 
 def caseJson
     (name fixture : String)
@@ -228,6 +306,24 @@ def caseJson
     ++ toString input.candidateArtifactReceiptRootOptionTagBytes ++ ",\n"
     ++ "      \"candidate_artifact_receipt_root_none\": "
     ++ boolJson input.candidateArtifactReceiptRootNone ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_proof_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootProofBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_proof_compact_prefix_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootProofCompactPrefixBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_relation_id_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootRelationIdBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_shape_digest_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootShapeDigestBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_leaf_count_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootLeafCountBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_fold_count_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootFoldCountBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_receipt_count\": "
+    ++ toString input.candidateArtifactReceiptRootReceiptCount ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_receipt_compact_prefix_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootReceiptCompactPrefixBytes ++ ",\n"
+    ++ "      \"candidate_artifact_receipt_root_receipt_element_bytes\": "
+    ++ toString input.candidateArtifactReceiptRootReceiptElementBytes ++ ",\n"
     ++ "      \"candidate_artifact_recursive_block_option_tag_bytes\": "
     ++ toString input.candidateArtifactRecursiveBlockOptionTagBytes ++ ",\n"
     ++ "      \"candidate_artifact_recursive_block_present\": "
@@ -255,6 +351,10 @@ def vectorJson : String :=
       validOneEachNoCandidate validOneEachBytes ++ ",\n"
     ++ caseJson "valid-candidate-artifact-some" "valid_candidate_artifact_some"
       validCandidateArtifactSome validCandidateSomeBytes ++ ",\n"
+    ++ caseJson "valid-candidate-artifact-some-receipt-root-slice"
+      "valid_candidate_artifact_some_receipt_root_slice"
+      validCandidateArtifactSomeReceiptRootSlice
+      validCandidateReceiptRootSomeBytes ++ ",\n"
     ++ caseJson "empty-bytes-rejected" "empty_bytes"
       { validEmptyNoCandidate with
         totalBytes := 0,
@@ -312,7 +412,11 @@ def vectorJson : String :=
       { validCandidateArtifactSome with
         candidateArtifactRecursiveProofBytes := 33,
         canonicalReencodeMatches := false }
-      candidateSomeRecursiveProofOverrunBytes ++ "\n"
+      candidateSomeRecursiveProofOverrunBytes ++ ",\n"
+    ++ caseJson "candidate-some-receipt-root-receipt-count-overrun-rejected"
+      "candidate_some_receipt_root_receipt_count_overrun"
+      candidateSomeReceiptRootReceiptCountOverrun
+      candidateSomeReceiptRootReceiptCountOverrunBytes ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

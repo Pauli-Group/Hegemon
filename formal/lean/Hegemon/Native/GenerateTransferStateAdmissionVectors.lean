@@ -1,6 +1,8 @@
 import Hegemon.Native.TransferStateAdmission
 
 open Hegemon.Native.TransferStateAdmission
+open Hegemon
+open Hegemon.Shielded
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -31,6 +33,14 @@ def rejectionJson : Option TransferStateReject -> String
   | some TransferStateReject.sidecarCiphertextSizeMismatch =>
       "\"sidecar_ciphertext_size_mismatch\""
 
+def commaJoin : List String -> String
+  | [] => ""
+  | [value] => value
+  | value :: rest => value ++ ", " ++ commaJoin rest
+
+def quotedHexListJson (values : List Nullifier) : String :=
+  commaJoin (values.map fun value => "\"" ++ hexBytes value ++ "\"")
+
 def transferStateCaseJson (name : String) (input : TransferStateInput) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -52,9 +62,26 @@ def transferStateCaseJson (name : String) (input : TransferStateInput) : String 
       ++ rejectionJson (transferStateRejection input) ++ "\n"
     ++ "    }"
 
+def transferNullifierRowsCaseJson
+    (name : String)
+    (input : TransferNullifierRowsInput) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"spent_nullifiers\": ["
+      ++ quotedHexListJson input.spent ++ "],\n"
+    ++ "      \"pending_nullifiers\": ["
+      ++ quotedHexListJson input.pending ++ "],\n"
+    ++ "      \"action_nullifiers\": ["
+      ++ quotedHexListJson input.action ++ "],\n"
+    ++ "      \"expected_mempool_nullifier_state\": "
+      ++ nullifierStateJson (deriveMempoolNullifierState input) ++ ",\n"
+    ++ "      \"expected_block_nullifier_state\": "
+      ++ nullifierStateJson (deriveBlockNullifierState input) ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"transfer_state_admission_cases\": [\n"
     ++ transferStateCaseJson "valid-sidecar-transfer-state"
       validTransferState ++ ",\n"
@@ -108,6 +135,40 @@ def vectorJson : String :=
         sidecarCiphertextsAvailable := false,
         sidecarCiphertextSizesPresent := false,
         sidecarCiphertextSizesMatch := false } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"transfer_nullifier_row_cases\": [\n"
+    ++ transferNullifierRowsCaseJson "fresh-single-nullifier-valid"
+      { spent := [],
+        pending := [],
+        action := [sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "zero-nullifier-precedes-spent-pending"
+      { spent := [sampleNullifierA],
+        pending := [sampleNullifierB],
+        action := [zeroNullifier, sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "prior-spent-mempool-spent-block-duplicate"
+      { spent := [sampleNullifierA],
+        pending := [],
+        action := [sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "prior-pending-mempool-pending-block-valid"
+      { spent := [],
+        pending := [sampleNullifierA],
+        action := [sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "same-action-duplicate-nullifier"
+      { spent := [],
+        pending := [],
+        action := [sampleNullifierA, sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "prior-pending-precedes-action-duplicate"
+      { spent := [],
+        pending := [sampleNullifierA],
+        action := [sampleNullifierA, sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "pending-middle-precedes-later-duplicate"
+      { spent := [],
+        pending := [sampleNullifierB],
+        action := [sampleNullifierA, sampleNullifierB, sampleNullifierA] } ++ ",\n"
+    ++ transferNullifierRowsCaseJson "spent-after-fresh-prefix-rejects"
+      { spent := [sampleNullifierA],
+        pending := [],
+        action := [sampleNullifierB, sampleNullifierA] } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 
