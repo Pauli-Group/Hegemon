@@ -313,6 +313,488 @@ theorem accepted_pq_handshake_native_ciphertext_privacy_boundary_exposes_raw_wir
     wireIndistinguishable :=
   certificate.rawWireIndistinguishable
 
+structure PqTransportCiphertextResidualAssumptions where
+  mlKemCiphertextIndistinguishability : Prop
+  aeadCiphertextConfidentiality : Prop
+  kdfDomainSeparation : Prop
+  osRngFreshness : Prop
+  parserWireExactness : Prop
+
+structure PqTransportNativeCiphertextResidualCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (localState peerState : Hegemon.Network.PqNoise.ChannelState)
+    (localBytesSent localBytesReceived peerBytesSent peerBytesReceived : Nat)
+    (firstFramePayloadBytes firstFrameTagBytes firstFrameWireBytes : Nat)
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (privacyAssumptions : PrivacyBoundaryAssumptions)
+    (residuals : PqTransportCiphertextResidualAssumptions)
+    (input : TxLeafActionBindingInput)
+    (shape : PublicInputShape)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields) :
+    Prop where
+  boundaryCertificate :
+    PqTransportPrivacyBoundaryCertificate
+      surface
+      crypto
+      localState
+      peerState
+      localBytesSent
+      localBytesReceived
+      peerBytesSent
+      peerBytesReceived
+      firstFramePayloadBytes
+      firstFrameTagBytes
+      firstFrameWireBytes
+      left
+      right
+      wireIndistinguishable
+      privacyAssumptions
+      residuals.mlKemCiphertextIndistinguishability
+      residuals.aeadCiphertextConfidentiality
+      residuals.kdfDomainSeparation
+      residuals.osRngFreshness
+      input
+      shape
+      statementFields
+      bindingFields
+  mlKemCiphertextIndistinguishability :
+    residuals.mlKemCiphertextIndistinguishability
+  aeadCiphertextConfidentiality :
+    residuals.aeadCiphertextConfidentiality
+  kdfDomainSeparation :
+    residuals.kdfDomainSeparation
+  osRngFreshness :
+    residuals.osRngFreshness
+  parserWireExactness :
+    residuals.parserWireExactness
+  rawWireIndistinguishable :
+    wireIndistinguishable
+  proofSystemZeroKnowledge :
+    privacyAssumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene :
+    privacyAssumptions.walletMetadataHygiene
+  timingAndBatchingPolicy :
+    privacyAssumptions.timingAndBatchingPolicy
+  networkMetadataPolicy :
+    privacyAssumptions.networkMetadataPolicy
+
+theorem accepted_pq_handshake_native_ciphertext_privacy_boundary_residual_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    {privacyAssumptions : PrivacyBoundaryAssumptions}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (privacyProofs : PrivacyBoundaryAssumptionProofs privacyAssumptions)
+    (mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      osRngFreshness
+      parserWireExactness : Prop)
+    (mlKemAssumption : mlKemCiphertextIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (kdfAssumption : kdfDomainSeparation)
+    (rngAssumption : osRngFreshness)
+    (parserWireAssumption : parserWireExactness)
+    (firstFramePayloadBytes : Nat)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    PqTransportNativeCiphertextResidualCertificate
+      surface
+      crypto
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes)
+      left
+      right
+      game.wireIndistinguishable
+      privacyAssumptions
+      { mlKemCiphertextIndistinguishability :=
+          mlKemCiphertextIndistinguishability
+        aeadCiphertextConfidentiality :=
+          aeadCiphertextConfidentiality
+        kdfDomainSeparation :=
+          kdfDomainSeparation
+        osRngFreshness :=
+          osRngFreshness
+        parserWireExactness :=
+          parserWireExactness }
+      input
+      shape
+      statementFields
+      bindingFields := by
+  let boundaryCertificate :=
+    accepted_pq_handshake_native_ciphertext_privacy_boundary_certificate
+      handshake
+      privacyProofs
+      mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      osRngFreshness
+      mlKemAssumption
+      aeadAssumption
+      kdfAssumption
+      rngAssumption
+      firstFramePayloadBytes
+      bindingAccepted
+      canonicalSurface
+      game
+      leftShape
+      leftObserverBytesBounded
+      rightObserverBytesBounded
+  exact
+    { boundaryCertificate := boundaryCertificate
+      mlKemCiphertextIndistinguishability :=
+        boundaryCertificate.ciphertextMlKemIndistinguishability
+      aeadCiphertextConfidentiality :=
+        boundaryCertificate.ciphertextAeadConfidentiality
+      kdfDomainSeparation :=
+        boundaryCertificate.ciphertextHkdfDomainSeparation
+      osRngFreshness :=
+        boundaryCertificate.ciphertextRngFreshness
+      parserWireExactness := parserWireAssumption
+      rawWireIndistinguishable :=
+        boundaryCertificate.rawWireIndistinguishable
+      proofSystemZeroKnowledge :=
+        boundaryCertificate.proofSystemZeroKnowledge
+      walletMetadataHygiene :=
+        boundaryCertificate.walletMetadataHygiene
+      timingAndBatchingPolicy :=
+        boundaryCertificate.timingAndBatchingPolicy
+      networkMetadataPolicy :=
+        boundaryCertificate.networkMetadataPolicy }
+
+structure PqKemSeedTranscriptKdfImplementationBoundaryFacts
+    (surface : HandshakeChannelSurface)
+    (responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts) : Prop where
+  responderSeedUse :
+    responderSeed.use =
+      Hegemon.Network.PqNoise.KemEncapsulationUse.responderEncapsulatesToInitiator
+  initiatorSeedUse :
+    initiatorSeed.use =
+      Hegemon.Network.PqNoise.KemEncapsulationUse.initiatorEncapsulatesToResponder
+  responderSeedSourceOsRng :
+    responderSeed.source = Hegemon.Network.PqNoise.KemSeedSource.osRng32
+  initiatorSeedSourceOsRng :
+    initiatorSeed.source = Hegemon.Network.PqNoise.KemSeedSource.osRng32
+  responderSeedByteLength :
+    responderSeed.seedByteLength = 32
+  initiatorSeedByteLength :
+    initiatorSeed.seedByteLength = 32
+  responderSeedConsumedByMlKem :
+    responderSeed.consumedByMlKemEncapsulate
+  initiatorSeedConsumedByMlKem :
+    initiatorSeed.consumedByMlKemEncapsulate
+  transcriptOnlyEntersSessionScheduleAsSalt :
+    Hegemon.Network.PqNoise.hkdfSalt surface.pqSession =
+      surface.pqSession.transcriptHash
+  kemSecretsEnterIkmInHandshakeOrder :
+    Hegemon.Network.PqNoise.hkdfIkm surface.pqSession =
+      surface.pqSession.shared1 ++ surface.pqSession.shared2
+  respAndFinishBindTranscriptHash :
+    surface.respHello.transcriptHash = surface.pqSession.transcriptHash
+      ∧ surface.finish.transcriptHash = surface.pqSession.transcriptHash
+
+theorem accepted_pq_kem_transcript_kdf_certificate_excludes_implementation_seed_misuse
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts}
+    (certificate :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface
+        crypto
+        responderSeed
+        initiatorSeed) :
+    PqKemSeedTranscriptKdfImplementationBoundaryFacts
+      surface
+      responderSeed
+      initiatorSeed := by
+  exact
+    { responderSeedUse := certificate.responderSeedUse
+      initiatorSeedUse := certificate.initiatorSeedUse
+      responderSeedSourceOsRng := certificate.responderSeedSource
+      initiatorSeedSourceOsRng := certificate.initiatorSeedSource
+      responderSeedByteLength := certificate.responderSeedByteLength
+      initiatorSeedByteLength := certificate.initiatorSeedByteLength
+      responderSeedConsumedByMlKem :=
+        certificate.responderEncapsulationUsesResponderSeed
+      initiatorSeedConsumedByMlKem :=
+        certificate.initiatorEncapsulationUsesInitiatorSeed
+      transcriptOnlyEntersSessionScheduleAsSalt :=
+        certificate.transcriptOnlyEntersSessionScheduleAsSalt
+      kemSecretsEnterIkmInHandshakeOrder :=
+        certificate.kemSecretsEnterIkmInHandshakeOrder
+      respAndFinishBindTranscriptHash :=
+        certificate.respAndFinishBindTranscriptHash }
+
+structure PqTransportCiphertextPrimitiveResidualAssumptions where
+  mlKemCiphertextIndistinguishability : Prop
+  aeadCiphertextConfidentiality : Prop
+  hkdfExtractExpandPrimitiveSecurity : Prop
+  osRngQuality : Prop
+  parserWireExactness : Prop
+
+structure PqTransportNativeCiphertextSeedHardenedResidualCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (localState peerState : Hegemon.Network.PqNoise.ChannelState)
+    (localBytesSent localBytesReceived peerBytesSent peerBytesReceived : Nat)
+    (firstFramePayloadBytes firstFrameTagBytes firstFrameWireBytes : Nat)
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (privacyAssumptions : PrivacyBoundaryAssumptions)
+    (residuals : PqTransportCiphertextPrimitiveResidualAssumptions)
+    (responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts)
+    (input : TxLeafActionBindingInput)
+    (shape : PublicInputShape)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields) :
+    Prop where
+  residualCertificate :
+    PqTransportNativeCiphertextResidualCertificate
+      surface
+      crypto
+      localState
+      peerState
+      localBytesSent
+      localBytesReceived
+      peerBytesSent
+      peerBytesReceived
+      firstFramePayloadBytes
+      firstFrameTagBytes
+      firstFrameWireBytes
+      left
+      right
+      wireIndistinguishable
+      privacyAssumptions
+      { mlKemCiphertextIndistinguishability :=
+          residuals.mlKemCiphertextIndistinguishability
+        aeadCiphertextConfidentiality :=
+          residuals.aeadCiphertextConfidentiality
+        kdfDomainSeparation :=
+          residuals.hkdfExtractExpandPrimitiveSecurity
+        osRngFreshness :=
+          residuals.osRngQuality
+        parserWireExactness :=
+          residuals.parserWireExactness }
+      input
+      shape
+      statementFields
+      bindingFields
+  kemTranscriptKdfCertificate :
+    AcceptedPqKemTranscriptKdfCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+  implementationSeedBoundary :
+    PqKemSeedTranscriptKdfImplementationBoundaryFacts
+      surface
+      responderSeed
+      initiatorSeed
+  mlKemCiphertextIndistinguishability :
+    residuals.mlKemCiphertextIndistinguishability
+  aeadCiphertextConfidentiality :
+    residuals.aeadCiphertextConfidentiality
+  hkdfExtractExpandPrimitiveSecurity :
+    residuals.hkdfExtractExpandPrimitiveSecurity
+  osRngQuality :
+    residuals.osRngQuality
+  parserWireExactness :
+    residuals.parserWireExactness
+  rawWireIndistinguishable :
+    wireIndistinguishable
+  proofSystemZeroKnowledge :
+    privacyAssumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene :
+    privacyAssumptions.walletMetadataHygiene
+  timingAndBatchingPolicy :
+    privacyAssumptions.timingAndBatchingPolicy
+  networkMetadataPolicy :
+    privacyAssumptions.networkMetadataPolicy
+
+theorem accepted_pq_kem_certificate_native_ciphertext_privacy_boundary_seed_hardened_residual_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed :
+      Hegemon.Network.PqNoise.MlKemEncapsulationSeedFacts}
+    {input : TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields : Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {left right : ShieldedTransactionWorld}
+    {privacyAssumptions : PrivacyBoundaryAssumptions}
+    (kemTranscriptKdfCertificate :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface
+        crypto
+        responderSeed
+        initiatorSeed)
+    (privacyProofs : PrivacyBoundaryAssumptionProofs privacyAssumptions)
+    (mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity
+      osRngQuality
+      parserWireExactness : Prop)
+    (mlKemAssumption : mlKemCiphertextIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (hkdfAssumption : hkdfExtractExpandPrimitiveSecurity)
+    (osRngAssumption : osRngQuality)
+    (parserWireAssumption : parserWireExactness)
+    (firstFramePayloadBytes : Nat)
+    (bindingAccepted : txLeafActionBindingAccepts input = true)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    PqTransportNativeCiphertextSeedHardenedResidualCertificate
+      surface
+      crypto
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      0
+      0
+      0
+      0
+      firstFramePayloadBytes
+      pqAeadTagBytes
+      (firstFramePayloadBytes + pqAeadTagBytes)
+      left
+      right
+      game.wireIndistinguishable
+      privacyAssumptions
+      { mlKemCiphertextIndistinguishability :=
+          mlKemCiphertextIndistinguishability
+        aeadCiphertextConfidentiality :=
+          aeadCiphertextConfidentiality
+        hkdfExtractExpandPrimitiveSecurity :=
+          hkdfExtractExpandPrimitiveSecurity
+        osRngQuality :=
+          osRngQuality
+        parserWireExactness :=
+          parserWireExactness }
+      responderSeed
+      initiatorSeed
+      input
+      shape
+      statementFields
+      bindingFields := by
+  let residualCertificate :=
+    accepted_pq_handshake_native_ciphertext_privacy_boundary_residual_certificate
+      kemTranscriptKdfCertificate.handshakeAccepted
+      privacyProofs
+      mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity
+      osRngQuality
+      parserWireExactness
+      mlKemAssumption
+      aeadAssumption
+      hkdfAssumption
+      osRngAssumption
+      parserWireAssumption
+      firstFramePayloadBytes
+      bindingAccepted
+      canonicalSurface
+      game
+      leftShape
+      leftObserverBytesBounded
+      rightObserverBytesBounded
+  exact
+    { residualCertificate := residualCertificate
+      kemTranscriptKdfCertificate := kemTranscriptKdfCertificate
+      implementationSeedBoundary :=
+        accepted_pq_kem_transcript_kdf_certificate_excludes_implementation_seed_misuse
+          kemTranscriptKdfCertificate
+      mlKemCiphertextIndistinguishability :=
+        residualCertificate.mlKemCiphertextIndistinguishability
+      aeadCiphertextConfidentiality :=
+        residualCertificate.aeadCiphertextConfidentiality
+      hkdfExtractExpandPrimitiveSecurity :=
+        residualCertificate.kdfDomainSeparation
+      osRngQuality :=
+        residualCertificate.osRngFreshness
+      parserWireExactness :=
+        residualCertificate.parserWireExactness
+      rawWireIndistinguishable :=
+        residualCertificate.rawWireIndistinguishable
+      proofSystemZeroKnowledge :=
+        residualCertificate.proofSystemZeroKnowledge
+      walletMetadataHygiene :=
+        residualCertificate.walletMetadataHygiene
+      timingAndBatchingPolicy :=
+        residualCertificate.timingAndBatchingPolicy
+      networkMetadataPolicy :=
+        residualCertificate.networkMetadataPolicy }
+
 end PqTransportPrivacyBoundary
 end Privacy
 end Hegemon

@@ -30,6 +30,79 @@ structure SessionKeyInput where
   shared2 : List Byte
 deriving DecidableEq, Repr
 
+inductive KemEncapsulationUse where
+  | responderEncapsulatesToInitiator
+  | initiatorEncapsulatesToResponder
+deriving DecidableEq, Repr
+
+inductive KemSeedSource where
+  | osRng32
+  | publicTranscriptDerived
+  | fixedDeterministic
+  | callerProvidedTest
+deriving DecidableEq, Repr
+
+structure MlKemEncapsulationSeedFacts where
+  use : KemEncapsulationUse
+  source : KemSeedSource
+  seedByteLength : Nat
+  consumedByMlKemEncapsulate : Prop
+
+def osRngMlKemSeedFacts
+    (use : KemEncapsulationUse)
+    (consumedByMlKemEncapsulate : Prop) :
+    MlKemEncapsulationSeedFacts :=
+  { use := use
+    source := KemSeedSource.osRng32
+    seedByteLength := 32
+    consumedByMlKemEncapsulate := consumedByMlKemEncapsulate }
+
+theorem os_rng_mlkem_seed_source
+    {use : KemEncapsulationUse}
+    {consumedByMlKemEncapsulate : Prop} :
+    (osRngMlKemSeedFacts use consumedByMlKemEncapsulate).source =
+      KemSeedSource.osRng32 := by
+  rfl
+
+theorem os_rng_mlkem_seed_length
+    {use : KemEncapsulationUse}
+    {consumedByMlKemEncapsulate : Prop} :
+    (osRngMlKemSeedFacts use consumedByMlKemEncapsulate).seedByteLength = 32 := by
+  rfl
+
+theorem os_rng_seed_source_not_public_transcript :
+    KemSeedSource.osRng32 ≠ KemSeedSource.publicTranscriptDerived := by
+  decide
+
+theorem os_rng_seed_source_not_fixed_deterministic :
+    KemSeedSource.osRng32 ≠ KemSeedSource.fixedDeterministic := by
+  decide
+
+theorem os_rng_seed_source_not_caller_provided_test :
+    KemSeedSource.osRng32 ≠ KemSeedSource.callerProvidedTest := by
+  decide
+
+theorem mlkem_os_rng_seed_not_public_transcript_derived
+    {facts : MlKemEncapsulationSeedFacts}
+    (seedSource : facts.source = KemSeedSource.osRng32) :
+    facts.source ≠ KemSeedSource.publicTranscriptDerived := by
+  rw [seedSource]
+  exact os_rng_seed_source_not_public_transcript
+
+theorem mlkem_os_rng_seed_not_fixed_deterministic
+    {facts : MlKemEncapsulationSeedFacts}
+    (seedSource : facts.source = KemSeedSource.osRng32) :
+    facts.source ≠ KemSeedSource.fixedDeterministic := by
+  rw [seedSource]
+  exact os_rng_seed_source_not_fixed_deterministic
+
+theorem mlkem_os_rng_seed_not_caller_provided_test
+    {facts : MlKemEncapsulationSeedFacts}
+    (seedSource : facts.source = KemSeedSource.osRng32) :
+    facts.source ≠ KemSeedSource.callerProvidedTest := by
+  rw [seedSource]
+  exact os_rng_seed_source_not_caller_provided_test
+
 def hkdfSalt (input : SessionKeyInput) : List Byte :=
   input.transcriptHash
 
@@ -201,6 +274,16 @@ theorem sample_hkdf_ikm_is_ordered_shared_secrets :
       sampleSessionInput.shared1 ++ sampleSessionInput.shared2 := by
   rfl
 
+theorem hkdf_salt_is_transcript_hash
+    {input : SessionKeyInput} :
+    hkdfSalt input = input.transcriptHash := by
+  rfl
+
+theorem hkdf_ikm_orders_kem_shared_secrets
+    {input : SessionKeyInput} :
+    hkdfIkm input = input.shared1 ++ input.shared2 := by
+  rfl
+
 theorem initiator_sends_i2r :
     sendSlot Role.initiator = KeySlot.initiatorToResponder := by
   rfl
@@ -368,6 +451,37 @@ theorem finish_preimage_starts_with_domain
   exists input.mlkemCiphertext
     ++ u64be input.nonce
     ++ input.transcriptHash
+
+theorem init_hello_signing_preimage_fields
+    {input : InitHelloSigningInput} :
+    initHelloSigningPreimage input =
+      asciiBytes "init-hello"
+        ++ [byte input.version]
+        ++ input.mlkemPublicKey
+        ++ input.identityKey
+        ++ u64be input.nonce := by
+  rfl
+
+theorem resp_hello_signing_preimage_fields
+    {input : RespHelloSigningInput} :
+    respHelloSigningPreimage input =
+      asciiBytes "resp-hello"
+        ++ [byte input.version]
+        ++ input.mlkemPublicKey
+        ++ input.mlkemCiphertext
+        ++ input.identityKey
+        ++ u64be input.nonce
+        ++ input.transcriptHash := by
+  rfl
+
+theorem finish_signing_preimage_fields
+    {input : FinishSigningInput} :
+    finishSigningPreimage input =
+      asciiBytes "finish"
+        ++ input.mlkemCiphertext
+        ++ u64be input.nonce
+        ++ input.transcriptHash := by
+  rfl
 
 theorem sample_init_resp_preimages_distinct :
     initHelloSigningPreimage sampleInitSigningInput ≠

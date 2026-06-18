@@ -149,9 +149,9 @@ impl PeerIdentity {
             .verify(&preimage, &signature)
             .map_err(|_| NetworkError::InvalidSignature)?;
 
-        let seed_material = random_encapsulation_seed();
         let kem_pk = MlKemPublicKey::from_bytes(&offer.kem_public)?;
-        let (ciphertext, shared_secret) = kem_pk.encapsulate(&seed_material);
+        let seed_material = random_encapsulation_seed();
+        let (ciphertext, shared_secret) = encapsulate_with_seed(&kem_pk, &seed_material);
         let ciphertext_bytes = ciphertext.to_bytes().to_vec();
         let nonce = random_nonce();
         let acceptance_preimage = acceptance_preimage(
@@ -195,7 +195,8 @@ impl PeerIdentity {
         let responder_secret = self.kem.decapsulate(&ciphertext)?;
         let responder_kem = MlKemPublicKey::from_bytes(&acceptance.kem_public)?;
         let seed_material = random_encapsulation_seed();
-        let (ciphertext_to_responder, initiator_secret) = responder_kem.encapsulate(&seed_material);
+        let (ciphertext_to_responder, initiator_secret) =
+            encapsulate_with_seed(&responder_kem, &seed_material);
         let cipher_bytes = ciphertext_to_responder.to_bytes().to_vec();
         let nonce = random_nonce();
         let confirmation_preimage = confirmation_preimage(&cipher_bytes, nonce);
@@ -466,6 +467,13 @@ fn random_encapsulation_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
     OsRng.fill_bytes(&mut seed);
     seed
+}
+
+fn encapsulate_with_seed(
+    public_key: &MlKemPublicKey,
+    seed: &[u8; 32],
+) -> (MlKemCiphertext, MlKemSharedSecret) {
+    public_key.encapsulate(seed)
 }
 
 fn secure_channel_from_transcript(
@@ -786,5 +794,21 @@ mod tests {
                 other => panic!("{} counter mismatch: {other:?}", case.name),
             }
         }
+    }
+
+    #[test]
+    fn encapsulate_with_seed_consumes_supplied_seed() {
+        let keypair = MlKemKeyPair::generate_deterministic(b"network-encapsulation-seed-binding");
+        let public_key = keypair.public_key();
+        let seed = [23u8; 32];
+
+        let (ciphertext, shared_secret) = encapsulate_with_seed(&public_key, &seed);
+        let (expected_ciphertext, expected_shared_secret) = public_key.encapsulate(&seed);
+
+        assert_eq!(ciphertext.to_bytes(), expected_ciphertext.to_bytes());
+        assert_eq!(
+            shared_secret.as_bytes(),
+            expected_shared_secret.as_bytes()
+        );
     }
 }

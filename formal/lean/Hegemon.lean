@@ -88,6 +88,7 @@ import Hegemon.Native.PendingActionScaleWire
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
 import Hegemon.Native.CodecCanonicalPublicationBoundary
+import Hegemon.Native.PreHeavyCodecCanonicalPublication
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 import Hegemon.Native.RawIngressActionHashTxLeafPublication
 import Hegemon.Native.RawIngressDaSidecarCanonicalPublication

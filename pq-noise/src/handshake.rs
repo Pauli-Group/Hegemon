@@ -110,7 +110,8 @@ impl PqHandshake {
         // Encapsulate to initiator's ML-KEM public key
         let initiator_mlkem_pk = MlKemPublicKey::from_bytes(&init_hello.mlkem_public_key)?;
         let encap_seed = random_encapsulation_seed();
-        let (ciphertext, shared_secret) = initiator_mlkem_pk.encapsulate(&encap_seed);
+        let (ciphertext, shared_secret) =
+            encapsulate_with_seed(&initiator_mlkem_pk, &encap_seed);
         self.mlkem_shared_1 = Some(shared_secret);
 
         // Get our identity and KEM public keys
@@ -191,7 +192,8 @@ impl PqHandshake {
         // Encapsulate to responder's ML-KEM public key
         let responder_mlkem_pk = MlKemPublicKey::from_bytes(&resp_hello.mlkem_public_key)?;
         let encap_seed = random_encapsulation_seed();
-        let (ciphertext, shared_secret_2) = responder_mlkem_pk.encapsulate(&encap_seed);
+        let (ciphertext, shared_secret_2) =
+            encapsulate_with_seed(&responder_mlkem_pk, &encap_seed);
         self.mlkem_shared_2 = Some(shared_secret_2);
 
         let nonce = random_nonce();
@@ -385,10 +387,17 @@ fn random_nonce() -> u64 {
     OsRng.next_u64()
 }
 
-fn random_encapsulation_seed() -> [u8; 32] {
+pub(crate) fn random_encapsulation_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
     OsRng.fill_bytes(&mut seed);
     seed
+}
+
+pub(crate) fn encapsulate_with_seed(
+    public_key: &MlKemPublicKey,
+    seed: &[u8; 32],
+) -> (MlKemCiphertext, MlKemSharedSecret) {
+    public_key.encapsulate(seed)
 }
 
 #[cfg(test)]
@@ -575,6 +584,22 @@ mod tests {
             old_public_ct_2.to_bytes().to_vec(),
             finish_msg.mlkem_ciphertext,
             "ML-KEM finish ciphertext must not be reproducible from public transcript bytes"
+        );
+    }
+
+    #[test]
+    fn encapsulate_with_seed_consumes_supplied_seed() {
+        let identity = LocalIdentity::generate(b"encapsulation-seed-binding");
+        let public_key = identity.kem_keypair.public_key();
+        let seed = [17u8; 32];
+
+        let (ciphertext, shared_secret) = encapsulate_with_seed(&public_key, &seed);
+        let (expected_ciphertext, expected_shared_secret) = public_key.encapsulate(&seed);
+
+        assert_eq!(ciphertext.to_bytes(), expected_ciphertext.to_bytes());
+        assert_eq!(
+            shared_secret.as_bytes(),
+            expected_shared_secret.as_bytes()
         );
     }
 }

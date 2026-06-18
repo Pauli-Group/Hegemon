@@ -56,8 +56,8 @@ mod formal_vectors {
     use super::*;
     use crate::handshake::{
         finish_signing_data, finish_signing_preimage, init_hello_signing_data,
-        init_hello_signing_preimage, resp_hello_signing_data, resp_hello_signing_preimage,
-        signing_digest,
+        init_hello_signing_preimage, random_encapsulation_seed, resp_hello_signing_data,
+        resp_hello_signing_preimage, signing_digest,
     };
     use crate::noise::{nonce_from_counter, nonce_step};
     use crate::types::{
@@ -77,6 +77,7 @@ mod formal_vectors {
     #[derive(Deserialize)]
     struct LeanPqNoiseVectorFile {
         schema_version: u32,
+        kem_rng_source_cases: Vec<LeanKemRngSourceCase>,
         session_key_cases: Vec<LeanSessionKeyCase>,
         role_cases: Vec<LeanRoleCase>,
         nonce_cases: Vec<LeanNonceCase>,
@@ -85,6 +86,16 @@ mod formal_vectors {
         init_signing_cases: Vec<LeanInitSigningCase>,
         resp_signing_cases: Vec<LeanRespSigningCase>,
         finish_signing_cases: Vec<LeanFinishSigningCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct LeanKemRngSourceCase {
+        name: String,
+        use_kind: String,
+        expected_source: String,
+        expected_seed_byte_length: String,
+        expected_consumed_by_mlkem_encapsulate: bool,
+        expected_public_transcript_derived: bool,
     }
 
     #[derive(Deserialize)]
@@ -276,8 +287,43 @@ mod formal_vectors {
         let contents = std::fs::read_to_string(path).expect("read Lean PQ Noise vectors");
         let vectors: LeanPqNoiseVectorFile =
             serde_json::from_str(&contents).expect("parse Lean PQ Noise vectors");
-        assert_eq!(vectors.schema_version, 3);
+        assert_eq!(vectors.schema_version, 4);
         let frame_keys = vector_session_keys(&vectors);
+
+        for case in &vectors.kem_rng_source_cases {
+            assert!(
+                matches!(
+                    case.use_kind.as_str(),
+                    "responder_encapsulates_to_initiator"
+                        | "initiator_encapsulates_to_responder"
+                ),
+                "{} use kind",
+                case.name
+            );
+            assert_eq!(
+                case.expected_source, "os_rng_32",
+                "{} seed source",
+                case.name
+            );
+            assert_eq!(
+                random_encapsulation_seed().len(),
+                case.expected_seed_byte_length
+                    .parse::<usize>()
+                    .expect("seed length"),
+                "{} seed length",
+                case.name
+            );
+            assert!(
+                case.expected_consumed_by_mlkem_encapsulate,
+                "{} seed consumed by encapsulate",
+                case.name
+            );
+            assert!(
+                !case.expected_public_transcript_derived,
+                "{} not public transcript derived",
+                case.name
+            );
+        }
 
         for case in &vectors.session_key_cases {
             let transcript_hash = decode_array_32(&case.transcript_hash_hex);

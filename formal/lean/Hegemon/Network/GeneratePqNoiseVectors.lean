@@ -23,6 +23,18 @@ def keySlotName : KeySlot -> String
 def keySlotJson (slot : KeySlot) : String :=
   "\"" ++ keySlotName slot ++ "\""
 
+def kemUseJson : KemEncapsulationUse -> String
+  | KemEncapsulationUse.responderEncapsulatesToInitiator =>
+      "\"responder_encapsulates_to_initiator\""
+  | KemEncapsulationUse.initiatorEncapsulatesToResponder =>
+      "\"initiator_encapsulates_to_responder\""
+
+def kemSeedSourceJson : KemSeedSource -> String
+  | KemSeedSource.osRng32 => "\"os_rng_32\""
+  | KemSeedSource.publicTranscriptDerived => "\"public_transcript_derived\""
+  | KemSeedSource.fixedDeterministic => "\"fixed_deterministic\""
+  | KemSeedSource.callerProvidedTest => "\"caller_provided_test\""
+
 def peerRole : Role -> Role
   | Role.initiator => Role.responder
   | Role.responder => Role.initiator
@@ -42,6 +54,20 @@ def sessionKeyCaseJson (name : String) (input : SessionKeyInput) : String :=
       ++ boolJson (initiatorToResponderInfo == responderToInitiatorInfo) ++ ",\n"
     ++ "      \"expected_i2r_equals_aad_info\": "
       ++ boolJson (initiatorToResponderInfo == sessionAadInfo) ++ "\n"
+    ++ "    }"
+
+def kemRngSourceCaseJson
+    (name : String)
+    (facts : MlKemEncapsulationSeedFacts) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"use_kind\": " ++ kemUseJson facts.use ++ ",\n"
+    ++ "      \"expected_source\": " ++ kemSeedSourceJson facts.source ++ ",\n"
+    ++ "      \"expected_seed_byte_length\": \""
+      ++ toString facts.seedByteLength ++ "\",\n"
+    ++ "      \"expected_consumed_by_mlkem_encapsulate\": true,\n"
+    ++ "      \"expected_public_transcript_derived\": "
+      ++ boolJson (facts.source == KemSeedSource.publicTranscriptDerived) ++ "\n"
     ++ "    }"
 
 def roleCaseJson (role : Role) : String :=
@@ -242,7 +268,17 @@ def alternateFinishSigningInput : FinishSigningInput := {
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 3,\n"
+    ++ "  \"schema_version\": 4,\n"
+    ++ "  \"kem_rng_source_cases\": [\n"
+    ++ kemRngSourceCaseJson
+      "responder-os-rng-encapsulates-to-initiator"
+      (osRngMlKemSeedFacts
+        KemEncapsulationUse.responderEncapsulatesToInitiator True) ++ ",\n"
+    ++ kemRngSourceCaseJson
+      "initiator-os-rng-encapsulates-to-responder"
+      (osRngMlKemSeedFacts
+        KemEncapsulationUse.initiatorEncapsulatesToResponder True) ++ "\n"
+    ++ "  ],\n"
     ++ "  \"session_key_cases\": [\n"
     ++ sessionKeyCaseJson "patterned-session" sampleSessionInput ++ ",\n"
     ++ sessionKeyCaseJson "alternate-session" alternateSessionInput ++ "\n"

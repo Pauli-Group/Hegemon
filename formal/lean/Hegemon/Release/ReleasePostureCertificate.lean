@@ -1,6 +1,7 @@
 import Hegemon.Release.CiReleaseGate
 import Hegemon.Release.DependencyAuditPolicy
 import Hegemon.Release.PqBinaryPolicy
+import Hegemon.Native.NativeBackendReleasePosture
 
 namespace Hegemon
 namespace Release
@@ -9,11 +10,13 @@ namespace ReleasePostureCertificate
 open Hegemon.Release.CiReleaseGate
 open Hegemon.Release.DependencyAuditPolicy
 open Hegemon.Release.PqBinaryPolicy
+open Hegemon.Native.NativeBackendReleasePosture
 
 structure ReleasePostureSurface where
   dependencyAudit : DependencyAuditInput
   pqBinaryAudit : PqBinaryAuditInput
   ciReleaseGate : CiReleaseGateInput
+  nativeBackendPosture : ReleasePostureInput
 deriving DecidableEq, Repr
 
 structure AcceptedReleasePostureInputs
@@ -24,6 +27,8 @@ structure AcceptedReleasePostureInputs
     evaluatePqBinaryAudit surface.pqBinaryAudit = Except.ok ()
   ciReleaseGateAccepted :
     evaluateCiReleaseGate surface.ciReleaseGate = Except.ok ()
+  nativeBackendPostureAccepted :
+    evaluateReleasePosture surface.nativeBackendPosture = Except.ok ()
 
 structure AcceptedReleasePostureFacts
     (surface : ReleasePostureSurface) : Prop where
@@ -67,6 +72,61 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.tagReleaseNativeBackendReviewStep = true
   tagReleaseNativeBackendPostureStep :
     surface.ciReleaseGate.tagReleaseNativeBackendPostureStep = true
+  nativeBackendPostureAccepted :
+    evaluateReleasePosture surface.nativeBackendPosture = Except.ok ()
+  nativeBackendPosturePreconditions :
+    releasePosturePreconditions surface.nativeBackendPosture = true
+
+structure DependencyAuditExplicitWaiverCertificate
+    (input : DependencyAuditInput) : Prop where
+  auditAccepted :
+    evaluateDependencyAudit input = Except.ok ()
+  auditPreconditions :
+    dependencyAuditPreconditions input = true
+  everyFindingHasExplicitValidWaiver :
+    ∀ finding, finding ∈ input.findings →
+      findingHasValidWaiver input.waivers finding = true
+  everyWaiverIsValid :
+    ∀ waiver, waiver ∈ input.waivers →
+      waiverIsValid waiver = true
+  everyWaiverMatchesLiveFinding :
+    ∀ waiver, waiver ∈ input.waivers →
+      waiverMatchesAnyFinding input.findings waiver = true
+
+structure PqReleaseResidualCertificate
+    (input : PqBinaryAuditInput) : Prop where
+  auditAccepted :
+    evaluatePqBinaryAudit input = Except.ok ()
+  allScansClean :
+    pqBinaryAllScansClean input = true
+  sourceScanClean :
+    input.sourceScanClean = true
+  dependencyScanClean :
+    input.dependencyScanClean = true
+  binaryScanClean :
+    input.binaryScanClean = true
+
+structure NativeBackendProductionAcceptedCertificate
+    (input : ReleasePostureInput) : Prop where
+  acceptedModeRequired :
+    input.requireAccepted = true
+  postureAccepted :
+    evaluateReleasePosture input = Except.ok ()
+  acceptedPreconditionsHold :
+    acceptedPreconditions input = true
+  posturePreconditionsHold :
+    releasePosturePreconditions input = true
+
+structure ProductionReleaseGateCertificate
+    (surface : ReleasePostureSurface) : Prop where
+  releaseFacts :
+    AcceptedReleasePostureFacts surface
+  dependencyWaiverGate :
+    DependencyAuditExplicitWaiverCertificate surface.dependencyAudit
+  pqResidualGate :
+    PqReleaseResidualCertificate surface.pqBinaryAudit
+  nativeBackendResidualGate :
+    NativeBackendProductionAcceptedCertificate surface.nativeBackendPosture
 
 theorem accepted_pq_binary_audit_exposes_clean_scans
     {input : PqBinaryAuditInput}
@@ -79,6 +139,26 @@ theorem accepted_pq_binary_audit_exposes_clean_scans
     cases hDependency : input.dependencyScanClean <;>
     cases hBinary : input.binaryScanClean <;>
     simp [hSource, hDependency, hBinary] at accepted ⊢
+
+theorem accepted_native_backend_release_posture_exposes_preconditions
+    {input : ReleasePostureInput}
+    (accepted : evaluateReleasePosture input = Except.ok ()) :
+    releasePosturePreconditions input = true := by
+  have accepts : releasePostureAccepts input = true := by
+    unfold releasePostureAccepts
+    simp [accepted]
+  rw [accepts_iff_release_posture_preconditions] at accepts
+  exact accepts
+
+theorem accepted_native_backend_release_posture_in_accepted_mode_exposes_preconditions
+    {input : ReleasePostureInput}
+    (accepted : evaluateReleasePosture input = Except.ok ())
+    (acceptedMode : input.requireAccepted = true) :
+    acceptedPreconditions input = true := by
+  have posturePreconditions :=
+    accepted_native_backend_release_posture_exposes_preconditions accepted
+  unfold releasePosturePreconditions at posturePreconditions
+  simpa [acceptedMode] using posturePreconditions
 
 theorem accepted_release_posture_exposes_all_release_gates
     {surface : ReleasePostureSurface}
@@ -93,6 +173,9 @@ theorem accepted_release_posture_exposes_all_release_gates
   have ciFacts :=
     accepted_ci_release_gate_exposes_required_policy_facts
       accepted.ciReleaseGateAccepted
+  have nativeBackendPostureFacts :=
+    accepted_native_backend_release_posture_exposes_preconditions
+      accepted.nativeBackendPostureAccepted
   exact {
     dependencyAuditAccepted := accepted.dependencyAuditAccepted,
     dependencyWaiversValid := dependencyFacts.left,
@@ -119,7 +202,72 @@ theorem accepted_release_posture_exposes_all_release_gates
     tagReleaseNativeBackendReviewStep :=
       ciFacts.right.right.right.right.right.right.right.right.right.left,
     tagReleaseNativeBackendPostureStep :=
-      ciFacts.right.right.right.right.right.right.right.right.right.right
+      ciFacts.right.right.right.right.right.right.right.right.right.right,
+    nativeBackendPostureAccepted :=
+      accepted.nativeBackendPostureAccepted,
+    nativeBackendPosturePreconditions :=
+      nativeBackendPostureFacts
+  }
+
+theorem accepted_release_posture_with_native_accepted_mode_yields_production_gate_certificate
+    {surface : ReleasePostureSurface}
+    (accepted : AcceptedReleasePostureInputs surface)
+    (nativeAcceptedMode :
+      surface.nativeBackendPosture.requireAccepted = true) :
+    ProductionReleaseGateCertificate surface := by
+  have releaseFacts :=
+    accepted_release_posture_exposes_all_release_gates accepted
+  have nativeAcceptedPreconditions :=
+    accepted_native_backend_release_posture_in_accepted_mode_exposes_preconditions
+      accepted.nativeBackendPostureAccepted
+      nativeAcceptedMode
+  exact {
+    releaseFacts := releaseFacts,
+    dependencyWaiverGate := {
+      auditAccepted := accepted.dependencyAuditAccepted,
+      auditPreconditions := by
+        simp [
+          dependencyAuditPreconditions,
+          releaseFacts.dependencyWaiversValid,
+          releaseFacts.dependencyFindingsWaived,
+          releaseFacts.dependencyWaiversUsed
+        ],
+      everyFindingHasExplicitValidWaiver := by
+        intro finding present
+        exact accepted_dependency_audit_finding_has_explicit_valid_waiver
+          accepted.dependencyAuditAccepted
+          present,
+      everyWaiverIsValid := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_is_valid
+          accepted.dependencyAuditAccepted
+          present,
+      everyWaiverMatchesLiveFinding := by
+        intro waiver present
+        exact accepted_dependency_audit_waiver_matches_live_finding
+          accepted.dependencyAuditAccepted
+          present
+    },
+    pqResidualGate := {
+      auditAccepted := accepted.pqBinaryAuditAccepted,
+      allScansClean := by
+        simp [
+          pqBinaryAllScansClean,
+          releaseFacts.sourceScanClean,
+          releaseFacts.dependencyScanClean,
+          releaseFacts.binaryScanClean
+        ],
+      sourceScanClean := releaseFacts.sourceScanClean,
+      dependencyScanClean := releaseFacts.dependencyScanClean,
+      binaryScanClean := releaseFacts.binaryScanClean
+    },
+    nativeBackendResidualGate := {
+      acceptedModeRequired := nativeAcceptedMode,
+      postureAccepted := accepted.nativeBackendPostureAccepted,
+      acceptedPreconditionsHold := nativeAcceptedPreconditions,
+      posturePreconditionsHold :=
+        releaseFacts.nativeBackendPosturePreconditions
+    }
   }
 
 end ReleasePostureCertificate

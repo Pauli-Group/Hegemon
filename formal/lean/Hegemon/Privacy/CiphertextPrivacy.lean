@@ -254,6 +254,32 @@ structure SecretResamplingPrivacyFacts
           privateWitness := rightPrivateWitness
           proverRandomnessSeed := rightProverRandomnessSeed
           localNetworkMetadata := rightNetwork }
+  publicMetadataStableUnderIndependentSecretAndWalletBookkeepingResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftWallet rightWallet,
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localWalletBookkeepingMetadata := leftWallet }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localWalletBookkeepingMetadata := rightWallet }
+  batchTimingStableUnderIndependentSecretAndWalletBookkeepingResampling :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed
+      leftWallet rightWallet,
+      sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed
+          localWalletBookkeepingMetadata := leftWallet }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed
+          localWalletBookkeepingMetadata := rightWallet }
 
 structure RawWireExcludedPublicLeakageFacts
     (left right : ShieldedTransactionWorld)
@@ -276,6 +302,125 @@ structure CiphertextPrivacyOpenAssumptionBoundaryFacts
     RawWireExcludedPublicLeakageFacts left right wireIndistinguishable
   sameWireDischargesRawWirePrivacy :
     left.ciphertextBytes = right.ciphertextBytes -> sameAllowedLeakage left right
+  rawWireIndistinguishable : wireIndistinguishable
+  proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
+  walletMetadataHygiene : assumptions.walletMetadataHygiene
+  timingAndBatchingPolicy : assumptions.timingAndBatchingPolicy
+  networkMetadataPolicy : assumptions.networkMetadataPolicy
+
+structure PublicMetadataPrivacyCertificate
+    (left right : ShieldedTransactionWorld)
+    (wireIndistinguishable : Prop)
+    (assumptions : PrivacyBoundaryAssumptions) : Prop where
+  openAssumptionBoundary :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      left
+      right
+      wireIndistinguishable
+      assumptions
+  intentionallyPublicFields :
+    left.publicInputs = right.publicInputs
+      ∧ left.ciphertextSummaries = right.ciphertextSummaries
+      ∧ left.blockHeight = right.blockHeight
+      ∧ left.actionIndex = right.actionIndex
+  publicCiphertextShape : samePublicCiphertextShape left right
+  publicMetadataProjection : samePublicMetadataLeakage left right
+  publicBatchTimingProjection : sameBatchTimingLeakage left right
+  activeOutputCountEq :
+    activeOutputCount left.publicInputs =
+      activeOutputCount right.publicInputs
+  ciphertextWireCountEq :
+    left.ciphertextBytes.length = right.ciphertextBytes.length
+  ciphertextSummaryCountEq :
+    left.ciphertextSummaries.length =
+      right.ciphertextSummaries.length
+  chainCiphertextFormat :
+    summariesHaveChainCiphertextFormat left.ciphertextSummaries
+      ∧ summariesHaveChainCiphertextFormat right.ciphertextSummaries
+  rawWireExcludedFromPublicMetadata :
+    RawWireExcludedPublicLeakageFacts left right wireIndistinguishable
+  sameRawWireDischargesFullObserverLeakage :
+    left.ciphertextBytes = right.ciphertextBytes ->
+      sameAllowedLeakage left right
+  privateWitnessAndProverRandomnessHiddenFromPublicMetadata :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed,
+      samePublicMetadataLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed }
+  privateWitnessAndProverRandomnessHiddenFromBatchTiming :
+    ∀ leftPrivateWitness rightPrivateWitness
+      leftProverRandomnessSeed rightProverRandomnessSeed,
+      sameBatchTimingLeakage
+        { left with
+          privateWitness := leftPrivateWitness
+          proverRandomnessSeed := leftProverRandomnessSeed }
+        { right with
+          privateWitness := rightPrivateWitness
+          proverRandomnessSeed := rightProverRandomnessSeed }
+  localActionMetadataHidden :
+    ∀ leftLocal rightLocal,
+      samePublicMetadataLeakage
+        { left with localActionMetadata := leftLocal }
+        { right with localActionMetadata := rightLocal }
+        ∧ sameBatchTimingLeakage
+          { left with localActionMetadata := leftLocal }
+          { right with localActionMetadata := rightLocal }
+  localAddressMetadataHidden :
+    ∀ leftAddress rightAddress,
+      samePublicMetadataLeakage
+        { left with localAddressMetadata := leftAddress }
+        { right with localAddressMetadata := rightAddress }
+        ∧ sameBatchTimingLeakage
+          { left with localAddressMetadata := leftAddress }
+          { right with localAddressMetadata := rightAddress }
+  localWalletBookkeepingMetadataHidden :
+    ∀ leftWallet rightWallet,
+      samePublicMetadataLeakage
+        { left with localWalletBookkeepingMetadata := leftWallet }
+        { right with localWalletBookkeepingMetadata := rightWallet }
+        ∧ sameBatchTimingLeakage
+          { left with localWalletBookkeepingMetadata := leftWallet }
+          { right with localWalletBookkeepingMetadata := rightWallet }
+  localNetworkMetadataHidden :
+    ∀ leftNetwork rightNetwork,
+      samePublicMetadataLeakage
+        { left with localNetworkMetadata := leftNetwork }
+        { right with localNetworkMetadata := rightNetwork }
+        ∧ sameBatchTimingLeakage
+          { left with localNetworkMetadata := leftNetwork }
+          { right with localNetworkMetadata := rightNetwork }
+  allWalletLocalMetadataHidden :
+    ∀ leftLocal rightLocal
+      leftAddress rightAddress
+      leftWallet rightWallet
+      leftNetwork rightNetwork,
+      samePublicMetadataLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localWalletBookkeepingMetadata := leftWallet
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localWalletBookkeepingMetadata := rightWallet
+          localNetworkMetadata := rightNetwork }
+        ∧ sameBatchTimingLeakage
+          { left with
+            localActionMetadata := leftLocal
+            localAddressMetadata := leftAddress
+            localWalletBookkeepingMetadata := leftWallet
+            localNetworkMetadata := leftNetwork }
+          { right with
+            localActionMetadata := rightLocal
+            localAddressMetadata := rightAddress
+            localWalletBookkeepingMetadata := rightWallet
+            localNetworkMetadata := rightNetwork }
   rawWireIndistinguishable : wireIndistinguishable
   proofSystemZeroKnowledge : assumptions.proofSystemZeroKnowledge
   walletMetadataHygiene : assumptions.walletMetadataHygiene
@@ -671,6 +816,66 @@ theorem ciphertext_privacy_game_secret_resampling_boundary_facts
                 rightPrivateWitness
                 rightProverRandomnessSeed
                 rightNetwork).symm
+    publicMetadataStableUnderIndependentSecretAndWalletBookkeepingResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftWallet rightWallet => by
+        unfold samePublicMetadataLeakage
+        calc
+          publicMetadataView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localWalletBookkeepingMetadata := leftWallet } =
+            publicMetadataView left :=
+              public_metadata_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftWallet
+          _ = publicMetadataView right :=
+              boundary.publicMetadataLeakage
+          _ =
+            publicMetadataView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localWalletBookkeepingMetadata := rightWallet } :=
+              (public_metadata_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightWallet).symm
+    batchTimingStableUnderIndependentSecretAndWalletBookkeepingResampling :=
+      fun leftPrivateWitness rightPrivateWitness
+        leftProverRandomnessSeed rightProverRandomnessSeed
+        leftWallet rightWallet => by
+        unfold sameBatchTimingLeakage
+        calc
+          batchTimingView
+              { left with
+                privateWitness := leftPrivateWitness
+                proverRandomnessSeed := leftProverRandomnessSeed
+                localWalletBookkeepingMetadata := leftWallet } =
+            batchTimingView left :=
+              batch_timing_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+                left
+                leftPrivateWitness
+                leftProverRandomnessSeed
+                leftWallet
+          _ = batchTimingView right :=
+              boundary.batchTimingLeakage
+          _ =
+            batchTimingView
+              { right with
+                privateWitness := rightPrivateWitness
+                proverRandomnessSeed := rightProverRandomnessSeed
+                localWalletBookkeepingMetadata := rightWallet } :=
+              (batch_timing_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+                right
+                rightPrivateWitness
+                rightProverRandomnessSeed
+                rightWallet).symm
   }
 
 def buildCiphertextPrivacyGame
@@ -806,6 +1011,63 @@ theorem ciphertext_privacy_game_local_address_metadata_boundary_facts
       assumptionProofs.timingAndBatchingPolicy,
       assumptionProofs.networkMetadataPolicy⟩
 
+def ciphertext_privacy_game_resample_local_wallet_bookkeeping_metadata
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    CiphertextPrivacyGame
+      { left with localWalletBookkeepingMetadata := leftWallet }
+      { right with localWalletBookkeepingMetadata := rightWallet } := by
+  exact
+    { leftValid :=
+        valid_observer_chain_surface_stable_under_local_wallet_bookkeeping_metadata
+          game.leftValid
+          leftWallet
+      rightValid :=
+        valid_observer_chain_surface_stable_under_local_wallet_bookkeeping_metadata
+          game.rightValid
+          rightWallet
+      publicInputs := by
+        simpa [samePublicInputs] using game.publicInputs
+      summaries := by
+        simpa using game.summaries
+      placement := by
+        simpa [samePlacement] using game.placement
+      wireIndistinguishable := game.wireIndistinguishable
+      wireIndistinguishableProof := game.wireIndistinguishableProof }
+
+theorem ciphertext_privacy_game_local_wallet_bookkeeping_metadata_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    samePublicMetadataLeakage
+        { left with localWalletBookkeepingMetadata := leftWallet }
+        { right with localWalletBookkeepingMetadata := rightWallet }
+      ∧ sameBatchTimingLeakage
+        { left with localWalletBookkeepingMetadata := leftWallet }
+        { right with localWalletBookkeepingMetadata := rightWallet }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨same_public_metadata_leakage_stable_under_local_wallet_bookkeeping_metadata
+        (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+        leftWallet
+        rightWallet,
+      same_batch_timing_leakage_stable_under_local_wallet_bookkeeping_metadata
+        (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftWallet
+        rightWallet,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      assumptionProofs.proofSystemZeroKnowledge,
+      assumptionProofs.walletMetadataHygiene,
+      assumptionProofs.timingAndBatchingPolicy,
+      assumptionProofs.networkMetadataPolicy⟩
+
 def ciphertext_privacy_game_resample_local_network_metadata
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -858,6 +1120,48 @@ def ciphertext_privacy_game_resample_all_local_metadata
           game.rightValid
           rightLocal
           rightAddress
+          rightNetwork
+      publicInputs := by
+        simpa [samePublicInputs] using game.publicInputs
+      summaries := by
+        simpa using game.summaries
+      placement := by
+        simpa [samePlacement] using game.placement
+      wireIndistinguishable := game.wireIndistinguishable
+      wireIndistinguishableProof := game.wireIndistinguishableProof }
+
+def ciphertext_privacy_game_resample_all_wallet_local_metadata
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyGame
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localWalletBookkeepingMetadata := leftWallet
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localWalletBookkeepingMetadata := rightWallet
+        localNetworkMetadata := rightNetwork } := by
+  exact
+    { leftValid :=
+        valid_observer_chain_surface_stable_under_all_wallet_local_metadata
+          game.leftValid
+          leftLocal
+          leftAddress
+          leftWallet
+          leftNetwork
+      rightValid :=
+        valid_observer_chain_surface_stable_under_all_wallet_local_metadata
+          game.rightValid
+          rightLocal
+          rightAddress
+          rightWallet
           rightNetwork
       publicInputs := by
         simpa [samePublicInputs] using game.publicInputs
@@ -946,6 +1250,69 @@ theorem ciphertext_privacy_game_all_local_metadata_boundary_facts
         rightLocal
         leftAddress
         rightAddress
+        leftNetwork
+        rightNetwork,
+      ciphertext_privacy_game_only_open_crypto_obligation game,
+      assumptionProofs.proofSystemZeroKnowledge,
+      assumptionProofs.walletMetadataHygiene,
+      assumptionProofs.timingAndBatchingPolicy,
+      assumptionProofs.networkMetadataPolicy⟩
+
+theorem ciphertext_privacy_game_all_wallet_local_metadata_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localWalletBookkeepingMetadata := leftWallet
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localWalletBookkeepingMetadata := rightWallet
+          localNetworkMetadata := rightNetwork }
+      ∧ sameBatchTimingLeakage
+        { left with
+          localActionMetadata := leftLocal
+          localAddressMetadata := leftAddress
+          localWalletBookkeepingMetadata := leftWallet
+          localNetworkMetadata := leftNetwork }
+        { right with
+          localActionMetadata := rightLocal
+          localAddressMetadata := rightAddress
+          localWalletBookkeepingMetadata := rightWallet
+          localNetworkMetadata := rightNetwork }
+      ∧ game.wireIndistinguishable
+      ∧ assumptions.proofSystemZeroKnowledge
+      ∧ assumptions.walletMetadataHygiene
+      ∧ assumptions.timingAndBatchingPolicy
+      ∧ assumptions.networkMetadataPolicy := by
+  exact
+    ⟨same_public_metadata_leakage_stable_under_all_wallet_local_metadata
+        (ciphertext_privacy_game_preserves_public_metadata_leakage game)
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftWallet
+        rightWallet
+        leftNetwork
+        rightNetwork,
+      same_batch_timing_leakage_stable_under_all_wallet_local_metadata
+        (ciphertext_privacy_game_preserves_batch_timing_leakage game)
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftWallet
+        rightWallet
         leftNetwork
         rightNetwork,
       ciphertext_privacy_game_only_open_crypto_obligation game,
@@ -1060,6 +1427,25 @@ theorem ciphertext_privacy_game_local_address_metadata_open_assumption_boundary_
         rightAddress)
       assumptionProofs
 
+theorem ciphertext_privacy_game_local_wallet_bookkeeping_metadata_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      { left with localWalletBookkeepingMetadata := leftWallet }
+      { right with localWalletBookkeepingMetadata := rightWallet }
+      game.wireIndistinguishable
+      assumptions := by
+  simpa [ciphertext_privacy_game_resample_local_wallet_bookkeeping_metadata] using
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      (ciphertext_privacy_game_resample_local_wallet_bookkeeping_metadata
+        game
+        leftWallet
+        rightWallet)
+      assumptionProofs
+
 theorem ciphertext_privacy_game_local_network_metadata_open_assumption_boundary_facts
     {left right : ShieldedTransactionWorld}
     (game : CiphertextPrivacyGame left right)
@@ -1109,6 +1495,170 @@ theorem ciphertext_privacy_game_all_local_metadata_open_assumption_boundary_fact
         leftNetwork
         rightNetwork)
       assumptionProofs
+
+theorem ciphertext_privacy_game_all_wallet_local_metadata_open_assumption_boundary_facts
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    CiphertextPrivacyOpenAssumptionBoundaryFacts
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localWalletBookkeepingMetadata := leftWallet
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localWalletBookkeepingMetadata := rightWallet
+        localNetworkMetadata := rightNetwork }
+      game.wireIndistinguishable
+      assumptions := by
+  simpa [ciphertext_privacy_game_resample_all_wallet_local_metadata] using
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      (ciphertext_privacy_game_resample_all_wallet_local_metadata
+        game
+        leftLocal
+        rightLocal
+        leftAddress
+        rightAddress
+        leftWallet
+        rightWallet
+        leftNetwork
+        rightNetwork)
+      assumptionProofs
+
+theorem accepted_ciphertext_privacy_game_public_metadata_privacy_certificate
+    {left right : ShieldedTransactionWorld}
+    (game : CiphertextPrivacyGame left right)
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions) :
+    PublicMetadataPrivacyCertificate
+      left
+      right
+      game.wireIndistinguishable
+      assumptions := by
+  have deterministicBoundary :=
+    ciphertext_privacy_game_boundary_facts
+      game
+      assumptionProofs
+  have secretBoundary :=
+    ciphertext_privacy_game_secret_resampling_boundary_facts
+      game
+      assumptionProofs
+  have rawWireBoundary :=
+    ciphertext_privacy_game_raw_wire_excluded_public_leakage_facts game
+  have openBoundary :=
+    ciphertext_privacy_game_open_assumption_boundary_facts
+      game
+      assumptionProofs
+  have ciphertextWireCountEq :
+      left.ciphertextBytes.length = right.ciphertextBytes.length := by
+    calc
+      left.ciphertextBytes.length =
+          activeOutputCount left.publicInputs :=
+        game.leftValid.right.right
+      _ = activeOutputCount right.publicInputs :=
+        same_public_inputs_active_output_count game.publicInputs
+      _ = right.ciphertextBytes.length :=
+        game.rightValid.right.right.symm
+  exact {
+    openAssumptionBoundary := openBoundary
+    intentionallyPublicFields :=
+      ⟨game.publicInputs,
+        game.summaries,
+        game.placement.left,
+        game.placement.right⟩
+    publicCiphertextShape := deterministicBoundary.publicCiphertextShape
+    publicMetadataProjection := deterministicBoundary.publicMetadataLeakage
+    publicBatchTimingProjection := deterministicBoundary.batchTimingLeakage
+    activeOutputCountEq := deterministicBoundary.activeOutputCountEq
+    ciphertextWireCountEq := ciphertextWireCountEq
+    ciphertextSummaryCountEq :=
+      deterministicBoundary.ciphertextSummaryCountEq
+    chainCiphertextFormat := deterministicBoundary.summariesHaveChainFormat
+    rawWireExcludedFromPublicMetadata := rawWireBoundary
+    sameRawWireDischargesFullObserverLeakage :=
+      rawWireBoundary.sameWireDischargesFullObserverLeakage
+    privateWitnessAndProverRandomnessHiddenFromPublicMetadata :=
+      secretBoundary.publicMetadataStableUnderIndependentSecretResampling
+    privateWitnessAndProverRandomnessHiddenFromBatchTiming :=
+      secretBoundary.batchTimingStableUnderIndependentSecretResampling
+    localActionMetadataHidden :=
+      fun leftLocal rightLocal =>
+        ⟨same_public_metadata_leakage_stable_under_local_action_metadata
+            deterministicBoundary.publicMetadataLeakage
+            leftLocal
+            rightLocal,
+          same_batch_timing_leakage_stable_under_local_action_metadata
+            deterministicBoundary.batchTimingLeakage
+            leftLocal
+            rightLocal⟩
+    localAddressMetadataHidden :=
+      fun leftAddress rightAddress =>
+        ⟨same_public_metadata_leakage_stable_under_local_address_metadata
+            deterministicBoundary.publicMetadataLeakage
+            leftAddress
+            rightAddress,
+          same_batch_timing_leakage_stable_under_local_address_metadata
+            deterministicBoundary.batchTimingLeakage
+            leftAddress
+            rightAddress⟩
+    localWalletBookkeepingMetadataHidden :=
+      fun leftWallet rightWallet =>
+        ⟨same_public_metadata_leakage_stable_under_local_wallet_bookkeeping_metadata
+            deterministicBoundary.publicMetadataLeakage
+            leftWallet
+            rightWallet,
+          same_batch_timing_leakage_stable_under_local_wallet_bookkeeping_metadata
+            deterministicBoundary.batchTimingLeakage
+            leftWallet
+            rightWallet⟩
+    localNetworkMetadataHidden :=
+      fun leftNetwork rightNetwork =>
+        ⟨same_public_metadata_leakage_stable_under_local_network_metadata
+            deterministicBoundary.publicMetadataLeakage
+            leftNetwork
+            rightNetwork,
+          same_batch_timing_leakage_stable_under_local_network_metadata
+            deterministicBoundary.batchTimingLeakage
+            leftNetwork
+            rightNetwork⟩
+    allWalletLocalMetadataHidden :=
+      fun leftLocal rightLocal
+        leftAddress rightAddress
+        leftWallet rightWallet
+        leftNetwork rightNetwork =>
+        ⟨same_public_metadata_leakage_stable_under_all_wallet_local_metadata
+            deterministicBoundary.publicMetadataLeakage
+            leftLocal
+            rightLocal
+            leftAddress
+            rightAddress
+            leftWallet
+            rightWallet
+            leftNetwork
+            rightNetwork,
+          same_batch_timing_leakage_stable_under_all_wallet_local_metadata
+            deterministicBoundary.batchTimingLeakage
+            leftLocal
+            rightLocal
+            leftAddress
+            rightAddress
+            leftWallet
+            rightWallet
+            leftNetwork
+            rightNetwork⟩
+    rawWireIndistinguishable := deterministicBoundary.rawWireIndistinguishable
+    proofSystemZeroKnowledge := deterministicBoundary.proofSystemZeroKnowledge
+    walletMetadataHygiene := deterministicBoundary.walletMetadataHygiene
+    timingAndBatchingPolicy := deterministicBoundary.timingAndBatchingPolicy
+    networkMetadataPolicy := deterministicBoundary.networkMetadataPolicy
+  }
 
 def rawWireSplitCiphertextPrivacyGame :
     CiphertextPrivacyGame
@@ -1175,6 +1725,17 @@ theorem raw_wire_split_ciphertext_privacy_game_open_assumption_boundary :
       samplePrivacyBoundaryAssumptions := by
   exact
     ciphertext_privacy_game_open_assumption_boundary_facts
+      rawWireSplitCiphertextPrivacyGame
+      sample_privacy_boundary_assumptions_hold
+
+theorem raw_wire_split_public_metadata_privacy_certificate :
+    PublicMetadataPrivacyCertificate
+      publicRawWireSplitLeftWorld
+      publicRawWireSplitRightWorld
+      rawWireSplitCiphertextPrivacyGame.wireIndistinguishable
+      samplePrivacyBoundaryAssumptions := by
+  exact
+    accepted_ciphertext_privacy_game_public_metadata_privacy_certificate
       rawWireSplitCiphertextPrivacyGame
       sample_privacy_boundary_assumptions_hold
 

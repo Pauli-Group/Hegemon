@@ -132,6 +132,8 @@ EOF
     network-transport-abuse)
       cat <<'EOF'
 cargo_test_filter pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
+cargo_test_filter pq-noise encapsulate_with_seed_consumes_supplied_seed -- --nocapture
+cargo_test_filter network encapsulate_with_seed_consumes_supplied_seed --lib -- --nocapture
 cargo_test_target network adversarial -- --nocapture
 cargo_test_filter network duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
 EOF

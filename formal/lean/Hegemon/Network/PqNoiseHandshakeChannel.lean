@@ -50,6 +50,69 @@ structure AcceptedAuthenticatedPqHandshake
   hkdfSound : crypto.hkdfExtractExpandSound
   aeadSound : crypto.aeadProtectOpenSound
 
+structure AcceptedPqKemTranscriptKdfCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts) : Prop where
+  handshakeAccepted :
+    AcceptedAuthenticatedPqHandshake surface crypto
+  transcriptBound :
+    crypto.transcriptBindsHandshakeMessages
+  kemSharedSecretsAgree :
+    crypto.mlkemSharedSecretsAgree
+  responderSeedUse :
+    responderSeed.use =
+      PqNoise.KemEncapsulationUse.responderEncapsulatesToInitiator
+  initiatorSeedUse :
+    initiatorSeed.use =
+      PqNoise.KemEncapsulationUse.initiatorEncapsulatesToResponder
+  responderSeedSource :
+    responderSeed.source = PqNoise.KemSeedSource.osRng32
+  initiatorSeedSource :
+    initiatorSeed.source = PqNoise.KemSeedSource.osRng32
+  responderSeedByteLength :
+    responderSeed.seedByteLength = 32
+  initiatorSeedByteLength :
+    initiatorSeed.seedByteLength = 32
+  responderEncapsulationUsesResponderSeed :
+    responderSeed.consumedByMlKemEncapsulate
+  initiatorEncapsulationUsesInitiatorSeed :
+    initiatorSeed.consumedByMlKemEncapsulate
+  transcriptOnlyEntersSessionScheduleAsSalt :
+    PqNoise.hkdfSalt surface.pqSession = surface.pqSession.transcriptHash
+  kemSecretsEnterIkmInHandshakeOrder :
+    PqNoise.hkdfIkm surface.pqSession =
+      surface.pqSession.shared1 ++ surface.pqSession.shared2
+  i2rR2iAndAadLabelsSeparated :
+    PqNoise.initiatorToResponderInfo ≠ PqNoise.responderToInitiatorInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.initiatorToResponderInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.responderToInitiatorInfo
+  initSigningPreimageFields :
+    PqNoise.initHelloSigningPreimage surface.initHello =
+      asciiBytes "init-hello"
+        ++ [byte surface.initHello.version]
+        ++ surface.initHello.mlkemPublicKey
+        ++ surface.initHello.identityKey
+        ++ PqNoise.u64be surface.initHello.nonce
+  respSigningPreimageFields :
+    PqNoise.respHelloSigningPreimage surface.respHello =
+      asciiBytes "resp-hello"
+        ++ [byte surface.respHello.version]
+        ++ surface.respHello.mlkemPublicKey
+        ++ surface.respHello.mlkemCiphertext
+        ++ surface.respHello.identityKey
+        ++ PqNoise.u64be surface.respHello.nonce
+        ++ surface.respHello.transcriptHash
+  finishSigningPreimageFields :
+    PqNoise.finishSigningPreimage surface.finish =
+      asciiBytes "finish"
+        ++ surface.finish.mlkemCiphertext
+        ++ PqNoise.u64be surface.finish.nonce
+        ++ surface.finish.transcriptHash
+  respAndFinishBindTranscriptHash :
+    surface.respHello.transcriptHash = surface.pqSession.transcriptHash
+      ∧ surface.finish.transcriptHash = surface.pqSession.transcriptHash
+
 def channelStateFromHandshake
     (surface : HandshakeChannelSurface) :
     SecureChannel.ChannelState :=
@@ -277,6 +340,62 @@ theorem accepted_authenticated_pq_handshake_establishes_pq_channel_facts
   · exact PqNoise.init_hello_preimage_starts_with_domain
   · exact PqNoise.resp_hello_preimage_starts_with_domain
   · exact PqNoise.finish_preimage_starts_with_domain
+
+theorem accepted_authenticated_pq_handshake_secret_rng_transcript_kdf_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (handshake : AcceptedAuthenticatedPqHandshake surface crypto)
+    (responderSeedUse :
+      responderSeed.use =
+        PqNoise.KemEncapsulationUse.responderEncapsulatesToInitiator)
+    (initiatorSeedUse :
+      initiatorSeed.use =
+        PqNoise.KemEncapsulationUse.initiatorEncapsulatesToResponder)
+    (responderSeedSource :
+      responderSeed.source = PqNoise.KemSeedSource.osRng32)
+    (initiatorSeedSource :
+      initiatorSeed.source = PqNoise.KemSeedSource.osRng32)
+    (responderSeedByteLength :
+      responderSeed.seedByteLength = 32)
+    (initiatorSeedByteLength :
+      initiatorSeed.seedByteLength = 32)
+    (responderSeedConsumed :
+      responderSeed.consumedByMlKemEncapsulate)
+    (initiatorSeedConsumed :
+      initiatorSeed.consumedByMlKemEncapsulate)
+    (respTranscriptBound :
+      surface.respHello.transcriptHash = surface.pqSession.transcriptHash)
+    (finishTranscriptBound :
+      surface.finish.transcriptHash = surface.pqSession.transcriptHash) :
+    AcceptedPqKemTranscriptKdfCertificate
+      surface crypto responderSeed initiatorSeed := by
+  refine
+    { handshakeAccepted := handshake
+      transcriptBound := handshake.transcriptBound
+      kemSharedSecretsAgree := handshake.kemAgreed
+      responderSeedUse := responderSeedUse
+      initiatorSeedUse := initiatorSeedUse
+      responderSeedSource := responderSeedSource
+      initiatorSeedSource := initiatorSeedSource
+      responderSeedByteLength := responderSeedByteLength
+      initiatorSeedByteLength := initiatorSeedByteLength
+      responderEncapsulationUsesResponderSeed :=
+        responderSeedConsumed
+      initiatorEncapsulationUsesInitiatorSeed :=
+        initiatorSeedConsumed
+      transcriptOnlyEntersSessionScheduleAsSalt := rfl
+      kemSecretsEnterIkmInHandshakeOrder := rfl
+      i2rR2iAndAadLabelsSeparated := ?_
+      initSigningPreimageFields := rfl
+      respSigningPreimageFields := rfl
+      finishSigningPreimageFields := rfl
+      respAndFinishBindTranscriptHash :=
+        ⟨respTranscriptBound, finishTranscriptBound⟩ }
+  exact
+    ⟨PqNoise.hkdf_infos_distinct,
+      PqNoise.aad_info_distinct_from_i2r,
+      PqNoise.aad_info_distinct_from_r2i⟩
 
 structure PqTransportCompletionFacts
     (surface : HandshakeChannelSurface)
@@ -993,6 +1112,232 @@ theorem accepted_authenticated_pq_handshake_bounded_pq_peer_frame_sequence_facts
       (PqNoise.openFrame_accepts_below_max
         (state := peerPqReceiveStateAt surface frameIndex peerSendCounter)
         peerRecvCounterBelowMax)
+
+structure PqProductionChannelSafetyCertificate
+    (surface : HandshakeChannelSurface)
+    (crypto : CryptoAssumptions surface)
+    (responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts)
+    (localState peerState : PqNoise.ChannelState)
+    (sequenceLength frameIndex localRecvCounter peerSendCounter : Nat)
+    (protectedSlot : PqNoise.KeySlot)
+    (protectedNonce : List Byte)
+    (protectedNext : PqNoise.ChannelState)
+    (peerOpenedSlot : PqNoise.KeySlot)
+    (peerOpenedNonce : List Byte)
+    (peerOpenedNext : PqNoise.ChannelState) : Prop where
+  kemTranscriptKdf :
+    AcceptedPqKemTranscriptKdfCertificate
+      surface crypto responderSeed initiatorSeed
+  transportCompletion :
+    PqTransportCompletionFacts surface crypto localState peerState
+  indexedFrameAdmission :
+    IndexedPqPeerFrameAdmissionFacts
+      surface
+      crypto
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      protectedSlot
+      protectedNonce
+      protectedNext
+      peerOpenedSlot
+      peerOpenedNonce
+      peerOpenedNext
+  sequenceAdmitsFrame :
+    frameIndex < sequenceLength
+  sequenceWithinCounterDomain :
+    sequenceLength ≤ PqNoise.u64Max
+  transcriptBindsHandshake :
+    crypto.transcriptBindsHandshakeMessages
+  kemSharedSecretsAgree :
+    crypto.mlkemSharedSecretsAgree
+  hkdfExtractExpandSound :
+    crypto.hkdfExtractExpandSound
+  aeadProtectOpenSound :
+    crypto.aeadProtectOpenSound
+  responderSeedOsRng :
+    responderSeed.source = PqNoise.KemSeedSource.osRng32
+  initiatorSeedOsRng :
+    initiatorSeed.source = PqNoise.KemSeedSource.osRng32
+  responderSeedNotPublicTranscriptDerived :
+    responderSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+  initiatorSeedNotPublicTranscriptDerived :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.publicTranscriptDerived
+  responderSeedNotFixedDeterministic :
+    responderSeed.source ≠ PqNoise.KemSeedSource.fixedDeterministic
+  initiatorSeedNotFixedDeterministic :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.fixedDeterministic
+  responderSeedNotCallerProvidedTest :
+    responderSeed.source ≠ PqNoise.KemSeedSource.callerProvidedTest
+  initiatorSeedNotCallerProvidedTest :
+    initiatorSeed.source ≠ PqNoise.KemSeedSource.callerProvidedTest
+  responderEncapsulationConsumesOsRngSeed :
+    responderSeed.consumedByMlKemEncapsulate
+  initiatorEncapsulationConsumesOsRngSeed :
+    initiatorSeed.consumedByMlKemEncapsulate
+  publicTranscriptOnlyEntersSessionScheduleAsSalt :
+    PqNoise.hkdfSalt surface.pqSession = surface.pqSession.transcriptHash
+  kemSharedSecretsOnlyEnterHkdfIkmInHandshakeOrder :
+    PqNoise.hkdfIkm surface.pqSession =
+      surface.pqSession.shared1 ++ surface.pqSession.shared2
+  responseAndFinishSignaturesBindTranscript :
+    surface.respHello.transcriptHash = surface.pqSession.transcriptHash
+      ∧ surface.finish.transcriptHash = surface.pqSession.transcriptHash
+  i2rR2iAndAadInfosSeparated :
+    PqNoise.initiatorToResponderInfo ≠ PqNoise.responderToInitiatorInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.initiatorToResponderInfo
+      ∧ PqNoise.sessionAadInfo ≠ PqNoise.responderToInitiatorInfo
+  localSendRecvSlotsDistinct :
+    PqNoise.sendSlot localState.role ≠ PqNoise.recvSlot localState.role
+  localSendRecvInfosDistinct :
+    PqNoise.expandInfo (PqNoise.sendSlot localState.role) ≠
+      PqNoise.expandInfo (PqNoise.recvSlot localState.role)
+  localSessionAadDistinctFromSend :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.sendSlot localState.role)
+  localSessionAadDistinctFromRecv :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.recvSlot localState.role)
+  peerSessionAadDistinctFromSend :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.sendSlot peerState.role)
+  peerSessionAadDistinctFromRecv :
+    PqNoise.sessionAadInfo ≠
+      PqNoise.expandInfo (PqNoise.recvSlot peerState.role)
+  localSendSlotAdmittedByPeerRecv :
+    protectedSlot = peerOpenedSlot
+  localSendInfoAdmittedByPeerRecv :
+    PqNoise.expandInfo protectedSlot = PqNoise.expandInfo peerOpenedSlot
+  frameAadDistinctFromDirectionalKeyInfo :
+    PqNoise.sessionAadInfo ≠ PqNoise.expandInfo protectedSlot
+  protectedNonceAtFrameIndex :
+    protectedNonce = PqNoise.nonceFromCounter frameIndex
+  peerOpenedNonceAtFrameIndex :
+    peerOpenedNonce = PqNoise.nonceFromCounter frameIndex
+  protectedNonceAdmittedByPeer :
+    protectedNonce = peerOpenedNonce
+  protectedNextSendCounter :
+    protectedNext.sendCounter = frameIndex + 1
+  protectedNextRecvCounterCarried :
+    protectedNext.recvCounter = localRecvCounter
+  peerOpenedNextSendCounterCarried :
+    peerOpenedNext.sendCounter = peerSendCounter
+  peerOpenedNextRecvCounter :
+    peerOpenedNext.recvCounter = frameIndex + 1
+
+theorem accepted_pq_v4_os_rng_transcript_kdf_directional_channel_safety_certificate
+    {surface : HandshakeChannelSurface}
+    {crypto : CryptoAssumptions surface}
+    {responderSeed initiatorSeed : PqNoise.MlKemEncapsulationSeedFacts}
+    (kemTranscriptKdf :
+      AcceptedPqKemTranscriptKdfCertificate
+        surface crypto responderSeed initiatorSeed)
+    {sequenceLength frameIndex localRecvCounter peerSendCounter : Nat}
+    (frameInSequence : frameIndex < sequenceLength)
+    (sequenceBound : sequenceLength ≤ PqNoise.u64Max) :
+    PqProductionChannelSafetyCertificate
+      surface
+      crypto
+      responderSeed
+      initiatorSeed
+      (pqChannelStateFromHandshake surface)
+      (peerPqChannelStateFromHandshake surface)
+      sequenceLength
+      frameIndex
+      localRecvCounter
+      peerSendCounter
+      (PqNoise.sendSlot surface.role)
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ localPqSendStateAt surface frameIndex localRecvCounter with
+          sendCounter := frameIndex + 1 })
+      (PqNoise.recvSlot (peerRole surface.role))
+      (PqNoise.nonceFromCounter frameIndex)
+      ({ peerPqReceiveStateAt surface frameIndex peerSendCounter with
+          recvCounter := frameIndex + 1 }) := by
+  let transportCompletion :=
+    accepted_authenticated_pq_handshake_transport_completion_facts
+      kemTranscriptKdf.handshakeAccepted
+  let frameAdmission :=
+    accepted_authenticated_pq_handshake_bounded_pq_peer_frame_sequence_facts
+      kemTranscriptKdf.handshakeAccepted
+      frameInSequence
+      sequenceBound
+      (localRecvCounter := localRecvCounter)
+      (peerSendCounter := peerSendCounter)
+  refine
+    { kemTranscriptKdf := kemTranscriptKdf
+      transportCompletion := transportCompletion
+      indexedFrameAdmission := frameAdmission
+      sequenceAdmitsFrame := frameInSequence
+      sequenceWithinCounterDomain := sequenceBound
+      transcriptBindsHandshake := kemTranscriptKdf.transcriptBound
+      kemSharedSecretsAgree := kemTranscriptKdf.kemSharedSecretsAgree
+      hkdfExtractExpandSound := kemTranscriptKdf.handshakeAccepted.hkdfSound
+      aeadProtectOpenSound := kemTranscriptKdf.handshakeAccepted.aeadSound
+      responderSeedOsRng := kemTranscriptKdf.responderSeedSource
+      initiatorSeedOsRng := kemTranscriptKdf.initiatorSeedSource
+      responderSeedNotPublicTranscriptDerived :=
+        PqNoise.mlkem_os_rng_seed_not_public_transcript_derived
+          kemTranscriptKdf.responderSeedSource
+      initiatorSeedNotPublicTranscriptDerived :=
+        PqNoise.mlkem_os_rng_seed_not_public_transcript_derived
+          kemTranscriptKdf.initiatorSeedSource
+      responderSeedNotFixedDeterministic :=
+        PqNoise.mlkem_os_rng_seed_not_fixed_deterministic
+          kemTranscriptKdf.responderSeedSource
+      initiatorSeedNotFixedDeterministic :=
+        PqNoise.mlkem_os_rng_seed_not_fixed_deterministic
+          kemTranscriptKdf.initiatorSeedSource
+      responderSeedNotCallerProvidedTest :=
+        PqNoise.mlkem_os_rng_seed_not_caller_provided_test
+          kemTranscriptKdf.responderSeedSource
+      initiatorSeedNotCallerProvidedTest :=
+        PqNoise.mlkem_os_rng_seed_not_caller_provided_test
+          kemTranscriptKdf.initiatorSeedSource
+      responderEncapsulationConsumesOsRngSeed :=
+        kemTranscriptKdf.responderEncapsulationUsesResponderSeed
+      initiatorEncapsulationConsumesOsRngSeed :=
+        kemTranscriptKdf.initiatorEncapsulationUsesInitiatorSeed
+      publicTranscriptOnlyEntersSessionScheduleAsSalt :=
+        kemTranscriptKdf.transcriptOnlyEntersSessionScheduleAsSalt
+      kemSharedSecretsOnlyEnterHkdfIkmInHandshakeOrder :=
+        kemTranscriptKdf.kemSecretsEnterIkmInHandshakeOrder
+      responseAndFinishSignaturesBindTranscript :=
+        kemTranscriptKdf.respAndFinishBindTranscriptHash
+      i2rR2iAndAadInfosSeparated :=
+        kemTranscriptKdf.i2rR2iAndAadLabelsSeparated
+      localSendRecvSlotsDistinct :=
+        transportCompletion.localEstablished.sendRecvSlotsDistinct
+      localSendRecvInfosDistinct :=
+        transportCompletion.localEstablished.sendRecvInfosDistinct
+      localSessionAadDistinctFromSend :=
+        transportCompletion.localSessionAadDistinctFromSend
+      localSessionAadDistinctFromRecv :=
+        transportCompletion.localSessionAadDistinctFromRecv
+      peerSessionAadDistinctFromSend :=
+        transportCompletion.peerSessionAadDistinctFromSend
+      peerSessionAadDistinctFromRecv :=
+        transportCompletion.peerSessionAadDistinctFromRecv
+      localSendSlotAdmittedByPeerRecv :=
+        frameAdmission.protectedSlotAdmittedByPeer
+      localSendInfoAdmittedByPeerRecv :=
+        frameAdmission.protectedInfoAdmittedByPeer
+      frameAadDistinctFromDirectionalKeyInfo :=
+        frameAdmission.frameAadDistinctFromDirectionalKeyInfo
+      protectedNonceAtFrameIndex :=
+        frameAdmission.protectedNonceAtFrameIndex
+      peerOpenedNonceAtFrameIndex :=
+        frameAdmission.peerOpenedNonceAtFrameIndex
+      protectedNonceAdmittedByPeer :=
+        frameAdmission.protectedNonceAdmittedByPeer
+      protectedNextSendCounter :=
+        frameAdmission.protectedNextSendCounter
+      protectedNextRecvCounterCarried :=
+        frameAdmission.protectedNextRecvCounterCarried
+      peerOpenedNextSendCounterCarried :=
+        frameAdmission.peerOpenedNextSendCounterCarried
+      peerOpenedNextRecvCounter :=
+        frameAdmission.peerOpenedNextRecvCounter }
 
 theorem accepted_authenticated_pq_handshake_initial_protect_open_facts
     {surface : HandshakeChannelSurface}

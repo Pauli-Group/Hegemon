@@ -57,6 +57,16 @@ structure LocalAddressMetadata where
   addressBookGeneration : Nat
 deriving DecidableEq, Repr
 
+structure LocalWalletBookkeepingMetadata where
+  syncHeight : Nat
+  syncBlockHashTag : Nat
+  ciphertextCursor : Nat
+  trackedNoteGeneration : Nat
+  pendingStatusTag : Nat
+  pendingRecipientMemoTag : Nat
+  submissionTimestampMs : Nat
+deriving DecidableEq, Repr
+
 structure LocalNetworkMetadata where
   remotePeerTag : Nat
   connectionEpoch : Nat
@@ -73,6 +83,7 @@ structure ShieldedTransactionWorld where
   actionIndex : Nat
   localActionMetadata : LocalActionMetadata
   localAddressMetadata : LocalAddressMetadata
+  localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata
   localNetworkMetadata : LocalNetworkMetadata
   privateWitness : PrivateWitness
   proverRandomnessSeed : Nat
@@ -281,6 +292,17 @@ def sampleLocalAddressMetadata : LocalAddressMetadata :=
     addressBookGeneration := 0
   }
 
+def sampleLocalWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata :=
+  {
+    syncHeight := 0,
+    syncBlockHashTag := 0,
+    ciphertextCursor := 0,
+    trackedNoteGeneration := 0,
+    pendingStatusTag := 0,
+    pendingRecipientMemoTag := 0,
+    submissionTimestampMs := 0
+  }
+
 def sampleLocalNetworkMetadata : LocalNetworkMetadata :=
   {
     remotePeerTag := 0,
@@ -311,6 +333,7 @@ def publicRawWireSplitLeftWorld : ShieldedTransactionWorld :=
     actionIndex := 7,
     localActionMetadata := sampleLocalActionMetadata,
     localAddressMetadata := sampleLocalAddressMetadata,
+    localWalletBookkeepingMetadata := sampleLocalWalletBookkeepingMetadata,
     localNetworkMetadata := sampleLocalNetworkMetadata,
     privateWitness := samplePrivateWitness,
     proverRandomnessSeed := 0
@@ -325,6 +348,7 @@ def publicRawWireSplitRightWorld : ShieldedTransactionWorld :=
     actionIndex := 7,
     localActionMetadata := sampleLocalActionMetadata,
     localAddressMetadata := sampleLocalAddressMetadata,
+    localWalletBookkeepingMetadata := sampleLocalWalletBookkeepingMetadata,
     localNetworkMetadata := sampleLocalNetworkMetadata,
     privateWitness := samplePrivateWitness,
     proverRandomnessSeed := 1
@@ -411,6 +435,33 @@ theorem batch_timing_view_ignores_local_address_metadata
     (world : ShieldedTransactionWorld)
     (localAddressMetadata : LocalAddressMetadata) :
     batchTimingView { world with localAddressMetadata := localAddressMetadata } =
+      batchTimingView world := by
+  rfl
+
+theorem observer_view_ignores_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    observerView
+        { world with
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    publicMetadataView
+        { world with
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    batchTimingView
+        { world with
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
       batchTimingView world := by
   rfl
 
@@ -546,6 +597,45 @@ theorem batch_timing_view_ignores_private_witness_randomness_and_local_network_m
       batchTimingView world := by
   rfl
 
+theorem observer_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    observerView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    publicMetadataView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_private_witness_randomness_and_local_wallet_bookkeeping_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    batchTimingView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } =
+      batchTimingView world := by
+  rfl
+
 theorem observer_view_ignores_private_witness_randomness_and_all_local_metadata
     (world : ShieldedTransactionWorld)
     (privateWitness : PrivateWitness)
@@ -593,6 +683,63 @@ theorem batch_timing_view_ignores_private_witness_randomness_and_all_local_metad
           proverRandomnessSeed := proverRandomnessSeed
           localActionMetadata := localActionMetadata
           localAddressMetadata := localAddressMetadata
+          localNetworkMetadata := localNetworkMetadata } =
+      batchTimingView world := by
+  rfl
+
+theorem observer_view_ignores_private_witness_randomness_and_all_wallet_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata)
+    (localAddressMetadata : LocalAddressMetadata)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    observerView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata
+          localAddressMetadata := localAddressMetadata
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata
+          localNetworkMetadata := localNetworkMetadata } =
+      observerView world := by
+  rfl
+
+theorem public_metadata_view_ignores_private_witness_randomness_and_all_wallet_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata)
+    (localAddressMetadata : LocalAddressMetadata)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    publicMetadataView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata
+          localAddressMetadata := localAddressMetadata
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata
+          localNetworkMetadata := localNetworkMetadata } =
+      publicMetadataView world := by
+  rfl
+
+theorem batch_timing_view_ignores_private_witness_randomness_and_all_wallet_local_metadata
+    (world : ShieldedTransactionWorld)
+    (privateWitness : PrivateWitness)
+    (proverRandomnessSeed : Nat)
+    (localActionMetadata : LocalActionMetadata)
+    (localAddressMetadata : LocalAddressMetadata)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    batchTimingView
+        { world with
+          privateWitness := privateWitness
+          proverRandomnessSeed := proverRandomnessSeed
+          localActionMetadata := localActionMetadata
+          localAddressMetadata := localAddressMetadata
+          localWalletBookkeepingMetadata := localWalletBookkeepingMetadata
           localNetworkMetadata := localNetworkMetadata } =
       batchTimingView world := by
   rfl
@@ -955,6 +1102,33 @@ theorem same_batch_timing_leakage_stable_under_local_address_metadata
       { right with localAddressMetadata := rightAddress } := by
   exact same
 
+theorem same_allowed_leakage_stable_under_local_wallet_bookkeeping_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    sameAllowedLeakage
+      { left with localWalletBookkeepingMetadata := leftWallet }
+      { right with localWalletBookkeepingMetadata := rightWallet } := by
+  exact same
+
+theorem same_public_metadata_leakage_stable_under_local_wallet_bookkeeping_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : samePublicMetadataLeakage left right)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    samePublicMetadataLeakage
+      { left with localWalletBookkeepingMetadata := leftWallet }
+      { right with localWalletBookkeepingMetadata := rightWallet } := by
+  exact same
+
+theorem same_batch_timing_leakage_stable_under_local_wallet_bookkeeping_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameBatchTimingLeakage left right)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata) :
+    sameBatchTimingLeakage
+      { left with localWalletBookkeepingMetadata := leftWallet }
+      { right with localWalletBookkeepingMetadata := rightWallet } := by
+  exact same
+
 theorem same_allowed_leakage_stable_under_local_network_metadata
     {left right : ShieldedTransactionWorld}
     (same : sameAllowedLeakage left right)
@@ -1033,6 +1207,66 @@ theorem same_batch_timing_leakage_stable_under_all_local_metadata
         localNetworkMetadata := rightNetwork } := by
   exact same
 
+theorem same_allowed_leakage_stable_under_all_wallet_local_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameAllowedLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    sameAllowedLeakage
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localWalletBookkeepingMetadata := leftWallet
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localWalletBookkeepingMetadata := rightWallet
+        localNetworkMetadata := rightNetwork } := by
+  exact same
+
+theorem same_public_metadata_leakage_stable_under_all_wallet_local_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : samePublicMetadataLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    samePublicMetadataLeakage
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localWalletBookkeepingMetadata := leftWallet
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localWalletBookkeepingMetadata := rightWallet
+        localNetworkMetadata := rightNetwork } := by
+  exact same
+
+theorem same_batch_timing_leakage_stable_under_all_wallet_local_metadata
+    {left right : ShieldedTransactionWorld}
+    (same : sameBatchTimingLeakage left right)
+    (leftLocal rightLocal : LocalActionMetadata)
+    (leftAddress rightAddress : LocalAddressMetadata)
+    (leftWallet rightWallet : LocalWalletBookkeepingMetadata)
+    (leftNetwork rightNetwork : LocalNetworkMetadata) :
+    sameBatchTimingLeakage
+      { left with
+        localActionMetadata := leftLocal
+        localAddressMetadata := leftAddress
+        localWalletBookkeepingMetadata := leftWallet
+        localNetworkMetadata := leftNetwork }
+      { right with
+        localActionMetadata := rightLocal
+        localAddressMetadata := rightAddress
+        localWalletBookkeepingMetadata := rightWallet
+        localNetworkMetadata := rightNetwork } := by
+  exact same
+
 theorem valid_observer_chain_surface_stable_under_local_action_metadata
     {world : ShieldedTransactionWorld}
     (valid : validObserverChainSurface world)
@@ -1047,6 +1281,15 @@ theorem valid_observer_chain_surface_stable_under_local_address_metadata
     (localAddressMetadata : LocalAddressMetadata) :
     validObserverChainSurface
       { world with localAddressMetadata := localAddressMetadata } := by
+  simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
+theorem valid_observer_chain_surface_stable_under_local_wallet_bookkeeping_metadata
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata) :
+    validObserverChainSurface
+      { world with
+        localWalletBookkeepingMetadata := localWalletBookkeepingMetadata } := by
   simpa [validObserverChainSurface, summariesMatchChainWire] using valid
 
 theorem valid_observer_chain_surface_stable_under_local_network_metadata
@@ -1067,6 +1310,21 @@ theorem valid_observer_chain_surface_stable_under_all_local_metadata
       { world with
         localActionMetadata := localActionMetadata
         localAddressMetadata := localAddressMetadata
+        localNetworkMetadata := localNetworkMetadata } := by
+  simpa [validObserverChainSurface, summariesMatchChainWire] using valid
+
+theorem valid_observer_chain_surface_stable_under_all_wallet_local_metadata
+    {world : ShieldedTransactionWorld}
+    (valid : validObserverChainSurface world)
+    (localActionMetadata : LocalActionMetadata)
+    (localAddressMetadata : LocalAddressMetadata)
+    (localWalletBookkeepingMetadata : LocalWalletBookkeepingMetadata)
+    (localNetworkMetadata : LocalNetworkMetadata) :
+    validObserverChainSurface
+      { world with
+        localActionMetadata := localActionMetadata
+        localAddressMetadata := localAddressMetadata
+        localWalletBookkeepingMetadata := localWalletBookkeepingMetadata
         localNetworkMetadata := localNetworkMetadata } := by
   simpa [validObserverChainSurface, summariesMatchChainWire] using valid
 
