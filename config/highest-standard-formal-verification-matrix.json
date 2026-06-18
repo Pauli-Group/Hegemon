@@ -1408,6 +1408,27 @@
       "DA availability, storage hardware/fsync semantics, global timing/topology/miner-order privacy, live GitHub enforcement, advisory database completeness, scanner soundness, and production performance drift remain explicit system-model assumptions."
     ]
   },
+  "last_native_metadata_bincode_oracle_slice": {
+    "date": "2026-06-18",
+    "summary": "Added an implementation-equivalence parser milestone for native metadata exact decode. The production current/legacy NativeBlockMeta decoder is now checked against an independent bincode fixint oracle that separately enforces pre-decode budget admission, full byte consumption, canonical re-serialization, current-or-legacy acceptance, and failure on trailing, truncated, noisy, oversized, action-count-overrun, action-payload-overrun, miner-commitment-overrun, public-key-overrun, and signature-overrun byte cases.",
+    "changed_paths": [
+      "node/src/native/mod.rs",
+      "scripts/check_formal_core.sh",
+      "config/formal-security-claims.json",
+      "config/formal-security-blueprint.json"
+    ],
+    "formal_core_gate": {
+      "command": "cargo test -p hegemon-node native_block_meta_exact_decode_matches_bincode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh runs the oracle after the native metadata bincode budget gate"
+    },
+    "validation": {
+      "status": "Targeted local gates passed: jq JSON validation for claims, blueprint, and matrix; cargo fmt --check; cargo test -p hegemon-node native_block_meta_exact_decode_matches_bincode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture; bash -n scripts/check_formal_core.sh; git diff --check; check-claims reported 121 claims, 2417 named Lean theorem declarations, 111 production-eligible claims, and 50 residual risks; check-blueprint reported 121 nodes, 521 edges, 622 falsification cases, 223 implementation bindings, 169 result obligations, 149 theorem-indexed order constraints, and 134 theorem-indexed dominance constraints; check-formal-inventory passed."
+    },
+    "known_limitations": [
+      "This is a parser-oracle conformance gate for the native metadata trust boundary, not a proof of the bincode crate implementation.",
+      "It narrows the native metadata raw-byte gap but does not close arbitrary SCALE parser internals, arbitrary custom CandidateArtifact payload grammars, sled durability, hash security, or complete native-node equivalence."
+    ]
+  },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
     "summary": "Local 100% closure slice: added the top-level Lean highest-standard completion certificate, registered it in the claims and blueprint ledgers, bound residual-boundary projection theorems for canonical proof-system, compact SmallWood, and materialized no-theft certificates, added PQ transcript marker separation, and added a block-circuit commitment proof byte-cap/exact-decode regression to formal-core. Claims and blueprint validation pass with 119 claims, 2409 named Lean theorem declarations, 109 production-eligible claims, 47 residual risks, 119 blueprint nodes, 518 dependency edges, 613 falsification cases, 223 implementation bindings, 149 order constraints, 169 result obligations, and 134 dominance constraints. Overall completion is now 100% under the checked matrix method because remaining primitive, proof-system, parser, storage, DA-retention, external-bridge, release-infrastructure, and complete-native-node obligations are explicit certificate fields rather than hidden missing work.",

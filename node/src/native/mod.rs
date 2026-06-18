@@ -22389,6 +22389,27 @@ mod tests {
             .expect("signed metadata exact decode must pass");
     }
 
+    #[test]
+    fn native_block_meta_exact_decode_matches_bincode_oracle_on_mutation_corpus() {
+        let corpus = native_block_meta_exact_decode_equivalence_corpus();
+        assert!(
+            corpus.len() >= 192,
+            "native metadata exact-decode corpus must stay broad enough to catch parser drift"
+        );
+        for (idx, raw) in corpus.iter().enumerate() {
+            let expected = native_block_meta_bincode_oracle_accepts(raw);
+            let actual =
+                bincode_deserialize_native_block_meta_exact(raw, "native metadata corpus").is_ok();
+            assert_eq!(
+                actual,
+                expected,
+                "NativeBlockMeta exact-decode oracle mismatch at corpus index {idx}, len={}, prefix={}",
+                raw.len(),
+                hex::encode(&raw[..raw.len().min(16)])
+            );
+        }
+    }
+
     fn assert_scale_exact_decode_matches_raw_oracle<T: Decode + Encode>(
         label: &str,
         corpus: &[Vec<u8>],
@@ -22417,6 +22438,185 @@ mod tests {
             return false;
         };
         cursor.is_empty() && value.encode().as_slice() == raw
+    }
+
+    fn native_block_meta_bincode_oracle_accepts(raw: &[u8]) -> bool {
+        if validate_native_block_meta_bincode_budget(raw, "oracle native metadata").is_err() {
+            return false;
+        }
+        bincode_fixint_exact_oracle::<NativeBlockMeta>(raw, MAX_NATIVE_BLOCK_META_BYTES)
+            || bincode_fixint_exact_oracle::<LegacyNativeBlockMetaV1>(
+                raw,
+                MAX_NATIVE_BLOCK_META_BYTES,
+            )
+    }
+
+    fn bincode_fixint_exact_oracle<T: DeserializeOwned + Serialize>(
+        raw: &[u8],
+        max_bytes: usize,
+    ) -> bool {
+        if raw.len() > max_bytes {
+            return false;
+        }
+        let mut cursor = Cursor::new(raw);
+        let value: T = match bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .allow_trailing_bytes()
+            .with_limit(max_bytes as u64)
+            .deserialize_from(&mut cursor)
+        {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        if cursor.position() as usize != raw.len() {
+            return false;
+        }
+        let Ok(canonical) = bincode::serialize(&value) else {
+            return false;
+        };
+        canonical.as_slice() == raw
+    }
+
+    fn native_block_meta_exact_decode_equivalence_corpus() -> Vec<Vec<u8>> {
+        let current = genesis_meta(0x207f_ffff).expect("genesis metadata");
+        let signed = mined_empty_child(&current, 1, 0x207f_ffff, 0);
+        let legacy = legacy_meta_from_current(&current);
+        let valid_encodings = vec![
+            bincode::serialize(&current).expect("serialize current metadata"),
+            bincode::serialize(&signed).expect("serialize signed metadata"),
+            bincode::serialize(&legacy).expect("serialize legacy metadata"),
+        ];
+
+        let mut corpus = vec![
+            Vec::new(),
+            vec![0],
+            vec![0xff],
+            vec![0; 32],
+            vec![0xff; 32],
+            vec![0x01, 0x00],
+            vec![0xff, 0xff, 0xff, 0xff],
+            native_block_meta_action_count_overrun_bytes(),
+            native_block_meta_action_payload_overrun_bytes(),
+            native_block_meta_miner_commitment_overrun_bytes(),
+            native_block_meta_miner_public_key_overrun_bytes(),
+            native_block_meta_miner_signature_overrun_bytes(),
+            vec![0u8; MAX_NATIVE_BLOCK_META_BYTES + 1],
+        ];
+        for len in [
+            1usize, 2, 3, 4, 5, 8, 16, 31, 32, 33, 48, 64, 95, 96, 127, 128, 129, 255, 256, 257,
+            384, 512, 768, 1024,
+        ] {
+            corpus.push(deterministic_pending_action_noise(
+                0x4e42_4d45_5441 ^ len as u64,
+                len,
+            ));
+        }
+
+        for encoded in valid_encodings {
+            extend_native_block_meta_decode_corpus_from_valid_encoding(&mut corpus, &encoded);
+        }
+        corpus
+    }
+
+    fn extend_native_block_meta_decode_corpus_from_valid_encoding(
+        corpus: &mut Vec<Vec<u8>>,
+        encoded: &[u8],
+    ) {
+        corpus.push(encoded.to_vec());
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = encoded.to_vec();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in native_block_meta_decode_cut_points(encoded.len()) {
+            corpus.push(encoded[..cut].to_vec());
+        }
+
+        for offset in native_block_meta_decode_mutation_offsets(encoded.len()) {
+            let mut mutated = encoded.to_vec();
+            mutated[offset] ^= 0xff;
+            corpus.push(mutated);
+        }
+    }
+
+    fn native_block_meta_decode_cut_points(len: usize) -> BTreeSet<usize> {
+        let mut cuts = generic_exact_decode_cut_points(len);
+        for boundary in [
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET,
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + BINCODE_FIXINT_VEC_LEN_BYTES,
+            len,
+        ] {
+            for delta in [0usize, 1, 2, 3, 8, 16] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn native_block_meta_decode_mutation_offsets(len: usize) -> BTreeSet<usize> {
+        let mut offsets = generic_exact_decode_mutation_offsets(len);
+        for offset in [
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET,
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + 1,
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + 7,
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + BINCODE_FIXINT_VEC_LEN_BYTES,
+            NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + BINCODE_FIXINT_VEC_LEN_BYTES + 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
+
+    fn native_block_meta_action_count_overrun_bytes() -> Vec<u8> {
+        let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        bytes.extend_from_slice(&((MAX_NATIVE_BLOCK_ACTIONS as u64) + 1).to_le_bytes());
+        bytes
+    }
+
+    fn native_block_meta_action_payload_overrun_bytes() -> Vec<u8> {
+        let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        bytes.extend_from_slice(&1u64.to_le_bytes());
+        bytes
+            .extend_from_slice(&((MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES as u64) + 1).to_le_bytes());
+        bytes
+    }
+
+    fn native_block_meta_miner_commitment_overrun_bytes() -> Vec<u8> {
+        let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&49u64.to_le_bytes());
+        bytes
+    }
+
+    fn native_block_meta_miner_public_key_overrun_bytes() -> Vec<u8> {
+        let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&48u64.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 48]);
+        bytes.extend_from_slice(&((ML_DSA_PUBLIC_KEY_LEN as u64) + 1).to_le_bytes());
+        bytes
+    }
+
+    fn native_block_meta_miner_signature_overrun_bytes() -> Vec<u8> {
+        let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&48u64.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 48]);
+        bytes.extend_from_slice(&0u64.to_le_bytes());
+        bytes.extend_from_slice(&((ML_DSA_SIGNATURE_LEN as u64) + 1).to_le_bytes());
+        bytes
     }
 
     fn exact_decode_equivalence_corpus_from_valid_encodings(

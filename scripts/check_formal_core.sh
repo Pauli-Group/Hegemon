@@ -549,6 +549,7 @@ HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS="$LEAN_PENDING_ACTION_SCALE_WIRE_
 cargo test -p hegemon-node pending_action_exact_decode_matches_scale_decode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node consensus_route_scale_exact_decoders_match_raw_decode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node native_block_meta_bincode_budget --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node native_block_meta_exact_decode_matches_bincode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture
 cargo test -p block-circuit commitment_block_proof_decode_rejects --lib -- --nocapture
 HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS="$LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS" \
