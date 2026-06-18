@@ -1,5 +1,7 @@
 import Hegemon.Consensus.DaRoot
 import Hegemon.Native.MaterializedSidecarDaBlobPublication
+import Hegemon.Native.MaterializedTransferNoTheftPublication
+import Hegemon.Privacy.NativeSidecarObserverSurface
 
 namespace Hegemon
 namespace Native
@@ -16,14 +18,25 @@ open Hegemon.Native.CanonicalReorgChainAdmission
 open Hegemon.Native.CanonicalStateReload
 open Hegemon.Native.CodecAdmission
 open Hegemon.Native.MaterializedSidecarDaBlobPublication
+open Hegemon.Native.MaterializedTransferNoTheftPublication
 open Hegemon.Native.RawIngressFullBytePublicationSurface
 open Hegemon.Native.RawIngressSidecarReplayRecoverability
+open Hegemon.Native.StablecoinPolicyAuthorization
+open Hegemon.Native.StablecoinPolicyLiveAuthorization
 open Hegemon.Native.StorageDurabilityAdmission
+open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafCanonicalSurface
+open Hegemon.Privacy.CiphertextPrivacy
+open Hegemon.Privacy.NativeObserverSurface
+open Hegemon.Privacy.NativeSidecarObserverSurface
+open Hegemon.Privacy.Observer
 open Hegemon.Transaction.CanonicalVerifierBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
+open Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope
+open Hegemon.Wallet.NoteCiphertextDecrypt
+open Hegemon.Wallet.NotePlaintextCommitment
 
 def u32Bound : Nat := 4294967296
 
@@ -139,6 +152,96 @@ def TransactionsFitU32
   transactions.length < u32Bound
     ∧ ∀ transaction, transaction ∈ transactions →
         CiphertextRowsFitU32 transaction.ciphertexts
+
+def MaterializedSidecarOpenAssumptionPrivacyBoundary
+    (sidecarSurface : RawIngressSidecarReplaySurface)
+    (blockActionDecode : BlockActionDecodeInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput)
+    (shape : PublicInputShape)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (left right : ShieldedTransactionWorld)
+    (assumptions : PrivacyBoundaryAssumptions)
+    (mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness : Prop)
+    (game : CiphertextPrivacyGame left right) : Prop :=
+  (sidecarSurface.transferState.sidecarCiphertextsAvailable = true
+    ∧ sidecarSurface.transferState.sidecarCiphertextSizesPresent = true
+    ∧ sidecarSurface.transferState.sidecarCiphertextSizesMatch = true)
+    ∧ (actionWireReplayProjectionPreconditions
+        sidecarSurface.daSidecarReplay.wireReplayProjection = true
+      ∧ sidecarSurface.daSidecarReplay.wireReplayProjection.actionCount =
+        sidecarSurface.daSidecarReplay.wireReplayProjection.plannedCount
+      ∧ sidecarSurface.daSidecarReplay.wireReplayProjection.actionCount =
+        sidecarSurface.daSidecarReplay.wireReplayProjection.actions.length
+      ∧ wireOutput.projectedActionCount =
+        blockActionDecode.actualActionPayloadCount)
+    ∧ (txLeaf.ciphertextHashesMatch = true
+      ∧ txLeaf.ciphertextPayloadHashesMatch = true)
+    ∧ (shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds)
+    ∧ CiphertextPrivacyOpenAssumptionBoundaryFacts
+      left
+      right
+      game.wireIndistinguishable
+      assumptions
+    ∧ ∀ index publicCommitment publicCiphertextHash
+        attempt plaintext material data,
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        1
+        publicCommitment
+        publicCiphertextHash ->
+      left.ciphertextSummaries[
+        activeFlagCountBefore shape.outputFlags index]? =
+          some attempt.ciphertext ->
+      evaluateDecrypt attempt = none ->
+      data = exportNoteData plaintext material ->
+      publicCommitment = commitmentFromNoteData data ->
+      (ciphertextHashMatches : List Byte → Digest → Prop) ->
+      (∀ {wire summary daBytes},
+        left.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) ->
+      (∀ {wire summary daBytes},
+        right.ciphertextBytes[
+            activeFlagCountBefore shape.outputFlags index]? = some wire ->
+          Hegemon.Wallet.NoteCiphertextWire.parseChainNoteCiphertext
+            wire = some summary ->
+          Hegemon.Wallet.NoteCiphertextWire.projectChainDaBytes
+            wire = some daBytes ->
+          ciphertextHashMatches daBytes publicCiphertextHash) ->
+      ActiveOutputDecryptDaCommitmentFacts
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game.wireIndistinguishable
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        left
+        right
+        index
+        publicCommitment
+        publicCiphertextHash
+        attempt
+        plaintext
+        material
+        ciphertextHashMatches
 
 structure TransferFilteredMaterializedTransactionProjectionFacts
     (blockActionDecode : BlockActionDecodeInput)
@@ -861,6 +964,808 @@ theorem accepted_materialized_transfer_projection_rows_feed_concrete_consensus_d
       commitmentRootPublication := publication.commitmentRootPublication
       replayedSupply := publication.replayedSupply
       finalReplaySetsUnique := publication.finalReplaySetsUnique }
+
+structure MaterializedTransferSmallWoodConsensusDaBlobPublicationFacts
+    (surface : RawIngressSidecarReplaySurface)
+    (pendingDecode : ExactDecodeInput)
+    (blockActionDecode : BlockActionDecodeInput)
+    (actionHash : AdmissionInput)
+    (wireOutput : ActionWireReplayProjectionOutput)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields)
+    (blockIndex : BlockIndexReloadInput)
+    (canonicalState : CanonicalStateReloadInput)
+    (reorgChain : CanonicalReorgChainInput)
+    (commitManifest : AtomicCommitManifestInput)
+    (durability : StorageDurabilityInput)
+    (initial final : NativeLedgerTreeReplayState)
+    (blocks : List RawDecodedNativeTreeReplayBlock)
+    (artifactBytes : List Byte)
+    (summary : TxLeafSummary)
+    (payload : TransferPayloadInput)
+    (transferKey : Nat)
+    (txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput)
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields)
+    (bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs)
+    (statementFields : Hegemon.Transaction.StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (balanceWitness : Hegemon.Transaction.BalanceWitness)
+    (slots : List Hegemon.Transaction.BalanceSlot)
+    (assetId index activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness :
+      Hegemon.Transaction.SpendAuthorization.InputSpendWitness)
+    (candidateWrapper :
+      Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput)
+    (publicStatement :
+      Hegemon.Transaction.SmallWoodPublicStatementBinding.PublicStatementSurface)
+    (authSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveAuthLinkSurface)
+    (inputSpendSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface)
+    (outputSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveOutputBindingSurface)
+    (smallwoodBalanceSurface :
+      Hegemon.Transaction.SmallWoodBalanceBoundary.BalanceSurface)
+    (airBalanceSurface :
+      Hegemon.Transaction.AirBalanceBoundary.AirBalanceFinalRowSurface)
+    (policyInput : StablecoinPolicyAuthorizationInput)
+    (productionPayload : StablecoinMintExceptionPayload)
+    (validation : BlockActionValidationInput)
+    (validationSummary : BlockActionValidationSummary)
+    (actions : List MaterializedTransferActionRow)
+    (payloads : List MaterializedTransferPayloadRow)
+    (transactions : List MaterializedConsensusTransaction)
+    (daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop) : Prop where
+  transferPublication :
+    MaterializedTransferNoTheftPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      payload
+      transferKey
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+      True
+      True
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence
+  consensusDaBlobRefinement :
+    MaterializedConsensusDaBlobRefinementFacts
+      surface
+      blockActionDecode
+      wireOutput
+      semanticFields
+      initial
+      final
+      blocks
+      txLeaf
+      shape
+      statementFields
+      bindingFields
+      actions
+      payloads
+      transactions
+      (transactions.map consensusDaPayload)
+      (Consensus.DaRoot.daBlob (transactions.map consensusDaPayload))
+  smallwoodVerifierExport :
+    SmallWoodPublicStatementVerifierExportFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+  authorizedAssetDeltaValue :
+    Hegemon.Transaction.slotDelta assetId slots =
+      publicAuthorizedAssetDeltaValue publicFields assetId
+  authorizedStablecoinExceptionSurface :
+    AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      (Hegemon.Transaction.slotDelta assetId slots)
+      (nativeStablecoinLivePolicyAuthorizes
+        policyInput
+        productionPayload)
+  nativeStablecoinLiveAuthorization :
+    NativeStablecoinLiveAuthorizationFacts
+      policyInput
+      productionPayload
+  transactionLengthBounds :
+    TransactionsFitU32 transactions
+
+theorem accepted_materialized_transfer_smallwood_consensus_da_blob_certificate
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness :
+      Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {candidateWrapper :
+      Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      Hegemon.Transaction.SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      Hegemon.Transaction.SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      Hegemon.Transaction.AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {policyInput : StablecoinPolicyAuthorizationInput}
+    {productionPayload : StablecoinMintExceptionPayload}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    (publication :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        True
+        True
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (productionProjection :
+      RawIngressFullByteProductionProjectionFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        actions.length
+        payloads.length)
+    (payloadRowsMatchTransactionRows :
+      payloads.length = transactions.length)
+    (rowBinding :
+      ∀ (index : Nat) action payload transaction,
+        actions[index]? = some action →
+        payloads[index]? = some payload →
+        transactions[index]? = some transaction →
+          MaterializedRowFeedsTransactionNew action payload transaction)
+    (u32Bounds : TransactionsFitU32 transactions)
+    (payloadAccepted :
+      transferPayloadAccepts payload = true)
+    (txLeafAccepted :
+      BlockArtifactBindingAdmission.txLeafActionBindingAccepts txLeaf = true)
+    (smallwoodExport :
+      SmallWoodPublicStatementVerifierExportFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : Hegemon.Transaction.slotDelta assetId slots ≠ 0)
+    (present : policyInput.stablecoinPresent = true)
+    (policyAccepted :
+      stablecoinPolicyAuthorizationAccepts policyInput = true)
+    (exactPayload :
+      productionPayload =
+        stablecoinMintExceptionPayload
+          publicFields
+          assetId
+          (Hegemon.Transaction.slotDelta assetId slots)) :
+    MaterializedTransferSmallWoodConsensusDaBlobPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      payload
+      transferKey
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId
+      index
+      activeFlag
+      publicNullifier
+      witness
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+      policyInput
+      productionPayload
+      validation
+      validationSummary
+      actions
+      payloads
+      transactions
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence := by
+  have transferCertificate :=
+    accepted_materialized_transfer_publication_from_smallwood_native_policy_certificate
+      (transferKey := transferKey)
+      (materializedFacts := publication)
+      (payloadAccepted := payloadAccepted)
+      (txLeafAccepted := txLeafAccepted)
+      (smallwoodExport := smallwoodExport)
+      (slot := slot)
+      (active := active)
+      (nonNative := nonNative)
+      (nonzero := nonzero)
+      (present := present)
+      (policyAccepted := policyAccepted)
+      (exactPayload := exactPayload)
+  rcases transferCertificate with
+    ⟨transferPublication,
+      smallwoodVerifierExport,
+      authorizedAssetDeltaValue,
+      authorizedStablecoinExceptionSurface,
+      nativeStablecoinLiveAuthorization⟩
+  have consensusCertificate :=
+    accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob
+      (publication := publication)
+      (productionProjection := productionProjection)
+      (payloadRowsMatchTransactionRows := payloadRowsMatchTransactionRows)
+      (rowBinding := rowBinding)
+      (u32Bounds := u32Bounds)
+  exact
+    { transferPublication := transferPublication
+      consensusDaBlobRefinement := consensusCertificate
+      smallwoodVerifierExport := smallwoodVerifierExport
+      authorizedAssetDeltaValue := authorizedAssetDeltaValue
+      authorizedStablecoinExceptionSurface :=
+        authorizedStablecoinExceptionSurface
+      nativeStablecoinLiveAuthorization :=
+        nativeStablecoinLiveAuthorization
+      transactionLengthBounds :=
+        consensusCertificate.transactionLengthBounds }
+
+theorem accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput : ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields : Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {assetId index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness :
+      Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {candidateWrapper :
+      Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      Hegemon.Transaction.SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      Hegemon.Transaction.SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      Hegemon.Transaction.AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {policyInput : StablecoinPolicyAuthorizationInput}
+    {productionPayload : StablecoinMintExceptionPayload}
+    {validation : BlockActionValidationInput}
+    {validationSummary : BlockActionValidationSummary}
+    {actions : List MaterializedTransferActionRow}
+    {payloads : List MaterializedTransferPayloadRow}
+    {transactions : List MaterializedConsensusTransaction}
+    {daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence : Prop}
+    {left right : ShieldedTransactionWorld}
+    {assumptions : PrivacyBoundaryAssumptions}
+    (assumptionProofs : PrivacyBoundaryAssumptionProofs assumptions)
+    (mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness : Prop)
+    (mlKemAssumption : mlKemIndistinguishability)
+    (aeadAssumption : aeadCiphertextConfidentiality)
+    (kdfAssumption : kdfDomainSeparation)
+    (rngAssumption : rngFreshness)
+    (publication :
+      MaterializedSidecarDaBlobPublicationFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        True
+        True
+        daRootHashSecurityEquivalence
+        daAvailability
+        proofSystemSoundness
+        completeNativeNodeEquivalence)
+    (productionProjection :
+      RawIngressFullByteProductionProjectionFacts
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        validation
+        validationSummary
+        actions.length
+        payloads.length)
+    (payloadRowsMatchTransactionRows :
+      payloads.length = transactions.length)
+    (rowBinding :
+      ∀ (index : Nat) action payload transaction,
+        actions[index]? = some action →
+        payloads[index]? = some payload →
+        transactions[index]? = some transaction →
+          MaterializedRowFeedsTransactionNew action payload transaction)
+    (u32Bounds : TransactionsFitU32 transactions)
+    (payloadAccepted :
+      transferPayloadAccepts payload = true)
+    (txLeafAccepted :
+      BlockArtifactBindingAdmission.txLeafActionBindingAccepts txLeaf = true)
+    (canonicalSurface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (smallwoodExport :
+      SmallWoodPublicStatementVerifierExportFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface)
+    (slot :
+      Hegemon.Transaction.SpendAuthorization.ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness)
+    (active : activeFlag = 1)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : Hegemon.Transaction.slotDelta assetId slots ≠ 0)
+    (present : policyInput.stablecoinPresent = true)
+    (policyAccepted :
+      stablecoinPolicyAuthorizationAccepts policyInput = true)
+    (exactPayload :
+      productionPayload =
+        stablecoinMintExceptionPayload
+          publicFields
+          assetId
+          (Hegemon.Transaction.slotDelta assetId slots))
+    (game : CiphertextPrivacyGame left right)
+    (leftShape : left.publicInputs = shape)
+    (leftObserverBytesBounded :
+      ∀ wire,
+        wire ∈ left.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire)
+    (rightObserverBytesBounded :
+      ∀ wire,
+        wire ∈ right.ciphertextBytes ->
+          Hegemon.Wallet.NoteCiphertextWire.bytesBounded wire) :
+    MaterializedTransferSmallWoodConsensusDaBlobPublicationFacts
+      surface
+      pendingDecode
+      blockActionDecode
+      actionHash
+      wireOutput
+      semanticFields
+      blockIndex
+      canonicalState
+      reorgChain
+      commitManifest
+      durability
+      initial
+      final
+      blocks
+      artifactBytes
+      summary
+      payload
+      transferKey
+      txLeaf
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      assetId
+      index
+      activeFlag
+      publicNullifier
+      witness
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+      policyInput
+      productionPayload
+      validation
+      validationSummary
+      actions
+      payloads
+      transactions
+      daRootHashSecurityEquivalence
+      daAvailability
+      proofSystemSoundness
+      completeNativeNodeEquivalence
+    ∧ MaterializedSidecarOpenAssumptionPrivacyBoundary
+      surface
+      blockActionDecode
+      wireOutput
+      txLeaf
+      shape
+      statementFields
+      bindingFields
+      left
+      right
+      assumptions
+      mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness
+      game := by
+  have integrityCertificate :=
+    accepted_materialized_transfer_smallwood_consensus_da_blob_certificate
+      (transferKey := transferKey)
+      (publication := publication)
+      (productionProjection := productionProjection)
+      (payloadRowsMatchTransactionRows := payloadRowsMatchTransactionRows)
+      (rowBinding := rowBinding)
+      (u32Bounds := u32Bounds)
+      (payloadAccepted := payloadAccepted)
+      (txLeafAccepted := txLeafAccepted)
+      (smallwoodExport := smallwoodExport)
+      (slot := slot)
+      (active := active)
+      (nonNative := nonNative)
+      (nonzero := nonzero)
+      (present := present)
+      (policyAccepted := policyAccepted)
+      (exactPayload := exactPayload)
+  have privacyBoundary :
+      MaterializedSidecarOpenAssumptionPrivacyBoundary
+        surface
+        blockActionDecode
+        wireOutput
+        txLeaf
+        shape
+        statementFields
+        bindingFields
+        left
+        right
+        assumptions
+        mlKemIndistinguishability
+        aeadCiphertextConfidentiality
+        kdfDomainSeparation
+        rngFreshness
+        game :=
+    materialized_sidecar_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary
+      (assumptionProofs := assumptionProofs)
+      mlKemIndistinguishability
+      aeadCiphertextConfidentiality
+      kdfDomainSeparation
+      rngFreshness
+      mlKemAssumption
+      aeadAssumption
+      kdfAssumption
+      rngAssumption
+      (facts := publication)
+      (canonicalSurface := canonicalSurface)
+      (game := game)
+      (leftShape := leftShape)
+      (leftObserverBytesBounded := leftObserverBytesBounded)
+      (rightObserverBytesBounded := rightObserverBytesBounded)
+  exact ⟨integrityCertificate, privacyBoundary⟩
 
 end MaterializedConsensusDaBlobRefinement
 end Native

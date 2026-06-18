@@ -4,20 +4,20 @@
   "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
-  "overall_completion_percent": 93.335,
+  "overall_completion_percent": 94.36,
   "last_full_formal_core": {
-    "date": "2026-06-17T23:15:47Z",
-    "commit": "7465d4c7+worktree",
-    "status": "passed locally for the 93.335% theorem milestone: raw-ingress ledger-integrity publication, bridge mint/replay policy to raw canonical publication, and active-output public metadata boundary",
+    "date": "2026-06-18T00:03:50Z",
+    "commit": "8e46db2c+worktree",
+    "status": "passed locally for the 94.36% theorem milestone: integrated SmallWood/materialized-transfer/consensus-DA/privacy certificate",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 118,
-    "named_lean_theorems": 2035,
+    "named_lean_theorems": 2037,
     "axiom_free_theorems": 910,
-    "axiom_dependent_theorems": 1125,
+    "axiom_dependent_theorems": 1127,
     "temporary_axiom_theorems": 0,
     "production_eligible_claims": 108,
     "residual_risks": 47,
-    "blueprint_edges": 493,
+    "blueprint_edges": 495,
     "falsification_cases": 537,
     "implementation_bindings": 218,
     "implementation_result_obligations": 169,
@@ -69,25 +69,24 @@
     ]
   },
   "last_theorem_slice": {
-    "date": "2026-06-17",
-    "summary": "Added a raw-ingress ledger-integrity and bridge-policy theorem milestone: accepted raw-ingress field projection now packages ledger/tree replay, replayed supply, commitment-root and leaf-cursor publication, final nullifier and bridge replay uniqueness, exact canonical commitment/nullifier/bridge rows, ordered decoded content, and append-summary index/count agreement over one witness; accepted bridge mint/replay policy now composes into the raw-ingress canonical publication surface with authorized non-native bridge asset delta, zero direct native mint, final replay membership, duplicate rejection, and canonical supply replay; and the active-output public metadata privacy boundary is claimed and documented without requiring raw ciphertext equality.",
+    "date": "2026-06-18",
+    "summary": "Added an integrated materialized-transfer consensus-DA privacy theorem milestone: one accepted materialized publication witness now composes SmallWood verifier export, materialized transfer no-theft publication, exact authorized per-asset delta, authorized stablecoin exception surface, native stablecoin live authorization, concrete consensus DA-blob row publication, transaction u32 bounds, and the open-assumption sidecar ciphertext privacy/decrypt-to-DA boundary.",
     "lean_modules": [
-      "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
-      "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
-      "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean"
+      "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
+      "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
+      "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_active_output_public_metadata_boundary",
-      "Hegemon.Native.CommitmentTreeContentRefinement.raw_ingress_full_byte_field_projection_binds_ledger_integrity_publication",
-      "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_from_mint_replay_policy"
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_smallwood_consensus_da_blob_certificate",
+      "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate"
     ],
     "validation": {
-      "lean_formal": "cd formal/lean && lake build Hegemon.Native.CommitmentTreeContentRefinement Hegemon.Native.RawIngressBridgePendingActionPublication Hegemon.Privacy.NativeObserverSurface Hegemon passed locally.",
+      "lean_formal": "cd formal/lean && lake build Hegemon.Native.MaterializedConsensusDaBlobRefinement Hegemon.Privacy.NativeSidecarObserverSurface Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon passed locally; bash scripts/check_formal_core.sh then passed locally.",
       "targeted_rust": "No shipped runtime code changed in this theorem-only milestone; the full formal-core conformance suite passed locally.",
-      "claims_blueprint": "formal-security-claims.json, formal-security-blueprint.json, METHODS.md, DESIGN.md, formal/lean/README.md, and this matrix bind the new theorem names and residual limits. Full formal-core reported 118 claims, 2035 named Lean theorem declarations, 910 axiom-free theorem declarations, 1125 allowed-kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 493 blueprint edges, 537 falsification cases, 218 implementation bindings, 169 result obligations, 144 theorem-indexed order constraints, 130 theorem-indexed dominance constraints, 126 full-claim order constraints, 2274 full-claim theorem refs, and 11 native backend vectors."
+      "claims_blueprint": "formal-security-claims.json, formal-security-blueprint.json, METHODS.md, DESIGN.md, formal/lean/README.md, and this matrix bind the new theorem names and residual limits. Full formal-core reported 118 claims, 2037 named Lean theorem declarations, 910 axiom-free theorem declarations, 1127 allowed-kernel-axiom-dependent theorem declarations, zero temporary axiom theorem dependencies, 108 production-eligible claims, 47 residual risks, 495 blueprint edges, 537 falsification cases, 218 implementation bindings, 169 result obligations, 144 theorem-indexed order constraints, 130 theorem-indexed dominance constraints, 126 full-claim order constraints, 2274 full-claim theorem refs, and 11 native backend vectors."
     },
     "known_limitations": [
-      "The milestone does not prove arbitrary raw-byte parser internals, cryptographic hash/security equivalence, ML-KEM/AEAD security, simulator zero knowledge, proof-system soundness or witness extraction, external bridge receipt soundness, PQ-clean bridge mint decoder equivalence, storage durability below accepted predicates, or complete native-node refinement."
+      "The milestone does not prove arbitrary raw-byte parser internals, cryptographic hash/security equivalence, ML-KEM/AEAD security, simulator zero knowledge, proof-system soundness or witness extraction, external bridge receipt soundness, PQ-clean bridge mint decoder equivalence, storage durability below accepted predicates, or complete native-node refinement. Its privacy theorem remains an open-assumption boundary over sidecar ciphertext indistinguishability/decryption correctness, now bound to the same materialized transfer/DA publication witness."
     ]
   },
   "last_production_binding_slice": {
@@ -211,7 +210,7 @@
     {
       "id": "ledger.spend-authorization-no-theft",
       "weight": 7,
-      "completion_percent": 91.3,
+      "completion_percent": 94.3,
       "top_level_theorem_target": "Every accepted spend has an authorized private witness: valid note secret/opening, spend authority, nullifier derivation, Merkle membership, and proof acceptance for the exact public statement.",
       "current_evidence": [
         "transaction proof-wrapper admission vectors",
@@ -260,7 +259,8 @@
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now packages split spend-only and balance/public-field assumptions into `CanonicalProofSystemNoTheftBoundaryFacts`, carrying spend boundary facts, witness-authorized deltas, public-authorized deltas, and public stablecoin exception surfaces",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean composes accepted SmallWood candidate wrapper, transcript/profile, active auth-link, input row-boundary, output row-boundary, balance, and AIR final-row facts with the packaged no-theft/public-conservation boundary",
         "formal/lean/Hegemon/Native/TransferNoTheftBoundary.lean now constructs decoded-transfer no-theft and total input-slot authorization directly from `CanonicalDeployedVerifierSpendBoundaryFacts`, eliminating a fresh spend-soundness premise at downstream native publication boundaries",
-        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean and MaterializedTransferNoTheftPublication.lean now prove raw-ingress and materialized transfer publication certificates from `SmallWoodPublicStatementVerifierExportFacts`, binding concrete SmallWood verifier-surface export facts to active-input no-theft and total input-slot authorization on the production publication surfaces"
+        "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean and MaterializedTransferNoTheftPublication.lean now prove raw-ingress and materialized transfer publication certificates from `SmallWoodPublicStatementVerifierExportFacts`, binding concrete SmallWood verifier-surface export facts to active-input no-theft and total input-slot authorization on the production publication surfaces",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean now proves `accepted_materialized_transfer_smallwood_consensus_da_blob_certificate`, tying the same accepted materialized publication witness to concrete SmallWood no-theft/input-slot authorization, native policy authorization, and concrete consensus DA-blob row refinement"
       ],
       "missing_work": [
         "Prove that the complete circuit/AIR constraints imply the full spend-authorization relation, beyond the now-production-bound SmallWood active auth-link, input row-boundary, output row-boundary, and composed verifier-envelope slices.",
@@ -312,7 +312,7 @@
     {
       "id": "ledger.per-asset-transaction-conservation",
       "weight": 7,
-      "completion_percent": 91.2,
+      "completion_percent": 94.2,
       "top_level_theorem_target": "For every accepted non-mint transaction, each asset's input value equals output value plus fees and burns; authorized mint exceptions are explicit and separately checked.",
       "current_evidence": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
@@ -338,7 +338,8 @@
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean now exposes public-authorized deltas and stablecoin exception surfaces from the split balance/public-field boundary inside `CanonicalProofSystemNoTheftBoundaryFacts`",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean carries those public-authorized deltas with SmallWood wrapper/transcript/spend/balance/AIR verifier-surface facts",
         "formal/lean/Hegemon/Native/RawIngressTransferNoTheftPublication.lean now proves `accepted_raw_ingress_transfer_payload_from_smallwood_native_policy_certificate`, packaging raw-ingress publication, SmallWood public-statement verifier export facts, exact public-authorized per-asset delta equality, native policy-authorized stablecoin exception surface, and native live authorization facts over one accepted raw replay surface",
-        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves `accepted_materialized_transfer_publication_from_smallwood_native_policy_certificate`, packaging materialized DA/tx-leaf publication, SmallWood public-statement verifier export facts, exact public-authorized per-asset delta equality, native policy-authorized stablecoin exception surface, and native live authorization facts over one materialized publication surface"
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now proves `accepted_materialized_transfer_publication_from_smallwood_native_policy_certificate`, packaging materialized DA/tx-leaf publication, SmallWood public-statement verifier export facts, exact public-authorized per-asset delta equality, native policy-authorized stablecoin exception surface, and native live authorization facts over one materialized publication surface",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean `accepted_materialized_transfer_smallwood_consensus_da_blob_certificate` keeps exact public-authorized per-asset delta equality, native live authorization facts, u32-bounded consensus transaction rows, and concrete `Consensus.DaRoot.daBlob` bytes on the same materialized transfer witness"
       ],
       "missing_work": [
         "Complete and discharge full deployed AIR/proof-system soundness for all balance slots and spend authorization, beyond the now-modeled P3 final-row public balance equations and SmallWood verifier envelope.",
@@ -349,7 +350,7 @@
     {
       "id": "ledger.asset-isolation-authorized-mint",
       "weight": 5,
-      "completion_percent": 94.5,
+      "completion_percent": 95.5,
       "top_level_theorem_target": "No accepted transaction can transform one asset into another; stablecoin and bridge mint/burn deltas require explicit authorized evidence.",
       "current_evidence": [
         "stablecoin fields in transaction public-input binding",
@@ -380,7 +381,8 @@
         "formal/lean/Hegemon/Native/StablecoinPolicyLiveAuthorization.lean now instantiates LiveStablecoinPolicyAuthorizes from the accepted native stablecoin policy authorization predicate for the exact canonical StablecoinMintExceptionPayload, proves the predicate authorizes only that exact payload, exposes policy lifecycle/freshness/bounds facts, denies not-live payload authorization, and upgrades any publication-plus-exception-surface package to an authorized stablecoin mint exception surface",
         "node/src/native/mod.rs native_transfer_stablecoin_policy_authorized production path now fail-closes enabled stablecoin payloads unless protocol_manifest().stablecoin_policies authorizes the exact StablecoinPolicyBinding under active policy, enabled/retired lifecycle, matching policy hash/version, matching oracle/attestation commitments, undisputed attestation, fresh oracle submitted_at/max_age, nonzero issuance, and max_mint_per_epoch/u64 bounds; the old mutable authorization set is test-only",
         "formal/lean/Hegemon/Native/TransferStateAdmission.lean proves unauthorized stablecoin policy rejection and precedence before sidecar materialization, with generated vectors checked against production Rust",
-        "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate"
+        "formal/lean/Hegemon/Native/BlockActionValidation.lean proves decoded block-action validation rejects unauthorized stablecoin policy through the transfer-state gate",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean `accepted_materialized_transfer_smallwood_consensus_da_blob_certificate` carries the native-policy-authorized stablecoin exception surface and live authorization facts through the same materialized transfer witness as no-theft and concrete consensus DA-blob publication"
       ],
       "missing_work": [
         "Bind the accepted transaction-chain aggregate theorem to complete block/native-node execution across reorg and startup replay; the accepted raw-ingress transfer path now carries per-asset/stablecoin-exception consequences.",
@@ -510,7 +512,7 @@
     {
       "id": "privacy.zero-knowledge-unlinkability",
       "weight": 8,
-      "completion_percent": 88.5,
+      "completion_percent": 92.5,
       "top_level_theorem_target": "Public chain data and accepted proofs reveal only declared public outputs, and same-wallet/same-recipient worlds are indistinguishable except through public timing and explicitly public metadata.",
       "current_evidence": [
         "privacy-oriented design in DESIGN.md and METHODS.md",
@@ -577,7 +579,8 @@
         "formal/lean/Hegemon/Native/MineableActionAdmission.lean now models ordered same-block candidate-artifact selection from the canonical mineable-transfer count and proves candidates are accepted iff selected, transfers are accepted iff mineable, and plain actions pass",
         "formal/lean/Hegemon/Native/GenerateMineableActionAdmissionVectors.lean schema-v2 vectors cover zero-transfer candidate rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from transfer count, and canonical-order first matching candidate selection",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean `native_tx_leaf_active_output_public_metadata_boundary` packages active-output public metadata boundary without requiring raw ciphertext equality, binding selected tx-leaf/action output rows to canonical statement/proof output slots, valid observer-chain surfaces, same public metadata leakage, and observer ciphertext-count equality",
-        "node/src/native/mod.rs lean_generated_mineable_action_admission_vectors_match_production now drives production select_mineable_actions over real pending-action fixtures, staged sidecar metadata, candidate artifacts, and bridge actions, catching insertion-order drift in same-count candidate selection"
+        "node/src/native/mod.rs lean_generated_mineable_action_admission_vectors_match_production now drives production select_mineable_actions over real pending-action fixtures, staged sidecar metadata, candidate artifacts, and bridge actions, catching insertion-order drift in same-count candidate selection",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean `accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate` composes the open-assumption native sidecar ciphertext privacy/decrypt-to-DA boundary with the same materialized transfer, SmallWood verifier, native policy, and concrete consensus DA-blob publication witness"
       ],
       "missing_work": [
         "Discharge or externally justify the explicit proof-system zero-knowledge, wallet metadata hygiene, timing/batching, remote network/topology metadata, and raw-wire indistinguishability assumptions.",
@@ -589,7 +592,7 @@
     {
       "id": "privacy.ciphertext-correctness-confidentiality",
       "weight": 5,
-      "completion_percent": 92,
+      "completion_percent": 93.5,
       "top_level_theorem_target": "Accepted note ciphertexts decrypt only for intended recipients, bind to the committed note contents, and malformed ciphertexts fail closed.",
       "current_evidence": [
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -632,7 +635,8 @@
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean promotes ciphertext wire indistinguishability to a named privacy-game obligation",
         "wallet/src/notes.rs same-plaintext same-recipient re-encryption regression checks fresh KEM randomness changes KEM ciphertext and chain wire bytes while preserving decrypt correctness",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean now models active SmallWood output ciphertext rows binding to public ciphertext-hash rows and inactive output public ciphertext hashes zeroing",
-        "circuits/transaction/src/smallwood_frontend.rs now rejects active and inactive output ciphertext-hash drift in the shipped inline-Merkle SmallWood relation"
+        "circuits/transaction/src/smallwood_frontend.rs now rejects active and inactive output ciphertext-hash drift in the shipped inline-Merkle SmallWood relation",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean `accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate` keeps all-active decrypt-to-statement-commitment and projected-DA ciphertext-hash facts on the same materialized sidecar/tx-leaf/consensus-DA publication witness"
       ],
       "missing_work": [
         "Discharge or externally justify the named ML-KEM, AEAD, KDF, and RNG assumptions behind `wireIndistinguishable`."
@@ -778,7 +782,7 @@
     {
       "id": "availability.da-sidecar-binding",
       "weight": 4,
-      "completion_percent": 88.5,
+      "completion_percent": 92.5,
       "top_level_theorem_target": "Accepted blocks bind exactly the sidecar ciphertext/proof bytes required for private-state recovery and reject missing, swapped, oversized, or hash-mismatched sidecars before mutation.",
       "current_evidence": [
         "DA-root byte binding gate",
@@ -807,7 +811,8 @@
         "node/src/native/mod.rs committed_sidecar_replay_materializes_ciphertext_from_archive checks canonical replay/rebuild can materialize committed sidecar bytes from the canonical archive after mined commit removes staged DA rows, while still validating ciphertext hash and declared size",
         "node/src/native/mod.rs startup_rejects_committed_sidecar_archive_hash_drift checks reopened nodes fail closed when committed sidecar archive bytes no longer match the action ciphertext hash",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean accepted_materialized_transfer_projection_rows_feed_concrete_consensus_da_blob derives the transfer-filtered Transaction::new row package from raw-ingress production projection facts before the concrete DA-blob theorem",
-        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now binds the materialized DA/tx-leaf publication surface to the concrete SmallWood verifier export and native stablecoin policy certificate, keeping DA sidecar binding, tx-leaf statement binding, no-theft, per-asset conservation, and authorized mint exceptions on one materialized publication record"
+        "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean now binds the materialized DA/tx-leaf publication surface to the concrete SmallWood verifier export and native stablecoin policy certificate, keeping DA sidecar binding, tx-leaf statement binding, no-theft, per-asset conservation, and authorized mint exceptions on one materialized publication record",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean now proves the integrated SmallWood/materialized-transfer/consensus-DA/privacy certificate, binding sidecar availability and size facts, wire replay DA rows, exact u32-bounded consensus DA blob bytes, tx-leaf ciphertext gates, and statement/proof ciphertext vectors to one accepted publication witness"
       ],
       "missing_work": [
         "Lift accepted-predicate DA sidecar/canonical publication into arbitrary-byte SCALE/JSON parser refinement, DA availability, and retention proofs.",
