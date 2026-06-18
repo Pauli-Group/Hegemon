@@ -87,6 +87,7 @@ import Hegemon.Native.CanonicalPublicationRefinement
 import Hegemon.Native.PendingActionScaleWire
 import Hegemon.Native.PendingActionByteParserRefinement
 import Hegemon.Native.PendingActionBytePublicationRefinement
+import Hegemon.Native.CodecCanonicalPublicationBoundary
 import Hegemon.Native.RawIngressPendingActionPublicationRefinement
 import Hegemon.Native.RawIngressActionHashTxLeafPublication
 import Hegemon.Native.RawIngressDaSidecarCanonicalPublication
@@ -120,6 +121,7 @@ import Hegemon.Network.SecureChannel
 import Hegemon.Privacy.CiphertextPrivacy
 import Hegemon.Privacy.Observer
 import Hegemon.Privacy.NativeObserverSurface
+import Hegemon.Privacy.PqTransportPrivacyBoundary
 import Hegemon.Privacy.NativeSidecarObserverSurface
 import Hegemon.Privacy.WalletOutputBatch
 import Hegemon.Resource.BoundedRequestAdmission

@@ -775,7 +775,8 @@
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_candidate_wrapper_exposes_admission_facts",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_verifier_envelope_exposes_no_theft_and_public_conservation",
-        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export"
+        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export",
+        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_review_certificate"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
@@ -791,7 +792,8 @@
         "`Hegemon.Transaction.AirBalanceBoundary` narrows the deployed P3 AIR target by modeling the final-row value-balance and stablecoin equations directly; `p3_air_balance_public_field_mutations_rejected` proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof.",
         "`Hegemon.Transaction.SmallWoodPublicStatementBinding` narrows the SmallWood verifier implementation-equivalence target by proving the modeled public statement values are exactly the P3 public-input vector followed by the circuit-version and crypto-suite suffix, and by carrying the serialized-statement boundary into the transcript surface. The generated-vector gate checks the production `smallwood_public_statement_values_for_p3` helper and the live SmallWood candidate profile surface for normal and stablecoin witnesses. This does not prove bincode serialization correctness, hash security, or SmallWood cryptographic soundness.",
         "`Hegemon.Transaction.SmallWoodTranscriptBinding` narrows the SmallWood verifier target by modeling the transcript/profile bytes over already serialized public statement bytes; the generated-vector gate checks the production transcript helper, version/profile material, arithmetization label, statement byte inclusion, and eight-byte padding. This does not prove bincode serialization correctness or SmallWood cryptographic soundness.",
-        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope` packages accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input row-boundary facts, active output row-boundary facts, SmallWood public balance facts, P3 AIR final-row balance facts, canonical deployed-verifier boundary facts, split spend-only boundary facts, split balance/public-field boundary facts, public authorized deltas, native delta authorization, and the exact remaining split deployed-verifier soundness assumptions into one reviewable verifier envelope. `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export` joins that envelope to the accepted public-statement binding surface and statement-byte equality, exposing no-theft, public conservation, and non-native stablecoin exception consequences at the same export boundary. This narrows the AIR/FRI/Rust-refinement target but still does not prove STARK/FRI soundness or witness extraction."
+        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope` packages accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input row-boundary facts, active output row-boundary facts, SmallWood public balance facts, P3 AIR final-row balance facts, canonical deployed-verifier boundary facts, split spend-only boundary facts, split balance/public-field boundary facts, public authorized deltas, native delta authorization, and the exact remaining split deployed-verifier soundness assumptions into one reviewable verifier envelope. `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export` joins that envelope to the accepted public-statement binding surface and statement-byte equality, exposing no-theft, public conservation, and non-native stablecoin exception consequences at the same export boundary. This narrows the AIR/FRI/Rust-refinement target but still does not prove STARK/FRI soundness or witness extraction.",
+        "The SmallWood formal soundness review certificate co-witnesses the explicit split spend/balance soundness assumptions with the concrete public-statement verifier export and no-theft/public-conservation consequences; it still does not discharge STARK/FRI soundness or witness extraction."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
@@ -828,7 +830,8 @@
         "HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture",
         "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
-        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture"
+        "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture",
+        "cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope"
       ],
       "residual_risks": [
         {
@@ -1279,6 +1282,8 @@
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_open_assumption_decrypt_da_boundary",
         "Hegemon.Privacy.NativeObserverSurface.native_tx_leaf_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary",
         "Hegemon.Privacy.NativeSidecarObserverSurface.materialized_sidecar_ciphertext_privacy_game_all_active_outputs_open_assumption_decrypt_da_boundary",
+        "Hegemon.Privacy.PqTransportPrivacyBoundary.accepted_pq_handshake_native_ciphertext_privacy_boundary_certificate",
+        "Hegemon.Privacy.PqTransportPrivacyBoundary.accepted_pq_handshake_native_ciphertext_privacy_boundary_exposes_raw_wire",
         "Hegemon.Native.transfer_order_preimage_ignores_local_received_ms",
         "Hegemon.Native.transfer_order_action_ignores_local_received_ms",
         "Hegemon.Native.transfer_relative_order_ignores_local_received_ms",
@@ -1321,6 +1326,7 @@
         "formal/lean/Hegemon/Privacy/Observer.lean",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
         "formal/lean/Hegemon/Privacy/NativeSidecarObserverSurface.lean",
+        "formal/lean/Hegemon/Privacy/PqTransportPrivacyBoundary.lean",
         "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean",
         "formal/lean/Hegemon/Wallet/NoteCiphertextWire.lean",
@@ -1343,6 +1349,7 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake build Hegemon.Privacy.PqTransportPrivacyBoundary",
         "cargo test -p wallet encrypt_same_plaintext_to_same_address_uses_fresh_kem_randomness --lib -- --nocapture",
         "cargo test -p wallet reencryption_preserves_public_ciphertext_summary_shape --lib -- --nocapture",
         "cargo test -p wallet local_wallet_bookkeeping_does_not_change_public_ciphertext_projection --lib -- --nocapture",
@@ -4920,7 +4927,7 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, current-first/legacy-fallback native metadata decode selection, native block action payload counts, pending/block action parser resource-cap composition, a concrete PendingAction SCALE wire grammar covering no-candidate actions plus the shipped recursive-block CandidateArtifact::Some product lane with route public_args bytes, and a concrete shielded coinbase MintCoinbaseArgs SCALE wire grammar; generated Lean vectors are checked against production decode helpers, native metadata fallback decode, block-action decoding, PendingAction exact decode, and MintCoinbaseArgs exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, and canonical publication facts.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, current-first/legacy-fallback native metadata decode selection, native block action payload counts, pending/block action parser resource-cap composition, a concrete PendingAction SCALE wire grammar covering no-candidate actions plus the shipped recursive-block CandidateArtifact::Some product lane with route public_args bytes, and a concrete shielded coinbase MintCoinbaseArgs SCALE wire grammar; generated Lean vectors are checked against production decode helpers, native metadata fallback decode, block-action decoding, PendingAction exact decode, and MintCoinbaseArgs exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, canonical publication facts, and one codec-canonical publication boundary certificate.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4971,6 +4978,9 @@
         "Hegemon.Native.PendingActionByteParserRefinement.accepted_pending_action_byte_parser_with_resource_bounds_refines_wire_replay_rows",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_raw_canonical_publication",
         "Hegemon.Native.PendingActionBytePublicationRefinement.accepted_pending_action_bytes_bind_tx_leaf_publication",
+        "Hegemon.Native.CodecCanonicalPublicationBoundary.pending_action_byte_publication_facts_imply_codec_canonical_publication_boundary",
+        "Hegemon.Native.CodecCanonicalPublicationBoundary.accepted_pending_action_codec_canonical_publication_boundary",
+        "Hegemon.Native.CodecCanonicalPublicationBoundary.accepted_pending_action_codec_canonical_publication_non_malleability_facts",
         "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_exact_decode",
         "Hegemon.Native.PendingActionScaleWire.accepted_pending_action_scale_wire_total_length",
         "Hegemon.Native.PendingActionScaleWire.candidate_some_missing_payload_rejects",
@@ -4989,6 +4999,7 @@
         "The CoinbaseActionPayload SCALE wire slice models the production MintCoinbaseArgs field order for one BlockRewardBundle and CoinbaseNoteData: note commitment, note ciphertext, compact KEM ciphertext length, KEM ciphertext bytes, recipient, amount, and public seed. Generated Lean vectors cover valid short and zero-length KEM ciphertexts plus parser failure, trailing byte, KEM length overrun, and noncanonical compact prefix rejection.",
         "The theorem covers strict native codec admission at sync, metadata exact-decode, current-first/legacy-fallback native metadata selection, and decoded block-action boundaries. Blueprint bindings additionally require outbound native sync messages to pass the bounded encoder before announcement queueing or peer sends. This does not prove postcard, SCALE, or bincode parser implementation correctness, BLAKE3 action-hash security, full action payload validation, or complete native-node equivalence.",
         "The byte parser refinement theorem reuses the exact-decode and block-action decode kernels as accepted parser predicates and derives projected replay row-count equality from declared action count plus accepted wire replay; the resource-bound refinement additionally carries generic raw/decoded/item/aggregate/work cap facts and binds resource item count to decoded payload rows and wire rows.",
+        "The codec-canonical publication boundary certificate packages accepted exact pending-action decode, canonical re-encode equality, exact block-action decode, declared/decoded/wire action-count equality, action-hash admission, pending reload, raw canonical publication, raw carried-state preconditions, and reusable canonical non-malleability rejection facts on one accepted pending-action byte witness.",
         "Production `decode_block_actions` now calls a pre-decode byte-budget helper that rejects over-cap declared/payload action counts, over-cap per-action payload bytes, aggregate-byte overflow, and aggregate-byte over-cap before SCALE action decode; this is a cheap admission check and does not replace external parser implementation review.",
         "Arbitrary nested CandidateArtifact payload grammars beyond the shipped recursive-block product lane, arbitrary bincode internals, postcard internals, and parser implementation proofs for other consensus byte objects remain explicit follow-on targets."
       ],
@@ -5003,7 +5014,8 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
-        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean"
+        "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
+        "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -6490,7 +6502,8 @@
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_smallwood_consensus_da_blob_certificate",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.materialized_transfer_smallwood_consensus_da_blob_certificate_implies_admission_safety",
         "Hegemon.Native.MaterializedConsensusDaBlobRefinement.materialized_transfer_smallwood_consensus_da_blob_certificate_implies_end_to_end_security_boundary",
-        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate"
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_smallwood_consensus_da_blob_privacy_certificate",
+        "Hegemon.Native.MaterializedConsensusDaBlobRefinement.accepted_materialized_transfer_end_to_end_boundary_exposes_highest_standard_core_review"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition and a targeted Rust conformance gate over the existing materialized sidecar, tx-leaf, and consensus DA helpers.",
@@ -6498,7 +6511,8 @@
         "The integrated certificate is zero-runtime-cost: it reuses the same accepted materialized sidecar publication witness to carry SmallWood no-theft/public-conservation export facts, native-policy-authorized stablecoin exception facts, concrete consensus DA blob bytes/u32 bounds, accepted-block admission safety, and the open-assumption native sidecar ciphertext privacy/decrypt-to-DA boundary.",
         "The end-to-end boundary theorem is a packaging theorem over the same certificate and explicit privacy boundary. It does not discharge ML-KEM/AEAD/KDF/RNG indistinguishability, proof-system soundness, hash security, DA availability, or complete native-node equivalence, but it makes those residuals explicit while binding the production-critical no-counterfeiting/no-theft/conservation/admission/DA/privacy facts to one accepted witness.",
         "The theorem records explicit `u32` transaction/ciphertext length bounds because production `consensus::types::build_da_blob` encodes transaction and ciphertext counts by casting lengths to u32.",
-        "The theorem and test do not prove arbitrary-byte parser internals, hash collision resistance, DA availability/retention, Reed-Solomon network availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
+        "The theorem and test do not prove arbitrary-byte parser internals, hash collision resistance, DA availability/retention, Reed-Solomon network availability, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement.",
+        "The highest-standard core review theorem projects the end-to-end materialized transfer boundary into one certificate carrying supply, ledger/tree replay, commitment-root, nullifier/replay uniqueness, no-theft, input authorization, SmallWood export, authorized asset/stablecoin exception, DA blob, tx-leaf statement/ciphertext gates, sidecar materialization, privacy, and admission-safety facts; residual crypto/proof/DA/parser/native-node assumptions remain explicit."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
@@ -6519,7 +6533,8 @@
         "cargo test -p hegemon-node materialized_sidecar_transfer_payload_builds_consensus_da_blob --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
-        "bash scripts/check_formal_core.sh"
+        "bash scripts/check_formal_core.sh",
+        "cd formal/lean && lake build Hegemon.Native.MaterializedConsensusDaBlobRefinement"
       ],
       "residual_risks": [
         {

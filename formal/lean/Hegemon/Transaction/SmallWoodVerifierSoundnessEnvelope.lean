@@ -229,6 +229,105 @@ structure SmallWoodPublicStatementVerifierExportFacts
           assetId
           (slotDelta assetId slots)
 
+structure SmallWoodFormalSoundnessReviewCertificate
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput)
+    (publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface)
+    (authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface)
+    (inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface)
+    (outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface)
+    (smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface)
+    (airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface) : Prop where
+  spendSoundnessAssumption :
+    DeployedTxVerifierSpendSoundnessAssumption
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+  balancePublicSoundnessAssumption :
+    DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots
+  verifierExport :
+    SmallWoodPublicStatementVerifierExportFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface
+  publicStatementBytesMatch :
+    publicStatement.statementBytes = statementBytes
+  spendAuthorized :
+    transactionSpendAuthorized shape merkleRoot spendWitnesses = true
+  publicAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nativeDeltaAuthorized :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness
+  nonNativeNonzeroStablecoinException :
+    ∀ {assetId : Nat},
+      assetId ≠ nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+        StablecoinMintExceptionSurface
+          publicFields
+          bound
+          statementFields
+          bindingFields
+          assetId
+          (slotDelta assetId slots)
+
 theorem accepted_candidate_wrapper_exposes_admission_facts
     {input : SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
     (accepted :
@@ -634,6 +733,166 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_
           verifierEnvelopeFacts.noTheftBoundaryFacts.nonNativeNonzeroExceptionSurface
             nonNative
             nonzero
+    }
+
+theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_review_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (candidateAccepted :
+      SmallWoodCandidateWrapperAdmission.wrapperAccepts
+        candidateWrapper = true)
+    (publicStatementAccepted :
+      SmallWoodPublicStatementBinding.acceptedSmallwoodPublicStatementBinding
+        publicStatement)
+    (publicStatementBytesMatch :
+      publicStatement.statementBytes = statementBytes)
+    (authAccepted :
+      SmallWoodSpendAuthorization.activeAuthLinkAccepted
+        authSurface = true)
+    (inputAccepted :
+      SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
+        inputSpendSurface = true)
+    (outputAccepted :
+      SmallWoodSpendAuthorization.activeOutputBindingAccepted
+        outputSurface = true)
+    (smallwoodBalanceAccepted :
+      SmallWoodBalanceBoundary.AcceptedSmallWoodBalanceConstraints
+        smallwoodBalanceSurface)
+    (airBalanceAccepted :
+      AirBalanceBoundary.AcceptedAirBalanceFinalRowConstraints
+        airBalanceSurface) :
+    SmallWoodFormalSoundnessReviewCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      candidateWrapper
+      publicStatement
+      authSurface
+      inputSpendSurface
+      outputSurface
+      smallwoodBalanceSurface
+      airBalanceSurface := by
+  have verifierExport :
+      SmallWoodPublicStatementVerifierExportFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface :=
+    accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export
+      surface
+      spendSound
+      balanceSound
+      candidateAccepted
+      publicStatementAccepted
+      publicStatementBytesMatch
+      authAccepted
+      inputAccepted
+      outputAccepted
+      smallwoodBalanceAccepted
+      airBalanceAccepted
+  exact
+    {
+      spendSoundnessAssumption := spendSound
+      balancePublicSoundnessAssumption := balanceSound
+      verifierExport := verifierExport
+      publicStatementBytesMatch := verifierExport.publicStatementBytesMatch
+      spendAuthorized := verifierExport.noTheftAndPublicConservation.left
+      publicAuthorizedDeltas :=
+        verifierExport.noTheftAndPublicConservation.right.left
+      nativeDeltaAuthorized :=
+        verifierExport.noTheftAndPublicConservation.right.right
+      nonNativeNonzeroStablecoinException :=
+        verifierExport.nonNativeNonzeroStablecoinException
     }
 
 end SmallWoodVerifierSoundnessEnvelope
