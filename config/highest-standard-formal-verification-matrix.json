@@ -1376,6 +1376,38 @@
       "Overall completion remains 100% under the current matrix method because the residuals are explicit; this slice makes their category and burn-down path theorem-indexed."
     ]
   },
+  "last_system_model_assumption_gate_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a theorem-backed and formal-core-checked fail-closed gate for system-model residuals. DA retention, storage durability, global privacy boundary, release infrastructure, dependency scanner completeness, and performance budget residuals must now appear in config/system-model-assumption-gates.json as system_model assumptions with fail_closed=true, release_blocking=true, freshness SLAs, alert routes, and checked-in evidence paths.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Release/SystemModelAssumptionGate.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Release.SystemModelAssumptionGate.accepts_iff_system_model_gate_preconditions",
+      "Hegemon.Release.SystemModelAssumptionGate.accepted_system_model_gate_exposes_fail_closed_monitoring",
+      "Hegemon.Release.SystemModelAssumptionGate.complete_system_model_gate_accepts",
+      "Hegemon.Release.SystemModelAssumptionGate.accepted_system_model_gate_yields_facts"
+    ],
+    "formal_core_gate": {
+      "command": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-system-model-gates config/system-model-assumption-gates.json",
+      "wrapper": "bash scripts/check_formal_core.sh now runs check-system-model-gates as phase 7/13"
+    },
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Release.SystemModelAssumptionGate Hegemon over 174 jobs; bash scripts/check_lean_formal.sh reported 2417 theorem declarations, 1058 axiom-free theorem declarations, 1359 theorem declarations depending only on waived Lean kernel axioms, zero temporary axiom theorem leaks, and passed=true; cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml passed 121 tests; check-system-model-gates reported 6 gates, 20 evidence paths, max freshness SLA 168 hours, and passed=true; check-formal-inventory passed with the new gate files present; check-claims reported 121 claims, 2417 named Lean theorem declarations, 111 production-eligible claims, and 50 residual risks; check-blueprint reported 121 nodes, 521 edges, 621 falsification cases, 223 implementation bindings, 169 result obligations, 149 theorem-indexed order constraints, and 134 theorem-indexed dominance constraints."
+    },
+    "categories": [
+      "da-retention",
+      "storage-durability",
+      "global-privacy-boundary",
+      "release-infrastructure",
+      "dependency-scanner-completeness",
+      "performance-budget"
+    ],
+    "known_limitations": [
+      "This gate proves and checks evidence presence and fail-closed release policy, not environmental honesty.",
+      "DA availability, storage hardware/fsync semantics, global timing/topology/miner-order privacy, live GitHub enforcement, advisory database completeness, scanner soundness, and production performance drift remain explicit system-model assumptions."
+    ]
+  },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
     "summary": "Local 100% closure slice: added the top-level Lean highest-standard completion certificate, registered it in the claims and blueprint ledgers, bound residual-boundary projection theorems for canonical proof-system, compact SmallWood, and materialized no-theft certificates, added PQ transcript marker separation, and added a block-circuit commitment proof byte-cap/exact-decode regression to formal-core. Claims and blueprint validation pass with 119 claims, 2409 named Lean theorem declarations, 109 production-eligible claims, 47 residual risks, 119 blueprint nodes, 518 dependency edges, 613 falsification cases, 223 implementation bindings, 149 order constraints, 169 result obligations, and 134 dominance constraints. Overall completion is now 100% under the checked matrix method because remaining primitive, proof-system, parser, storage, DA-retention, external-bridge, release-infrastructure, and complete-native-node obligations are explicit certificate fields rather than hidden missing work.",

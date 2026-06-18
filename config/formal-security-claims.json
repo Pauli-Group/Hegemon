@@ -7342,6 +7342,52 @@
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
       ]
+    },
+    {
+      "id": "formal.system-model-assumption-gates",
+      "component": "fail-closed system-model release gates",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean system-model gate proves that accepted system-model evidence exposes DA retention monitoring, storage durability monitoring, global privacy boundary monitoring, release infrastructure monitoring, dependency scanner freshness monitoring, performance budget monitoring, fail-closed policy, and release-blocking policy. The formal-core checker now validates `config/system-model-assumption-gates.json`, requiring every system-model residual category to be present, fail-closed, release-blocking, freshness-bounded, and backed by checked-in evidence paths before the full formal-core gate can pass.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_plus_formal_core_system_model_gate_checker",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.SystemModelAssumptionGate.accepts_iff_system_model_gate_preconditions",
+        "Hegemon.Release.SystemModelAssumptionGate.accepted_system_model_gate_exposes_fail_closed_monitoring",
+        "Hegemon.Release.SystemModelAssumptionGate.complete_system_model_gate_accepts",
+        "Hegemon.Release.SystemModelAssumptionGate.accepted_system_model_gate_yields_facts"
+      ],
+      "assumptions": [
+        "The gate proves and checks fail-closed evidence presence; it does not prove DA nodes retain data, disks honestly flush, GitHub runners are incorruptible, advisory feeds are complete, global observers are absent, or benchmarks perfectly predict production behavior.",
+        "Each listed system-model category remains an environmental assumption, but accepted release evidence must now name the monitor, enforcement gate, freshness SLA, alert route, and checked-in supporting evidence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Release/SystemModelAssumptionGate.lean",
+        "config/system-model-assumption-gates.json",
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/hegemon_formal_core/src/main.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/hegemon_formal_core/README.md",
+        "config/highest-standard-formal-verification-matrix.json"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake build Hegemon.Release.SystemModelAssumptionGate Hegemon",
+        "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml system_model_gates",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-system-model-gates config/system-model-assumption-gates.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "system-model-environment-not-proved",
+          "description": "The gate makes environmental assumptions fail-closed and monitored, but external DA retention, storage hardware behavior, GitHub enforcement, advisory-feed completeness, global traffic privacy, and performance drift remain outside Lean's direct proof scope.",
+          "status": "open",
+          "tracking": "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md"
+        }
+      ]
     }
   ]
 }

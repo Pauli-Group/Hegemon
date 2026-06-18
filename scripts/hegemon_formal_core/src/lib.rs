@@ -25,6 +25,15 @@ const CLAIM_CLASSES: &[&str] = &[
 const CONJECTURAL_MODELS: &[&str] = &["conjectural_research", "heuristic_only"];
 const BLUEPRINT_NODE_KINDS: &[&str] = &["target_claim", "supporting_claim", "residual_risk"];
 const TARGET_REVIEW_STATUSES: &[&str] = &["accepted", "needs_review", "blocked"];
+const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
+    "da-retention",
+    "storage-durability",
+    "global-privacy-boundary",
+    "release-infrastructure",
+    "dependency-scanner-completeness",
+    "performance-budget",
+];
+const MAX_SYSTEM_MODEL_GATE_FRESHNESS_SLA_HOURS: u64 = 168;
 
 #[derive(Debug, Serialize)]
 pub struct ClaimsReport {
@@ -45,6 +54,15 @@ pub struct BridgeVectorReport {
 #[derive(Debug, Serialize)]
 pub struct InventoryReport {
     pub required_files: Vec<String>,
+    pub passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SystemModelGateReport {
+    pub gates: usize,
+    pub required_categories: Vec<String>,
+    pub evidence_paths: usize,
+    pub max_freshness_sla_hours: u64,
     pub passed: bool,
 }
 
@@ -231,6 +249,29 @@ struct BridgeVectorCase {
     expected_replay_key: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemModelGateLedger {
+    schema_version: u32,
+    generated_for_branch: String,
+    gates: Vec<SystemModelGate>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SystemModelGate {
+    id: String,
+    category: String,
+    assumption_class: String,
+    fail_closed: bool,
+    release_blocking: bool,
+    monitor: String,
+    enforcement_gate: String,
+    freshness_sla_hours: u64,
+    alert_route: String,
+    evidence_paths: Vec<String>,
+}
+
 pub fn check_claims_file(path: &Path) -> Result<ClaimsReport> {
     let root = repository_root_from(path);
     let ledger = read_claims_ledger(path)?;
@@ -337,6 +378,121 @@ pub fn verify_bridge_vectors_file(path: &Path) -> Result<BridgeVectorReport> {
 
     Ok(BridgeVectorReport {
         cases: vectors.cases.len(),
+        passed: true,
+    })
+}
+
+pub fn check_system_model_gates_file(path: &Path) -> Result<SystemModelGateReport> {
+    let root = repository_root_from(path);
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let ledger: SystemModelGateLedger =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    validate_system_model_gates(&root, &ledger)
+}
+
+fn validate_system_model_gates(
+    root: &Path,
+    ledger: &SystemModelGateLedger,
+) -> Result<SystemModelGateReport> {
+    ensure!(
+        ledger.schema_version == 1,
+        "unsupported system-model gate schema version"
+    );
+    ensure!(
+        !ledger.generated_for_branch.trim().is_empty(),
+        "generated_for_branch must be set"
+    );
+    ensure!(
+        !ledger.gates.is_empty(),
+        "system-model gate ledger must not be empty"
+    );
+
+    let required: BTreeSet<&str> = REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES
+        .iter()
+        .copied()
+        .collect();
+    let mut seen_ids = BTreeSet::new();
+    let mut seen_categories = BTreeSet::new();
+    let mut evidence_paths = 0usize;
+    let mut max_freshness_sla_hours = 0u64;
+
+    for gate in &ledger.gates {
+        validate_id("system-model gate id", &gate.id)?;
+        ensure!(
+            seen_ids.insert(&gate.id),
+            "duplicate system-model gate id {}",
+            gate.id
+        );
+        ensure!(
+            required.contains(gate.category.as_str()),
+            "{} has unknown system-model category {}",
+            gate.id,
+            gate.category
+        );
+        ensure!(
+            seen_categories.insert(gate.category.as_str()),
+            "duplicate system-model category {}",
+            gate.category
+        );
+        ensure!(
+            gate.assumption_class == "system_model",
+            "{} must use assumption_class system_model",
+            gate.id
+        );
+        ensure!(gate.fail_closed, "{} must fail closed", gate.id);
+        ensure!(gate.release_blocking, "{} must block release", gate.id);
+        ensure!(
+            !gate.monitor.trim().is_empty(),
+            "{} must name a monitor",
+            gate.id
+        );
+        ensure!(
+            !gate.enforcement_gate.trim().is_empty(),
+            "{} must name an enforcement gate",
+            gate.id
+        );
+        ensure!(
+            !gate.alert_route.trim().is_empty(),
+            "{} must name an alert route",
+            gate.id
+        );
+        ensure!(
+            gate.freshness_sla_hours > 0
+                && gate.freshness_sla_hours <= MAX_SYSTEM_MODEL_GATE_FRESHNESS_SLA_HOURS,
+            "{} freshness_sla_hours must be in 1..={}",
+            gate.id,
+            MAX_SYSTEM_MODEL_GATE_FRESHNESS_SLA_HOURS
+        );
+        ensure!(
+            !gate.evidence_paths.is_empty(),
+            "{} must list evidence paths",
+            gate.id
+        );
+        for evidence in &gate.evidence_paths {
+            ensure_repo_relative_existing(root, evidence, &format!("{} evidence path", gate.id))?;
+            evidence_paths += 1;
+        }
+        max_freshness_sla_hours = max_freshness_sla_hours.max(gate.freshness_sla_hours);
+    }
+
+    let missing: Vec<_> = required
+        .difference(&seen_categories)
+        .copied()
+        .map(str::to_owned)
+        .collect();
+    ensure!(
+        missing.is_empty(),
+        "missing required system-model categories: {missing:?}"
+    );
+
+    Ok(SystemModelGateReport {
+        gates: ledger.gates.len(),
+        required_categories: REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES
+            .iter()
+            .map(|category| (*category).to_owned())
+            .collect(),
+        evidence_paths,
+        max_freshness_sla_hours,
         passed: true,
     })
 }
@@ -558,6 +714,9 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Release/GenerateDependencyAuditPolicyVectors.lean",
         "formal/lean/Hegemon/Release/PqBinaryPolicy.lean",
         "formal/lean/Hegemon/Release/GeneratePqBinaryPolicyVectors.lean",
+        "formal/lean/Hegemon/Release/SystemModelAssumptionGate.lean",
+        "config/system-model-assumption-gates.json",
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
         "formal/lean/Hegemon/Native/GenerateTxLeafArtifactVectors.lean",
@@ -4625,6 +4784,54 @@ mod tests {
     }
 
     #[test]
+    fn system_model_gates_accept_required_fail_closed_evidence() {
+        let root = test_root("system-model-gates-valid");
+        write_system_model_gate_evidence(&root);
+        let gates_path = root.join("system-model-gates.json");
+        write_json(&gates_path, system_model_gate_fixture());
+
+        let report = check_system_model_gates_file(&gates_path).expect("valid system-model gates");
+        assert_eq!(report.gates, REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES.len());
+        assert_eq!(
+            report.required_categories.len(),
+            REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES.len()
+        );
+        assert_eq!(
+            report.evidence_paths,
+            REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES.len()
+        );
+        assert!(report.passed);
+    }
+
+    #[test]
+    fn system_model_gates_reject_missing_required_category() {
+        let root = test_root("system-model-gates-missing-category");
+        write_system_model_gate_evidence(&root);
+        let mut fixture = system_model_gate_fixture();
+        fixture["gates"].as_array_mut().expect("gates array").pop();
+        let gates_path = root.join("system-model-gates.json");
+        write_json(&gates_path, fixture);
+
+        let err = check_system_model_gates_file(&gates_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("missing required system-model categories"));
+    }
+
+    #[test]
+    fn system_model_gates_reject_non_fail_closed_gate() {
+        let root = test_root("system-model-gates-non-fail-closed");
+        write_system_model_gate_evidence(&root);
+        let mut fixture = system_model_gate_fixture();
+        fixture["gates"][0]["fail_closed"] = json!(false);
+        let gates_path = root.join("system-model-gates.json");
+        write_json(&gates_path, fixture);
+
+        let err = check_system_model_gates_file(&gates_path).unwrap_err();
+        assert!(err.to_string().contains("must fail closed"));
+    }
+
+    #[test]
     fn blueprint_accepts_valid_claim_dag() {
         let root = test_root("valid-blueprint");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8539,6 +8746,43 @@ mod tests {
             serde_json::to_string_pretty(&value).expect("serialize json"),
         )
         .expect("write json");
+    }
+
+    fn write_system_model_gate_evidence(root: &Path) {
+        for category in REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES {
+            write_repo_file(
+                root,
+                &format!("evidence/system-model-{category}.txt"),
+                category,
+            );
+        }
+    }
+
+    fn system_model_gate_fixture() -> Value {
+        let gates: Vec<Value> = REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES
+            .iter()
+            .map(|category| {
+                json!({
+                    "id": format!("system.{category}"),
+                    "category": category,
+                    "assumption_class": "system_model",
+                    "fail_closed": true,
+                    "release_blocking": true,
+                    "monitor": format!("{category} monitor"),
+                    "enforcement_gate": "formal-core system-model gate",
+                    "freshness_sla_hours": 24,
+                    "alert_route": "release-owner",
+                    "evidence_paths": [
+                        format!("evidence/system-model-{category}.txt")
+                    ]
+                })
+            })
+            .collect();
+        json!({
+            "schema_version": 1,
+            "generated_for_branch": "codex/superneo-formal-verification",
+            "gates": gates
+        })
     }
 
     fn claims_fixture() -> Value {

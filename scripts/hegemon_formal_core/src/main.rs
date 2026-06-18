@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use hegemon_formal_core::{
-    check_blueprint_file, check_claims_file, check_formal_inventory, verify_bridge_vectors_file,
+    check_blueprint_file, check_claims_file, check_formal_inventory, check_system_model_gates_file,
+    verify_bridge_vectors_file,
 };
 use std::path::PathBuf;
 
@@ -33,6 +34,9 @@ enum Command {
         #[arg(long, default_value = ".")]
         root: PathBuf,
     },
+    CheckSystemModelGates {
+        path: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -47,6 +51,9 @@ fn main() -> Result<()> {
         }
         Command::CheckFormalInventory { root } => {
             serde_json::to_value(check_formal_inventory(&root)?)?
+        }
+        Command::CheckSystemModelGates { path } => {
+            serde_json::to_value(check_system_model_gates_file(&path)?)?
         }
     };
     println!("{}", serde_json::to_string_pretty(&value)?);

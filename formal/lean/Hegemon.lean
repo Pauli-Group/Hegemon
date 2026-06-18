@@ -140,6 +140,7 @@ import Hegemon.Release.AssumptionClosureRoadmap
 import Hegemon.Release.HighestStandardCompletionCertificate
 import Hegemon.Release.PqBinaryPolicy
 import Hegemon.Release.ReleasePostureCertificate
+import Hegemon.Release.SystemModelAssumptionGate
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.AcceptedProofArtifact
 import Hegemon.Transaction.AcceptedTransactionSoundness

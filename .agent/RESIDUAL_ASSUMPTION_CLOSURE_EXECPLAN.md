@@ -16,7 +16,10 @@ The visible outcome is that `bash scripts/check_formal_core.sh` fails if any res
 - [x] (2026-06-18 19:05Z) Updated `DESIGN.md`, `METHODS.md`, `formal/lean/README.md`, and `config/highest-standard-formal-verification-matrix.json` so the status is discoverable without reading Lean source.
 - [x] (2026-06-18 19:11Z) Ran metadata gates: `jq empty`, `check-claims`, `check-blueprint`, and `git diff --check` all passed.
 - [x] (2026-06-18 19:25Z) Ran `bash scripts/check_lean_formal.sh`; it passed with 2413 theorem declarations, 1056 axiom-free theorem declarations, 1357 declarations depending only on waived kernel axioms, and zero temporary axiom theorem leaks.
-- [ ] Commit the roadmap slice.
+- [x] (2026-06-18 19:28Z) Committed the roadmap slice as `d04a4b95 Classify residual assumptions for closure`.
+- [x] (2026-06-18 19:55Z) Added `Hegemon.Release.SystemModelAssumptionGate`, `config/system-model-assumption-gates.json`, and the formal-core `check-system-model-gates` command so DA/storage/global-privacy/release/scanner/performance residuals are release-blocking fail-closed evidence gates instead of prose.
+- [x] (2026-06-18 20:08Z) Validated the system-model gate slice: targeted Lean build passed over 174 jobs; `bash scripts/check_lean_formal.sh` passed with 2417 theorem declarations and zero temporary axiom theorem leaks; `cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml` passed 121 tests; `check-system-model-gates`, `check-formal-inventory`, `check-claims`, `check-blueprint`, JSON validation, rustfmt check, and `git diff --check` passed.
+- [x] (2026-06-18 20:10Z) Committed the system-model gate slice as `ace383d9 Gate system-model assumptions fail-closed`.
 - [ ] For later milestones, replace each mechanized-track proposition with deeper theorem packages and generated Rust conformance gates.
 
 ## Surprises & Discoveries
@@ -45,6 +48,8 @@ The visible outcome is that `bash scripts/check_formal_core.sh` fails if any res
 ## Outcomes & Retrospective
 
 This first slice converts the user-facing classification into a Lean theorem surface and makes the next milestones explicit. It does not yet close the deep parser/native/proof/bridge gaps; it prevents them from being mislabeled as ordinary cryptographic assumptions.
+
+The second slice starts closing the fail-closed system-model bucket by adding a theorem-backed release gate and formal-core checker for DA retention, storage durability, global privacy boundary, release infrastructure, dependency scanner completeness, and performance budget monitoring evidence.
 
 ## Context and Orientation
 

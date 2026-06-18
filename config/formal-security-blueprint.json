@@ -15016,6 +15016,62 @@
         }
       ],
       "scope_boundary": "This node classifies and ratchets residual work. It is not a proof of arbitrary-byte parser internals, complete native-node equivalence, deployed proof-system/AIR soundness, positive bridge mint verifier soundness, primitive cryptographic hardness, DA retention, storage hardware behavior, global unlinkability, live GitHub enforcement, scanner completeness, or performance preservation."
+    },
+    {
+      "id": "formal.system-model-assumption-gates",
+      "claim_id": "formal.system-model-assumption-gates",
+      "kind": "target_claim",
+      "formal_statement": "Accepted system-model residual evidence must expose DA-retention monitoring, storage-durability monitoring, global-privacy-boundary monitoring, release-infrastructure monitoring, dependency-scanner freshness monitoring, performance-budget monitoring, fail-closed policy, and release-blocking policy; the formal-core checker must reject missing, non-fail-closed, non-release-blocking, stale, or unevidenced system-model categories.",
+      "informal_argument": "`Hegemon.Release.SystemModelAssumptionGate` proves the executable decision table for accepted system-model monitoring facts. The formal-core command `check-system-model-gates` validates the checked-in JSON ledger, requiring every required category to be represented by a fail-closed, release-blocking, freshness-bounded monitor with evidence paths. This turns DA/storage/global-privacy/release/scanner/performance assumptions into explicit fail-closed operational gates rather than prose residuals.",
+      "depends_on": [
+        "formal.residual-assumption-closure-roadmap",
+        "release.ci-release-gate"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Release/SystemModelAssumptionGate.lean",
+        "scripts/hegemon_formal_core/src/lib.rs",
+        "scripts/hegemon_formal_core/src/main.rs",
+        "scripts/check_formal_core.sh",
+        "config/system-model-assumption-gates.json"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Release/SystemModelAssumptionGate.lean",
+        "config/system-model-assumption-gates.json",
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "scripts/hegemon_formal_core/README.md",
+        "config/formal-security-claims.json",
+        "config/formal-security-blueprint.json",
+        "config/highest-standard-formal-verification-matrix.json"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-18",
+        "notes": "Accepted as a release-blocking system-model evidence gate. It does not prove external environmental honesty; it fails closed if required monitoring categories or evidence are removed."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-system-model-gate-theorem",
+          "description": "Removing the accepted system-model gate theorem surface must fail the Lean or claims gate.",
+          "gate": "cd formal/lean && lake build Hegemon.Release.SystemModelAssumptionGate Hegemon"
+        },
+        {
+          "id": "formal-core-system-model-gate",
+          "description": "Deleting any required system-model category, disabling fail-closed/release-blocking policy, exceeding freshness bounds, or removing evidence paths must fail the formal-core checker.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-system-model-gates config/system-model-assumption-gates.json"
+        },
+        {
+          "id": "formal-core-wrapper-runs-system-model-gate",
+          "description": "The full formal-core wrapper must include the system-model gate phase.",
+          "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "system-model-gate-checker-tests",
+          "description": "The checker unit tests must reject missing categories and non-fail-closed gates.",
+          "gate": "cargo test --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml system_model_gates"
+        }
+      ],
+      "scope_boundary": "This node proves and checks fail-closed evidence presence for environmental assumptions. It does not prove DA availability, storage hardware/fsync semantics, global unlinkability against timing/topology/miner-order observers, GitHub or runner integrity, advisory database completeness, scanner soundness, or that benchmark samples bound all production deployments."
     }
   ]
 }
