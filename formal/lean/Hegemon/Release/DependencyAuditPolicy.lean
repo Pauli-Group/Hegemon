@@ -108,6 +108,45 @@ theorem accepts_iff_dependency_audit_preconditions
     cases hUsed : dependencyWaiversUsed input <;>
     simp
 
+theorem accepted_dependency_audit_exposes_policy_facts
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ()) :
+    dependencyWaiversValid input = true
+      ∧ dependencyFindingsWaived input = true
+      ∧ dependencyWaiversUsed input = true := by
+  unfold evaluateDependencyAudit at accepted
+  cases hWaivers : dependencyWaiversValid input <;>
+    cases hFindings : dependencyFindingsWaived input <;>
+    cases hUsed : dependencyWaiversUsed input <;>
+    simp [hWaivers, hFindings, hUsed] at accepted ⊢
+
+theorem accepted_dependency_audit_finding_has_explicit_valid_waiver
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {finding : DependencyFinding}
+    (present : finding ∈ input.findings) :
+    findingHasValidWaiver input.waivers finding = true := by
+  have facts := accepted_dependency_audit_exposes_policy_facts accepted
+  exact (List.all_eq_true.mp facts.2.1) finding present
+
+theorem accepted_dependency_audit_waiver_is_valid
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    waiverIsValid waiver = true := by
+  have facts := accepted_dependency_audit_exposes_policy_facts accepted
+  exact (List.all_eq_true.mp facts.1) waiver present
+
+theorem accepted_dependency_audit_waiver_matches_live_finding
+    {input : DependencyAuditInput}
+    (accepted : evaluateDependencyAudit input = Except.ok ())
+    {waiver : DependencyWaiver}
+    (present : waiver ∈ input.waivers) :
+    waiverMatchesAnyFinding input.findings waiver = true := by
+  have facts := accepted_dependency_audit_exposes_policy_facts accepted
+  exact (List.all_eq_true.mp facts.2.2) waiver present
+
 def bincodeFinding : DependencyFinding :=
   {
     id := "RUSTSEC-2025-0141",

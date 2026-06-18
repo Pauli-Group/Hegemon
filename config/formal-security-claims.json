@@ -6,7 +6,7 @@
       "id": "release.pq-binary",
       "component": "hegemon-node release binary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean release PQ-binary policy kernel proves the release gate accepts exactly when source, dependency, and binary scans are all clean, and generated vectors check that policy decision table used by the release audit gate.",
+      "summary": "The Lean release PQ-binary policy kernel proves the release gate accepts exactly when source, dependency, and binary scans are all clean, generated vectors check that policy decision table used by the release audit gate, and the release posture certificate exposes those clean scans together with dependency-audit and CI release-gate acceptance.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_binary_symbol_dependency_scan",
       "production_eligible": true,
@@ -16,7 +16,9 @@
         "Hegemon.Release.PqBinaryPolicy.binary_forbidden_rejects_after_source_dependency_clean",
         "Hegemon.Release.PqBinaryPolicy.dependency_forbidden_rejects_after_source_clean",
         "Hegemon.Release.PqBinaryPolicy.source_forbidden_rejects",
-        "Hegemon.Release.PqBinaryPolicy.source_rejection_precedes_dependency_and_binary"
+        "Hegemon.Release.PqBinaryPolicy.source_rejection_precedes_dependency_and_binary",
+        "Hegemon.Release.ReleasePostureCertificate.accepted_pq_binary_audit_exposes_clean_scans",
+        "Hegemon.Release.ReleasePostureCertificate.accepted_release_posture_exposes_all_release_gates"
       ],
       "assumptions": [
         "The release binary under target/release/hegemon-node is the binary that operators deploy.",
@@ -29,7 +31,8 @@
         "scripts/security-audit.sh",
         "scripts/check_release_pq_binary_policy_vectors.py",
         "DESIGN.md",
-        "METHODS.md"
+        "METHODS.md",
+        "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -44,7 +47,7 @@
       "id": "release.ci-release-gate",
       "component": "GitHub CI and tag-release gate wiring",
       "claim_class": "lean_theorem",
-      "summary": "The Lean CI release-gate policy proves release-build acceptance requires dependency audit, formal-core, security-adversarial, native-backend-security, a release-build job, release-build dependency on those security gates, a release binary audit step, and tag-release native backend review/posture gates; generated vectors plus a workflow checker bind that policy to the checked-in PR/main and tag-release workflows.",
+      "summary": "The Lean CI release-gate policy proves release-build acceptance requires dependency audit, formal-core, security-adversarial, native-backend-security, a release-build job, release-build dependency on those security gates, a release binary audit step, and tag-release native backend review/posture gates; generated vectors plus a workflow checker bind that policy to the checked-in PR/main and tag-release workflows. The release posture certificate packages those CI facts with accepted dependency-audit waiver accounting and clean PQ source/dependency/binary scans.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_workflow_wiring_checker",
       "production_eligible": true,
@@ -62,7 +65,9 @@
         "Hegemon.Release.CiReleaseGate.release_build_security_adversarial_dependency_missing_rejects",
         "Hegemon.Release.CiReleaseGate.security_adversarial_missing_rejects_after_formal_core",
         "Hegemon.Release.CiReleaseGate.tag_release_native_backend_posture_missing_rejects",
-        "Hegemon.Release.CiReleaseGate.tag_release_native_backend_review_missing_rejects"
+        "Hegemon.Release.CiReleaseGate.tag_release_native_backend_review_missing_rejects",
+        "Hegemon.Release.CiReleaseGate.accepted_ci_release_gate_exposes_required_policy_facts",
+        "Hegemon.Release.ReleasePostureCertificate.accepted_release_posture_exposes_all_release_gates"
       ],
       "assumptions": [
         "GitHub branch protection or merge policy marks the checked workflow jobs as required for protected release branches.",
@@ -77,7 +82,8 @@
         "scripts/check_ci_release_gate_policy.py",
         "scripts/check_formal_core.sh",
         "DESIGN.md",
-        "METHODS.md"
+        "METHODS.md",
+        "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -98,7 +104,7 @@
       "id": "release.dependency-waivers",
       "component": "cargo dependency graph and formal-core checker toolchain",
       "claim_class": "lean_theorem",
-      "summary": "The Lean dependency-audit policy kernel proves that every cargo-audit finding must either be absent or be matched by a well-formed, non-expired waiver with exact advisory/package/version/kind metadata, and that every checked-in waiver must match a current cargo-audit finding so stale waivers fail closed.",
+      "summary": "The Lean dependency-audit policy kernel proves that every cargo-audit finding must either be absent or be matched by a well-formed, non-expired waiver with exact advisory/package/version/kind metadata, and that every checked-in waiver must match a current cargo-audit finding so stale waivers fail closed. The release posture certificate now composes accepted dependency audit, PQ binary audit, and CI release-gate inputs into one accepted release posture surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_cargo_audit_json_with_policy",
       "production_eligible": true,
@@ -112,7 +118,12 @@
         "Hegemon.Release.DependencyAuditPolicy.no_findings_no_waivers_accepts",
         "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_rejects",
         "Hegemon.Release.DependencyAuditPolicy.unused_waiver_rejects",
-        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_precedes_unused_waiver"
+        "Hegemon.Release.DependencyAuditPolicy.unwaived_finding_precedes_unused_waiver",
+        "Hegemon.Release.DependencyAuditPolicy.accepted_dependency_audit_exposes_policy_facts",
+        "Hegemon.Release.DependencyAuditPolicy.accepted_dependency_audit_finding_has_explicit_valid_waiver",
+        "Hegemon.Release.DependencyAuditPolicy.accepted_dependency_audit_waiver_is_valid",
+        "Hegemon.Release.DependencyAuditPolicy.accepted_dependency_audit_waiver_matches_live_finding",
+        "Hegemon.Release.ReleasePostureCertificate.accepted_release_posture_exposes_all_release_gates"
       ],
       "assumptions": [
         "cargo-audit is available in release CI.",
@@ -127,7 +138,8 @@
         "scripts/check_dependency_audit_policy_vectors.py",
         "config/dependency-audit-waivers.json",
         "docs/DEPENDENCY_AUDITS.md",
-        "scripts/hegemon_formal_core/Cargo.lock"
+        "scripts/hegemon_formal_core/Cargo.lock",
+        "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -3514,7 +3526,7 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, bridge action resource admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, receipt-root artifact schedule facts, pending/block action parser resource caps, sync response item-count caps, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, bridge receipt/payload caps, recursive artifact proof caps, tx-leaf parser shape bounds, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, sync response import work, bridge payload-hash binding, bridge receipt decode/verification, or mining work.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, bridge action resource admission, candidate-artifact admission, tx-leaf artifact byte-shape facts, receipt-root artifact schedule facts, sync decode/range/count/resource admission, pending/block action parser resource caps, sync response item-count caps, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, sync exact-decode/count/range caps, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, bridge receipt/payload caps, recursive artifact proof caps, tx-leaf parser shape bounds, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, sync response import work, bridge payload-hash binding, bridge receipt decode/verification, or mining work.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -3547,7 +3559,9 @@
         "Hegemon.Resource.BoundedRequestAdmission.item_count_over_limit_request_rejects",
         "Hegemon.Resource.BoundedRequestAdmission.item_bytes_over_limit_request_rejects",
         "Hegemon.Resource.BoundedRequestAdmission.aggregate_bytes_over_limit_request_rejects",
-        "Hegemon.Resource.BoundedRequestAdmission.work_units_over_limit_request_rejects"
+        "Hegemon.Resource.BoundedRequestAdmission.work_units_over_limit_request_rejects",
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.sync_path_accepts_implies_preheavy_bounds",
+        "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_preheavy_work_dos_bound_certificate"
       ],
       "assumptions": [
         "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, native tx-leaf artifact parsing, and native receipt-root artifact schedule parsing; it inherits production conformance from those gates and adds no new runtime helper.",
@@ -4656,7 +4670,7 @@
       "id": "native.raw-ingress-bridge-pending-action-publication",
       "component": "native raw ingress bridge pending-action publication refinement",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress bridge pending-action publication refinement composes accepted inbound bridge payload authorization and decoded amount authorization with accepted raw-ingress pending-action publication over the same raw ledger/tree replay witness, and now adds canonical-publication surfaces that do not depend on external receipt-soundness assumptions. The final-replay theorem binds the freshly imported replay set to the canonical replay witness and proves the exact replay key remains present in the final published canonical replay set, so reimporting it against final state rejects as a duplicate. A separate replay theorem also packages canonical publication, inbound receipt admission, native backend review posture, and explicit external PQ receipt verifier soundness as one bridge replay surface. The newest certificates consume the abstract `Bridge.MintReplayPolicy` accepted result and the raw-ingress authorized-asset/final-replay theorem, then prove the current disabled release RISC Zero verifier cannot feed an accepted receipt-mint policy when receipt verification is sourced from that release gate. Accepted receipt-mint policy facts, policy replay-key import and immediate duplicate rejection, authorized non-native bridge asset delta, zero direct native mint, final canonical replay-key membership, final-state duplicate rejection, canonical supply replay, and fail-closed disabled-verifier blocking are visible on one publication record while the byte-key to native-replay-key projection remains an explicit premise. The resulting theorem set packages replayed supply, commitment-root publication, pending-action parser row-count agreement, zero direct native mint delta, one-shot bridge replay import, duplicate replay rejection, final nullifier uniqueness, final bridge replay-key uniqueness, and an explicit authorized non-native bridge asset-delta surface on the same raw ingress and pending-action byte-publication surface.",
+      "summary": "The Lean raw-ingress bridge pending-action publication refinement composes accepted inbound bridge payload authorization and decoded amount authorization with accepted raw-ingress pending-action publication over the same raw ledger/tree replay witness, and now adds canonical-publication surfaces that do not depend on external receipt-soundness assumptions. The final-replay theorem and final-replay publication record bind the freshly imported replay set to the canonical replay witness and proves the exact replay key remains present in the final published canonical replay set, so reimporting it against final state rejects as a duplicate. A separate replay theorem also packages canonical publication, inbound receipt admission, native backend review posture, and explicit external PQ receipt verifier soundness as one bridge replay surface. The newest certificates consume the abstract `Bridge.MintReplayPolicy` accepted result and the raw-ingress authorized-asset/final-replay theorem, then prove the current disabled release RISC Zero verifier cannot feed an accepted receipt-mint policy when receipt verification is sourced from that release gate. Accepted receipt-mint policy facts, policy replay-key import and immediate duplicate rejection, authorized non-native bridge asset delta, zero direct native mint, final canonical replay-key membership, final-state duplicate rejection, canonical supply replay, and fail-closed disabled-verifier blocking are visible on one publication record while the byte-key to native-replay-key projection remains an explicit premise. The resulting theorem set packages replayed supply, commitment-root publication, pending-action parser row-count agreement, zero direct native mint delta, one-shot bridge replay import, duplicate replay rejection, final nullifier uniqueness, final bridge replay-key uniqueness, and an explicit authorized non-native bridge asset-delta surface on the same raw ingress and pending-action byte-publication surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
@@ -4670,7 +4684,8 @@
         "Hegemon.Native.RawIngressBridgePendingActionPublication.release_disabled_blocks_receipt_mint_replay_policy_before_replay",
         "Hegemon.Native.RawIngressBridgePendingActionPublication.release_disabled_precludes_accepted_inbound_bridge_mint_policy",
         "Hegemon.Native.RawIngressBridgePendingActionPublication.release_disabled_precludes_raw_ingress_bridge_mint_replay_policy_publication",
-        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe"
+        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_replay_safe",
+        "Hegemon.Native.RawIngressBridgePendingActionPublication.accepted_inbound_bridge_raw_ingress_canonical_publication_binds_final_replay_state"
       ],
       "assumptions": [
         "This is a Lean composition theorem over existing production-bound predicates. It relies on the separate bridge payload/mint safety, raw-ingress pending-action publication, DA/sidecar binding, pending-action parser/publication, canonical publication, and replay-refinement claims for executable predicate conformance.",
@@ -6171,9 +6186,9 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
-          "cargo test -p consensus append_ -- --nocapture",
-          "tmp=$(mktemp); (cd formal/lean && lake exe gen_commitment_tree_append_vectors > $tmp); HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=$tmp cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture; rm -f $tmp",
-          "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
+        "cargo test -p consensus append_ -- --nocapture",
+        "tmp=$(mktemp); (cd formal/lean && lake exe gen_commitment_tree_append_vectors > $tmp); HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=$tmp cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture; rm -f $tmp",
+        "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [

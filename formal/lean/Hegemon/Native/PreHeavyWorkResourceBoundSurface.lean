@@ -1,11 +1,13 @@
 import Hegemon.Native.ActionRequestProjectionAdmission
 import Hegemon.Native.BridgeActionResourceAdmission
 import Hegemon.Native.CandidateArtifactAdmission
+import Hegemon.Native.CodecAdmission
 import Hegemon.Native.MineableActionAdmission
 import Hegemon.Native.ReceiptRoot
 import Hegemon.Native.ResourceBudgetAdmission
 import Hegemon.Native.RpcAdmission
 import Hegemon.Native.SidecarUploadAdmission
+import Hegemon.Native.SyncAdmission
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TxLeafArtifactProjectionRefinement
 
@@ -17,10 +19,12 @@ open Hegemon.Native.MineableActionAdmission
 open Hegemon.Native.ActionRequestProjectionAdmission
 open Hegemon.Native.BridgeActionResourceAdmission
 open Hegemon.Native.CandidateArtifactAdmission
+open Hegemon.Native.CodecAdmission
 open Hegemon.Native.ReceiptRoot
 open Hegemon.Native.ResourceBudgetAdmission
 open Hegemon.Native.RpcAdmission
 open Hegemon.Native.SidecarUploadAdmission
+open Hegemon.Native.SyncAdmission
 open Hegemon.Native.TransferActionPayloadAdmission
 open Hegemon.Native.TxLeafArtifact
 open Hegemon.Native.TxLeafArtifactProjectionRefinement
@@ -690,8 +694,139 @@ theorem action_request_projection_accepts_implies_preheavy_bounds
           routePayloadDecodesExactlyFact
       }
 
+structure PreHeavyWorkSyncPathSurface where
+  syncDecode : SyncDecodeInput
+  responseRangeInput : SyncResponseRangeInput
+  responseRange : Nat × Nat
+  responseCount : SyncResponseCountInput
+  resourcePolicy : ResourcePolicy
+  resourceRequest : ResourceRequest
+deriving DecidableEq, Repr
+
+structure AcceptedPreHeavyWorkSyncPathInputs
+    (surface : PreHeavyWorkSyncPathSurface) : Prop where
+  syncDecodeAccepted :
+    syncDecodeAccepts surface.syncDecode = true
+  responseRangeAccepted :
+    responseRange surface.responseRangeInput =
+      some surface.responseRange
+  responseCountAccepted :
+    responseCountAccepts surface.responseCount = true
+  syncResourceAccepted :
+    evaluateBoundedRequest
+      surface.resourcePolicy
+      surface.resourceRequest = none
+  responseRangeCountMatchesResponseCount :
+    responseRangeBlockCount surface.responseRange =
+      surface.responseCount.blockCount
+  resourceItemCountMatchesResponseCount :
+    surface.resourceRequest.itemCount =
+      surface.responseCount.blockCount
+
+structure AcceptedPreHeavyWorkSyncPathBounds
+    (surface : PreHeavyWorkSyncPathSurface) : Prop where
+  syncDecodeAccepted :
+    syncDecodeAccepts surface.syncDecode = true
+  syncDecodePreconditions :
+    syncDecodePreconditions surface.syncDecode = true
+  syncDecodeExact :
+    surface.syncDecode.boundedWireDecodeAccepts = true
+      ∧ surface.syncDecode.consumedAllBytes = true
+  responseRangeAccepted :
+    responseRange surface.responseRangeInput =
+      some surface.responseRange
+  responseRangeBoundedFacts :
+    AcceptedBoundedRequestFacts
+      (responseRangeBoundedPolicy surface.responseRangeInput)
+      (responseRangeBoundedRequest surface.responseRange)
+  responseRangeItemCountWithinMaxBlocks :
+    ¬ surface.responseRangeInput.maxBlocks <
+      responseRangeBlockCount surface.responseRange
+  responseCountAccepted :
+    responseCountAccepts surface.responseCount = true
+  responseCountWithinLimit :
+    surface.responseCount.blockCount ≤ surface.responseCount.maxBlocks
+  responseRangeCountMatchesResponseCount :
+    responseRangeBlockCount surface.responseRange =
+      surface.responseCount.blockCount
+  syncResourceAccepted :
+    evaluateBoundedRequest
+      surface.resourcePolicy
+      surface.resourceRequest = none
+  syncResourceFacts :
+    AcceptedBoundedRequestFacts
+      surface.resourcePolicy
+      surface.resourceRequest
+  resourceItemCountMatchesResponseCount :
+    surface.resourceRequest.itemCount =
+      surface.responseCount.blockCount
+  responseCountWithinResourceCap :
+    ¬ surface.resourcePolicy.itemCountCap <
+      surface.responseCount.blockCount
+
+theorem sync_path_accepts_implies_preheavy_bounds
+    {surface : PreHeavyWorkSyncPathSurface}
+    (accepted : AcceptedPreHeavyWorkSyncPathInputs surface) :
+    AcceptedPreHeavyWorkSyncPathBounds surface := by
+  have syncPreconditions :
+      syncDecodePreconditions surface.syncDecode = true :=
+    (sync_accepts_iff_preconditions
+      (input := surface.syncDecode)).mp accepted.syncDecodeAccepted
+  have syncExact :
+      surface.syncDecode.boundedWireDecodeAccepts = true
+        ∧ surface.syncDecode.consumedAllBytes = true :=
+    sync_decode_acceptance_excludes_malleability
+      accepted.syncDecodeAccepted
+  have responseRangeFacts :
+      AcceptedBoundedRequestFacts
+        (responseRangeBoundedPolicy surface.responseRangeInput)
+        (responseRangeBoundedRequest surface.responseRange) :=
+    accepted_response_range_exposes_bounded_request_facts
+      accepted.responseRangeAccepted
+  have responseRangeWithinMaxBlocks :
+      ¬ surface.responseRangeInput.maxBlocks <
+        responseRangeBlockCount surface.responseRange := by
+    simpa [responseRangeBoundedPolicy, responseRangeBoundedRequest] using
+      responseRangeFacts.itemCountWithinCap
+  have responseWithinLimit :
+      surface.responseCount.blockCount ≤
+        surface.responseCount.maxBlocks :=
+    (response_count_accepts_iff_within_limit
+      (input := surface.responseCount)).mp
+        accepted.responseCountAccepted
+  have resourceFacts :
+      AcceptedBoundedRequestFacts
+        surface.resourcePolicy
+        surface.resourceRequest :=
+    accepted_bounded_request_exposes_all_caps
+      accepted.syncResourceAccepted
+  have responseCountWithinResourceCap :
+      ¬ surface.resourcePolicy.itemCountCap <
+        surface.responseCount.blockCount := by
+    simpa [accepted.resourceItemCountMatchesResponseCount] using
+      resourceFacts.itemCountWithinCap
+  exact {
+    syncDecodeAccepted := accepted.syncDecodeAccepted,
+    syncDecodePreconditions := syncPreconditions,
+    syncDecodeExact := syncExact,
+    responseRangeAccepted := accepted.responseRangeAccepted,
+    responseRangeBoundedFacts := responseRangeFacts,
+    responseRangeItemCountWithinMaxBlocks :=
+      responseRangeWithinMaxBlocks,
+    responseCountAccepted := accepted.responseCountAccepted,
+    responseCountWithinLimit := responseWithinLimit,
+    responseRangeCountMatchesResponseCount :=
+      accepted.responseRangeCountMatchesResponseCount,
+    syncResourceAccepted := accepted.syncResourceAccepted,
+    syncResourceFacts := resourceFacts,
+    resourceItemCountMatchesResponseCount :=
+      accepted.resourceItemCountMatchesResponseCount,
+    responseCountWithinResourceCap := responseCountWithinResourceCap
+  }
+
 structure PreHeavyWorkVerificationPathSurface where
   resourceSurface : PreHeavyWorkResourceBoundSurface
+  syncPath : PreHeavyWorkSyncPathSurface
   actionRequest : ActionRequestProjectionInput
   transferPayload : TransferPayloadInput
   bridgeResourcePolicy : ResourcePolicy
@@ -709,6 +844,8 @@ structure AcceptedPreHeavyWorkVerificationPathInputs
     (parserCorrectness benchmarkCaps : Prop) : Prop where
   resourceAccepted :
     AcceptedPreHeavyWorkResourceBoundInputs surface.resourceSurface
+  syncAccepted :
+    AcceptedPreHeavyWorkSyncPathInputs surface.syncPath
   actionRequestAccepted :
     actionRequestProjectionAccepts surface.actionRequest = true
   transferPayloadAccepted :
@@ -739,6 +876,8 @@ structure AcceptedPreHeavyWorkVerificationPathBounds
     (parserCorrectness benchmarkCaps : Prop) : Prop where
   resourceFacts :
     AcceptedPreHeavyWorkResourceBoundFacts surface.resourceSurface
+  syncBounds :
+    AcceptedPreHeavyWorkSyncPathBounds surface.syncPath
   actionRequestAccepted :
     actionRequestProjectionAccepts surface.actionRequest = true
   actionRequestPreconditions :
@@ -783,6 +922,9 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
     resourceFacts :=
       accepted_preheavy_resource_bound_surface_exposes_bounds
         accepted.resourceAccepted,
+    syncBounds :=
+      sync_path_accepts_implies_preheavy_bounds
+        accepted.syncAccepted,
     actionRequestAccepted := accepted.actionRequestAccepted,
     actionRequestPreconditions :=
       (action_request_projection_accepts_implies_preheavy_bounds
@@ -810,6 +952,72 @@ theorem accepted_preheavy_public_input_parser_admission_bounds_verification_path
       accepted.parserCorrectnessAssumption,
     benchmarkCapsAssumption :=
       accepted.benchmarkCapsAssumption
+  }
+
+structure AcceptedPreHeavyWorkDoSBoundCertificate
+    (surface : PreHeavyWorkVerificationPathSurface)
+    (parserCorrectness benchmarkCaps : Prop) : Prop where
+  rpcAndSidecarResourceBounds :
+    AcceptedPreHeavyWorkResourceBoundFacts surface.resourceSurface
+  syncBounds :
+    AcceptedPreHeavyWorkSyncPathBounds surface.syncPath
+  actionRequestBounds :
+    AcceptedActionRequestProjectionPreHeavyBounds surface.actionRequest
+  transferBounds :
+    AcceptedTransferPayloadPreHeavyBounds surface.transferPayload
+  bridgeResourceFacts :
+    AcceptedBridgeActionResourceFacts
+      surface.bridgeResourcePolicy
+      surface.bridgeResource
+  candidateArtifactBounds :
+    AcceptedCandidateArtifactPreHeavyBounds surface.candidateArtifact
+  txLeafArtifactByteShapeFacts :
+    AcceptedNativeTxLeafArtifactByteShapeFacts
+      surface.txLeafArtifactBytes
+      surface.txLeafArtifactSummary
+  receiptRootScheduleFacts :
+    ReceiptRootScheduleFacts
+      surface.receiptRootExpectedLeafCount
+      surface.receiptRootArtifactBytes
+      surface.receiptRootSummary
+  parserCorrectnessAssumption :
+    parserCorrectness
+  benchmarkCapsAssumption :
+    benchmarkCaps
+
+theorem accepted_preheavy_work_dos_bound_certificate
+    {surface : PreHeavyWorkVerificationPathSurface}
+    {parserCorrectness benchmarkCaps : Prop}
+    (accepted :
+      AcceptedPreHeavyWorkVerificationPathInputs
+        surface
+        parserCorrectness
+        benchmarkCaps) :
+    AcceptedPreHeavyWorkDoSBoundCertificate
+      surface
+      parserCorrectness
+      benchmarkCaps := by
+  have pathBounds :
+      AcceptedPreHeavyWorkVerificationPathBounds
+        surface
+        parserCorrectness
+        benchmarkCaps :=
+    accepted_preheavy_public_input_parser_admission_bounds_verification_paths
+      accepted
+  exact {
+    rpcAndSidecarResourceBounds := pathBounds.resourceFacts,
+    syncBounds := pathBounds.syncBounds,
+    actionRequestBounds := pathBounds.actionRequestBounds,
+    transferBounds := pathBounds.transferBounds,
+    bridgeResourceFacts := pathBounds.bridgeResourceFacts,
+    candidateArtifactBounds := pathBounds.candidateBounds,
+    txLeafArtifactByteShapeFacts :=
+      pathBounds.txLeafArtifactByteShapeFacts,
+    receiptRootScheduleFacts := pathBounds.receiptRootScheduleFacts,
+    parserCorrectnessAssumption :=
+      pathBounds.parserCorrectnessAssumption,
+    benchmarkCapsAssumption :=
+      pathBounds.benchmarkCapsAssumption
   }
 
 end PreHeavyWorkResourceBoundSurface

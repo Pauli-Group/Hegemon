@@ -107,6 +107,47 @@ theorem accepts_iff_ci_release_gate_preconditions
         cases tagReleaseNativeBackendPostureStep <;>
         rfl
 
+theorem accepted_ci_release_gate_exposes_required_policy_facts
+    {input : CiReleaseGateInput}
+    (accepted : evaluateCiReleaseGate input = Except.ok ()) :
+    input.dependencyAuditJob = true
+      ∧ input.formalCoreJob = true
+      ∧ input.securityAdversarialJob = true
+      ∧ input.nativeBackendSecurityJob = true
+      ∧ input.releaseBuildJob = true
+      ∧ input.releaseBuildNeedsSecurityGates = true
+      ∧ input.releaseBuildNeedsSecurityAdversarial = true
+      ∧ input.releaseBuildNeedsNativeBackendSecurity = true
+      ∧ input.releaseBinaryAuditStep = true
+      ∧ input.tagReleaseNativeBackendReviewStep = true
+      ∧ input.tagReleaseNativeBackendPostureStep = true := by
+  unfold evaluateCiReleaseGate at accepted
+  cases hDependency : input.dependencyAuditJob <;>
+    cases hFormal : input.formalCoreJob <;>
+    cases hAdversarial : input.securityAdversarialJob <;>
+    cases hNativeBackend : input.nativeBackendSecurityJob <;>
+    cases hReleaseBuild : input.releaseBuildJob <;>
+    cases hSecurityGates : input.releaseBuildNeedsSecurityGates <;>
+    cases hAdversarialNeeds : input.releaseBuildNeedsSecurityAdversarial <;>
+    cases hNativeBackendNeeds :
+      input.releaseBuildNeedsNativeBackendSecurity <;>
+    cases hBinaryAudit : input.releaseBinaryAuditStep <;>
+    cases hReview : input.tagReleaseNativeBackendReviewStep <;>
+    cases hPosture : input.tagReleaseNativeBackendPostureStep <;>
+    simp [
+      hDependency,
+      hFormal,
+      hAdversarial,
+      hNativeBackend,
+      hReleaseBuild,
+      hSecurityGates,
+      hAdversarialNeeds,
+      hNativeBackendNeeds,
+      hBinaryAudit,
+      hReview,
+      hPosture
+    ] at accepted ⊢
+
 def completeCiReleaseGate : CiReleaseGateInput :=
   {
     dependencyAuditJob := true,

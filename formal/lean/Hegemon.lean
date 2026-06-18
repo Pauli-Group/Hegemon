@@ -126,6 +126,7 @@ import Hegemon.Resource.BoundedRequestAdmission
 import Hegemon.Release.CiReleaseGate
 import Hegemon.Release.DependencyAuditPolicy
 import Hegemon.Release.PqBinaryPolicy
+import Hegemon.Release.ReleasePostureCertificate
 import Hegemon.Shielded.Nullifier
 import Hegemon.Transaction.AcceptedProofArtifact
 import Hegemon.Transaction.AcceptedTransactionSoundness
