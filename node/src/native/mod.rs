@@ -14965,6 +14965,56 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactScaleWireVectorFile {
+        schema_version: u32,
+        candidate_artifact_scale_wire_cases: Vec<LeanCandidateArtifactScaleWireCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCandidateArtifactScaleWireCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        version_bytes: usize,
+        tx_count_bytes: usize,
+        tx_statements_commitment_bytes: usize,
+        da_root_bytes: usize,
+        da_chunk_count_bytes: usize,
+        commitment_proof_compact_prefix_bytes: usize,
+        commitment_proof_bytes: usize,
+        proof_mode_bytes: usize,
+        proof_mode_tag_valid: bool,
+        proof_kind_bytes: usize,
+        proof_kind_tag_valid: bool,
+        verifier_profile_bytes: usize,
+        receipt_root_option_tag_bytes: usize,
+        receipt_root_option_tag_valid: bool,
+        receipt_root_none: bool,
+        receipt_root_proof_compact_prefix_bytes: usize,
+        receipt_root_proof_bytes: usize,
+        receipt_root_relation_id_bytes: usize,
+        receipt_root_shape_digest_bytes: usize,
+        receipt_root_leaf_count_bytes: usize,
+        receipt_root_fold_count_bytes: usize,
+        receipt_root_receipt_compact_prefix_bytes: usize,
+        receipt_root_receipt_count: usize,
+        receipt_root_receipt_element_bytes: usize,
+        recursive_block_option_tag_bytes: usize,
+        recursive_block_option_tag_valid: bool,
+        recursive_block_present: bool,
+        recursive_proof_compact_prefix_bytes: usize,
+        recursive_proof_bytes: usize,
+        compact_prefixes_canonical: bool,
+        total_bytes: usize,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanStorageDurabilityAdmissionVectorFile {
         schema_version: u32,
         storage_durability_admission_cases: Vec<LeanStorageDurabilityAdmissionCase>,
@@ -22336,6 +22386,290 @@ mod tests {
                 );
             }
             assert_eq!(action.encode().len(), case.total_bytes);
+        }
+    }
+
+    #[test]
+    fn lean_generated_candidate_artifact_scale_wire_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean candidate-artifact SCALE wire vectors");
+        let vectors: LeanCandidateArtifactScaleWireVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean candidate-artifact SCALE wire vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.candidate_artifact_scale_wire_cases.is_empty(),
+            "Lean candidate-artifact SCALE wire cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.candidate_artifact_scale_wire_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_candidate_artifact_scale_wire_case(case);
+        }
+    }
+
+    fn expected_candidate_artifact_scale_wire_encoded_len(
+        case: &LeanCandidateArtifactScaleWireCase,
+    ) -> usize {
+        let commitment_proof_len =
+            case.commitment_proof_compact_prefix_bytes + case.commitment_proof_bytes;
+        let receipt_root_payload_len = if case.receipt_root_none {
+            0
+        } else {
+            case.receipt_root_proof_compact_prefix_bytes
+                + case.receipt_root_proof_bytes
+                + case.receipt_root_relation_id_bytes
+                + case.receipt_root_shape_digest_bytes
+                + case.receipt_root_leaf_count_bytes
+                + case.receipt_root_fold_count_bytes
+                + case.receipt_root_receipt_compact_prefix_bytes
+                + case.receipt_root_receipt_count * case.receipt_root_receipt_element_bytes
+        };
+        let recursive_payload_len = if case.recursive_block_present {
+            case.recursive_proof_compact_prefix_bytes + case.recursive_proof_bytes
+        } else {
+            0
+        };
+        case.version_bytes
+            + case.tx_count_bytes
+            + case.tx_statements_commitment_bytes
+            + case.da_root_bytes
+            + case.da_chunk_count_bytes
+            + commitment_proof_len
+            + case.proof_mode_bytes
+            + case.proof_kind_bytes
+            + case.verifier_profile_bytes
+            + case.receipt_root_option_tag_bytes
+            + receipt_root_payload_len
+            + case.recursive_block_option_tag_bytes
+            + recursive_payload_len
+    }
+
+    fn expected_candidate_artifact_scale_wire_fixture(
+        case: &LeanCandidateArtifactScaleWireCase,
+    ) -> CandidateArtifact {
+        match case.fixture.as_str() {
+            "valid_recursive_block_v2" => CandidateArtifact {
+                version: BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment: [5u8; 48],
+                da_root: [6u8; 48],
+                da_chunk_count: 1,
+                commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+                proof_mode: BlockProofMode::RecursiveBlock,
+                proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
+                verifier_profile: [7u8; 48],
+                receipt_root: None,
+                recursive_block: Some(protocol_shielded_pool::types::RecursiveBlockProofPayload {
+                    proof: protocol_shielded_pool::types::StarkProof {
+                        data: vec![8u8; 32],
+                    },
+                }),
+            },
+            "valid_receipt_root" => CandidateArtifact {
+                version: BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment: [0x15u8; 48],
+                da_root: [0x16u8; 48],
+                da_chunk_count: 1,
+                commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+                proof_mode: BlockProofMode::ReceiptRoot,
+                proof_kind: PoolProofArtifactKind::ReceiptRoot,
+                verifier_profile: [0x17u8; 48],
+                receipt_root: Some(ReceiptRootProofPayload {
+                    root_proof: protocol_shielded_pool::types::StarkProof {
+                        data: vec![0x21, 0x22, 0x23],
+                    },
+                    metadata: ReceiptRootMetadata {
+                        relation_id: [0x24u8; 32],
+                        shape_digest: [0x25u8; 32],
+                        leaf_count: 1,
+                        fold_count: 0,
+                    },
+                    receipts: vec![TxValidityReceipt {
+                        statement_hash: [0x31u8; 48],
+                        proof_digest: [0x32u8; 48],
+                        public_inputs_digest: [0x33u8; 48],
+                        verifier_profile: [0x34u8; 48],
+                    }],
+                }),
+                recursive_block: None,
+            },
+            "valid_custom_proof_kind" => CandidateArtifact {
+                version: BLOCK_PROOF_BUNDLE_SCHEMA,
+                tx_count: 1,
+                tx_statements_commitment: [5u8; 48],
+                da_root: [6u8; 48],
+                da_chunk_count: 1,
+                commitment_proof: protocol_shielded_pool::types::StarkProof::default(),
+                proof_mode: BlockProofMode::RecursiveBlock,
+                proof_kind: PoolProofArtifactKind::Custom([0x42u8; 16]),
+                verifier_profile: [7u8; 48],
+                receipt_root: None,
+                recursive_block: Some(protocol_shielded_pool::types::RecursiveBlockProofPayload {
+                    proof: protocol_shielded_pool::types::StarkProof {
+                        data: vec![8u8; 32],
+                    },
+                }),
+            },
+            other => panic!("no valid CandidateArtifact fixture for {other}"),
+        }
+    }
+
+    fn candidate_artifact_scale_wire_rejection_label(
+        result: &Result<CandidateArtifact>,
+    ) -> Option<String> {
+        result.as_ref().err().map(|err| {
+            let message = err.to_string();
+            if message.contains("trailing bytes") {
+                "trailing_bytes".to_owned()
+            } else if message.contains("not canonical") {
+                "non_canonical_encoding".to_owned()
+            } else {
+                "parser_rejected".to_owned()
+            }
+        })
+    }
+
+    fn verify_lean_candidate_artifact_scale_wire_case(case: &LeanCandidateArtifactScaleWireCase) {
+        let fixed_fields_ok = case.version_bytes == 1
+            && case.tx_count_bytes == 4
+            && case.tx_statements_commitment_bytes == 48
+            && case.da_root_bytes == 48
+            && case.da_chunk_count_bytes == 4
+            && case.proof_mode_bytes == 1
+            && case.proof_mode_tag_valid
+            && (case.proof_kind_bytes == 1 || case.proof_kind_bytes == 17)
+            && case.proof_kind_tag_valid
+            && case.verifier_profile_bytes == 48
+            && case.receipt_root_option_tag_bytes == 1
+            && case.receipt_root_option_tag_valid
+            && case.recursive_block_option_tag_bytes == 1
+            && case.recursive_block_option_tag_valid;
+        let receipt_root_payload_ok = case.receipt_root_none
+            || (case.receipt_root_proof_compact_prefix_bytes >= 1
+                && case.receipt_root_relation_id_bytes == 32
+                && case.receipt_root_shape_digest_bytes == 32
+                && case.receipt_root_leaf_count_bytes == 4
+                && case.receipt_root_fold_count_bytes == 4
+                && case.receipt_root_receipt_compact_prefix_bytes >= 1
+                && case.receipt_root_receipt_element_bytes == 192);
+        let recursive_block_payload_ok =
+            !case.recursive_block_present || case.recursive_proof_compact_prefix_bytes >= 1;
+        let expected_len = expected_candidate_artifact_scale_wire_encoded_len(case);
+        let lean_predicate_accepts = fixed_fields_ok
+            && receipt_root_payload_ok
+            && recursive_block_payload_ok
+            && case.compact_prefixes_canonical
+            && case.total_bytes == expected_len
+            && case.consumed_all_bytes
+            && case.canonical_reencode_matches;
+        assert_eq!(
+            lean_predicate_accepts, case.expected_valid,
+            "{} Lean candidate-artifact SCALE predicate fields disagree with expected validity",
+            case.name
+        );
+
+        let raw = decode_lean_hex(&case.raw_hex);
+        if case.expected_valid {
+            let expected = expected_candidate_artifact_scale_wire_fixture(case);
+            assert_eq!(
+                expected.encode(),
+                raw,
+                "{} Lean raw bytes drifted from production CandidateArtifact::encode",
+                case.name
+            );
+            assert_eq!(
+                SubmitCandidateArtifactArgs {
+                    payload: expected.clone()
+                }
+                .encode(),
+                raw,
+                "{} Lean raw bytes drifted from production SubmitCandidateArtifactArgs::encode",
+                case.name
+            );
+        }
+
+        let actual_artifact =
+            decode_scale_exact::<CandidateArtifact>(&raw, "Lean candidate artifact SCALE wire");
+        let actual_rejection = candidate_artifact_scale_wire_rejection_label(&actual_artifact);
+        assert_eq!(
+            actual_artifact.is_ok(),
+            case.expected_valid,
+            "{} production CandidateArtifact exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} production CandidateArtifact exact decode rejection drifted from Lean wire spec",
+            case.name
+        );
+
+        let actual_submit = decode_scale_exact::<SubmitCandidateArtifactArgs>(
+            &raw,
+            "Lean submit candidate artifact args SCALE wire",
+        );
+        assert_eq!(
+            actual_submit.is_ok(),
+            case.expected_valid,
+            "{} production SubmitCandidateArtifactArgs exact decode validity drifted from Lean wire spec",
+            case.name
+        );
+
+        if let (Ok(artifact), Ok(args)) = (&actual_artifact, &actual_submit) {
+            assert_eq!(
+                args.payload, *artifact,
+                "{} route payload must match decoded candidate artifact",
+                case.name
+            );
+            assert_eq!(artifact.encoded_size(), case.total_bytes);
+            assert_eq!(usize::from(artifact.version), 2);
+            assert_eq!(artifact.tx_count, 1);
+            assert_eq!(
+                artifact.commitment_proof.data.len(),
+                case.commitment_proof_bytes
+            );
+            assert_eq!(artifact.receipt_root.is_none(), case.receipt_root_none);
+            if let Some(receipt_root) = artifact.receipt_root.as_ref() {
+                assert_eq!(
+                    receipt_root.root_proof.data.len(),
+                    case.receipt_root_proof_bytes
+                );
+                assert_eq!(
+                    receipt_root.metadata.relation_id.len(),
+                    case.receipt_root_relation_id_bytes
+                );
+                assert_eq!(
+                    receipt_root.metadata.shape_digest.len(),
+                    case.receipt_root_shape_digest_bytes
+                );
+                assert_eq!(case.receipt_root_leaf_count_bytes, 4);
+                assert_eq!(case.receipt_root_fold_count_bytes, 4);
+                assert_eq!(receipt_root.receipts.len(), case.receipt_root_receipt_count);
+                for receipt in &receipt_root.receipts {
+                    assert_eq!(
+                        receipt.encoded_size(),
+                        case.receipt_root_receipt_element_bytes
+                    );
+                }
+            }
+            assert_eq!(
+                artifact.recursive_block.is_some(),
+                case.recursive_block_present
+            );
+            assert_eq!(
+                artifact
+                    .recursive_block
+                    .as_ref()
+                    .map_or(0, |recursive| recursive.proof.data.len()),
+                case.recursive_proof_bytes
+            );
         }
     }
 

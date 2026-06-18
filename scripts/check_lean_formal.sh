@@ -201,6 +201,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateStagedCiphertextReloadVectors.lean
   lake env lean Hegemon/Native/StagedProofReload.lean
   lake env lean Hegemon/Native/GenerateStagedProofReloadVectors.lean
+  lake env lean Hegemon/Native/CandidateArtifactScaleWire.lean
+  lake env lean Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean
   lake env lean Hegemon/Native/SyncAdmission.lean
   lake env lean Hegemon/Native/SyncBlockReplayPublication.lean
   lake env lean Hegemon/Native/GenerateSyncAdmissionVectors.lean

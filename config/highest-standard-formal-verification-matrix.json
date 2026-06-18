@@ -1452,58 +1452,54 @@
   },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
-    "summary": "Local 100% closure slice: added the top-level Lean highest-standard completion certificate, registered it in the claims and blueprint ledgers, bound residual-boundary projection theorems for canonical proof-system, compact SmallWood, and materialized no-theft certificates, added PQ transcript marker separation, and added a block-circuit commitment proof byte-cap/exact-decode regression to formal-core. Claims and blueprint validation pass with 119 claims, 2409 named Lean theorem declarations, 109 production-eligible claims, 47 residual risks, 119 blueprint nodes, 518 dependency edges, 613 falsification cases, 223 implementation bindings, 149 order constraints, 169 result obligations, and 134 dominance constraints. Overall completion is now 100% under the checked matrix method because remaining primitive, proof-system, parser, storage, DA-retention, external-bridge, release-infrastructure, and complete-native-node obligations are explicit certificate fields rather than hidden missing work.",
-    "theorems": [
-      "Hegemon.Consensus.AggregationV5.rejects_tree_arity_mismatch",
-      "Hegemon.Consensus.DaRoot.chunk_proof_path_len_over_cap_rejects",
-      "Hegemon.Consensus.DaRoot.page_proof_path_len_over_cap_rejects",
-      "Hegemon.Consensus.ProvenBatchBinding.rejects_da_chunk_count_mismatch",
-      "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_chunk_count_mismatch_rejects",
-      "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_chunk_count_precedes_statement_commitment",
-      "Hegemon.Native.CodecAdmission.native_metadata_bincode_budget_acceptance_excludes_overruns",
-      "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_implementation_equivalence_certificate_exposes_residual_boundary_facts",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.accepted_staged_proof_upload_preheavy_exposes_bounds",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.staged_proof_budget_precedes_binding_mismatch",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.staged_proof_budget_precedes_decoded_oversize",
-      "Hegemon.Native.PreHeavyWorkResourceBoundSurface.valid_staged_proof_upload_preheavy_accepts",
-      "Hegemon.Native.TransferStateAdmission.block_fresh_doubleton_derives_duplicate",
-      "Hegemon.Native.TransferStateAdmission.block_pending_only_valid_when_unspent",
-      "Hegemon.Native.TransferStateAdmission.block_prior_spent_duplicate_derives_duplicate_of_mem",
-      "Hegemon.Native.TransferStateAdmission.mempool_fresh_doubleton_derives_duplicate",
-      "Hegemon.Native.TransferStateAdmission.mempool_prior_pending_precedes_action_duplicate_of_mem",
-      "Hegemon.Native.TxLeafArtifact.input_count_mismatch_projection_rejects",
-      "Hegemon.Native.TxLeafArtifact.nonbinary_input_flag_projection_rejects",
-      "Hegemon.Native.TxLeafArtifact.nonbinary_output_flag_projection_rejects",
-      "Hegemon.Native.TxLeafArtifact.output_ciphertext_count_mismatch_projection_rejects",
-      "Hegemon.Native.TxLeafArtifact.output_commitment_count_mismatch_projection_rejects",
-      "Hegemon.Native.TxLeafArtifact.valid_projection_counts_accept",
-      "Hegemon.Network.FrameResourceAdmission.accepted_frame_decode_exposes_facts",
-      "Hegemon.Network.FrameResourceAdmission.evaluate_frame_decode_accepts_iff",
-      "Hegemon.Network.FrameResourceAdmission.pq_transcript_magic_distinct_from_handshake",
-      "Hegemon.Network.PqNoise.openFrameWithObservedWire_rejects_same_role_send_slot",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_authenticated_pq_handshake_same_role_misbind_admission_facts",
-      "Hegemon.Network.PqNoiseHandshakeChannel.accepted_pq_v6_os_rng_transcript_kdf_directional_replay_role_binding_channel_safety_certificate",
-      "Hegemon.Release.HighestStandardCompletionCertificate.accepted_internal_bundle_and_release_gate_yield_highest_standard_completion_certificate",
-      "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_binds_release_gate_and_native_backend_posture",
-      "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_exposes_critical_chain_security_and_residuals",
-      "Hegemon.Transaction.ProofSystemBoundary.canonical_proof_system_production_residual_certificate_exposes_residual_boundary_facts",
-      "Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire.matching_descriptor_admission_accepts",
-      "Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire.mismatched_descriptor_admission_rejects",
-      "Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire.valid_recursive_envelope_accepts",
-      "Hegemon.Transaction.ProofWrapperWire.top_level_nullifier_drift_wire_accepts_admission_rejects",
-      "Hegemon.Transaction.ProofWrapperWire.valid_dummy_proof_wrapper_accepts",
-      "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_compact_residual_certificate_exposes_residual_boundary_facts",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_accepts_valid_prefix",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_active_zero",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_extra_compact_row",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_malformed_flag",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_missing_compact_row",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_nonprefix_active_slot",
-      "Hegemon.Transaction.SpendAuthorization.tx_leaf_input_projection_rejects_prefix_alias"
+    "summary": "Added a CandidateArtifact / SubmitCandidateArtifactArgs raw SCALE wire refinement gate. Lean now models the candidate-artifact route-payload byte grammar for recursive-block-v2, receipt-root, custom proof-kind, trailing, truncated, invalid enum, noncanonical compact-prefix, recursive proof overrun, and receipt-count overrun cases; formal-core generates those vectors and checks production CandidateArtifact::encode, SubmitCandidateArtifactArgs::encode, and decode_scale_exact for both types.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/CandidateArtifactScaleWire.lean",
+      "formal/lean/Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean"
     ],
-    "validation": {
-      "status": "Targeted local gates passed: jq JSON validation; bash -n scripts/check_formal_core.sh; cd formal/lean && lake build Hegemon.Release.HighestStandardCompletionCertificate Hegemon over 172 jobs; cd formal/lean && lake build Hegemon.Transaction.ProofSystemBoundary Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Network.FrameResourceAdmission Hegemon.Network.GenerateFrameResourceAdmissionVectors Hegemon.Native.TxLeafArtifactProjectionRefinement Hegemon.Native.RawIngressSidecarReplayRecoverability over 74 jobs; cargo test -p block-circuit commitment_block_proof_decode_rejects --lib -- --nocapture; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json. Full local bash scripts/check_formal_core.sh passed for the 100.0% completion slice with 119 claims, 2409 named Lean theorem declarations, 1052 axiom-free theorem declarations, 1357 allowed axiom-dependent declarations, zero temporary axiom theorem dependencies, 109 production-eligible claims, 47 explicit residual risks, 119 blueprint nodes, 518 edges, 613 falsification cases, 223 implementation bindings, 149 theorem-indexed order constraints, 134 theorem-indexed dominance constraints, 104 full-claim order constraints, 1926 full-claim theorem refs, 2 independent bridge vector cases, and 11 native backend vector cases. hegemon-dev deployment remains pending for this local 100% closure slice."
+    "top_level_theorems": [
+      "Hegemon.Native.CandidateArtifactScaleWire.accepted_candidate_artifact_scale_wire_exact_decode",
+      "Hegemon.Native.CandidateArtifactScaleWire.candidate_artifact_scale_wire_acceptance_exposes_facts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_recursive_block_v2_wire_accepts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_receipt_root_wire_accepts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_custom_proof_kind_wire_accepts"
+    ],
+    "formal_core_gate": {
+      "command": "HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_candidate_artifact_scale_wire_vectors and runs the production conformance test before continuing candidate-artifact coupling and codec gates."
     },
-    "push_status": "pushed_to_origin_and_validated_on_hegemon_dev"
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.CandidateArtifactScaleWire Hegemon.Native.GenerateCandidateArtifactScaleWireVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=/tmp/hegemon-candidate-artifact-scale-wire.json cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture."
+    },
+    "known_limitations": [
+      "This is representative mechanized raw-byte refinement for the candidate-artifact route payload, not a full proof of parity-scale-codec internals for every possible byte string.",
+      "Recursive proof cryptographic soundness, DA availability, hash security, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+    ]
+  },
+  "last_candidate_artifact_scale_wire_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a CandidateArtifact / SubmitCandidateArtifactArgs raw SCALE wire refinement gate. Lean now models the candidate-artifact route-payload byte grammar for recursive-block-v2, receipt-root, custom proof-kind, trailing, truncated, invalid enum, noncanonical compact-prefix, recursive proof overrun, and receipt-count overrun cases; formal-core generates those vectors and checks production CandidateArtifact::encode, SubmitCandidateArtifactArgs::encode, and decode_scale_exact for both types.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/CandidateArtifactScaleWire.lean",
+      "formal/lean/Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.CandidateArtifactScaleWire.accepted_candidate_artifact_scale_wire_exact_decode",
+      "Hegemon.Native.CandidateArtifactScaleWire.candidate_artifact_scale_wire_acceptance_exposes_facts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_recursive_block_v2_wire_accepts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_receipt_root_wire_accepts",
+      "Hegemon.Native.CandidateArtifactScaleWire.valid_custom_proof_kind_wire_accepts"
+    ],
+    "formal_core_gate": {
+      "command": "HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_candidate_artifact_scale_wire_vectors and runs the production conformance test before continuing candidate-artifact coupling and codec gates."
+    },
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.CandidateArtifactScaleWire Hegemon.Native.GenerateCandidateArtifactScaleWireVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=/tmp/hegemon-candidate-artifact-scale-wire.json cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture."
+    },
+    "known_limitations": [
+      "This is representative mechanized raw-byte refinement for the candidate-artifact route payload, not a full proof of parity-scale-codec internals for every possible byte string.",
+      "Recursive proof cryptographic soundness, DA availability, hash security, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+    ]
   }
 }

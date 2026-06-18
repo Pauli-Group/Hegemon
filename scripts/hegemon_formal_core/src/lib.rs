@@ -646,6 +646,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/CandidateArtifactAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/CandidateArtifactScaleWire.lean",
+        "formal/lean/Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean",
         "formal/lean/Hegemon/Native/CandidateArtifactCouplingAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateCandidateArtifactCouplingAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/CodecAdmission.lean",
