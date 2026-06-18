@@ -460,6 +460,7 @@ pub fn projected_smallwood_recursive_proof_bytes_v1(
 mod tests {
     use super::*;
     use crate::smallwood_semantics::SmallwoodNonlinearEvalView;
+    use serde::Deserialize;
 
     #[derive(Clone)]
     struct ToyRecursiveStatement {
@@ -545,6 +546,291 @@ mod tests {
             out[0] = 0;
             Ok(())
         }
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSmallwoodRecursiveEnvelopeWireVectorFile {
+        schema_version: u32,
+        smallwood_recursive_envelope_wire_cases: Vec<LeanSmallwoodRecursiveEnvelopeWireCase>,
+        smallwood_recursive_envelope_admission_cases:
+            Vec<LeanSmallwoodRecursiveEnvelopeAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSmallwoodRecursiveEnvelopeWireCase {
+        name: String,
+        raw_hex: String,
+        canonical_hex: String,
+        expected_len: usize,
+        parser_accepts: bool,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSmallwoodRecursiveEnvelopeAdmissionCase {
+        name: String,
+        raw_hex: String,
+        expected_descriptor_hex: String,
+        expected_wire_valid: bool,
+        descriptor_matches: bool,
+        expected_admission_valid: bool,
+        expected_admission_rejection: Option<String>,
+    }
+
+    fn load_recursive_envelope_wire_vectors() -> LeanSmallwoodRecursiveEnvelopeWireVectorFile {
+        if let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_RECURSIVE_ENVELOPE_WIRE_VECTORS") {
+            let raw = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+                panic!("read Lean SmallWood recursive envelope wire vectors {path}: {err}")
+            });
+            return serde_json::from_str(&raw).unwrap_or_else(|err| {
+                panic!("parse Lean SmallWood recursive envelope wire vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_recursive_envelope_wire_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!("failed to run Lean SmallWood recursive envelope generator: {err}")
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood recursive envelope generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout)
+            .expect("parse generated Lean SmallWood recursive envelope wire vectors")
+    }
+
+    #[test]
+    fn lean_generated_smallwood_recursive_envelope_wire_vectors_match_production() {
+        let vectors = load_recursive_envelope_wire_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.smallwood_recursive_envelope_wire_cases.is_empty(),
+            "Lean SmallWood recursive envelope wire cases must not be empty"
+        );
+        assert!(
+            !vectors
+                .smallwood_recursive_envelope_admission_cases
+                .is_empty(),
+            "Lean SmallWood recursive envelope admission cases must not be empty"
+        );
+
+        let valid_fixture =
+            encode_smallwood_recursive_proof_envelope_v1(&lean_default_recursive_envelope())
+                .expect("encode default recursive envelope fixture");
+        let alternate_fixture =
+            encode_smallwood_recursive_proof_envelope_v1(&lean_alternate_recursive_envelope())
+                .expect("encode alternate recursive envelope fixture");
+
+        for case in &vectors.smallwood_recursive_envelope_wire_cases {
+            verify_lean_recursive_envelope_wire_case(case, &valid_fixture, &alternate_fixture);
+        }
+        for case in &vectors.smallwood_recursive_envelope_admission_cases {
+            verify_lean_recursive_envelope_admission_case(case);
+        }
+    }
+
+    fn verify_lean_recursive_envelope_wire_case(
+        case: &LeanSmallwoodRecursiveEnvelopeWireCase,
+        valid_fixture: &[u8],
+        alternate_fixture: &[u8],
+    ) {
+        let raw = decode_lean_hex_bytes(&case.raw_hex);
+        let canonical = decode_lean_hex_bytes(&case.canonical_hex);
+        assert_eq!(
+            raw.len(),
+            case.expected_len,
+            "{} Lean raw byte length drifted",
+            case.name
+        );
+        if case.name == "valid-recursive-envelope" {
+            assert_eq!(
+                raw, valid_fixture,
+                "{} Lean valid fixture drifted from production bincode",
+                case.name
+            );
+        } else if case.name == "alternate-recursive-envelope" {
+            assert_eq!(
+                raw, alternate_fixture,
+                "{} Lean alternate fixture drifted from production bincode",
+                case.name
+            );
+        }
+
+        let actual = decode_smallwood_recursive_proof_envelope_v1(&raw);
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} exact SmallWood recursive envelope validity drifted from Lean spec: {actual:?}",
+            case.name
+        );
+
+        match actual {
+            Ok(decoded) => {
+                assert!(
+                    case.parser_accepts
+                        && case.consumed_all_bytes
+                        && case.canonical_reencode_matches,
+                    "{} Lean marked a valid recursive envelope without all codec gates",
+                    case.name
+                );
+                let reencoded = encode_smallwood_recursive_proof_envelope_v1(&decoded)
+                    .expect("reencode recursive envelope");
+                assert_eq!(
+                    reencoded, canonical,
+                    "{} decoded recursive envelope reencoded to non-Lean canonical bytes",
+                    case.name
+                );
+                assert_eq!(
+                    raw, canonical,
+                    "{} accepted recursive envelope raw bytes must be canonical",
+                    case.name
+                );
+            }
+            Err(err) => {
+                let actual_rejection = recursive_envelope_wire_rejection_label(&err);
+                assert_eq!(
+                    Some(actual_rejection.as_str()),
+                    case.expected_rejection.as_deref(),
+                    "{} exact recursive envelope rejection label drifted: {err:?}",
+                    case.name
+                );
+                if case.parser_accepts && !case.consumed_all_bytes {
+                    assert!(
+                        raw.starts_with(&canonical),
+                        "{} trailing fixture must carry the canonical prefix",
+                        case.name
+                    );
+                    assert!(
+                        raw.len() > canonical.len(),
+                        "{} trailing fixture must extend canonical bytes",
+                        case.name
+                    );
+                }
+            }
+        }
+    }
+
+    fn verify_lean_recursive_envelope_admission_case(
+        case: &LeanSmallwoodRecursiveEnvelopeAdmissionCase,
+    ) {
+        let raw = decode_lean_hex_bytes(&case.raw_hex);
+        let expected_descriptor = decode_lean_hex_bytes(&case.expected_descriptor_hex);
+        let decoded = decode_smallwood_recursive_proof_envelope_v1(&raw);
+        assert_eq!(
+            decoded.is_ok(),
+            case.expected_wire_valid,
+            "{} recursive envelope admission wire-validity drifted",
+            case.name
+        );
+        let decoded = match decoded {
+            Ok(decoded) => decoded,
+            Err(_) => return,
+        };
+        let actual_descriptor =
+            bincode::serialize(&decoded.descriptor).expect("serialize decoded descriptor");
+        let actual_descriptor_matches = actual_descriptor == expected_descriptor;
+        assert_eq!(
+            actual_descriptor_matches, case.descriptor_matches,
+            "{} recursive envelope descriptor match drifted",
+            case.name
+        );
+        let actual_valid = actual_descriptor_matches;
+        assert_eq!(
+            actual_valid, case.expected_admission_valid,
+            "{} recursive envelope admission validity drifted",
+            case.name
+        );
+        let actual_rejection = if actual_valid {
+            None
+        } else {
+            Some("descriptor_mismatch".to_string())
+        };
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_admission_rejection.as_deref(),
+            "{} recursive envelope admission rejection drifted",
+            case.name
+        );
+    }
+
+    fn lean_default_recursive_envelope() -> SmallwoodRecursiveProofEnvelopeV1 {
+        let profile = recursive_profile_b_v1(VersionBinding {
+            circuit: 2,
+            crypto: 2,
+        });
+        SmallwoodRecursiveProofEnvelopeV1 {
+            descriptor: recursive_descriptor_v1(
+                &profile,
+                SmallwoodRecursiveRelationKindV1::StepB,
+                [4u8; 32],
+                [5u8; 32],
+                [6u8; 32],
+            ),
+            proof_bytes: vec![7u8; 17],
+        }
+    }
+
+    fn lean_alternate_recursive_envelope() -> SmallwoodRecursiveProofEnvelopeV1 {
+        let profile = recursive_profile_a_v1(VersionBinding {
+            circuit: 2,
+            crypto: 2,
+        });
+        SmallwoodRecursiveProofEnvelopeV1 {
+            descriptor: recursive_descriptor_v1(
+                &profile,
+                SmallwoodRecursiveRelationKindV1::BaseA,
+                [9u8; 32],
+                [10u8; 32],
+                [11u8; 32],
+            ),
+            proof_bytes: (0..19)
+                .map(|index| 0x21u8.wrapping_add((index as u8).wrapping_mul(17)))
+                .collect(),
+        }
+    }
+
+    fn recursive_envelope_wire_rejection_label(err: &TransactionCircuitError) -> String {
+        let message = err.to_string();
+        if message.contains("trailing bytes") {
+            "trailing_bytes".to_string()
+        } else if message.contains("canonical serialization") {
+            "non_canonical_encoding".to_string()
+        } else {
+            "parser_rejected".to_string()
+        }
+    }
+
+    fn decode_lean_hex_bytes(value: &str) -> Vec<u8> {
+        let hex = value
+            .strip_prefix("0x")
+            .expect("Lean vectors use 0x-prefixed hex");
+        assert!(
+            hex.len().is_multiple_of(2),
+            "hex value must have an even number of digits"
+        );
+        (0..hex.len())
+            .step_by(2)
+            .map(|idx| {
+                u8::from_str_radix(&hex[idx..idx + 2], 16).expect("Lean vector hex bytes are valid")
+            })
+            .collect()
     }
 
     #[test]

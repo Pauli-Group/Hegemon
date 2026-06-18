@@ -750,6 +750,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodRecursiveEnvelopeWire.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodRecursiveEnvelopeWireVectors.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean",

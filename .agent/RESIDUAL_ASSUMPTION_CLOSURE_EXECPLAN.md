@@ -136,3 +136,5 @@ The first slice defines these theorem names:
     Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_splits_all_open_assumptions
 
 Future claims and blueprint nodes should use these theorem names to keep the residual classification executable and indexed by formal-core.
+
+The fifth slice narrows the deployed proof-artifact parser/refinement bucket at the SmallWood recursive envelope handoff. `Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire` now models representative bincode envelope bytes, trailing/truncated/invalid-enum/truncated-proof-vector rejection, and descriptor equality before recursive proof verification. `gen_smallwood_recursive_envelope_wire_vectors` feeds a production `transaction-circuit` test over `decode_smallwood_recursive_proof_envelope_v1`, canonical reserialization, and descriptor matching. This keeps primitive proof-system soundness and bincode implementation correctness as named assumptions while turning the parser/descriptor handoff into a checked refinement gate.
