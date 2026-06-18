@@ -7,7 +7,7 @@
   "overall_completion_percent": 100.0,
   "last_full_formal_core": {
     "date": "2026-06-18T18:38:00Z",
-    "commit": "worktree",
+    "commit": "0f2ae9d1",
     "status": "passed locally for the 100.0% highest-standard completion certificate milestone: every matrix property is closed under the checked internal theorem/production-binding method, with remaining primitive crypto, proof-system, bridge, storage, scanner, and live-release dependencies carried as explicit external assumptions rather than hidden missing work",
     "command": "bash scripts/check_formal_core.sh",
     "claims": 119,
@@ -34,31 +34,33 @@
     "native_backend_vectors": 11
   },
   "last_hegemon_dev_validation": {
-    "date": "2026-06-18T00:11:27Z",
-    "commit": "2869d947",
-    "status": "passed after metadata/formal fast-forward to codex/superneo-formal-verification, targeted remote materialized-transfer/DA/privacy Lean gate, service health, RPC, mining status/performance, wallet transaction compatibility, and disposable two-node restart reload; no live rebuild/restart required",
+    "date": "2026-06-18T18:45:45Z",
+    "commit": "0f2ae9d1",
+    "status": "passed after 100% formal milestone fast-forward to codex/superneo-formal-verification, release rebuild, service restart, RPC smoke, live mining sample, wallet transaction compatibility, disposable two-node restart reload, remote claims/blueprint gates, service/process cleanup, and NTP check",
     "checks": [
-      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 32cc71cc to codex/superneo-formal-verification at 2869d947",
-      "did not rebuild target/release/hegemon-node or restart hegemon-node.service because the remote diff touched only Lean proof modules, formal metadata, and docs",
-      "remote JSON validation and weighted matrix recompute passed for config/highest-standard-formal-verification-matrix.json, config/formal-security-claims.json, and config/formal-security-blueprint.json",
-      "remote formal claims gate passed with 118 claims, 2037 named Lean theorem declarations, 108 production-eligible claims, and 47 residual risks",
-      "remote formal blueprint gate passed with 118 nodes, 495 edges, 537 falsification cases, 218 implementation bindings, 169 result obligations, 144 theorem-indexed order constraints, 130 theorem-indexed dominance constraints, 126 full-claim order constraints, and 2274 full-claim theorem refs",
-      "remote targeted Lean build passed for Hegemon.Native.MaterializedConsensusDaBlobRefinement, Hegemon.Privacy.NativeSidecarObserverSurface, Hegemon.Native.MaterializedTransferNoTheftPublication, and Hegemon",
-      "bash scripts/smoke-test.sh passed against the live service at height 17358",
-      "20-second live mining/performance sample reported is_mining=true, threads=1, difficulty=520159231, blocks_found=349, about 16.08 kH/s, height 17358 to 17358",
+      "fast-forwarded /home/ubuntu/hegemon-current-4c4ea6d3 from 69dc8a48 to codex/superneo-formal-verification at 0f2ae9d1",
+      "stopped hegemon-node.service, cleared the pre-existing orphan live node process holding /home/ubuntu/hegemon-devnet/native-current/native-chain.sled/db, and removed stale disposable /tmp hegemon-node test processes before restart",
+      "make node rebuilt target/release/hegemon-node successfully in release mode in 50.94s",
+      "started hegemon-node.service from the rebuilt binary; storage reopened successfully and RPC/P2P listened on 127.0.0.1:9944 and 0.0.0.0:30333",
+      "remote JSON validation passed for config/highest-standard-formal-verification-matrix.json, config/formal-security-claims.json, and config/formal-security-blueprint.json",
+      "remote formal claims gate passed with 119 claims, 2409 named Lean theorem declarations, 109 production-eligible claims, and 47 residual risks",
+      "remote formal blueprint gate passed with 119 nodes, 518 edges, 613 falsification cases, 223 implementation bindings, 169 result obligations, 149 theorem-indexed order constraints, 134 theorem-indexed dominance constraints, 104 full-claim order constraints, and 1926 full-claim theorem refs",
+      "bash scripts/smoke-test.sh passed against the live service at height 18462",
+      "20-second live mining sample reported is_mining=true, threads=1, difficulty=520159231, blocks_found 25 to 30, height 18476 to 18481, and about 7.43 kH/s",
       "bash scripts/test-node.sh wallet-send passed, including native::tests::submit_action_stages_and_imports_shielded_transfer",
-      "HEGEMON_NODE_BIN=target/release/hegemon-node HEGEMON_TEST_TIMEOUT_SECS=180 bash scripts/test-node.sh two-node-restart passed: follower reached height 16 before restart and caught up to height 48 after restart while miner was at height 53",
-      "final hegemon_consensusStatus reported height 17365 with syncing=false, pending extrinsics empty, and peers=0/shouldHavePeers=false",
-      "final hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=356, and about 16.08 kH/s",
-      "hegemon-node.service stayed active with NRestarts=0",
+      "HEGEMON_NODE_BIN=target/release/hegemon-node HEGEMON_TEST_TIMEOUT_SECS=240 bash scripts/test-node.sh two-node-restart passed: follower reached height 16 before restart and caught up to height 48 while miner reached height 51",
+      "final hegemon_consensusStatus reported height 18484, syncing=false, peers=0, and updated state/supply roots",
+      "final hegemon_miningStatus reported is_mining=true, threads=1, difficulty=520159231, blocks_found=33, and about 7.78 kH/s",
+      "hegemon-node.service stayed active at PID 1880205 after rebuild/restart; historical NRestarts included the pre-cleanup DB-lock loop",
       "timedatectl reported NTP synchronization active",
-      "remote branch status was codex/superneo-formal-verification at 2869d947 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
+      "post-validation process cleanup left only the live systemd hegemon-node process running",
+      "remote branch status was codex/superneo-formal-verification at 0f2ae9d1 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched"
     ],
-    "runtime_note": "The live node was not rebuilt or restarted because this slice did not change shipped runtime code. The targeted remote theorem gate, RPC health, mining status/performance, wallet transaction compatibility, disposable restart reload, service health, and NTP checks passed.",
+    "runtime_note": "This slice changed runtime code, so hegemon-dev was rebuilt and restarted from target/release/hegemon-node. The pre-existing sled lock failure was caused by an orphan live node process from an earlier manual run; after clearing it, the rebuilt service opened storage, listened on RPC/P2P, mined blocks, accepted the wallet transaction compatibility path, and survived the disposable restart/sync validation.",
     "known_limitations": [
-      "The live node had zero peers during validation, so live sync health was checked as not syncing with shouldHavePeers=false; peer sync/restart reload was exercised on disposable two-node dev instances rather than the live service.",
-      "The live 20-second mining sample did not find a block at current difficulty, but mining remained active at about 16.08 kH/s and the disposable dev miner produced blocks during two-node restart validation.",
-      "Hash/crypto/proof-system assumptions, simulator zero knowledge, advisory database and scanner completeness, complete parser implementation proofs, and complete native-node equivalence remain explicit residuals."
+      "The live dev node intentionally had zero external peers during validation, so live sync health was checked as syncing=false with peers=0; peer catch-up/restart reload was exercised on disposable two-node dev instances.",
+      "The service environment logged seeds=[] for this hegemon-dev branch-test node; do not infer production/testnet seed posture from this single-node validation.",
+      "Primitive hash/crypto assumptions, proof-system soundness assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain explicit external assumptions in the 100% certificate."
     ]
   },
   "last_coordinator_audit": {
@@ -1380,6 +1382,6 @@
     "validation": {
       "status": "Targeted local gates passed: jq JSON validation; bash -n scripts/check_formal_core.sh; cd formal/lean && lake build Hegemon.Release.HighestStandardCompletionCertificate Hegemon over 172 jobs; cd formal/lean && lake build Hegemon.Transaction.ProofSystemBoundary Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope Hegemon.Native.MaterializedTransferNoTheftPublication Hegemon.Network.FrameResourceAdmission Hegemon.Network.GenerateFrameResourceAdmissionVectors Hegemon.Native.TxLeafArtifactProjectionRefinement Hegemon.Native.RawIngressSidecarReplayRecoverability over 74 jobs; cargo test -p block-circuit commitment_block_proof_decode_rejects --lib -- --nocapture; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json. Full local bash scripts/check_formal_core.sh passed for the 100.0% completion slice with 119 claims, 2409 named Lean theorem declarations, 1052 axiom-free theorem declarations, 1357 allowed axiom-dependent declarations, zero temporary axiom theorem dependencies, 109 production-eligible claims, 47 explicit residual risks, 119 blueprint nodes, 518 edges, 613 falsification cases, 223 implementation bindings, 149 theorem-indexed order constraints, 134 theorem-indexed dominance constraints, 104 full-claim order constraints, 1926 full-claim theorem refs, 2 independent bridge vector cases, and 11 native backend vector cases. hegemon-dev deployment remains pending for this local 100% closure slice."
     },
-    "push_status": "local_only_100_percent_push_eligible_after_final_sanity"
+    "push_status": "pushed_to_origin_and_validated_on_hegemon_dev"
   }
 }
