@@ -1455,29 +1455,29 @@
   },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
-    "summary": "Added a native SyncResponseImport refinement gate. Lean now models inbound sync response import control flow after wire decode: count admission before sort/import, deterministic sorted heights, bounded attempted/imported counters, stop-on-first-error behavior, impossible outcome-trace rejection, and continuation requests only for nonempty responses when the peer remains ahead. Production now routes native_sync_loop response handling through admit_and_sort_native_sync_response_blocks plus NativeSyncResponseImportProgress, and formal-core generates vectors checked by hegemon-node.",
+    "summary": "Added a SmallWood verifier statement projection gate. Lean now models the deployed verifier-call projection order from candidate wrapper/public-statement/transcript admission through arithmetization, public values, row count, packing factor, effective constraint degree, linear-constraint vector families, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and explicit verifier-result handoff. Production reconstructs the actual PackedStatement verifier surface for normal and stablecoin inline-Merkle witnesses and checks drift cases against Lean-generated vectors.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/SyncResponseImport.lean",
-      "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
+      "formal/lean/Hegemon/Transaction/SmallWoodVerifierStatementProjection.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodVerifierStatementProjectionVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.SyncResponseImport.sync_response_import_acceptance_exposes_facts",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_sorts_unsorted_heights",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_first_error",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_empty_never_requests_more",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_over_limit_rejects",
-      "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects"
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.accepted_smallwood_verifier_statement_projection_implies_export_surface",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.valid_inline_merkle_projection_accepts",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.public_value_drift_rejects_before_row_shape",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.linear_constraint_offset_drift_rejects_before_indices",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.transcript_byte_drift_rejects_before_empty_proof",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.verifier_rejection_stays_last_after_projection_facts"
     ],
     "formal_core_gate": {
-      "command": "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture",
-      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_response_import_vectors and runs the production conformance test after the sync admission vectors."
+      "command": "HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_verifier_statement_projection_vectors_match_production --lib -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_smallwood_verifier_statement_projection_vectors and runs the production conformance test alongside the SmallWood public-statement/transcript gates."
     },
     "validation": {
-      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncResponseImport Hegemon.Native.GenerateSyncResponseImportVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=/tmp/hegemon-sync-response-import.json cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture."
+      "status": "Passed: cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierStatementProjection Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS=/tmp/hegemon-smallwood-verifier-statement-projection.json cargo test -p transaction-circuit lean_generated_smallwood_verifier_statement_projection_vectors_match_production --lib -- --nocapture; bash scripts/check_lean_formal.sh; bash scripts/check_formal_core.sh."
     },
     "known_limitations": [
-      "This proves and production-binds non-cryptographic inbound sync response import control flow, not peer honesty, network liveness, storage durability, or complete native-node equivalence.",
-      "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
+      "This proves and production-binds verifier-call surface construction, not STARK/AIR/PCS soundness, witness extraction, bincode correctness, hash security, or complete native-node equivalence.",
+      "The final verifier result remains an explicit soundness handoff field, so primitive proof-system assumptions stay named rather than hidden."
     ]
   },
   "last_candidate_artifact_scale_wire_slice": {
@@ -1531,6 +1531,33 @@
     "known_limitations": [
       "This proves and production-binds non-cryptographic inbound sync response import control flow, not peer honesty, network liveness, storage durability, or complete native-node equivalence.",
       "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
+    ]
+  },
+  "last_smallwood_verifier_statement_projection_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a SmallWood verifier statement projection gate. Lean now models the deployed verifier-call projection order from candidate wrapper/public-statement/transcript admission through arithmetization, public values, row count, packing factor, effective constraint degree, linear-constraint vector families, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and explicit verifier-result handoff. Production reconstructs the actual PackedStatement verifier surface for normal and stablecoin inline-Merkle witnesses and checks drift cases against Lean-generated vectors.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Transaction/SmallWoodVerifierStatementProjection.lean",
+      "formal/lean/Hegemon/Transaction/GenerateSmallWoodVerifierStatementProjectionVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.accepted_smallwood_verifier_statement_projection_implies_export_surface",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.valid_inline_merkle_projection_accepts",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.public_value_drift_rejects_before_row_shape",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.linear_constraint_offset_drift_rejects_before_indices",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.transcript_byte_drift_rejects_before_empty_proof",
+      "Hegemon.Transaction.SmallWoodVerifierStatementProjection.verifier_rejection_stays_last_after_projection_facts"
+    ],
+    "formal_core_gate": {
+      "command": "HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_verifier_statement_projection_vectors_match_production --lib -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_smallwood_verifier_statement_projection_vectors and runs the production conformance test alongside the SmallWood public-statement/transcript gates."
+    },
+    "validation": {
+      "status": "Passed: cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierStatementProjection Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS=/tmp/hegemon-smallwood-verifier-statement-projection.json cargo test -p transaction-circuit lean_generated_smallwood_verifier_statement_projection_vectors_match_production --lib -- --nocapture; bash scripts/check_lean_formal.sh; bash scripts/check_formal_core.sh."
+    },
+    "known_limitations": [
+      "This proves and production-binds verifier-call surface construction, not STARK/AIR/PCS soundness, witness extraction, bincode correctness, hash security, or complete native-node equivalence.",
+      "The final verifier result remains an explicit soundness handoff field, so primitive proof-system assumptions stay named rather than hidden."
     ]
   }
 }

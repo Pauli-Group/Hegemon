@@ -166,6 +166,7 @@ import Hegemon.Transaction.SmallWoodPublicStatementBinding
 import Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire
 import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SmallWoodTranscriptBinding
+import Hegemon.Transaction.SmallWoodVerifierStatementProjection
 import Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope
 import Hegemon.Transaction.SpendAuthorization
 import Hegemon.Transaction.StatementHash

@@ -331,6 +331,9 @@ lean_exe gen_smallwood_transcript_binding_vectors where
 lean_exe gen_smallwood_public_statement_binding_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodPublicStatementBindingVectors
 
+lean_exe gen_smallwood_verifier_statement_projection_vectors where
+  root := `Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors
+
 lean_exe gen_smallwood_recursive_envelope_wire_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodRecursiveEnvelopeWireVectors
 

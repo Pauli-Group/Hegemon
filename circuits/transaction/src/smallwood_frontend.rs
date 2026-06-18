@@ -3730,6 +3730,41 @@ mod tests {
         expected_rejection: Option<String>,
     }
 
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodVerifierStatementProjectionVectors {
+        schema_version: u32,
+        active_circuit_version: u16,
+        active_crypto_suite: u16,
+        smallwood_verifier_statement_projection_cases:
+            Vec<LeanSmallwoodVerifierStatementProjectionCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodVerifierStatementProjectionCase {
+        name: String,
+        fixture: String,
+        arithmetization: u64,
+        candidate_wrapper_accepted: bool,
+        public_statement_binding_accepted: bool,
+        transcript_binding_accepted: bool,
+        arithmetization_matches: bool,
+        public_values_match: bool,
+        row_count_matches: bool,
+        packing_factor_matches: bool,
+        constraint_degree_matches: bool,
+        linear_constraint_offsets_match: bool,
+        linear_constraint_indices_match: bool,
+        linear_constraint_coefficients_match: bool,
+        linear_constraint_targets_match: bool,
+        auxiliary_witness_limb_count_matches: bool,
+        profile_material_matches: bool,
+        transcript_bytes_match: bool,
+        proof_bytes_nonempty: bool,
+        verifier_accepted: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
     fn smallwood_active_auth_link_case_accepts(case: &LeanSmallwoodSpendAuthorizationCase) -> bool {
         if !case.active {
             return true;
@@ -3881,6 +3916,51 @@ mod tests {
         );
         serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
             panic!("failed to parse generated Lean SmallWood wrapper vectors: {err}")
+        })
+    }
+
+    fn load_smallwood_verifier_statement_projection_vectors(
+    ) -> LeanSmallwoodVerifierStatementProjectionVectors {
+        if let Ok(path) =
+            std::env::var("HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS")
+        {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!(
+                    "failed to read Lean SmallWood verifier statement projection vectors {path}: {err}"
+                )
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse Lean SmallWood verifier statement projection vectors {path}: {err}"
+                )
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_verifier_statement_projection_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to run Lean SmallWood verifier statement projection vector generator: {err}"
+                )
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood verifier statement projection vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!(
+                "failed to parse generated Lean SmallWood verifier statement projection vectors: {err}"
+            )
         })
     }
 
@@ -4202,6 +4282,456 @@ mod tests {
                 bytes
             }
             other => panic!("unknown Lean SmallWood wrapper fixture {other}"),
+        }
+    }
+
+    #[derive(Debug)]
+    struct SmallwoodVerifierStatementProjectionFacts {
+        candidate_wrapper_accepted: bool,
+        public_statement_binding_accepted: bool,
+        transcript_binding_accepted: bool,
+        arithmetization_matches: bool,
+        public_values_match: bool,
+        row_count_matches: bool,
+        packing_factor_matches: bool,
+        constraint_degree_matches: bool,
+        linear_constraint_offsets_match: bool,
+        linear_constraint_indices_match: bool,
+        linear_constraint_coefficients_match: bool,
+        linear_constraint_targets_match: bool,
+        auxiliary_witness_limb_count_matches: bool,
+        profile_material_matches: bool,
+        transcript_bytes_match: bool,
+        proof_bytes_nonempty: bool,
+        verifier_accepted: bool,
+    }
+
+    fn mutate_u32_vec(mut values: Vec<u32>) -> Vec<u32> {
+        if let Some(value) = values.first_mut() {
+            *value = value.wrapping_add(1);
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mutate_u64_vec(mut values: Vec<u64>) -> Vec<u64> {
+        if let Some(value) = values.first_mut() {
+            *value = value.wrapping_add(1);
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mutate_bytes(mut values: Vec<u8>) -> Vec<u8> {
+        if let Some(value) = values.first_mut() {
+            *value ^= 1;
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mismatched_smallwood_arithmetization(
+        arithmetization: SmallwoodArithmetization,
+    ) -> SmallwoodArithmetization {
+        if arithmetization == SmallwoodArithmetization::DirectPacked64V1 {
+            SmallwoodArithmetization::Bridge64V1
+        } else {
+            SmallwoodArithmetization::DirectPacked64V1
+        }
+    }
+
+    fn vec_u32_projection_matches(actual: &[u32], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_u32_vec(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn vec_u64_projection_matches(actual: &[u64], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_u64_vec(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn bytes_projection_matches(actual: &[u8], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_bytes(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn production_verifier_statement_projection_facts(
+        case: &LeanSmallwoodVerifierStatementProjectionCase,
+    ) -> SmallwoodVerifierStatementProjectionFacts {
+        use crate::smallwood_semantics::SmallwoodConstraintAdapter;
+
+        let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+        let mut witness = match case.fixture.as_str() {
+            "active_inline_merkle" => sample_witness(),
+            "stablecoin_inline_merkle" => stablecoin_witness(),
+            other => panic!("unknown Lean SmallWood verifier statement fixture {other}"),
+        };
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+
+        let context =
+            build_smallwood_witness_context(&witness).expect("build SmallWood witness context");
+        let surface = build_smallwood_candidate_profile_surface_for_arithmetization(
+            &witness,
+            arithmetization,
+        )
+        .expect("build SmallWood candidate profile surface");
+        let transcript_binding = smallwood_transcript_binding(
+            &surface.public_statement,
+            witness.version,
+            arithmetization,
+        )
+        .expect("build SmallWood transcript binding");
+        let profile_material =
+            smallwood_candidate_verifier_profile_material(witness.version, arithmetization);
+        let packed_statement = if uses_inline_merkle_auxiliary(arithmetization) {
+            crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &surface.public_statement.public_values,
+                surface.public_statement.lppc_row_count as usize,
+                surface.public_statement.lppc_packing_factor as usize,
+                surface.public_statement.effective_constraint_degree as usize,
+                &surface.linear_constraints.term_offsets,
+                &surface.linear_constraints.term_indices,
+                &surface.linear_constraints.term_coefficients,
+                &surface.linear_constraints.targets,
+                &[],
+                surface.auxiliary_witness_limb_count,
+            )
+        } else {
+            crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &surface.public_statement.public_values,
+                surface.public_statement.lppc_row_count as usize,
+                surface.public_statement.lppc_packing_factor as usize,
+                surface.public_statement.effective_constraint_degree as usize,
+                &surface.linear_constraints.term_offsets,
+                &surface.linear_constraints.term_indices,
+                &surface.linear_constraints.term_coefficients,
+                &surface.linear_constraints.targets,
+            )
+        };
+
+        assert_eq!(packed_statement.arithmetization(), arithmetization);
+        assert_eq!(
+            packed_statement.row_count(),
+            surface.public_statement.lppc_row_count as usize
+        );
+        assert_eq!(
+            packed_statement.packing_factor(),
+            surface.public_statement.lppc_packing_factor as usize
+        );
+        assert_eq!(
+            packed_statement.constraint_degree(),
+            surface.public_statement.effective_constraint_degree as usize
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_offsets(),
+            surface.linear_constraints.term_offsets.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_indices(),
+            surface.linear_constraints.term_indices.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_coefficients(),
+            surface.linear_constraints.term_coefficients.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_targets(),
+            surface.linear_constraints.targets.as_slice()
+        );
+
+        let auxiliary_limb_count = packed_statement
+            .auxiliary_witness_limb_count()
+            .unwrap_or_default();
+        assert_eq!(auxiliary_limb_count, surface.auxiliary_witness_limb_count);
+
+        let auxiliary_words = if uses_inline_merkle_auxiliary(arithmetization) {
+            vec![0u64; surface.auxiliary_witness_limb_count]
+        } else {
+            Vec::new()
+        };
+        let wrapper_bytes = if case.candidate_wrapper_accepted {
+            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3], &auxiliary_words)
+                .expect("encode SmallWood candidate wrapper")
+        } else {
+            vec![0xff, 0x00, 0x01]
+        };
+        let candidate_wrapper_accepted = decode_smallwood_candidate_proof(&wrapper_bytes)
+            .map(|candidate| !candidate.ark_proof.is_empty())
+            .unwrap_or(false);
+
+        let expected_public_values =
+            smallwood_public_statement_values_for_p3(&context.public_inputs_p3, witness.version);
+        let public_statement_binding_expected = if case.public_statement_binding_accepted {
+            expected_public_values.clone()
+        } else {
+            mutate_u64_vec(expected_public_values.clone())
+        };
+        let public_statement_binding_accepted = surface.public_statement.public_values
+            == public_statement_binding_expected
+            && surface.public_statement.public_value_count as usize == expected_public_values.len();
+
+        let transcript_binding_accepted =
+            bytes_projection_matches(&transcript_binding, case.transcript_binding_accepted);
+        let arithmetization_expected = if case.arithmetization_matches {
+            arithmetization
+        } else {
+            mismatched_smallwood_arithmetization(arithmetization)
+        };
+        let public_values_expected = if case.public_values_match {
+            expected_public_values
+        } else {
+            mutate_u64_vec(expected_public_values)
+        };
+        let row_count_expected = if case.row_count_matches {
+            packed_statement.row_count()
+        } else {
+            packed_statement.row_count() + 1
+        };
+        let packing_factor_expected = if case.packing_factor_matches {
+            packed_statement.packing_factor()
+        } else {
+            packed_statement.packing_factor() + 1
+        };
+        let constraint_degree_expected = if case.constraint_degree_matches {
+            packed_statement.constraint_degree()
+        } else {
+            packed_statement.constraint_degree() + 1
+        };
+        let auxiliary_limb_count_expected = if case.auxiliary_witness_limb_count_matches {
+            auxiliary_limb_count
+        } else {
+            auxiliary_limb_count + 1
+        };
+        let proof_bytes = if case.proof_bytes_nonempty {
+            vec![1, 2, 3]
+        } else {
+            Vec::new()
+        };
+
+        SmallwoodVerifierStatementProjectionFacts {
+            candidate_wrapper_accepted,
+            public_statement_binding_accepted,
+            transcript_binding_accepted,
+            arithmetization_matches: packed_statement.arithmetization() == arithmetization_expected,
+            public_values_match: surface.public_statement.public_values == public_values_expected,
+            row_count_matches: packed_statement.row_count() == row_count_expected,
+            packing_factor_matches: packed_statement.packing_factor() == packing_factor_expected,
+            constraint_degree_matches: packed_statement.constraint_degree()
+                == constraint_degree_expected,
+            linear_constraint_offsets_match: vec_u32_projection_matches(
+                packed_statement.linear_constraint_offsets(),
+                case.linear_constraint_offsets_match,
+            ),
+            linear_constraint_indices_match: vec_u32_projection_matches(
+                packed_statement.linear_constraint_indices(),
+                case.linear_constraint_indices_match,
+            ),
+            linear_constraint_coefficients_match: vec_u64_projection_matches(
+                packed_statement.linear_constraint_coefficients(),
+                case.linear_constraint_coefficients_match,
+            ),
+            linear_constraint_targets_match: vec_u64_projection_matches(
+                packed_statement.linear_targets(),
+                case.linear_constraint_targets_match,
+            ),
+            auxiliary_witness_limb_count_matches: auxiliary_limb_count
+                == auxiliary_limb_count_expected,
+            profile_material_matches: bytes_projection_matches(
+                &profile_material,
+                case.profile_material_matches,
+            ),
+            transcript_bytes_match: bytes_projection_matches(
+                &transcript_binding,
+                case.transcript_bytes_match,
+            ),
+            proof_bytes_nonempty: !proof_bytes.is_empty(),
+            verifier_accepted: case.verifier_accepted,
+        }
+    }
+
+    fn smallwood_verifier_statement_projection_rejection(
+        facts: &SmallwoodVerifierStatementProjectionFacts,
+    ) -> Option<&'static str> {
+        if !facts.candidate_wrapper_accepted {
+            Some("candidate_wrapper_rejected")
+        } else if !facts.public_statement_binding_accepted {
+            Some("public_statement_binding_rejected")
+        } else if !facts.transcript_binding_accepted {
+            Some("transcript_binding_rejected")
+        } else if !facts.arithmetization_matches {
+            Some("arithmetization_mismatch")
+        } else if !facts.public_values_match {
+            Some("public_values_mismatch")
+        } else if !facts.row_count_matches {
+            Some("row_count_mismatch")
+        } else if !facts.packing_factor_matches {
+            Some("packing_factor_mismatch")
+        } else if !facts.constraint_degree_matches {
+            Some("constraint_degree_mismatch")
+        } else if !facts.linear_constraint_offsets_match {
+            Some("linear_constraint_offsets_mismatch")
+        } else if !facts.linear_constraint_indices_match {
+            Some("linear_constraint_indices_mismatch")
+        } else if !facts.linear_constraint_coefficients_match {
+            Some("linear_constraint_coefficients_mismatch")
+        } else if !facts.linear_constraint_targets_match {
+            Some("linear_constraint_targets_mismatch")
+        } else if !facts.auxiliary_witness_limb_count_matches {
+            Some("auxiliary_witness_limb_count_mismatch")
+        } else if !facts.profile_material_matches {
+            Some("profile_material_mismatch")
+        } else if !facts.transcript_bytes_match {
+            Some("transcript_bytes_mismatch")
+        } else if !facts.proof_bytes_nonempty {
+            Some("proof_bytes_empty")
+        } else if !facts.verifier_accepted {
+            Some("verifier_rejected")
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_verifier_statement_projection_vectors_match_production() {
+        let vectors = load_smallwood_verifier_statement_projection_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.active_circuit_version,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit
+        );
+        assert_eq!(
+            vectors.active_crypto_suite,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto
+        );
+        assert!(
+            !vectors
+                .smallwood_verifier_statement_projection_cases
+                .is_empty(),
+            "Lean SmallWood verifier statement projection bundle must contain at least one case"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.smallwood_verifier_statement_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            let facts = production_verifier_statement_projection_facts(case);
+            assert_eq!(
+                facts.candidate_wrapper_accepted, case.candidate_wrapper_accepted,
+                "{}: production wrapper admission fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.public_statement_binding_accepted, case.public_statement_binding_accepted,
+                "{}: production public-statement binding fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.transcript_binding_accepted, case.transcript_binding_accepted,
+                "{}: production transcript binding fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.arithmetization_matches, case.arithmetization_matches,
+                "{}: production arithmetization projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.public_values_match, case.public_values_match,
+                "{}: production public-value projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.row_count_matches, case.row_count_matches,
+                "{}: production row-count projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.packing_factor_matches, case.packing_factor_matches,
+                "{}: production packing-factor projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.constraint_degree_matches, case.constraint_degree_matches,
+                "{}: production constraint-degree projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_offsets_match, case.linear_constraint_offsets_match,
+                "{}: production linear-offset projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_indices_match, case.linear_constraint_indices_match,
+                "{}: production linear-index projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_coefficients_match,
+                case.linear_constraint_coefficients_match,
+                "{}: production linear-coefficient projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_targets_match, case.linear_constraint_targets_match,
+                "{}: production linear-target projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.auxiliary_witness_limb_count_matches,
+                case.auxiliary_witness_limb_count_matches,
+                "{}: production auxiliary-limb projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.profile_material_matches, case.profile_material_matches,
+                "{}: production profile-material projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.transcript_bytes_match, case.transcript_bytes_match,
+                "{}: production transcript-byte projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.proof_bytes_nonempty, case.proof_bytes_nonempty,
+                "{}: production proof-byte projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.verifier_accepted, case.verifier_accepted,
+                "{}: explicit verifier-result handoff fact drifted",
+                case.name
+            );
+
+            let rejection = smallwood_verifier_statement_projection_rejection(&facts);
+            assert_eq!(
+                rejection.is_none(),
+                case.expected_valid,
+                "{}: Rust projection validity disagreed with Lean",
+                case.name
+            );
+            assert_eq!(
+                rejection,
+                case.expected_rejection.as_deref(),
+                "{}: Rust projection rejection disagreed with Lean",
+                case.name
+            );
         }
     }
 
