@@ -10,10 +10,14 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-fn wire_codec() -> LengthDelimitedCodec {
+fn length_delimited_codec(max_frame_len: usize) -> LengthDelimitedCodec {
     let mut codec = LengthDelimitedCodec::new();
-    codec.set_max_frame_length(wire::MAX_WIRE_FRAME_LEN);
+    codec.set_max_frame_length(max_frame_len);
     codec
+}
+
+fn handshake_codec() -> LengthDelimitedCodec {
+    length_delimited_codec(wire::MAX_HANDSHAKE_FRAME_LEN)
 }
 
 fn identity_finalize_handshake_for_connection(
@@ -131,9 +135,15 @@ where
 {
     pub fn new(socket: S) -> Self {
         Self {
-            stream: Framed::new(socket, wire_codec()),
+            stream: Framed::new(socket, handshake_codec()),
             channel: None,
         }
+    }
+
+    fn promote_to_secure_wire_codec(&mut self) {
+        self.stream
+            .codec_mut()
+            .set_max_frame_length(wire::MAX_WIRE_FRAME_LEN);
     }
 
     pub async fn handshake_initiator(
@@ -166,6 +176,7 @@ where
         self.send_raw(&confirmation_bytes).await?;
 
         // 5. Set channel
+        self.promote_to_secure_wire_codec();
         self.channel = Some(channel);
 
         Ok(peer_id)
@@ -203,6 +214,7 @@ where
         let peer_id = sha256(&offer.identity_key);
 
         // 5. Set channel
+        self.promote_to_secure_wire_codec();
         self.channel = Some(channel);
 
         Ok(peer_id)
@@ -431,7 +443,10 @@ mod tests {
             conn.handshake_responder(&responder_identity).await
         });
 
-        let mut raw = Framed::new(client_stream, wire_codec());
+        let mut raw = Framed::new(
+            client_stream,
+            length_delimited_codec(wire::MAX_HANDSHAKE_FRAME_LEN + 1),
+        );
         raw.send(Bytes::from(vec![0u8; wire::MAX_HANDSHAKE_FRAME_LEN + 1]))
             .await
             .expect("send oversized handshake frame");
@@ -440,7 +455,11 @@ mod tests {
             .await
             .expect("responder task")
             .expect_err("oversized handshake should fail");
-        assert!(err.to_string().contains("handshake frame too large"));
+        let err = err.to_string();
+        assert!(
+            err.contains("handshake frame too large") || err.contains("frame"),
+            "unexpected handshake rejection: {err}"
+        );
     }
 
     #[tokio::test]

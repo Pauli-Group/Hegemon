@@ -12,6 +12,10 @@ def nodeDomain : List Byte :=
 
 def maxShards : Nat := 255
 
+def maxChunkMerklePathLen : Nat := 8
+
+def maxPageMerklePathLen : Nat := 32
+
 structure DaParams where
   chunkSize : Nat
   sampleCount : Nat
@@ -61,6 +65,12 @@ def shardCountForBlob (blobLen : Nat) (params : DaParams) : Option ShardCount :=
       none
     else
       some { dataShards := data, parityShards := parity, totalShards := total }
+
+def validChunkProofPathLen (pathLen : Nat) : Bool :=
+  pathLen <= maxChunkMerklePathLen
+
+def validPageProofPathLen (pathLen : Nat) : Bool :=
+  pathLen <= maxPageMerklePathLen
 
 def leafPreimage (index : Nat) (data : List Byte) : List Byte :=
   leafDomain ++ u32le index ++ data
@@ -168,6 +178,30 @@ theorem shard_count_rejects_zero_sample :
 
 theorem shard_count_rejects_too_many :
     shardCountForBlob 1361 { chunkSize := 8, sampleCount := 1 } = none := by
+  decide
+
+theorem chunk_proof_path_len_empty_accepts :
+    validChunkProofPathLen 0 = true := by
+  decide
+
+theorem chunk_proof_path_len_max_accepts :
+    validChunkProofPathLen 8 = true := by
+  decide
+
+theorem chunk_proof_path_len_over_cap_rejects :
+    validChunkProofPathLen 9 = false := by
+  decide
+
+theorem page_proof_path_len_empty_accepts :
+    validPageProofPathLen 0 = true := by
+  decide
+
+theorem page_proof_path_len_max_accepts :
+    validPageProofPathLen 32 = true := by
+  decide
+
+theorem page_proof_path_len_over_cap_rejects :
+    validPageProofPathLen 33 = false := by
   decide
 
 theorem even_merkle_step_uses_current_left :

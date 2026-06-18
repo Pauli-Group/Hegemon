@@ -245,6 +245,197 @@ mod tests {
     }
 
     #[test]
+    fn network_wire_decode_matches_marker_limit_postcard_oracle_on_mutation_corpus() {
+        let sample = Sample {
+            name: "oracle".to_string(),
+            payload: vec![1, 2, 3, 4, 5],
+        };
+        for (label, max_len) in [
+            ("handshake", MAX_HANDSHAKE_FRAME_LEN),
+            ("wire", MAX_WIRE_FRAME_LEN),
+            ("peer-store", MAX_PEER_STORE_LEN),
+        ] {
+            let valid = encode(&sample, max_len).expect("encode network wire oracle sample");
+            let corpus = frame_decode_oracle_corpus(NETWORK_WIRE_MAGIC, max_len, vec![valid]);
+            assert!(
+                corpus.len() >= 256,
+                "{label} network wire corpus must stay broad enough to catch parser drift"
+            );
+            for (idx, raw) in corpus.iter().enumerate() {
+                let expected = frame_decode_postcard_oracle_accepts::<Sample>(
+                    raw,
+                    NETWORK_WIRE_MAGIC,
+                    max_len,
+                );
+                let actual = decode::<Sample>(raw, max_len).is_ok();
+                assert_eq!(
+                    actual,
+                    expected,
+                    "{label} network wire oracle mismatch at corpus index {idx}, len={}, prefix={}",
+                    raw.len(),
+                    hex::encode(&raw[..raw.len().min(16)])
+                );
+            }
+        }
+    }
+
+    fn frame_decode_postcard_oracle_accepts<T: serde::de::DeserializeOwned>(
+        raw: &[u8],
+        magic: &[u8; 4],
+        max_len: usize,
+    ) -> bool {
+        if raw.len() > max_len || !raw.starts_with(magic) {
+            return false;
+        }
+        let Ok((_value, remaining)) = postcard::take_from_bytes::<T>(&raw[magic.len()..]) else {
+            return false;
+        };
+        remaining.is_empty()
+    }
+
+    fn frame_decode_oracle_corpus(
+        magic: &[u8; 4],
+        max_len: usize,
+        valid_frames: Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        let mut corpus = vec![
+            Vec::new(),
+            vec![0],
+            magic.to_vec(),
+            b"BAD1".to_vec(),
+            b"BAD1\x00".to_vec(),
+            vec![0xff; magic.len()],
+        ];
+        for len in [
+            1usize, 2, 3, 4, 5, 8, 16, 31, 32, 33, 48, 64, 96, 127, 128, 129, 255, 256, 257, 512,
+        ] {
+            for seed_offset in 0..16u64 {
+                corpus.push(deterministic_frame_noise(
+                    0x4e45_5457_4952_45 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
+                    len,
+                ));
+
+                if len >= magic.len() {
+                    let mut marker_prefixed = deterministic_frame_noise(
+                        0x4d41_524b_4e45_54 ^ len as u64 ^ seed_offset.wrapping_mul(0x517c_c1b7),
+                        len,
+                    );
+                    marker_prefixed[..magic.len()].copy_from_slice(magic);
+                    corpus.push(marker_prefixed);
+                }
+            }
+        }
+        let mut oversized = Vec::with_capacity(max_len.saturating_add(1));
+        oversized.extend_from_slice(magic);
+        oversized.resize(max_len.saturating_add(1), 0);
+        corpus.push(oversized);
+
+        for encoded in valid_frames {
+            extend_frame_decode_corpus_from_valid_frame(&mut corpus, magic, &encoded);
+        }
+        corpus
+    }
+
+    fn deterministic_frame_noise(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            out.push((state >> 32) as u8);
+        }
+        out
+    }
+
+    fn extend_frame_decode_corpus_from_valid_frame(
+        corpus: &mut Vec<Vec<u8>>,
+        magic: &[u8; 4],
+        encoded: &[u8],
+    ) {
+        corpus.push(encoded.to_vec());
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = encoded.to_vec();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in frame_decode_cut_points(encoded.len()) {
+            corpus.push(encoded[..cut].to_vec());
+        }
+
+        for offset in frame_decode_mutation_offsets(encoded.len()) {
+            let mut mutated = encoded.to_vec();
+            mutated[offset] ^= 0xff;
+            corpus.push(mutated);
+        }
+
+        for offset in 0..encoded.len().min(8) {
+            let mut mutated = encoded.to_vec();
+            mutated.insert(offset, 0);
+            corpus.push(mutated);
+        }
+
+        let mut wrong_magic = encoded.to_vec();
+        wrong_magic[..magic.len()].copy_from_slice(b"BAD1");
+        corpus.push(wrong_magic);
+    }
+
+    fn frame_decode_cut_points(len: usize) -> std::collections::BTreeSet<usize> {
+        let mut cuts = std::collections::BTreeSet::new();
+        for cut in 0..=len.min(64) {
+            cuts.insert(cut);
+        }
+        for boundary in [1usize, 2, 3, 4, 5, 8, 16, 32, 64, 128, len] {
+            for delta in [0usize, 1, 2, 3] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn frame_decode_mutation_offsets(len: usize) -> std::collections::BTreeSet<usize> {
+        let mut offsets = std::collections::BTreeSet::new();
+        if len == 0 {
+            return offsets;
+        }
+        for offset in 0..len.min(64) {
+            offsets.insert(offset);
+        }
+        for offset in [
+            0usize,
+            1,
+            2,
+            3,
+            4,
+            5,
+            8,
+            16,
+            31,
+            32,
+            47,
+            48,
+            63,
+            64,
+            len - 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
+
+    #[test]
     fn lean_generated_frame_resource_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS") else {
             eprintln!("skipping Lean frame-resource vectors; env var not set");

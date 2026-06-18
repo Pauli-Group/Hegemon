@@ -13,6 +13,11 @@ def rejectionJson : Option ProofWrapperWireReject -> String
   | some ProofWrapperWireReject.nonCanonicalEncoding =>
       "\"non_canonical_encoding\""
 
+def admissionRejectionJson : Option ProofWrapperWireAdmissionReject -> String
+  | none => "null"
+  | some ProofWrapperWireAdmissionReject.nullifierVectorMismatch =>
+      "\"nullifier_vector_mismatch\""
+
 def caseJson (case : ProofWrapperWireCase) : String :=
   let result := evaluateProofWrapperWireRejection case
   "    {\n"
@@ -33,11 +38,30 @@ def casesJson : List ProofWrapperWireCase -> String
   | [case] => caseJson case
   | case :: rest => caseJson case ++ ",\n" ++ casesJson rest
 
+def admissionCaseJson (case : ProofWrapperWireAdmissionCase) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ case.name ++ "\",\n"
+    ++ "      \"raw_hex\": \"" ++ hexBytes case.rawBytes ++ "\",\n"
+    ++ "      \"canonical_hex\": \"" ++ hexBytes case.canonicalBytes ++ "\",\n"
+    ++ "      \"expected_wire_valid\": " ++ boolJson case.wireAccepts ++ ",\n"
+    ++ "      \"expected_admission_valid\": " ++ boolJson case.admissionAccepts ++ ",\n"
+    ++ "      \"expected_admission_rejection\": "
+    ++ admissionRejectionJson case.admissionReject ++ "\n"
+    ++ "    }"
+
+def admissionCasesJson : List ProofWrapperWireAdmissionCase -> String
+  | [] => ""
+  | [case] => admissionCaseJson case
+  | case :: rest => admissionCaseJson case ++ ",\n" ++ admissionCasesJson rest
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"transaction_proof_wrapper_wire_cases\": [\n"
     ++ casesJson allCases ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"transaction_proof_wrapper_wire_to_admission_cases\": [\n"
+    ++ admissionCasesJson allWireToAdmissionCases ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

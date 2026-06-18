@@ -380,12 +380,14 @@ theorem tx_leaf_proof_backend_precedes_payload_hashes :
 
 inductive CandidateArtifactBindingReject where
   | daRootMismatch
+  | daChunkCountMismatch
   | txStatementCommitmentMismatch
   | recursiveStateRootMismatch
 deriving DecidableEq, Repr
 
 structure CandidateArtifactBindingInput where
   daRootMatches : Bool
+  daChunkCountMatches : Bool
   txStatementsCommitmentMatches : Bool
   recursiveStateRootMatches : Bool
 deriving DecidableEq, Repr
@@ -395,6 +397,8 @@ def evaluateCandidateArtifactBinding
     Except CandidateArtifactBindingReject Unit :=
   if !input.daRootMatches then
     Except.error CandidateArtifactBindingReject.daRootMismatch
+  else if !input.daChunkCountMatches then
+    Except.error CandidateArtifactBindingReject.daChunkCountMismatch
   else if !input.txStatementsCommitmentMatches then
     Except.error CandidateArtifactBindingReject.txStatementCommitmentMismatch
   else if !input.recursiveStateRootMatches then
@@ -418,6 +422,7 @@ def candidateArtifactBindingRejection
 def candidateArtifactBindingPreconditions
     (input : CandidateArtifactBindingInput) : Bool :=
   input.daRootMatches
+    && input.daChunkCountMatches
     && input.txStatementsCommitmentMatches
     && input.recursiveStateRootMatches
 
@@ -426,16 +431,19 @@ theorem candidate_artifact_binding_accepts_iff_preconditions
     candidateArtifactBindingAccepts input =
       candidateArtifactBindingPreconditions input := by
   cases input with
-  | mk daRootMatches txStatementsCommitmentMatches recursiveStateRootMatches =>
+  | mk daRootMatches daChunkCountMatches txStatementsCommitmentMatches
+      recursiveStateRootMatches =>
       unfold candidateArtifactBindingAccepts
         candidateArtifactBindingPreconditions
         evaluateCandidateArtifactBinding
-      cases daRootMatches <;> cases txStatementsCommitmentMatches <;>
+      cases daRootMatches <;> cases daChunkCountMatches <;>
+        cases txStatementsCommitmentMatches <;>
         cases recursiveStateRootMatches <;> simp
 
 def validCandidateArtifactBinding : CandidateArtifactBindingInput :=
   {
     daRootMatches := true,
+    daChunkCountMatches := true,
     txStatementsCommitmentMatches := true,
     recursiveStateRootMatches := true
   }
@@ -457,6 +465,13 @@ theorem candidate_statement_commitment_mismatch_rejects :
       Except.error CandidateArtifactBindingReject.txStatementCommitmentMismatch := by
   rfl
 
+theorem candidate_da_chunk_count_mismatch_rejects :
+    evaluateCandidateArtifactBinding
+        { validCandidateArtifactBinding with
+          daChunkCountMatches := false } =
+      Except.error CandidateArtifactBindingReject.daChunkCountMismatch := by
+  rfl
+
 theorem candidate_recursive_state_root_mismatch_rejects :
     evaluateCandidateArtifactBinding
         { validCandidateArtifactBinding with
@@ -468,8 +483,18 @@ theorem candidate_da_root_precedes_statement_commitment :
     evaluateCandidateArtifactBinding
         { validCandidateArtifactBinding with
           daRootMatches := false,
+          daChunkCountMatches := false,
           txStatementsCommitmentMatches := false } =
       Except.error CandidateArtifactBindingReject.daRootMismatch := by
+  rfl
+
+theorem candidate_da_chunk_count_precedes_statement_commitment :
+    evaluateCandidateArtifactBinding
+        { validCandidateArtifactBinding with
+          daChunkCountMatches := false,
+          txStatementsCommitmentMatches := false,
+          recursiveStateRootMatches := false } =
+      Except.error CandidateArtifactBindingReject.daChunkCountMismatch := by
   rfl
 
 theorem candidate_statement_precedes_state_root :

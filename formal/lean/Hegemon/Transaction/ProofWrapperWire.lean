@@ -19,6 +19,19 @@ structure ProofWrapperWireCase where
   canonicalReencodeMatches : Bool
 deriving DecidableEq, Repr
 
+inductive ProofWrapperWireAdmissionReject where
+  | nullifierVectorMismatch
+deriving DecidableEq, Repr
+
+structure ProofWrapperWireAdmissionCase where
+  name : String
+  rawBytes : List Byte
+  canonicalBytes : List Byte
+  wireAccepts : Bool
+  admissionAccepts : Bool
+  admissionReject : Option ProofWrapperWireAdmissionReject
+deriving DecidableEq, Repr
+
 def canonicalBytesMatch (case : ProofWrapperWireCase) : Bool :=
   case.rawBytes == case.canonicalBytes
 
@@ -37,6 +50,12 @@ def evaluateProofWrapperWireRejection
 
 def proofWrapperWireAccepts (case : ProofWrapperWireCase) : Bool :=
   evaluateProofWrapperWireRejection case = none
+
+def proofWrapperWireAdmissionCaseRejectsAsExpected
+    (case : ProofWrapperWireAdmissionCase) : Bool :=
+  case.wireAccepts = true
+    && case.admissionAccepts = false
+    && case.admissionReject == some ProofWrapperWireAdmissionReject.nullifierVectorMismatch
 
 def concatByteLists : List (List Byte) -> List Byte
   | [] => []
@@ -73,6 +92,9 @@ def bincodeBalanceSlots (assetIds : List Nat) : List Byte :=
 
 def digest48 : List Byte :=
   zeroBytes 48
+
+def smallU64Bytes48 (value : Nat) : List Byte :=
+  zeroBytes 7 ++ [byte value] ++ zeroBytes 40
 
 def digest48Bytes : List Byte :=
   bincodeBytes digest48
@@ -115,9 +137,39 @@ def transactionPublicInputsBytes : List Byte :=
     ++ u16le legacyPlonky3CircuitVersion
     ++ u16le legacyPlonky3CryptoSuite
 
+def admissionValidTransactionPublicInputsBytes : List Byte :=
+  digest48Bytes
+    ++ bincodeBytes (smallU64Bytes48 11 ++ zeroBytes 48)
+    ++ bincodeBytes (smallU64Bytes48 22 ++ zeroBytes 48)
+    ++ bincodeBytes (smallU64Bytes48 33 ++ zeroBytes 48)
+    ++ bincodeBalanceSlots defaultBalanceSlotAssetIds
+    ++ u64le 0
+    ++ u128le 0
+    ++ defaultStablecoinBindingBytes
+    ++ digest48Bytes
+    ++ u16le legacyPlonky3CircuitVersion
+    ++ u16le legacyPlonky3CryptoSuite
+
 def serializedStarkInputsBytes : List Byte :=
   bincodeVecU8 [0, 0]
     ++ bincodeVecU8 [0, 0]
+    ++ u64le 0
+    ++ [0]
+    ++ u64le 0
+    ++ digest48Bytes
+    ++ bincodeVecU64 serializedBalanceSlotAssetIds
+    ++ [0]
+    ++ u64le 0
+    ++ u32le 0
+    ++ [0]
+    ++ u64le 0
+    ++ digest48Bytes
+    ++ digest48Bytes
+    ++ digest48Bytes
+
+def admissionValidSerializedStarkInputsBytes : List Byte :=
+  bincodeVecU8 [1, 0]
+    ++ bincodeVecU8 [1, 0]
     ++ u64le 0
     ++ [0]
     ++ u64le 0
@@ -138,9 +190,22 @@ def transactionProofWrapperPrefixBeforeBackend : List Byte :=
     ++ bincodeBytes (zeroBytes (maxOutputs * 48))
     ++ bincodeBalanceSlots defaultBalanceSlotAssetIds
 
+def driftedTopLevelNullifiersBytes : List Byte :=
+  bincodeBytes (repeated 48 0x4e ++ zeroBytes 48)
+
+def transactionProofWrapperPrefixWithTopLevelNullifierDriftBeforeBackend : List Byte :=
+  admissionValidTransactionPublicInputsBytes
+    ++ driftedTopLevelNullifiersBytes
+    ++ bincodeBytes (smallU64Bytes48 22 ++ zeroBytes 48)
+    ++ bincodeBalanceSlots defaultBalanceSlotAssetIds
+
 def transactionProofWrapperSuffixAfterBackend : List Byte :=
   bincodeVecU8 [1, 2, 3, 4]
     ++ bincodeOption (some serializedStarkInputsBytes)
+
+def admissionValidTransactionProofWrapperSuffixAfterBackend : List Byte :=
+  bincodeVecU8 [1, 2, 3, 4]
+    ++ bincodeOption (some admissionValidSerializedStarkInputsBytes)
 
 def transactionProofWrapperBytesWithBackendVariant
     (variant : Nat) : List Byte :=
@@ -150,6 +215,11 @@ def transactionProofWrapperBytesWithBackendVariant
 
 def canonicalDummyProofWrapperBytes : List Byte :=
   transactionProofWrapperBytesWithBackendVariant plonky3BackendVariant
+
+def topLevelNullifierDriftProofWrapperBytes : List Byte :=
+  transactionProofWrapperPrefixWithTopLevelNullifierDriftBeforeBackend
+    ++ bincodeEnumVariant plonky3BackendVariant
+    ++ admissionValidTransactionProofWrapperSuffixAfterBackend
 
 def trailingDummyProofWrapperBytes : List Byte :=
   canonicalDummyProofWrapperBytes ++ [0xaa, 0xbb]
@@ -211,6 +281,17 @@ def allCases : List ProofWrapperWireCase :=
   , malformedProofWrapper
   ]
 
+def topLevelNullifierDriftWireToAdmission : ProofWrapperWireAdmissionCase :=
+  { name := "top-level-nullifier-drift"
+    rawBytes := topLevelNullifierDriftProofWrapperBytes
+    canonicalBytes := topLevelNullifierDriftProofWrapperBytes
+    wireAccepts := true
+    admissionAccepts := false
+    admissionReject := some ProofWrapperWireAdmissionReject.nullifierVectorMismatch }
+
+def allWireToAdmissionCases : List ProofWrapperWireAdmissionCase :=
+  [ topLevelNullifierDriftWireToAdmission ]
+
 set_option maxRecDepth 200000 in
 theorem valid_dummy_proof_wrapper_accepts :
     proofWrapperWireAccepts validDummyProofWrapper = true := by
@@ -238,6 +319,12 @@ set_option maxRecDepth 200000 in
 theorem malformed_proof_wrapper_rejects :
     evaluateProofWrapperWireRejection malformedProofWrapper =
       some ProofWrapperWireReject.parserRejected := by
+  decide
+
+set_option maxRecDepth 200000 in
+theorem top_level_nullifier_drift_wire_accepts_admission_rejects :
+    proofWrapperWireAdmissionCaseRejectsAsExpected
+      topLevelNullifierDriftWireToAdmission = true := by
   decide
 
 end ProofWrapperWire

@@ -49,6 +49,15 @@ structure TxLeafSummary where
   proofBackend : Nat
 deriving DecidableEq, Repr
 
+structure TxLeafProjectionCountCase where
+  name : String
+  inputFlags : List Byte
+  outputFlags : List Byte
+  nullifierCount : Nat
+  commitmentCount : Nat
+  ciphertextHashCount : Nat
+deriving DecidableEq, Repr
+
 def leValue : List Byte -> Nat
   | [] => 0
   | byteValue :: rest => byte byteValue + 256 * leValue rest
@@ -197,6 +206,27 @@ def parseNativeTxLeafArtifactStrict (input : List Byte) : Option TxLeafSummary :
     some summary
   else
     none
+
+def activeBinaryFlagCount : List Byte -> Option Nat
+  | [] => some 0
+  | flag :: rest => do
+      let tail ← activeBinaryFlagCount rest
+      if flag = 0 then
+        some tail
+      else if flag = 1 then
+        some (tail + 1)
+      else
+        none
+
+def txLeafProjectionCountAccepts
+    (case : TxLeafProjectionCountCase) : Bool :=
+  match activeBinaryFlagCount case.inputFlags,
+      activeBinaryFlagCount case.outputFlags with
+  | some inputActive, some outputActive =>
+      inputActive == case.nullifierCount
+        && outputActive == case.commitmentCount
+        && outputActive == case.ciphertextHashCount
+  | _, _ => false
 
 structure TxLeafWireFields where
   version : Nat
@@ -418,6 +448,49 @@ def oversizedProofLenArtifact : List Byte :=
 def truncatedArtifact : List Byte :=
   validArtifact.take (validArtifact.length - 2)
 
+def validProjectionCounts : TxLeafProjectionCountCase := {
+  name := "active-counts-match",
+  inputFlags := [1, 0],
+  outputFlags := [1, 0],
+  nullifierCount := 1,
+  commitmentCount := 1,
+  ciphertextHashCount := 1
+}
+
+def inputCountMismatchProjectionCounts : TxLeafProjectionCountCase :=
+  { validProjectionCounts with
+    name := "input-active-count-mismatch",
+    nullifierCount := 2 }
+
+def outputCommitmentCountMismatchProjectionCounts : TxLeafProjectionCountCase :=
+  { validProjectionCounts with
+    name := "output-commitment-count-mismatch",
+    commitmentCount := 0 }
+
+def outputCiphertextCountMismatchProjectionCounts : TxLeafProjectionCountCase :=
+  { validProjectionCounts with
+    name := "output-ciphertext-count-mismatch",
+    ciphertextHashCount := 2 }
+
+def nonbinaryInputFlagProjectionCounts : TxLeafProjectionCountCase :=
+  { validProjectionCounts with
+    name := "nonbinary-input-flag-rejected",
+    inputFlags := [2, 0] }
+
+def nonbinaryOutputFlagProjectionCounts : TxLeafProjectionCountCase :=
+  { validProjectionCounts with
+    name := "nonbinary-output-flag-rejected",
+    outputFlags := [1, 2] }
+
+def allProjectionCountCases : List TxLeafProjectionCountCase :=
+  [ validProjectionCounts,
+    inputCountMismatchProjectionCounts,
+    outputCommitmentCountMismatchProjectionCounts,
+    outputCiphertextCountMismatchProjectionCounts,
+    nonbinaryInputFlagProjectionCounts,
+    nonbinaryOutputFlagProjectionCounts
+  ]
+
 theorem valid_artifact_parses :
     parseNativeTxLeafArtifact validArtifact = some validSummary := by
   set_option maxRecDepth 50000 in
@@ -506,6 +579,32 @@ theorem rejects_oversized_proof_len :
 theorem rejects_truncated_artifact :
     parseNativeTxLeafArtifact truncatedArtifact = none := by
   set_option maxRecDepth 50000 in
+  decide
+
+theorem valid_projection_counts_accept :
+    txLeafProjectionCountAccepts validProjectionCounts = true := by
+  decide
+
+theorem input_count_mismatch_projection_rejects :
+    txLeafProjectionCountAccepts inputCountMismatchProjectionCounts = false := by
+  decide
+
+theorem output_commitment_count_mismatch_projection_rejects :
+    txLeafProjectionCountAccepts
+      outputCommitmentCountMismatchProjectionCounts = false := by
+  decide
+
+theorem output_ciphertext_count_mismatch_projection_rejects :
+    txLeafProjectionCountAccepts
+      outputCiphertextCountMismatchProjectionCounts = false := by
+  decide
+
+theorem nonbinary_input_flag_projection_rejects :
+    txLeafProjectionCountAccepts nonbinaryInputFlagProjectionCounts = false := by
+  decide
+
+theorem nonbinary_output_flag_projection_rejects :
+    txLeafProjectionCountAccepts nonbinaryOutputFlagProjectionCounts = false := by
   decide
 
 end TxLeafArtifact

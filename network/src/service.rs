@@ -9,10 +9,11 @@ use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
-use tokio::sync::mpsc;
-use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, warn};
 
@@ -155,6 +156,8 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_INBOUND_HANDSHAKES: usize = 32;
 const ADDRESS_EXCHANGE_LIMIT: usize = 16;
 const ADDRESS_RATE_LIMIT: Duration = Duration::from_secs(5);
 const OPPORTUNISTIC_BATCH: usize = 4;
@@ -270,13 +273,31 @@ impl P2PService {
         let mut gossip_rx = self.gossip.subscribe();
         let mut heartbeat = interval(HEARTBEAT_INTERVAL);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let inbound_handshakes = Arc::new(Semaphore::new(MAX_INBOUND_HANDSHAKES));
 
         loop {
             tokio::select! {
                 // Accept incoming connections
                 Ok((socket, addr)) = listener.accept() => {
                     info!("incoming connection from {}", addr);
-                    self.spawn_accept(socket, addr, self.identity.clone(), cmd_tx.clone());
+                    match inbound_handshakes.clone().try_acquire_owned() {
+                        Ok(permit) => {
+                            self.spawn_accept(
+                                socket,
+                                addr,
+                                self.identity.clone(),
+                                cmd_tx.clone(),
+                                permit,
+                            );
+                        }
+                        Err(_) => {
+                            warn!(
+                                addr = %addr,
+                                limit = MAX_INBOUND_HANDSHAKES,
+                                "dropping inbound connection over handshake backlog cap"
+                            );
+                        }
+                    }
                 }
 
                 // Handle commands (NewPeer, Message, Disconnect)
@@ -301,6 +322,7 @@ impl P2PService {
                                 reachable: self
                                     .advertised_addrs
                                     .iter()
+                                    .take(ADDRESS_EXCHANGE_LIMIT)
                                     .copied()
                                     .map(CompactAddress::from)
                                     .collect(),
@@ -433,8 +455,10 @@ impl P2PService {
                 match TcpStream::connect(addr).await {
                     Ok(socket) => {
                         let mut connection = Connection::new(socket);
-                        match connection.handshake_initiator(&identity).await {
-                            Ok(peer_id) => {
+                        match timeout(HANDSHAKE_TIMEOUT, connection.handshake_initiator(&identity))
+                            .await
+                        {
+                            Ok(Ok(peer_id)) => {
                                 Self::run_peer_loop(
                                     connection,
                                     addr,
@@ -445,8 +469,11 @@ impl P2PService {
                                 .await;
                                 backoff = RECONNECT_BASE;
                             }
-                            Err(e) => {
+                            Ok(Err(e)) => {
                                 warn!("handshake failed with {}: {}", addr, e);
+                            }
+                            Err(_) => {
+                                warn!("handshake timed out with {}", addr);
                             }
                         }
                     }
@@ -466,15 +493,20 @@ impl P2PService {
         addr: SocketAddr,
         identity: PeerIdentity,
         cmd_tx: mpsc::Sender<P2PCommand>,
+        permit: OwnedSemaphorePermit,
     ) {
         tokio::spawn(async move {
             let mut connection = Connection::new(socket);
-            match connection.handshake_responder(&identity).await {
-                Ok(peer_id) => {
+            match timeout(HANDSHAKE_TIMEOUT, connection.handshake_responder(&identity)).await {
+                Ok(Ok(peer_id)) => {
+                    drop(permit);
                     Self::run_peer_loop(connection, addr, peer_id, cmd_tx, true).await;
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!("handshake failed with {}: {}", addr, e);
+                }
+                Err(_) => {
+                    warn!("handshake timed out with {}", addr);
                 }
             }
         });
@@ -550,7 +582,7 @@ impl P2PService {
                 if self.rate_limited(&sender) {
                     return;
                 }
-                let limit = limit as usize;
+                let limit = (limit as usize).min(ADDRESS_EXCHANGE_LIMIT);
                 if let Some(addr) = self.peer_manager.peer_address(&sender) {
                     self.share_addresses_with_peer(sender, addr, limit).await;
                 }
@@ -566,6 +598,7 @@ impl P2PService {
                 let addrs: Vec<_> = addrs
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
+                    .filter(|addr| is_dialable_addr(*addr))
                     .collect();
                 self.peer_manager.record_addresses(sender, addrs.clone());
                 if self.persist_learned_addresses(addrs.clone()).is_ok() {
@@ -573,9 +606,17 @@ impl P2PService {
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
+                if reachable.len() > ADDRESS_EXCHANGE_LIMIT {
+                    warn!(
+                        count = reachable.len(),
+                        "received relay registration beyond allowed limit"
+                    );
+                    return;
+                }
                 let addrs: Vec<_> = reachable
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
+                    .filter(|addr| is_dialable_addr(*addr))
                     .collect();
                 self.peer_manager.record_addresses(sender, addrs.clone());
                 if let Err(err) = self.persist_learned_addresses(addrs) {
@@ -834,11 +875,14 @@ impl P2PService {
             match TcpStream::connect(addr).await {
                 Ok(socket) => {
                     let mut connection = Connection::new(socket);
-                    match connection.handshake_initiator(&identity).await {
-                        Ok(peer_id) => {
+                    match timeout(HANDSHAKE_TIMEOUT, connection.handshake_initiator(&identity))
+                        .await
+                    {
+                        Ok(Ok(peer_id)) => {
                             Self::run_peer_loop(connection, addr, peer_id, cmd_tx, false).await;
                         }
-                        Err(e) => warn!("handshake failed with {}: {}", addr, e),
+                        Ok(Err(e)) => warn!("handshake failed with {}: {}", addr, e),
+                        Err(_) => warn!("handshake timed out with {}", addr),
                     }
                 }
                 Err(e) => warn!("opportunistic dial to {} failed: {}", addr, e),

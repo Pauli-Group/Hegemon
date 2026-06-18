@@ -365,6 +365,104 @@ theorem native_metadata_decode_facts
           legacyRejected
   }
 
+inductive NativeMetadataBincodeBudgetReject where
+  | metadataBytesOverLimit
+  | actionCountOverLimit
+  | actionPayloadOverLimit
+  | actionPayloadBytesOverLimit
+  | minerPublicKeyOverLimit
+  | minerSignatureOverLimit
+deriving DecidableEq, Repr
+
+structure NativeMetadataBincodeBudgetInput where
+  metadataBytes : Nat
+  maxMetadataBytes : Nat
+  actionCount : Nat
+  maxActionCount : Nat
+  largestActionPayloadBytes : Nat
+  maxActionPayloadBytes : Nat
+  actionPayloadBytesTotal : Nat
+  maxActionPayloadBytesTotal : Nat
+  minerPublicKeyBytes : Nat
+  maxMinerPublicKeyBytes : Nat
+  minerSignatureBytes : Nat
+  maxMinerSignatureBytes : Nat
+deriving DecidableEq, Repr
+
+def evaluateNativeMetadataBincodeBudgetRejection
+    (input : NativeMetadataBincodeBudgetInput) :
+    Option NativeMetadataBincodeBudgetReject :=
+  if input.metadataBytes > input.maxMetadataBytes then
+    some NativeMetadataBincodeBudgetReject.metadataBytesOverLimit
+  else if input.actionCount > input.maxActionCount then
+    some NativeMetadataBincodeBudgetReject.actionCountOverLimit
+  else if input.largestActionPayloadBytes > input.maxActionPayloadBytes then
+    some NativeMetadataBincodeBudgetReject.actionPayloadOverLimit
+  else if input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal then
+    some NativeMetadataBincodeBudgetReject.actionPayloadBytesOverLimit
+  else if input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes then
+    some NativeMetadataBincodeBudgetReject.minerPublicKeyOverLimit
+  else if input.minerSignatureBytes > input.maxMinerSignatureBytes then
+    some NativeMetadataBincodeBudgetReject.minerSignatureOverLimit
+  else
+    none
+
+def nativeMetadataBincodeBudgetAccepts
+    (input : NativeMetadataBincodeBudgetInput) : Bool :=
+  evaluateNativeMetadataBincodeBudgetRejection input = none
+
+structure AcceptedNativeMetadataBincodeBudgetFacts
+    (input : NativeMetadataBincodeBudgetInput) : Prop where
+  metadataBytesNotOverLimit :
+    ¬ input.metadataBytes > input.maxMetadataBytes
+  actionCountNotOverLimit :
+    ¬ input.actionCount > input.maxActionCount
+  largestActionPayloadNotOverLimit :
+    ¬ input.largestActionPayloadBytes > input.maxActionPayloadBytes
+  actionPayloadBytesTotalNotOverLimit :
+    ¬ input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal
+  minerPublicKeyNotOverLimit :
+    ¬ input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes
+  minerSignatureNotOverLimit :
+    ¬ input.minerSignatureBytes > input.maxMinerSignatureBytes
+
+theorem native_metadata_bincode_budget_acceptance_excludes_overruns
+    {input : NativeMetadataBincodeBudgetInput}
+    (accepted : nativeMetadataBincodeBudgetAccepts input = true) :
+    AcceptedNativeMetadataBincodeBudgetFacts input := by
+  unfold nativeMetadataBincodeBudgetAccepts at accepted
+  unfold evaluateNativeMetadataBincodeBudgetRejection at accepted
+  by_cases hMetadata : input.metadataBytes > input.maxMetadataBytes
+  · simp [hMetadata] at accepted
+  · simp [hMetadata] at accepted
+    by_cases hActionCount : input.actionCount > input.maxActionCount
+    · simp [hActionCount] at accepted
+    · simp [hActionCount] at accepted
+      by_cases hActionPayload :
+          input.largestActionPayloadBytes > input.maxActionPayloadBytes
+      · simp [hActionPayload] at accepted
+      · simp [hActionPayload] at accepted
+        by_cases hActionPayloadTotal :
+            input.actionPayloadBytesTotal > input.maxActionPayloadBytesTotal
+        · simp [hActionPayloadTotal] at accepted
+        · simp [hActionPayloadTotal] at accepted
+          by_cases hMinerPublicKey :
+              input.minerPublicKeyBytes > input.maxMinerPublicKeyBytes
+          · simp [hMinerPublicKey] at accepted
+          · simp [hMinerPublicKey] at accepted
+            by_cases hMinerSignature :
+                input.minerSignatureBytes > input.maxMinerSignatureBytes
+            · exfalso
+              exact (Nat.not_lt_of_ge accepted) hMinerSignature
+            · exact {
+                metadataBytesNotOverLimit := hMetadata,
+                actionCountNotOverLimit := hActionCount,
+                largestActionPayloadNotOverLimit := hActionPayload,
+                actionPayloadBytesTotalNotOverLimit := hActionPayloadTotal,
+                minerPublicKeyNotOverLimit := hMinerPublicKey,
+                minerSignatureNotOverLimit := hMinerSignature
+              }
+
 structure CanonicalDecodeNonMalleabilityFacts
     (syncInput : SyncDecodeInput)
     (exactInput : ExactDecodeInput)
@@ -519,6 +617,29 @@ def trailingNativeMetadataLegacy : NativeMetadataDecodeInput :=
     legacyExact := { validExactDecode with consumedAllBytes := false }
   }
 
+def productionMaxNativeMetadataBytes : Nat := 68477440
+def productionMaxNativeBlockActions : Nat := 10000
+def productionMaxNativeBlockActionPayloadBytes : Nat := 2113536
+def productionMaxNativeBlockActionBytes : Nat := 67108864
+def productionMaxMlDsaPublicKeyBytes : Nat := 1952
+def productionMaxMlDsaSignatureBytes : Nat := 3309
+
+def validNativeMetadataBincodeBudget : NativeMetadataBincodeBudgetInput :=
+  {
+    metadataBytes := 668,
+    maxMetadataBytes := productionMaxNativeMetadataBytes,
+    actionCount := 0,
+    maxActionCount := productionMaxNativeBlockActions,
+    largestActionPayloadBytes := 0,
+    maxActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
+    actionPayloadBytesTotal := 0,
+    maxActionPayloadBytesTotal := productionMaxNativeBlockActionBytes,
+    minerPublicKeyBytes := 0,
+    maxMinerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes,
+    minerSignatureBytes := 0,
+    maxMinerSignatureBytes := productionMaxMlDsaSignatureBytes
+  }
+
 theorem valid_sync_accepts :
     evaluateSyncDecodeRejection validSync = none := by
   rfl
@@ -594,6 +715,57 @@ theorem trailing_native_metadata_legacy_rejects :
     evaluateNativeMetadataDecode trailingNativeMetadataLegacy =
       Except.error NativeMetadataDecodeReject.currentAndLegacyRejected := by
   rfl
+
+theorem valid_native_metadata_bincode_budget_accepts :
+    evaluateNativeMetadataBincodeBudgetRejection
+      validNativeMetadataBincodeBudget = none := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_metadata_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        metadataBytes := productionMaxNativeMetadataBytes + 1 } =
+      some NativeMetadataBincodeBudgetReject.metadataBytesOverLimit := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_action_count_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        actionCount := productionMaxNativeBlockActions + 1 } =
+      some NativeMetadataBincodeBudgetReject.actionCountOverLimit := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_action_payload_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        actionCount := 1,
+        largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes + 1,
+        actionPayloadBytesTotal := productionMaxNativeBlockActionPayloadBytes + 1 } =
+      some NativeMetadataBincodeBudgetReject.actionPayloadOverLimit := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_action_payload_total_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        actionCount := productionMaxNativeBlockActions,
+        largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
+        actionPayloadBytesTotal := productionMaxNativeBlockActionBytes + 1 } =
+      some NativeMetadataBincodeBudgetReject.actionPayloadBytesOverLimit := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_miner_public_key_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        minerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes + 1 } =
+      some NativeMetadataBincodeBudgetReject.minerPublicKeyOverLimit := by
+  native_decide
+
+theorem native_metadata_bincode_budget_rejects_miner_signature_overrun :
+    evaluateNativeMetadataBincodeBudgetRejection
+      { validNativeMetadataBincodeBudget with
+        minerSignatureBytes := productionMaxMlDsaSignatureBytes + 1 } =
+      some NativeMetadataBincodeBudgetReject.minerSignatureOverLimit := by
+  native_decide
 
 end CodecAdmission
 end Native

@@ -10,6 +10,7 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use bincode::Options;
 use clap::Parser;
 use codec::{Decode, Encode};
 use consensus::{
@@ -122,6 +123,8 @@ const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_BLOCK_ACTIONS: usize = MAX_NATIVE_MEMPOOL_ACTIONS;
 const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize = MAX_NATIVE_RPC_ACTION_BYTES + 16 * 1024;
 const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+const MAX_NATIVE_BLOCK_META_BYTES: usize =
+    MAX_NATIVE_BLOCK_ACTION_BYTES + (MAX_NATIVE_BLOCK_ACTIONS * 32) + 1024 * 1024;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
@@ -1777,6 +1780,7 @@ impl NativeTxLeafActionBindingAdmissionRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeCandidateArtifactBindingAdmissionInput {
     da_root_matches: bool,
+    da_chunk_count_matches: bool,
     tx_statements_commitment_matches: bool,
     recursive_state_root_matches: bool,
 }
@@ -1784,6 +1788,7 @@ struct NativeCandidateArtifactBindingAdmissionInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeCandidateArtifactBindingAdmissionRejection {
     DaRootMismatch,
+    DaChunkCountMismatch,
     TxStatementCommitmentMismatch,
     RecursiveStateRootMismatch,
 }
@@ -1793,6 +1798,7 @@ impl NativeCandidateArtifactBindingAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
             Self::DaRootMismatch => "da_root_mismatch",
+            Self::DaChunkCountMismatch => "da_chunk_count_mismatch",
             Self::TxStatementCommitmentMismatch => "tx_statement_commitment_mismatch",
             Self::RecursiveStateRootMismatch => "recursive_state_root_mismatch",
         }
@@ -2005,6 +2011,7 @@ enum NativeStorageDurabilityOperation {
     StartupStagedCiphertextRepair,
     StartupStagedProofRepair,
     StartupPendingActionRepair,
+    ShutdownFlush,
 }
 
 impl NativeStorageDurabilityOperation {
@@ -2022,6 +2029,7 @@ impl NativeStorageDurabilityOperation {
             Self::StartupStagedCiphertextRepair => "startup_staged_ciphertext_repair",
             Self::StartupStagedProofRepair => "startup_staged_proof_repair",
             Self::StartupPendingActionRepair => "startup_pending_action_repair",
+            Self::ShutdownFlush => "shutdown_flush",
         }
     }
 
@@ -2040,6 +2048,7 @@ impl NativeStorageDurabilityOperation {
             "startup_staged_ciphertext_repair" => Some(Self::StartupStagedCiphertextRepair),
             "startup_staged_proof_repair" => Some(Self::StartupStagedProofRepair),
             "startup_pending_action_repair" => Some(Self::StartupPendingActionRepair),
+            "shutdown_flush" => Some(Self::ShutdownFlush),
             _ => None,
         }
     }
@@ -2645,10 +2654,21 @@ pub struct NativeNode {
 
 impl NativeNode {
     pub fn open(config: NativeConfig) -> Result<Arc<Self>> {
+        let startup_started = Instant::now();
+        info!(
+            base_path = %config.base_path.display(),
+            db_path = %config.db_path.display(),
+            "opening native Hegemon node storage"
+        );
         fs::create_dir_all(&config.base_path)
             .with_context(|| format!("create native base path {}", config.base_path.display()))?;
+        let db_open_started = Instant::now();
         let db = sled::open(&config.db_path)
             .with_context(|| format!("open native sled db {}", config.db_path.display()))?;
+        info!(
+            db_open_elapsed_ms = db_open_started.elapsed().as_millis(),
+            "native sled database opened"
+        );
         let meta_tree = db.open_tree("meta")?;
         let height_tree = db.open_tree("block_hash_by_height")?;
         let block_tree = db.open_tree("block_meta_by_hash")?;
@@ -2691,6 +2711,10 @@ impl NativeNode {
             staged_proofs,
         )?;
         let miner_identity = load_native_miner_identity(&config)?;
+        info!(
+            startup_reload_elapsed_ms = startup_started.elapsed().as_millis(),
+            "native Hegemon node storage reload completed"
+        );
 
         let node = Arc::new(Self {
             config,
@@ -3136,6 +3160,7 @@ impl NativeNode {
             "native mined block commit",
             NativeStorageDurabilityOperation::MinedBlockCommit,
         )?;
+        self.verify_persisted_canonical_head(&meta, "native mined block commit")?;
         self.forget_prepared_mining_actions(work);
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
@@ -3504,6 +3529,15 @@ impl NativeNode {
         for hash in &new_action_hashes {
             pending.remove(hash);
         }
+        new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
+        new_state.staged_proofs = state.staged_proofs.clone();
+        let mut staged_ciphertext_removals = Vec::new();
+        for meta in new_chain.iter().skip(1) {
+            for action in decode_block_actions(meta)? {
+                staged_ciphertext_removals.extend(action.ciphertext_hashes.iter().copied());
+                clear_staged_ciphertext_markers(&mut new_state, &action);
+            }
+        }
         pending = revalidate_reorg_pending_actions(
             &new_state,
             pending,
@@ -3520,20 +3554,15 @@ impl NativeNode {
             &height_entries,
             &pending_entries,
             &new_state.best,
+            &staged_ciphertext_removals,
         )?;
         self.flush_native_durability_barrier(
             "native canonical reorg commit",
             NativeStorageDurabilityOperation::CanonicalReorgCommit,
         )?;
+        self.verify_persisted_canonical_head(&new_state.best, "native canonical reorg commit")?;
 
-        new_state.staged_ciphertexts = state.staged_ciphertexts.clone();
-        for meta in new_chain.iter().skip(1) {
-            for action in decode_block_actions(meta)? {
-                clear_staged_ciphertext_markers(&mut new_state, &action);
-            }
-        }
         new_state.pending_actions = pending;
-        new_state.staged_proofs = state.staged_proofs.clone();
         publish_reorganized_state(state, new_state);
         Ok(())
     }
@@ -3545,6 +3574,7 @@ impl NativeNode {
         height_entries: &[(u64, [u8; 32])],
         pending_entries: &[([u8; 32], Vec<u8>)],
         best: &NativeBlockMeta,
+        staged_ciphertext_removals: &[[u8; 48]],
     ) -> Result<()> {
         let height_keys = collect_tree_keys(&self.height_tree, "native height")?;
         let commitment_keys = collect_tree_keys(&self.commitment_tree, "native commitment")?;
@@ -3562,6 +3592,7 @@ impl NativeNode {
             block_entries,
             height_entries,
             pending_entries,
+            staged_ciphertext_removals.len(),
         ))
         .map_err(|rejection| {
             native_atomic_commit_manifest_admission_error(
@@ -3586,6 +3617,7 @@ impl NativeNode {
             &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
             &self.ciphertext_archive_tree,
+            &self.da_ciphertext_tree,
             &self.action_tree,
         )
             .transaction(
@@ -3598,6 +3630,7 @@ impl NativeNode {
                     bridge_inbound_tree,
                     ciphertext_index_tree,
                     ciphertext_archive_tree,
+                    da_ciphertext_tree,
                     action_tree,
                 )| {
                     for key in &height_keys {
@@ -3644,6 +3677,9 @@ impl NativeNode {
                     }
                     for (hash, value) in &ciphertext_index_entries {
                         ciphertext_index_tree.insert(hash.to_vec(), value.clone())?;
+                    }
+                    for hash in staged_ciphertext_removals {
+                        da_ciphertext_tree.remove(hash.to_vec())?;
                     }
                     for (tx_hash, encoded) in pending_entries {
                         action_tree.insert(tx_hash.to_vec(), encoded.clone())?;
@@ -3767,6 +3803,62 @@ impl NativeNode {
             ));
         }
 
+        let mut commitment_entries = Vec::new();
+        let mut ciphertext_archive_entries = Vec::new();
+        let mut nullifier_entries = Vec::new();
+        let mut bridge_replay_entries = Vec::new();
+        let mut ciphertext_index_entries = Vec::new();
+        let mut pending_action_removals = Vec::new();
+        let mut staged_ciphertext_removals = Vec::new();
+
+        for (action, effect) in actions.iter().zip(planned.iter()) {
+            if action.ciphertext_hashes.len() != action.ciphertext_sizes.len() {
+                return Err(anyhow!(
+                    "native mined block ciphertext metadata count mismatch: hashes={} sizes={}",
+                    action.ciphertext_hashes.len(),
+                    action.ciphertext_sizes.len()
+                ));
+            }
+
+            for (offset, commitment) in action.commitments.iter().enumerate() {
+                let offset = u64::try_from(offset)
+                    .map_err(|_| anyhow!("native mined block commitment offset overflow"))?;
+                let index = effect
+                    .commitment_start
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow!("native mined block commitment index overflow"))?;
+                commitment_entries.push((index, *commitment));
+            }
+            for (offset, bytes) in effect.ciphertexts.iter().enumerate() {
+                let offset = u64::try_from(offset)
+                    .map_err(|_| anyhow!("native mined block ciphertext offset overflow"))?;
+                let index = effect
+                    .commitment_start
+                    .checked_add(offset)
+                    .ok_or_else(|| anyhow!("native mined block ciphertext index overflow"))?;
+                ciphertext_archive_entries.push((index, bytes.clone()));
+            }
+
+            nullifier_entries.extend(action.nullifiers.iter().copied());
+            if let Some(replay_key) = effect.replay_key {
+                bridge_replay_entries.push(replay_key);
+            }
+
+            for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+                let size = action.ciphertext_sizes[idx];
+                let idx = u64::try_from(idx)
+                    .map_err(|_| anyhow!("native mined block ciphertext row offset overflow"))?;
+                let mut value = Vec::with_capacity(32 + 4 + 8);
+                value.extend_from_slice(&action.tx_hash);
+                value.extend_from_slice(&size.to_le_bytes());
+                value.extend_from_slice(&idx.to_le_bytes());
+                ciphertext_index_entries.push((*hash, value));
+            }
+
+            pending_action_removals.push(action.tx_hash);
+            staged_ciphertext_removals.extend(action.ciphertext_hashes.iter().copied());
+        }
+
         let block_record = bincode::serialize(meta)?;
         let best_record = block_record.clone();
         let height_key = height_key(meta.height);
@@ -3799,48 +3891,28 @@ impl NativeNode {
                     height_tree.insert(height_key.to_vec(), meta.hash.to_vec())?;
                     meta_tree.insert(META_BEST_KEY.to_vec(), best_record.clone())?;
 
-                    for (action, effect) in actions.iter().zip(planned.iter()) {
-                        for (offset, commitment) in action.commitments.iter().enumerate() {
-                            let index = effect
-                                .commitment_start
-                                .checked_add(offset as u64)
-                                .expect("planned commitment index arithmetic must not overflow");
-                            commitment_tree
-                                .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
-                        }
-                        for (offset, bytes) in effect.ciphertexts.iter().enumerate() {
-                            let index = effect
-                                .commitment_start
-                                .checked_add(offset as u64)
-                                .expect("planned ciphertext index arithmetic must not overflow");
-                            ciphertext_archive_tree
-                                .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
-                        }
-
-                        for nullifier in &action.nullifiers {
-                            nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
-                        }
-                        if let Some(replay_key) = effect.replay_key {
-                            bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
-                        }
-
-                        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
-                            let size = action
-                                .ciphertext_sizes
-                                .get(idx)
-                                .copied()
-                                .unwrap_or_default();
-                            let mut value = Vec::with_capacity(32 + 4 + 8);
-                            value.extend_from_slice(&action.tx_hash);
-                            value.extend_from_slice(&size.to_le_bytes());
-                            value.extend_from_slice(&(idx as u64).to_le_bytes());
-                            ciphertext_index_tree.insert(hash.to_vec(), value)?;
-                        }
-
-                        action_tree.remove(action.tx_hash.to_vec())?;
-                        for hash in &action.ciphertext_hashes {
-                            da_ciphertext_tree.remove(hash.to_vec())?;
-                        }
+                    for (index, commitment) in &commitment_entries {
+                        commitment_tree
+                            .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
+                    }
+                    for (index, bytes) in &ciphertext_archive_entries {
+                        ciphertext_archive_tree
+                            .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
+                    }
+                    for nullifier in &nullifier_entries {
+                        nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
+                    }
+                    for replay_key in &bridge_replay_entries {
+                        bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
+                    }
+                    for (hash, value) in &ciphertext_index_entries {
+                        ciphertext_index_tree.insert(hash.to_vec(), value.clone())?;
+                    }
+                    for hash in &pending_action_removals {
+                        action_tree.remove(hash.to_vec())?;
+                    }
+                    for hash in &staged_ciphertext_removals {
+                        da_ciphertext_tree.remove(hash.to_vec())?;
                     }
                     Ok(())
                 },
@@ -3960,6 +4032,53 @@ impl NativeNode {
                 Ok(hash)
             })
             .transpose()
+    }
+
+    fn verify_persisted_canonical_head(&self, meta: &NativeBlockMeta, context: &str) -> Result<()> {
+        let best_bytes = self
+            .meta_tree
+            .get(META_BEST_KEY)?
+            .ok_or_else(|| anyhow!("{context} missing persisted best pointer"))?;
+        let persisted_best = bincode_deserialize_native_block_meta_exact(
+            &best_bytes,
+            &format!("{context} persisted best metadata"),
+        )?;
+        if &persisted_best != meta {
+            return Err(anyhow!(
+                "{context} persisted best pointer mismatch: expected height {} hash {}, got height {} hash {}",
+                meta.height,
+                hex32(&meta.hash),
+                persisted_best.height,
+                hex32(&persisted_best.hash)
+            ));
+        }
+
+        let persisted_height_hash = self
+            .hash_by_height(meta.height)?
+            .ok_or_else(|| anyhow!("{context} missing canonical height index {}", meta.height))?;
+        if persisted_height_hash != meta.hash {
+            return Err(anyhow!(
+                "{context} canonical height {} points to {}, expected {}",
+                meta.height,
+                hex32(&persisted_height_hash),
+                hex32(&meta.hash)
+            ));
+        }
+
+        let persisted_block = self.header_by_hash(&meta.hash)?.ok_or_else(|| {
+            anyhow!(
+                "{context} missing persisted block record for {}",
+                hex32(&meta.hash)
+            )
+        })?;
+        if &persisted_block != meta {
+            return Err(anyhow!(
+                "{context} persisted block record mismatch at height {} ({})",
+                meta.height,
+                hex32(&meta.hash)
+            ));
+        }
+        Ok(())
     }
 
     fn best_meta(&self) -> NativeBlockMeta {
@@ -4205,6 +4324,7 @@ impl NativeNode {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
         };
+        let mut consumed_staged_proof: Option<([u8; 64], Vec<u8>)> = None;
         let nullifiers = if transfer_route {
             request
                 .new_nullifiers
@@ -4281,6 +4401,7 @@ impl NativeNode {
                         .get(&proof_key)
                         .cloned()
                         .ok_or_else(|| anyhow!("missing staged proof for {proof_key}"))?;
+                    consumed_staged_proof = Some((args.binding_hash, proof.clone()));
                     args.proof = proof;
                     args.encode()
                 } else {
@@ -4380,12 +4501,42 @@ impl NativeNode {
                 return Err(anyhow!("duplicate semantic pending action"));
             }
             validate_pending_action_against_mempool_state(&state, &pending)?;
-            self.action_tree
-                .insert(pending.tx_hash.as_slice(), pending.encode())?;
+            if let Some((binding_hash, proof)) = &consumed_staged_proof {
+                let proof_key = hex64(binding_hash);
+                match state.staged_proofs.get(&proof_key) {
+                    Some(current) if current == proof => {}
+                    Some(_) => {
+                        return Err(anyhow!(
+                            "staged proof changed before native pending action stage"
+                        ));
+                    }
+                    None => {
+                        return Err(anyhow!(
+                            "staged proof missing before native pending action stage"
+                        ));
+                    }
+                }
+            }
+            let pending_encoded = pending.encode();
+            let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+                (&self.action_tree, &self.da_proof_tree).transaction(
+                    |(action_tree, da_proof_tree)| {
+                        action_tree.insert(pending.tx_hash.as_slice(), pending_encoded.clone())?;
+                        if let Some((binding_hash, _)) = &consumed_staged_proof {
+                            da_proof_tree.remove(binding_hash.to_vec())?;
+                        }
+                        Ok(())
+                    },
+                );
+            stage_result
+                .map_err(|err| anyhow!("atomic native pending action stage failed: {err}"))?;
             self.flush_native_durability_barrier(
                 "native pending action stage",
                 NativeStorageDurabilityOperation::PendingActionStage,
             )?;
+            if let Some((binding_hash, _)) = &consumed_staged_proof {
+                state.staged_proofs.remove(&hex64(binding_hash));
+            }
             state
                 .pending_actions
                 .insert(pending.tx_hash, pending.clone());
@@ -4422,6 +4573,8 @@ impl NativeNode {
         let mut results = Vec::with_capacity(ciphertexts.len());
         let mut state = self.state.write();
         let mut staged_ciphertexts = state.staged_ciphertexts.clone();
+        let mut prepared_ciphertexts: Vec<([u8; 48], Vec<u8>, u32)> =
+            Vec::with_capacity(ciphertexts.len());
         for ciphertext in ciphertexts {
             let raw =
                 parse_bytes_value(ciphertext, MAX_CIPHERTEXT_BYTES, "ciphertext upload item")?;
@@ -4443,13 +4596,22 @@ impl NativeNode {
             )
             .map_err(native_sidecar_upload_admission_error)?;
             let size = u32::try_from(raw.len()).unwrap_or(u32::MAX);
-            self.da_ciphertext_tree.insert(hash.as_slice(), raw)?;
+            prepared_ciphertexts.push((hash, raw, size));
             staged_ciphertexts.insert(hash_hex.clone(), size);
             results.push(json!({
                 "hash": hash_hex,
                 "size": size,
             }));
         }
+        let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+            self.da_ciphertext_tree.transaction(|da_ciphertext_tree| {
+                for (hash, raw, _) in &prepared_ciphertexts {
+                    da_ciphertext_tree.insert(hash.to_vec(), raw.clone())?;
+                }
+                Ok(())
+            });
+        stage_result
+            .map_err(|err| anyhow!("atomic native staged ciphertext upload failed: {err}"))?;
         self.flush_native_durability_barrier(
             "native staged ciphertext upload",
             NativeStorageDurabilityOperation::CiphertextSidecarStage,
@@ -4471,6 +4633,7 @@ impl NativeNode {
         let mut results = Vec::with_capacity(proofs.len());
         let mut state = self.state.write();
         let mut staged_proofs = state.staged_proofs.clone();
+        let mut prepared_proofs: Vec<([u8; 64], Vec<u8>)> = Vec::with_capacity(proofs.len());
         for item in proofs {
             let binding_hash_value = item.get("binding_hash").and_then(Value::as_str);
             let binding_hash_bytes = binding_hash_value.and_then(parse_hex64);
@@ -4515,8 +4678,7 @@ impl NativeNode {
             })
             .map_err(native_sidecar_upload_admission_error)?;
             let size = u32::try_from(proof.len()).unwrap_or(u32::MAX);
-            self.da_proof_tree
-                .insert(binding_hash_bytes.as_slice(), proof.as_slice())?;
+            prepared_proofs.push((binding_hash_bytes, proof.clone()));
             staged_proofs.insert(binding_hash_key.clone(), proof);
             results.push(json!({
                 "binding_hash": binding_hash_key,
@@ -4524,6 +4686,14 @@ impl NativeNode {
                 "size": size,
             }));
         }
+        let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+            self.da_proof_tree.transaction(|da_proof_tree| {
+                for (binding_hash, proof) in &prepared_proofs {
+                    da_proof_tree.insert(binding_hash.to_vec(), proof.clone())?;
+                }
+                Ok(())
+            });
+        stage_result.map_err(|err| anyhow!("atomic native staged proof upload failed: {err}"))?;
         self.flush_native_durability_barrier(
             "native staged proof upload",
             NativeStorageDurabilityOperation::ProofSidecarStage,
@@ -10425,7 +10595,9 @@ fn expected_atomic_staged_ciphertext_removals(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> usize {
     match input.kind {
-        NativeAtomicCommitKind::MinedBlockCommit => input.source_staged_ciphertext_removal_count,
+        NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::CanonicalReorgCommit => {
+            input.source_staged_ciphertext_removal_count
+        }
         _ => 0,
     }
 }
@@ -10534,6 +10706,7 @@ fn native_reorg_commit_manifest(
     block_entries: &[([u8; 32], Vec<u8>)],
     height_entries: &[(u64, [u8; 32])],
     pending_entries: &[([u8; 32], Vec<u8>)],
+    staged_ciphertext_removal_count: usize,
 ) -> NativeAtomicCommitManifestAdmissionInput {
     NativeAtomicCommitManifestAdmissionInput {
         kind: NativeAtomicCommitKind::CanonicalReorgCommit,
@@ -10547,7 +10720,7 @@ fn native_reorg_commit_manifest(
         source_bridge_replay_count: canonical_index_plan.bridge_replay_entries.len(),
         source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
         source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
-        source_staged_ciphertext_removal_count: 0,
+        source_staged_ciphertext_removal_count: staged_ciphertext_removal_count,
         block_record_writes: block_entries.len(),
         height_index_writes: height_entries.len(),
         best_pointer_writes: 1,
@@ -10560,7 +10733,7 @@ fn native_reorg_commit_manifest(
         bridge_replay_writes: canonical_index_plan.bridge_replay_entries.len(),
         ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
         ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
-        staged_ciphertext_removals: 0,
+        staged_ciphertext_removals: staged_ciphertext_removal_count,
     }
 }
 
@@ -11399,6 +11572,8 @@ fn apply_planned_actions_to_memory(
         actions,
         planned,
     )?;
+    let mut next_commitment_tree = state.commitment_tree.clone();
+    let mut planned_commitments = Vec::new();
     for (action, effect) in actions.iter().zip(planned.iter()) {
         for (offset, commitment) in action.commitments.iter().enumerate() {
             let offset = u64::try_from(offset)
@@ -11407,22 +11582,25 @@ fn apply_planned_actions_to_memory(
                 .commitment_start
                 .checked_add(offset)
                 .ok_or_else(|| anyhow!("native memory commitment index overflow"))?;
-            if expected_index != leaf_cursor || expected_index != state.commitment_tree.leaf_count()
-            {
+            if expected_index != leaf_cursor {
                 return Err(anyhow!(
                     "native memory action plan drift: expected leaf {} observed {}",
                     expected_index,
-                    state.commitment_tree.leaf_count()
+                    leaf_cursor
                 ));
             }
-            state
-                .commitment_tree
-                .append(*commitment)
-                .map_err(|err| anyhow!("append native commitment failed: {err}"))?;
+            planned_commitments.push(*commitment);
             leaf_cursor = leaf_cursor
                 .checked_add(1)
                 .ok_or_else(|| anyhow!("native memory commitment leaf overflow"))?;
         }
+    }
+    next_commitment_tree
+        .extend(planned_commitments)
+        .map_err(|err| anyhow!("append native commitment batch failed: {err}"))?;
+    state.commitment_tree = next_commitment_tree;
+
+    for (action, effect) in actions.iter().zip(planned.iter()) {
         for nullifier in &action.nullifiers {
             state.nullifiers.insert(*nullifier);
         }
@@ -12169,6 +12347,8 @@ fn evaluate_native_candidate_artifact_binding_admission(
 ) -> Result<(), NativeCandidateArtifactBindingAdmissionRejection> {
     if !input.da_root_matches {
         Err(NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch)
+    } else if !input.da_chunk_count_matches {
+        Err(NativeCandidateArtifactBindingAdmissionRejection::DaChunkCountMismatch)
     } else if !input.tx_statements_commitment_matches {
         Err(NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch)
     } else if !input.recursive_state_root_matches {
@@ -12184,6 +12364,9 @@ fn native_candidate_artifact_binding_admission_error(
     match rejection {
         NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch => {
             anyhow!("candidate artifact DA root mismatch")
+        }
+        NativeCandidateArtifactBindingAdmissionRejection::DaChunkCountMismatch => {
+            anyhow!("candidate artifact DA chunk count mismatch")
         }
         NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch => {
             anyhow!("candidate artifact tx statement commitment mismatch")
@@ -12253,11 +12436,15 @@ fn verify_native_block_artifacts_locked(
     }
 
     let da_params = native_da_params();
-    let computed_da_root = consensus::da_root(&transactions, da_params)
-        .map_err(|err| anyhow!("native block DA root failed: {err}"))?;
+    let da_encoding = consensus::encode_da_blob(&transactions, da_params)
+        .map_err(|err| anyhow!("native block DA encoding failed: {err}"))?;
+    let computed_da_root = da_encoding.root();
+    let computed_da_chunk_count = u32::try_from(da_encoding.chunks().len())
+        .map_err(|_| anyhow!("native block DA chunk count exceeds u32"))?;
     if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
         NativeCandidateArtifactBindingAdmissionInput {
             da_root_matches: computed_da_root == artifact.da_root,
+            da_chunk_count_matches: computed_da_chunk_count == artifact.da_chunk_count,
             tx_statements_commitment_matches: true,
             recursive_state_root_matches: true,
         },
@@ -12272,6 +12459,7 @@ fn verify_native_block_artifacts_locked(
     if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
         NativeCandidateArtifactBindingAdmissionInput {
             da_root_matches: true,
+            da_chunk_count_matches: true,
             tx_statements_commitment_matches: tx_statements_commitment
                 == artifact.tx_statements_commitment,
             recursive_state_root_matches: true,
@@ -12355,6 +12543,7 @@ fn verify_native_block_artifacts_locked(
     if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
         NativeCandidateArtifactBindingAdmissionInput {
             da_root_matches: true,
+            da_chunk_count_matches: true,
             tx_statements_commitment_matches: true,
             recursive_state_root_matches: verified_tree.root() == expected_tree.root(),
         },
@@ -13412,15 +13601,81 @@ fn bincode_deserialize_exact<T: DeserializeOwned + Serialize>(
     Ok(value)
 }
 
+fn bincode_deserialize_exact_with_limit<T: DeserializeOwned + Serialize>(
+    bytes: &[u8],
+    label: &str,
+    max_bytes: usize,
+) -> Result<T> {
+    if bytes.len() > max_bytes {
+        return Err(anyhow!(
+            "{label} bytes exceed bincode decode limit: {} > {}",
+            bytes.len(),
+            max_bytes
+        ));
+    }
+    let mut cursor = Cursor::new(bytes);
+    let value: T = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .allow_trailing_bytes()
+        .with_limit(max_bytes as u64)
+        .deserialize_from(&mut cursor)
+        .map_err(|err| anyhow!("decode {label} failed: {err}"))?;
+    if cursor.position() as usize != bytes.len() {
+        return Err(anyhow!(
+            "{label} has {} trailing bytes after bincode decode",
+            bytes.len().saturating_sub(cursor.position() as usize)
+        ));
+    }
+    let canonical =
+        bincode::serialize(&value).map_err(|err| anyhow!("re-encode {label} failed: {err}"))?;
+    if canonical.as_slice() != bytes {
+        return Err(anyhow!(
+            "{label} is not canonical bincode encoding: input_len={}, canonical_len={}",
+            bytes.len(),
+            canonical.len()
+        ));
+    }
+    Ok(value)
+}
+
+const BINCODE_FIXINT_VEC_LEN_BYTES: usize = 8;
+const BINCODE_SERDE_BYTES48_BYTES: usize = BINCODE_FIXINT_VEC_LEN_BYTES + 48;
+const NATIVE_BLOCK_META_ACTION_BYTES_OFFSET: usize = 32
+    + 32
+    + 8
+    + 32
+    + 32
+    + BINCODE_SERDE_BYTES48_BYTES
+    + BINCODE_SERDE_BYTES48_BYTES
+    + BINCODE_SERDE_BYTES48_BYTES
+    + 32
+    + BINCODE_SERDE_BYTES48_BYTES
+    + 4
+    + 32
+    + 8
+    + 8
+    + 4
+    + 32
+    + 32
+    + BINCODE_SERDE_BYTES48_BYTES
+    + 16
+    + 4;
+
 fn bincode_deserialize_native_block_meta_exact(
     bytes: &[u8],
     label: &str,
 ) -> Result<NativeBlockMeta> {
-    match bincode_deserialize_exact::<NativeBlockMeta>(bytes, label) {
+    validate_native_block_meta_bincode_budget(bytes, label)?;
+    match bincode_deserialize_exact_with_limit::<NativeBlockMeta>(
+        bytes,
+        label,
+        MAX_NATIVE_BLOCK_META_BYTES,
+    ) {
         Ok(meta) => Ok(meta),
-        Err(current_error) => match bincode_deserialize_exact::<LegacyNativeBlockMetaV1>(
+        Err(current_error) => match bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
             bytes,
             &format!("legacy {label}"),
+            MAX_NATIVE_BLOCK_META_BYTES,
         ) {
             Ok(meta) => Ok(meta.into()),
             Err(legacy_error) => Err(anyhow!(
@@ -13428,6 +13683,136 @@ fn bincode_deserialize_native_block_meta_exact(
             )),
         },
     }
+}
+
+fn validate_native_block_meta_bincode_budget(bytes: &[u8], label: &str) -> Result<()> {
+    validate_native_block_meta_bincode_budget_with_total_limit(
+        bytes,
+        label,
+        MAX_NATIVE_BLOCK_META_BYTES,
+    )
+}
+
+fn validate_native_block_meta_bincode_budget_with_total_limit(
+    bytes: &[u8],
+    label: &str,
+    max_total_bytes: usize,
+) -> Result<()> {
+    if bytes.len() > max_total_bytes {
+        return Err(anyhow!(
+            "{label} bytes exceed native block metadata limit: {} > {}",
+            bytes.len(),
+            max_total_bytes
+        ));
+    }
+    let Some(action_count) = read_bincode_fixint_len(bytes, NATIVE_BLOCK_META_ACTION_BYTES_OFFSET)?
+    else {
+        return Ok(());
+    };
+    if action_count > MAX_NATIVE_BLOCK_ACTIONS {
+        return Err(anyhow!(
+            "{label} action byte count exceeds limit before bincode decode: {} > {}",
+            action_count,
+            MAX_NATIVE_BLOCK_ACTIONS
+        ));
+    }
+
+    let mut cursor = NATIVE_BLOCK_META_ACTION_BYTES_OFFSET + BINCODE_FIXINT_VEC_LEN_BYTES;
+    let mut total_action_bytes = 0usize;
+    for index in 0..action_count {
+        let Some(action_len) = read_bincode_fixint_len(bytes, cursor)? else {
+            return Ok(());
+        };
+        if action_len > MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES {
+            return Err(anyhow!(
+                "{label} action payload {index} exceeds limit before bincode decode: {} > {}",
+                action_len,
+                MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+            ));
+        }
+        total_action_bytes = total_action_bytes
+            .checked_add(action_len)
+            .ok_or_else(|| anyhow!("{label} action byte total overflow before bincode decode"))?;
+        if total_action_bytes > MAX_NATIVE_BLOCK_ACTION_BYTES {
+            return Err(anyhow!(
+                "{label} action bytes exceed aggregate limit before bincode decode: {} > {}",
+                total_action_bytes,
+                MAX_NATIVE_BLOCK_ACTION_BYTES
+            ));
+        }
+        cursor = cursor
+            .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+            .and_then(|next| next.checked_add(action_len))
+            .ok_or_else(|| anyhow!("{label} bincode action-byte cursor overflow"))?;
+        if cursor > bytes.len() {
+            return Ok(());
+        }
+    }
+
+    let Some(miner_commitment_len) = read_bincode_fixint_len(bytes, cursor)? else {
+        return Ok(());
+    };
+    if miner_commitment_len > 48 {
+        return Err(anyhow!(
+            "{label} miner commitment exceeds limit before bincode decode: {} > 48",
+            miner_commitment_len
+        ));
+    }
+    let Some(miner_cursor) = cursor
+        .checked_add(BINCODE_FIXINT_VEC_LEN_BYTES)
+        .and_then(|next| next.checked_add(miner_commitment_len))
+    else {
+        return Err(anyhow!("{label} bincode miner-field cursor overflow"));
+    };
+    if miner_cursor > bytes.len() {
+        return Ok(());
+    }
+    let Some(miner_public_key_len) = read_bincode_fixint_len(bytes, miner_cursor)? else {
+        return Ok(());
+    };
+    if miner_public_key_len > ML_DSA_PUBLIC_KEY_LEN {
+        return Err(anyhow!(
+            "{label} miner public key exceeds limit before bincode decode: {} > {}",
+            miner_public_key_len,
+            ML_DSA_PUBLIC_KEY_LEN
+        ));
+    }
+    let Some(after_public_key_len) = miner_cursor.checked_add(BINCODE_FIXINT_VEC_LEN_BYTES) else {
+        return Err(anyhow!("{label} bincode miner public-key cursor overflow"));
+    };
+    let Some(signature_cursor) = after_public_key_len.checked_add(miner_public_key_len) else {
+        return Err(anyhow!(
+            "{label} bincode miner public-key payload cursor overflow"
+        ));
+    };
+    if signature_cursor > bytes.len() {
+        return Ok(());
+    }
+    let Some(miner_signature_len) = read_bincode_fixint_len(bytes, signature_cursor)? else {
+        return Ok(());
+    };
+    if miner_signature_len > ML_DSA_SIGNATURE_LEN {
+        return Err(anyhow!(
+            "{label} miner signature exceeds limit before bincode decode: {} > {}",
+            miner_signature_len,
+            ML_DSA_SIGNATURE_LEN
+        ));
+    }
+    Ok(())
+}
+
+fn read_bincode_fixint_len(bytes: &[u8], offset: usize) -> Result<Option<usize>> {
+    let Some(end) = offset.checked_add(BINCODE_FIXINT_VEC_LEN_BYTES) else {
+        return Err(anyhow!("bincode length cursor overflow"));
+    };
+    if end > bytes.len() {
+        return Ok(None);
+    }
+    let mut raw = [0u8; BINCODE_FIXINT_VEC_LEN_BYTES];
+    raw.copy_from_slice(&bytes[offset..end]);
+    usize::try_from(u64::from_le_bytes(raw))
+        .map(Some)
+        .map_err(|_| anyhow!("bincode length does not fit usize"))
 }
 
 fn encoded_len_limit(decoded_len_limit: usize) -> usize {
@@ -13680,12 +14065,52 @@ mod serde_array48 {
 }
 
 async fn shutdown_signal(node: Arc<NativeNode>) {
-    let _ = tokio::signal::ctrl_c().await;
+    let signal = wait_for_native_shutdown_signal().await;
+    info!(signal, "native Hegemon node shutdown signal received");
     node.stop_mining();
-    if let Err(err) = node.db.flush() {
+    if let Err(err) = flush_native_db_durability_barrier(
+        &node.db,
+        "native shutdown flush",
+        NativeStorageDurabilityOperation::ShutdownFlush,
+    ) {
         warn!(error = %err, "failed to flush native db during shutdown");
     }
+    record_native_shutdown_complete();
+}
+
+fn record_native_shutdown_complete() {
     info!("native Hegemon node shutdown complete");
+}
+
+#[cfg(unix)]
+async fn wait_for_native_shutdown_signal() -> &'static str {
+    let mut sigterm = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+    {
+        Ok(signal) => signal,
+        Err(err) => {
+            warn!(error = %err, "failed to install SIGTERM handler; falling back to Ctrl-C");
+            let _ = tokio::signal::ctrl_c().await;
+            return "ctrl_c";
+        }
+    };
+
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => {
+            if let Err(err) = result {
+                warn!(error = %err, "failed while waiting for Ctrl-C shutdown signal");
+            }
+            "ctrl_c"
+        }
+        _ = sigterm.recv() => "sigterm",
+    }
+}
+
+#[cfg(not(unix))]
+async fn wait_for_native_shutdown_signal() -> &'static str {
+    if let Err(err) = tokio::signal::ctrl_c().await {
+        warn!(error = %err, "failed while waiting for Ctrl-C shutdown signal");
+    }
+    "ctrl_c"
 }
 
 #[cfg(test)]
@@ -14216,6 +14641,7 @@ mod tests {
         exact_decode_cases: Vec<LeanExactDecodeCase>,
         block_action_decode_cases: Vec<LeanBlockActionDecodeCase>,
         native_metadata_decode_cases: Vec<LeanNativeMetadataDecodeCase>,
+        native_metadata_bincode_budget_cases: Vec<LeanNativeMetadataBincodeBudgetCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -14294,6 +14720,27 @@ mod tests {
         legacy_canonical_reencode_matches: bool,
         expected_valid: bool,
         expected_source: Option<String>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanNativeMetadataBincodeBudgetCase {
+        name: String,
+        fixture: String,
+        metadata_bytes: usize,
+        max_metadata_bytes: usize,
+        action_count: usize,
+        max_action_count: usize,
+        largest_action_payload_bytes: usize,
+        max_action_payload_bytes: usize,
+        action_payload_bytes_total: usize,
+        max_action_payload_bytes_total: usize,
+        miner_public_key_bytes: usize,
+        max_miner_public_key_bytes: usize,
+        miner_signature_bytes: usize,
+        max_miner_signature_bytes: usize,
+        expected_valid: bool,
         expected_rejection: Option<String>,
     }
 
@@ -14988,6 +15435,7 @@ mod tests {
     struct LeanCandidateArtifactBindingAdmissionCase {
         name: String,
         da_root_matches: bool,
+        da_chunk_count_matches: bool,
         tx_statements_commitment_matches: bool,
         recursive_state_root_matches: bool,
         expected_valid: bool,
@@ -16325,6 +16773,76 @@ mod tests {
             .get(old_action_hash.as_slice())
             .expect("read orphaned action after reopen")
             .is_some());
+    }
+
+    #[test]
+    fn reorg_preserves_valid_pending_sidecar_when_staged_ciphertext_survives() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let genesis = node.best_meta();
+
+        stage_test_coinbase(&node, consensus::reward::block_subsidy(1), [81u8; 48]);
+        let canonical_work = node.prepare_work().expect("prepare canonical native work");
+        let canonical_seal = mine_native_round(canonical_work.clone(), 0).expect("canonical seal");
+        let canonical = node
+            .import_mined_block(&canonical_work, canonical_seal)
+            .expect("canonical import")
+            .expect("canonical block");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+
+        let pending_template =
+            test_sidecar_transfer_action(genesis.state_root, [82u8; 48], [83u8; 48], 0);
+        let ciphertext_hex = format!("0x{}", hex::encode(test_transfer_ciphertext_bytes()));
+        node.submit_ciphertexts(json!({ "ciphertexts": [ciphertext_hex] }))
+            .expect("stage pending sidecar ciphertext");
+        let staged_pending = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": pending_template.binding.circuit,
+                "binding_crypto": pending_template.binding.crypto,
+                "family_id": pending_template.family_id,
+                "action_id": pending_template.action_id,
+                "new_nullifiers": pending_template
+                    .nullifiers
+                    .iter()
+                    .map(hex48)
+                    .collect::<Vec<_>>(),
+                "public_args": base64::engine::general_purpose::STANDARD
+                    .encode(pending_template.public_args.clone()),
+            }))
+            .expect("stage pending sidecar transfer");
+        assert!(node
+            .state
+            .read()
+            .pending_actions
+            .contains_key(&staged_pending.tx_hash));
+
+        let side_one = (1..128)
+            .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &canonical))
+            .expect("side child that does not beat canonical tip");
+        persist_block_record(&node.block_tree, &side_one).expect("persist side parent");
+        let side_two = mined_empty_child(&side_one, 2, test_pow_bits, 129);
+        assert!(
+            node.import_announced_block(side_two.clone())
+                .expect("side two import"),
+            "side two must trigger canonical reorg"
+        );
+        assert_eq!(node.best_meta().hash, side_two.hash);
+        let state = node.state.read();
+        assert!(
+            state.pending_actions.contains_key(&staged_pending.tx_hash),
+            "valid pending sidecar must survive reorg revalidation"
+        );
+        assert!(
+            state
+                .staged_ciphertexts
+                .contains_key(&hex48(&staged_pending.ciphertext_hashes[0])),
+            "pending sidecar ciphertext marker must remain staged after reorg"
+        );
     }
 
     #[test]
@@ -18569,6 +19087,43 @@ mod tests {
     }
 
     #[test]
+    fn submit_ciphertexts_rejects_mixed_batch_atomically() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+
+        let err = node
+            .submit_ciphertexts(json!({ "ciphertexts": ["0x010203", "!!!!"] }))
+            .expect_err("invalid second ciphertext must reject the whole batch");
+        assert!(err.to_string().contains("decode base64 bytes"));
+        assert!(node.state.read().staged_ciphertexts.is_empty());
+        assert_eq!(node.da_ciphertext_tree.len(), 0);
+    }
+
+    #[test]
+    fn submit_proofs_rejects_mixed_batch_atomically() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let (binding_hash, proof) = staged_proof_fixture();
+
+        let err = node
+            .submit_proofs(json!({
+                "proofs": [
+                    {
+                        "binding_hash": format!("0x{}", hex::encode(binding_hash)),
+                        "proof": format!("0x{}", hex::encode(proof)),
+                    },
+                    { "proof": "AA==" }
+                ]
+            }))
+            .expect_err("invalid second proof must reject the whole batch");
+        assert!(err.to_string().contains("missing binding_hash"));
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
+    }
+
+    #[test]
     fn submit_proofs_rejects_invalid_metadata_and_empty_proof() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
@@ -18667,6 +19222,64 @@ mod tests {
             state.staged_proofs.values().next().unwrap().len(),
             proof.len()
         );
+    }
+
+    #[test]
+    fn submit_sidecar_action_consumes_embedded_staged_proof_atomically() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_sidecar_transfer_action(anchor, [71u8; 48], [72u8; 48], 0);
+        let mut args: ShieldedTransferSidecarArgs =
+            decode_scale_exact(&action.public_args, "test sidecar args").expect("decode args");
+        let proof = args.proof.clone();
+        let binding_hash = args.binding_hash;
+        let binding_hex = format!("0x{}", hex::encode(binding_hash));
+
+        node.submit_ciphertexts(json!({
+            "ciphertexts": [format!("0x{}", hex::encode(test_transfer_ciphertext_bytes()))],
+        }))
+        .expect("stage sidecar ciphertext");
+        node.submit_proofs(json!({
+            "proofs": [{
+                "binding_hash": binding_hex,
+                "proof": format!("0x{}", hex::encode(&proof)),
+            }]
+        }))
+        .expect("stage proof sidecar");
+        assert_eq!(node.state.read().staged_proofs.len(), 1);
+        assert_eq!(node.da_proof_tree.len(), 1);
+
+        args.proof.clear();
+        let staged = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": action.binding.circuit,
+                "binding_crypto": action.binding.crypto,
+                "family_id": action.family_id,
+                "action_id": action.action_id,
+                "new_nullifiers": action
+                    .nullifiers
+                    .iter()
+                    .map(hex48)
+                    .collect::<Vec<_>>(),
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect("stage sidecar action by embedding staged proof");
+
+        assert!(node.state.read().staged_proofs.is_empty());
+        assert_eq!(node.da_proof_tree.len(), 0);
+        assert!(node
+            .action_tree
+            .get(staged.tx_hash.as_slice())
+            .expect("read staged action")
+            .is_some());
+        let staged_args: ShieldedTransferSidecarArgs =
+            decode_scale_exact(&staged.public_args, "staged sidecar args")
+                .expect("decode staged args");
+        assert_eq!(staged_args.proof, proof);
     }
 
     #[test]
@@ -20503,6 +21116,44 @@ mod tests {
         );
     }
 
+    fn action_request_projection_request_from_action(action: &PendingAction) -> Value {
+        use base64::Engine;
+
+        json!({
+            "binding_circuit": action.binding.circuit,
+            "binding_crypto": action.binding.crypto,
+            "family_id": action.family_id,
+            "action_id": action.action_id,
+            "new_nullifiers": action.nullifiers.iter().map(hex48).collect::<Vec<_>>(),
+            "public_args": base64::engine::general_purpose::STANDARD
+                .encode(&action.public_args),
+        })
+    }
+
+    fn test_bridge_verifier_registration_action() -> PendingAction {
+        let args = BridgeVerifierRegistrationV1 {
+            source_chain_id: [1u8; 32],
+            verifier_program_hash: [2u8; 32],
+            rules_hash: [3u8; 32],
+            enabled_at_height: 42,
+        };
+        let mut action = test_empty_action(FAMILY_BRIDGE, ACTION_REGISTER_BRIDGE_VERIFIER, 0);
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
+    fn test_sidecar_transfer_empty_proof_action() -> PendingAction {
+        let mut action = test_sidecar_transfer_action([31u8; 48], [32u8; 48], [33u8; 48], 7);
+        let mut args: ShieldedTransferSidecarArgs =
+            decode_scale_exact(&action.public_args, "test sidecar transfer args")
+                .expect("decode sidecar transfer args");
+        args.proof.clear();
+        action.public_args = args.encode();
+        action.tx_hash = pending_action_hash(&action);
+        action
+    }
+
     fn action_request_projection_fixture(fixture: &str) -> Value {
         use base64::Engine;
 
@@ -20518,7 +21169,8 @@ mod tests {
             "family_id": FAMILY_BRIDGE,
             "action_id": ACTION_BRIDGE_OUTBOUND,
             "new_nullifiers": [],
-            "public_args": base64::engine::general_purpose::STANDARD.encode(&valid_payload),
+            "public_args": base64::engine::general_purpose::STANDARD
+                .encode(&valid_payload),
         });
 
         match fixture {
@@ -20530,6 +21182,32 @@ mod tests {
                 object.insert("authorization_signatures".to_owned(), json!([]));
                 object.insert("aux_data".to_owned(), Value::Null);
                 request
+            }
+            "valid_outbound_bridge_request" => action_request_projection_request_from_action(
+                &test_outbound_bridge_action(b"lean outbound bridge"),
+            ),
+            "valid_inbound_bridge_request" => action_request_projection_request_from_action(
+                &test_inbound_bridge_action(b"lean inbound bridge"),
+            ),
+            "valid_bridge_verifier_registration_request" => {
+                action_request_projection_request_from_action(
+                    &test_bridge_verifier_registration_action(),
+                )
+            }
+            "valid_inline_transfer_request" => action_request_projection_request_from_action(
+                &test_inline_transfer_action([21u8; 48], [22u8; 48], [23u8; 48], 3),
+            ),
+            "valid_sidecar_transfer_request" => action_request_projection_request_from_action(
+                &test_sidecar_transfer_action([24u8; 48], [25u8; 48], [26u8; 48], 5),
+            ),
+            "valid_sidecar_empty_proof_request" => action_request_projection_request_from_action(
+                &test_sidecar_transfer_empty_proof_action(),
+            ),
+            "valid_candidate_artifact_request" => action_request_projection_request_from_action(
+                &test_candidate_artifact_action(1, 0x5a),
+            ),
+            "valid_coinbase_request" => {
+                action_request_projection_request_from_action(&test_coinbase_action(42))
             }
             "unknown_field" => {
                 request
@@ -20648,6 +21326,29 @@ mod tests {
     }
 
     #[test]
+    fn action_request_projection_accepts_supported_route_fixtures() {
+        let fixtures = [
+            "valid_outbound_bridge_request",
+            "valid_inbound_bridge_request",
+            "valid_bridge_verifier_registration_request",
+            "valid_inline_transfer_request",
+            "valid_sidecar_transfer_request",
+            "valid_sidecar_empty_proof_request",
+            "valid_candidate_artifact_request",
+            "valid_coinbase_request",
+        ];
+
+        for fixture in fixtures {
+            let request = action_request_projection_fixture(fixture);
+            let request = decode_submit_action_rpc_request(request)
+                .unwrap_or_else(|err| panic!("{fixture} request decode failed: {err:#}"));
+            evaluate_native_action_request_projection(&request).unwrap_or_else(|rejection| {
+                panic!("{fixture} projection rejected: {}", rejection.label())
+            });
+        }
+    }
+
+    #[test]
     fn lean_generated_codec_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_CODEC_ADMISSION_VECTORS") else {
             eprintln!(
@@ -20659,12 +21360,13 @@ mod tests {
             std::fs::read_to_string(&path).expect("read generated Lean codec admission vectors");
         let vectors: LeanCodecAdmissionVectorFile =
             serde_json::from_str(&raw).expect("parse generated Lean codec admission vectors");
-        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.schema_version, 3);
         assert!(
             !vectors.sync_codec_cases.is_empty()
                 && !vectors.exact_decode_cases.is_empty()
                 && !vectors.block_action_decode_cases.is_empty()
-                && !vectors.native_metadata_decode_cases.is_empty(),
+                && !vectors.native_metadata_decode_cases.is_empty()
+                && !vectors.native_metadata_bincode_budget_cases.is_empty(),
             "Lean codec admission cases must not be empty"
         );
 
@@ -20684,6 +21386,10 @@ mod tests {
         for case in &vectors.native_metadata_decode_cases {
             assert!(names.insert(format!("native-metadata:{}", case.name)));
             verify_lean_native_metadata_decode_case(case);
+        }
+        for case in &vectors.native_metadata_bincode_budget_cases {
+            assert!(names.insert(format!("native-metadata-budget:{}", case.name)));
+            verify_lean_native_metadata_bincode_budget_case(case);
         }
     }
 
@@ -20891,6 +21597,127 @@ mod tests {
             "{} native metadata decode rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    fn verify_lean_native_metadata_bincode_budget_case(case: &LeanNativeMetadataBincodeBudgetCase) {
+        assert_eq!(case.max_metadata_bytes, MAX_NATIVE_BLOCK_META_BYTES);
+        assert_eq!(case.max_action_count, MAX_NATIVE_BLOCK_ACTIONS);
+        assert_eq!(
+            case.max_action_payload_bytes,
+            MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES
+        );
+        assert_eq!(
+            case.max_action_payload_bytes_total,
+            MAX_NATIVE_BLOCK_ACTION_BYTES
+        );
+        assert_eq!(case.max_miner_public_key_bytes, ML_DSA_PUBLIC_KEY_LEN);
+        assert_eq!(case.max_miner_signature_bytes, ML_DSA_SIGNATURE_LEN);
+
+        let actual_rejection = lean_native_metadata_bincode_budget_rejection(case);
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} Lean native metadata bincode budget validity drifted from production constants",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} Lean native metadata bincode budget rejection drifted from production constants",
+            case.name
+        );
+
+        if let Some(actual) = production_native_metadata_bincode_budget_fixture_rejection(case) {
+            assert_eq!(
+                actual, case.expected_rejection,
+                "{} production native metadata bincode pre-scan rejection drifted from Lean fixture",
+                case.name
+            );
+        }
+    }
+
+    fn lean_native_metadata_bincode_budget_rejection(
+        case: &LeanNativeMetadataBincodeBudgetCase,
+    ) -> Option<String> {
+        if case.metadata_bytes > case.max_metadata_bytes {
+            Some("metadata_bytes_over_limit".to_owned())
+        } else if case.action_count > case.max_action_count {
+            Some("action_count_over_limit".to_owned())
+        } else if case.largest_action_payload_bytes > case.max_action_payload_bytes {
+            Some("action_payload_over_limit".to_owned())
+        } else if case.action_payload_bytes_total > case.max_action_payload_bytes_total {
+            Some("action_payload_bytes_over_limit".to_owned())
+        } else if case.miner_public_key_bytes > case.max_miner_public_key_bytes {
+            Some("miner_public_key_over_limit".to_owned())
+        } else if case.miner_signature_bytes > case.max_miner_signature_bytes {
+            Some("miner_signature_over_limit".to_owned())
+        } else {
+            None
+        }
+    }
+
+    fn production_native_metadata_bincode_budget_fixture_rejection(
+        case: &LeanNativeMetadataBincodeBudgetCase,
+    ) -> Option<Option<String>> {
+        let bytes = match case.fixture.as_str() {
+            "valid_current_metadata" => {
+                let meta = genesis_meta(0x207f_ffff).expect("genesis");
+                bincode::serialize(&meta).expect("serialize current metadata")
+            }
+            "action_count_overrun" => {
+                let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+                bytes.extend_from_slice(&((MAX_NATIVE_BLOCK_ACTIONS as u64) + 1).to_le_bytes());
+                bytes
+            }
+            "action_payload_overrun" => {
+                let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+                bytes.extend_from_slice(&1u64.to_le_bytes());
+                bytes.extend_from_slice(
+                    &((MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES as u64) + 1).to_le_bytes(),
+                );
+                bytes
+            }
+            "miner_public_key_overrun" => {
+                let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+                bytes.extend_from_slice(&0u64.to_le_bytes());
+                bytes.extend_from_slice(&48u64.to_le_bytes());
+                bytes.extend_from_slice(&[0u8; 48]);
+                bytes.extend_from_slice(&((ML_DSA_PUBLIC_KEY_LEN as u64) + 1).to_le_bytes());
+                bytes
+            }
+            "miner_signature_overrun" => {
+                let mut bytes = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+                bytes.extend_from_slice(&0u64.to_le_bytes());
+                bytes.extend_from_slice(&48u64.to_le_bytes());
+                bytes.extend_from_slice(&[0u8; 48]);
+                bytes.extend_from_slice(&0u64.to_le_bytes());
+                bytes.extend_from_slice(&((ML_DSA_SIGNATURE_LEN as u64) + 1).to_le_bytes());
+                bytes
+            }
+            "metadata_bytes_overrun" | "action_payload_bytes_overrun" => return None,
+            other => panic!("unknown Lean native metadata bincode budget fixture {other}"),
+        };
+        let actual =
+            validate_native_block_meta_bincode_budget(&bytes, "Lean native metadata budget")
+                .err()
+                .map(|err| {
+                    let message = err.to_string();
+                    if message.contains("metadata limit") {
+                        "metadata_bytes_over_limit".to_owned()
+                    } else if message.contains("action byte count exceeds") {
+                        "action_count_over_limit".to_owned()
+                    } else if message.contains("action payload") {
+                        "action_payload_over_limit".to_owned()
+                    } else if message.contains("action bytes exceed aggregate") {
+                        "action_payload_bytes_over_limit".to_owned()
+                    } else if message.contains("miner public key") {
+                        "miner_public_key_over_limit".to_owned()
+                    } else if message.contains("miner signature") {
+                        "miner_signature_over_limit".to_owned()
+                    } else {
+                        panic!("unknown native metadata bincode budget rejection: {message}")
+                    }
+                });
+        Some(actual)
     }
 
     fn verify_lean_block_action_decode_case(case: &LeanBlockActionDecodeCase) {
@@ -21331,6 +22158,533 @@ mod tests {
             }
             assert_eq!(action.encode().len(), case.total_bytes);
         }
+    }
+
+    #[test]
+    fn pending_action_exact_decode_matches_scale_decode_oracle_on_mutation_corpus() {
+        let corpus = pending_action_exact_decode_equivalence_corpus();
+        assert_scale_exact_decode_matches_raw_oracle::<PendingAction>(
+            "PendingAction",
+            &corpus,
+            512,
+        );
+    }
+
+    #[test]
+    fn consensus_route_scale_exact_decoders_match_raw_decode_oracle_on_mutation_corpus() {
+        let coinbase_a: MintCoinbaseArgs = decode_scale_exact(
+            &test_coinbase_action(42).public_args,
+            "coinbase corpus fixture",
+        )
+        .expect("coinbase fixture exact-decodes");
+        let coinbase_b: MintCoinbaseArgs = decode_scale_exact(
+            &test_coinbase_action_with_seed(77, [0x29u8; 32]).public_args,
+            "coinbase corpus fixture with seed",
+        )
+        .expect("coinbase fixture with seed exact-decodes");
+        assert_scale_exact_decode_matches_raw_oracle::<MintCoinbaseArgs>(
+            "MintCoinbaseArgs",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x4d49_4e54,
+                vec![coinbase_a.encode(), coinbase_b.encode()],
+            ),
+            192,
+        );
+
+        let inline_a: ShieldedTransferInlineArgs = decode_scale_exact(
+            &test_inline_transfer_action([1u8; 48], [2u8; 48], [3u8; 48], 5).public_args,
+            "inline transfer corpus fixture",
+        )
+        .expect("inline transfer fixture exact-decodes");
+        let inline_b: ShieldedTransferInlineArgs = decode_scale_exact(
+            &test_inline_transfer_action([4u8; 48], [5u8; 48], [6u8; 48], 8).public_args,
+            "inline transfer second corpus fixture",
+        )
+        .expect("inline transfer second fixture exact-decodes");
+        assert_scale_exact_decode_matches_raw_oracle::<ShieldedTransferInlineArgs>(
+            "ShieldedTransferInlineArgs",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x494e_4c49_4e45,
+                vec![inline_a.encode(), inline_b.encode()],
+            ),
+            192,
+        );
+
+        let sidecar_a: ShieldedTransferSidecarArgs = decode_scale_exact(
+            &test_sidecar_transfer_action([7u8; 48], [8u8; 48], [9u8; 48], 11).public_args,
+            "sidecar transfer corpus fixture",
+        )
+        .expect("sidecar transfer fixture exact-decodes");
+        let sidecar_b: ShieldedTransferSidecarArgs = decode_scale_exact(
+            &test_sidecar_transfer_action([10u8; 48], [11u8; 48], [12u8; 48], 13).public_args,
+            "sidecar transfer second corpus fixture",
+        )
+        .expect("sidecar transfer second fixture exact-decodes");
+        assert_scale_exact_decode_matches_raw_oracle::<ShieldedTransferSidecarArgs>(
+            "ShieldedTransferSidecarArgs",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x5349_4445_4341_52,
+                vec![sidecar_a.encode(), sidecar_b.encode()],
+            ),
+            192,
+        );
+
+        let outbound_a: OutboundBridgeArgsV1 = decode_scale_exact(
+            &test_outbound_bridge_action(b"").public_args,
+            "outbound bridge empty corpus fixture",
+        )
+        .expect("outbound bridge empty fixture exact-decodes");
+        let outbound_b: OutboundBridgeArgsV1 = decode_scale_exact(
+            &test_outbound_bridge_action(b"outbound bridge payload corpus").public_args,
+            "outbound bridge corpus fixture",
+        )
+        .expect("outbound bridge fixture exact-decodes");
+        assert_scale_exact_decode_matches_raw_oracle::<OutboundBridgeArgsV1>(
+            "OutboundBridgeArgsV1",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x4f55_5442_5249_4447,
+                vec![outbound_a.encode(), outbound_b.encode()],
+            ),
+            192,
+        );
+
+        let inbound_a: InboundBridgeArgsV1 = decode_scale_exact(
+            &test_inbound_bridge_action(b"").public_args,
+            "inbound bridge empty corpus fixture",
+        )
+        .expect("inbound bridge empty fixture exact-decodes");
+        let inbound_b: InboundBridgeArgsV1 = decode_scale_exact(
+            &test_inbound_bridge_action(b"inbound bridge payload corpus").public_args,
+            "inbound bridge corpus fixture",
+        )
+        .expect("inbound bridge fixture exact-decodes");
+        assert_scale_exact_decode_matches_raw_oracle::<InboundBridgeArgsV1>(
+            "InboundBridgeArgsV1",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x494e_424f_554e_44,
+                vec![inbound_a.encode(), inbound_b.encode()],
+            ),
+            192,
+        );
+
+        let registration_a = BridgeVerifierRegistrationV1 {
+            source_chain_id: [1u8; 32],
+            verifier_program_hash: [2u8; 32],
+            rules_hash: [3u8; 32],
+            enabled_at_height: 42,
+        };
+        let registration_b = BridgeVerifierRegistrationV1 {
+            source_chain_id: [4u8; 32],
+            verifier_program_hash: [5u8; 32],
+            rules_hash: [6u8; 32],
+            enabled_at_height: 99,
+        };
+        assert_scale_exact_decode_matches_raw_oracle::<BridgeVerifierRegistrationV1>(
+            "BridgeVerifierRegistrationV1",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x5245_4749_5354_4552,
+                vec![registration_a.encode(), registration_b.encode()],
+            ),
+            192,
+        );
+
+        let candidate_a = test_candidate_artifact(1);
+        let candidate_b = test_candidate_artifact(2);
+        let submit_a = SubmitCandidateArtifactArgs {
+            payload: candidate_a.clone(),
+        };
+        let submit_b = SubmitCandidateArtifactArgs {
+            payload: candidate_b.clone(),
+        };
+        assert_scale_exact_decode_matches_raw_oracle::<CandidateArtifact>(
+            "CandidateArtifact",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x4341_4e44_4944_4154,
+                vec![candidate_a.encode(), candidate_b.encode()],
+            ),
+            192,
+        );
+        assert_scale_exact_decode_matches_raw_oracle::<SubmitCandidateArtifactArgs>(
+            "SubmitCandidateArtifactArgs",
+            &exact_decode_equivalence_corpus_from_valid_encodings(
+                0x5355_424d_4954,
+                vec![submit_a.encode(), submit_b.encode()],
+            ),
+            192,
+        );
+    }
+
+    #[test]
+    fn native_block_meta_bincode_budget_rejects_unbounded_lengths_before_deserialize() {
+        let mut oversized_count = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        oversized_count.extend_from_slice(&((MAX_NATIVE_BLOCK_ACTIONS as u64) + 1).to_le_bytes());
+        let err =
+            validate_native_block_meta_bincode_budget(&oversized_count, "test native metadata")
+                .expect_err("oversized action count must reject before bincode decode");
+        assert!(err
+            .to_string()
+            .contains("action byte count exceeds limit before bincode decode"));
+
+        let mut oversized_payload = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        oversized_payload.extend_from_slice(&1u64.to_le_bytes());
+        oversized_payload
+            .extend_from_slice(&((MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES as u64) + 1).to_le_bytes());
+        let err =
+            validate_native_block_meta_bincode_budget(&oversized_payload, "test native metadata")
+                .expect_err("oversized action payload must reject before bincode decode");
+        assert!(err
+            .to_string()
+            .contains("action payload 0 exceeds limit before bincode decode"));
+
+        let mut oversized_miner_key = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        oversized_miner_key.extend_from_slice(&0u64.to_le_bytes());
+        oversized_miner_key.extend_from_slice(&48u64.to_le_bytes());
+        oversized_miner_key.extend_from_slice(&[0u8; 48]);
+        oversized_miner_key.extend_from_slice(&((ML_DSA_PUBLIC_KEY_LEN as u64) + 1).to_le_bytes());
+        let err =
+            validate_native_block_meta_bincode_budget(&oversized_miner_key, "test native metadata")
+                .expect_err("oversized miner public key must reject before bincode decode");
+        assert!(err
+            .to_string()
+            .contains("miner public key exceeds limit before bincode decode"));
+
+        let mut oversized_miner_signature = vec![0u8; NATIVE_BLOCK_META_ACTION_BYTES_OFFSET];
+        oversized_miner_signature.extend_from_slice(&0u64.to_le_bytes());
+        oversized_miner_signature.extend_from_slice(&48u64.to_le_bytes());
+        oversized_miner_signature.extend_from_slice(&[0u8; 48]);
+        oversized_miner_signature.extend_from_slice(&0u64.to_le_bytes());
+        oversized_miner_signature
+            .extend_from_slice(&((ML_DSA_SIGNATURE_LEN as u64) + 1).to_le_bytes());
+        let err = validate_native_block_meta_bincode_budget(
+            &oversized_miner_signature,
+            "test native metadata",
+        )
+        .expect_err("oversized miner signature must reject before bincode decode");
+        assert!(err
+            .to_string()
+            .contains("miner signature exceeds limit before bincode decode"));
+    }
+
+    #[test]
+    fn native_block_meta_bincode_budget_allows_current_and_legacy_metadata() {
+        let current = genesis_meta(0x207f_ffff).expect("genesis");
+        let current_bytes = bincode::serialize(&current).expect("serialize current metadata");
+        validate_native_block_meta_bincode_budget(&current_bytes, "current native metadata")
+            .expect("current metadata budget must pass");
+        bincode_deserialize_native_block_meta_exact(&current_bytes, "current native metadata")
+            .expect("current metadata exact decode must pass");
+
+        let legacy = legacy_meta_from_current(&current);
+        let legacy_bytes = bincode::serialize(&legacy).expect("serialize legacy metadata");
+        validate_native_block_meta_bincode_budget(&legacy_bytes, "legacy native metadata")
+            .expect("legacy metadata budget must pass");
+        bincode_deserialize_native_block_meta_exact(&legacy_bytes, "legacy native metadata")
+            .expect("legacy metadata exact decode must pass");
+
+        let signed = mined_empty_child(&current, 1, 0x207f_ffff, 0);
+        let signed_bytes = bincode::serialize(&signed).expect("serialize signed metadata");
+        validate_native_block_meta_bincode_budget(&signed_bytes, "signed native metadata")
+            .expect("signed metadata budget must pass");
+        bincode_deserialize_native_block_meta_exact(&signed_bytes, "signed native metadata")
+            .expect("signed metadata exact decode must pass");
+    }
+
+    fn assert_scale_exact_decode_matches_raw_oracle<T: Decode + Encode>(
+        label: &str,
+        corpus: &[Vec<u8>],
+        min_cases: usize,
+    ) {
+        assert!(
+            corpus.len() >= min_cases,
+            "{label} exact-decode corpus must stay broad enough to catch parser drift"
+        );
+        for (idx, raw) in corpus.iter().enumerate() {
+            let expected = scale_decode_oracle_accepts::<T>(raw);
+            let actual = decode_scale_exact::<T>(raw, label).is_ok();
+            assert_eq!(
+                actual,
+                expected,
+                "{label} exact-decode oracle mismatch at corpus index {idx}, len={}, prefix={}",
+                raw.len(),
+                hex::encode(&raw[..raw.len().min(16)])
+            );
+        }
+    }
+
+    fn scale_decode_oracle_accepts<T: Decode + Encode>(raw: &[u8]) -> bool {
+        let mut cursor = raw;
+        let Ok(value) = T::decode(&mut cursor) else {
+            return false;
+        };
+        cursor.is_empty() && value.encode().as_slice() == raw
+    }
+
+    fn exact_decode_equivalence_corpus_from_valid_encodings(
+        seed: u64,
+        valid_encodings: Vec<Vec<u8>>,
+    ) -> Vec<Vec<u8>> {
+        let mut corpus = vec![
+            Vec::new(),
+            vec![0],
+            vec![0xff],
+            vec![0x01, 0x00],
+            vec![0xff, 0xff, 0xff, 0xff],
+        ];
+        for len in [
+            1usize, 2, 3, 4, 5, 8, 16, 31, 32, 33, 48, 64, 96, 127, 128, 129, 255, 256, 257,
+        ] {
+            corpus.push(deterministic_pending_action_noise(seed ^ len as u64, len));
+        }
+        for encoded in valid_encodings {
+            extend_exact_decode_corpus_from_valid_encoding(&mut corpus, &encoded);
+        }
+        corpus
+    }
+
+    fn extend_exact_decode_corpus_from_valid_encoding(corpus: &mut Vec<Vec<u8>>, encoded: &[u8]) {
+        corpus.push(encoded.to_vec());
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = encoded.to_vec();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in generic_exact_decode_cut_points(encoded.len()) {
+            corpus.push(encoded[..cut].to_vec());
+        }
+
+        for offset in generic_exact_decode_mutation_offsets(encoded.len()) {
+            let mut mutated = encoded.to_vec();
+            mutated[offset] ^= 0xff;
+            corpus.push(mutated);
+        }
+
+        for offset in 0..encoded.len().min(8) {
+            if let Some(mutated) =
+                replace_pending_action_byte_with_noncanonical_zero_prefix(encoded, offset)
+            {
+                corpus.push(mutated);
+            }
+        }
+    }
+
+    fn generic_exact_decode_cut_points(len: usize) -> BTreeSet<usize> {
+        let mut cuts = BTreeSet::new();
+        for cut in 0..=len.min(64) {
+            cuts.insert(cut);
+        }
+        for boundary in [1usize, 2, 4, 8, 16, 32, 48, 64, 96, 128, len] {
+            for delta in [0usize, 1, 2, 3] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn generic_exact_decode_mutation_offsets(len: usize) -> BTreeSet<usize> {
+        let mut offsets = BTreeSet::new();
+        if len == 0 {
+            return offsets;
+        }
+        for offset in 0..len.min(64) {
+            offsets.insert(offset);
+        }
+        for offset in [
+            0usize,
+            1,
+            2,
+            3,
+            4,
+            7,
+            8,
+            15,
+            16,
+            31,
+            32,
+            47,
+            48,
+            63,
+            64,
+            95,
+            96,
+            len - 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
+
+    fn pending_action_exact_decode_equivalence_corpus() -> Vec<Vec<u8>> {
+        let mut corpus = Vec::new();
+        corpus.extend([
+            Vec::new(),
+            vec![0],
+            vec![0xff],
+            vec![0; 32],
+            vec![0xff; 88],
+            vec![0x01, 0x00],
+            vec![0xff, 0xff, 0xff, 0xff],
+        ]);
+        for len in [
+            1usize, 2, 3, 4, 5, 8, 16, 31, 32, 33, 48, 64, 87, 88, 89, 96, 110, 127, 128, 129, 255,
+            256, 257, 384, 512,
+        ] {
+            corpus.push(deterministic_pending_action_noise(
+                0x9e37_79b9_7f4a_7c15 ^ len as u64,
+                len,
+            ));
+        }
+
+        let mut generic = test_empty_action(0x1234, 0x5678, 99);
+        generic.nullifiers = vec![[1u8; 48], [2u8; 48]];
+        generic.commitments = vec![[3u8; 48], [4u8; 48]];
+        generic.ciphertext_hashes = vec![[5u8; 48]];
+        generic.ciphertext_sizes = vec![7, 11, 13];
+        generic.public_args = (0u8..64).collect();
+        generic.received_ms = 17;
+        generic.tx_hash = pending_action_hash(&generic);
+
+        let valid_actions = vec![
+            test_empty_action(0, 0, 0),
+            test_empty_action(FAMILY_SHIELDED_POOL, ACTION_SHIELDED_TRANSFER_INLINE, 3),
+            test_outbound_bridge_action(b"pending-action exact-decode corpus"),
+            test_inbound_bridge_action(b"pending-action inbound corpus"),
+            test_coinbase_action(42),
+            test_inline_transfer_action([1u8; 48], [2u8; 48], [3u8; 48], 5),
+            test_sidecar_transfer_action([4u8; 48], [5u8; 48], [6u8; 48], 7),
+            test_candidate_artifact_action(1, 0x44),
+            generic,
+        ];
+        for action in valid_actions {
+            extend_pending_action_decode_corpus_from_valid_action(&mut corpus, &action);
+        }
+        corpus
+    }
+
+    fn deterministic_pending_action_noise(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            out.push((state >> 32) as u8);
+        }
+        out
+    }
+
+    fn extend_pending_action_decode_corpus_from_valid_action(
+        corpus: &mut Vec<Vec<u8>>,
+        action: &PendingAction,
+    ) {
+        let encoded = action.encode();
+        corpus.push(encoded.clone());
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = encoded.clone();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in pending_action_decode_cut_points(encoded.len()) {
+            corpus.push(encoded[..cut].to_vec());
+        }
+
+        for offset in pending_action_decode_mutation_offsets(encoded.len()) {
+            let mut mutated = encoded.clone();
+            mutated[offset] ^= 0xff;
+            corpus.push(mutated);
+        }
+
+        for offset in [88usize, 89, 90, 91, 92] {
+            if let Some(mutated) =
+                replace_pending_action_byte_with_noncanonical_zero_prefix(&encoded, offset)
+            {
+                corpus.push(mutated);
+            }
+        }
+    }
+
+    fn pending_action_decode_cut_points(len: usize) -> BTreeSet<usize> {
+        let mut cuts = BTreeSet::new();
+        for cut in 0..=len.min(64) {
+            cuts.insert(cut);
+        }
+        for boundary in [32usize, 36, 38, 40, 88, 89, 90, 91, 92, 93, 101, 102, len] {
+            for delta in [0usize, 1, 2, 3] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn pending_action_decode_mutation_offsets(len: usize) -> BTreeSet<usize> {
+        let mut offsets = BTreeSet::new();
+        if len == 0 {
+            return offsets;
+        }
+        for offset in 0..len.min(64) {
+            offsets.insert(offset);
+        }
+        for offset in [
+            31usize,
+            32,
+            35,
+            36,
+            37,
+            38,
+            39,
+            40,
+            87,
+            88,
+            89,
+            90,
+            91,
+            92,
+            93,
+            100,
+            101,
+            102,
+            len - 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
+
+    fn replace_pending_action_byte_with_noncanonical_zero_prefix(
+        encoded: &[u8],
+        offset: usize,
+    ) -> Option<Vec<u8>> {
+        if offset >= encoded.len() {
+            return None;
+        }
+        let mut mutated = Vec::with_capacity(encoded.len() + 1);
+        mutated.extend_from_slice(&encoded[..offset]);
+        mutated.extend_from_slice(&[0x01, 0x00]);
+        mutated.extend_from_slice(&encoded[offset + 1..]);
+        Some(mutated)
     }
 
     #[test]
@@ -23353,6 +24707,7 @@ mod tests {
     ) {
         let input = NativeCandidateArtifactBindingAdmissionInput {
             da_root_matches: case.da_root_matches,
+            da_chunk_count_matches: case.da_chunk_count_matches,
             tx_statements_commitment_matches: case.tx_statements_commitment_matches,
             recursive_state_root_matches: case.recursive_state_root_matches,
         };
@@ -23554,6 +24909,7 @@ mod tests {
     fn block_artifact_binding_rejects_candidate_artifact_mismatches_in_order() {
         let valid = NativeCandidateArtifactBindingAdmissionInput {
             da_root_matches: true,
+            da_chunk_count_matches: true,
             tx_statements_commitment_matches: true,
             recursive_state_root_matches: true,
         };
@@ -23562,6 +24918,7 @@ mod tests {
             evaluate_native_candidate_artifact_binding_admission(
                 NativeCandidateArtifactBindingAdmissionInput {
                     da_root_matches: false,
+                    da_chunk_count_matches: false,
                     tx_statements_commitment_matches: false,
                     ..valid
                 }
@@ -23569,6 +24926,19 @@ mod tests {
             .expect_err("DA root mismatch must reject first")
             .label(),
             "da_root_mismatch"
+        );
+        assert_eq!(
+            evaluate_native_candidate_artifact_binding_admission(
+                NativeCandidateArtifactBindingAdmissionInput {
+                    da_chunk_count_matches: false,
+                    tx_statements_commitment_matches: false,
+                    recursive_state_root_matches: false,
+                    ..valid
+                }
+            )
+            .expect_err("DA chunk count mismatch must reject before statement or state root")
+            .label(),
+            "da_chunk_count_mismatch"
         );
         assert_eq!(
             evaluate_native_candidate_artifact_binding_admission(
@@ -29702,6 +31072,53 @@ mod tests {
     }
 
     #[test]
+    fn apply_planned_actions_rejects_commitment_batch_overflow_atomically() {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        state.commitment_tree =
+            CommitmentTreeState::new_empty(1, consensus::DEFAULT_ROOT_HISTORY_LIMIT)
+                .expect("small commitment tree");
+        state
+            .commitment_tree
+            .append([11u8; 48])
+            .expect("prefill first leaf");
+        let anchor = state.commitment_tree.root();
+        let first = test_inline_transfer_action(anchor, [69u8; 48], [70u8; 48], 0);
+        let second = test_inline_transfer_action(anchor, [71u8; 48], [72u8; 48], 0);
+        state.pending_actions.insert(first.tx_hash, first.clone());
+        state.pending_actions.insert(second.tx_hash, second.clone());
+        let before_leaf_count = state.commitment_tree.leaf_count();
+        let before_root = state.commitment_tree.root();
+        let planned = vec![
+            NativePlannedActionEffect {
+                commitment_start: before_leaf_count,
+                ciphertexts: vec![test_transfer_ciphertext_bytes()],
+                replay_key: None,
+            },
+            NativePlannedActionEffect {
+                commitment_start: before_leaf_count + 1,
+                ciphertexts: vec![test_transfer_ciphertext_bytes()],
+                replay_key: None,
+            },
+        ];
+
+        let err =
+            apply_planned_actions_to_memory(&mut state, &[first.clone(), second.clone()], &planned)
+                .expect_err("commitment batch overflow must reject atomically");
+
+        assert!(
+            err.to_string()
+                .contains("append native commitment batch failed"),
+            "unexpected apply error: {err}"
+        );
+        assert_eq!(state.commitment_tree.leaf_count(), before_leaf_count);
+        assert_eq!(state.commitment_tree.root(), before_root);
+        assert!(state.nullifiers.is_empty());
+        assert!(state.pending_actions.contains_key(&first.tx_hash));
+        assert!(state.pending_actions.contains_key(&second.tx_hash));
+    }
+
+    #[test]
     fn mined_commit_removes_pending_sidecar_ciphertext() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let pow_bits = 0x207f_ffff;
@@ -29770,6 +31187,52 @@ mod tests {
         assert_eq!(node.best_meta(), parent);
         assert_eq!(node.commitment_tree.len(), 0);
         assert_eq!(node.ciphertext_archive_tree.len(), 0);
+        assert!(node
+            .da_ciphertext_tree
+            .get(action.ciphertext_hashes[0])
+            .expect("read staged sidecar after rejected commit")
+            .is_some());
+    }
+
+    #[test]
+    fn mined_commit_rejects_ciphertext_hash_size_count_mismatch_before_sled_mutation() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let parent = node.best_meta();
+        let mut action = test_sidecar_transfer_action(parent.state_root, [66u8; 48], [67u8; 48], 0);
+        insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &action);
+        action.ciphertext_sizes.clear();
+        action.tx_hash = pending_action_hash(&action);
+
+        let mut meta = mined_empty_child(&parent, 1, pow_bits, 0);
+        meta.action_bytes = vec![action.encode()];
+        meta.tx_count = 1;
+        let planned = vec![NativePlannedActionEffect {
+            commitment_start: 0,
+            ciphertexts: vec![test_transfer_ciphertext_bytes()],
+            replay_key: None,
+        }];
+
+        let err = node
+            .commit_mined_block_atomically(std::slice::from_ref(&action), &planned, &meta)
+            .expect_err("mismatched ciphertext metadata must reject before sled mutation");
+
+        assert!(
+            err.to_string()
+                .contains("native mined block ciphertext metadata count mismatch"),
+            "unexpected commit error: {err}"
+        );
+        assert!(node
+            .block_tree
+            .get(meta.hash)
+            .expect("read rejected block record")
+            .is_none());
+        assert_eq!(node.best_meta(), parent);
+        assert_eq!(node.commitment_tree.len(), 0);
+        assert_eq!(node.ciphertext_archive_tree.len(), 0);
+        assert_eq!(node.ciphertext_index_tree.len(), 0);
         assert!(node
             .da_ciphertext_tree
             .get(action.ciphertext_hashes[0])
@@ -30109,6 +31572,58 @@ mod tests {
         let err = verify_native_block_artifacts_locked(&node, &state, &actions, &meta)
             .expect_err("candidate artifact tx_count mismatch must be rejected");
         assert!(err.to_string().contains("tx_count mismatch"));
+    }
+
+    #[test]
+    fn shielded_transfer_rejects_candidate_da_chunk_count_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
+        let state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let transfer =
+            test_inline_transfer_action(state.commitment_tree.root(), [13u8; 48], [14u8; 48], 0);
+        let materialized = materialize_native_action_payloads(
+            &node.da_ciphertext_tree,
+            std::slice::from_ref(&transfer),
+        )
+        .expect("materialize inline transfer");
+        let (tx, _) = consensus_tx_and_artifact_from_action(&transfer, &materialized[0])
+            .expect("build consensus transaction");
+        let da_encoding = consensus::encode_da_blob(std::slice::from_ref(&tx), native_da_params())
+            .expect("encode test DA blob");
+        let expected_count =
+            u32::try_from(da_encoding.chunks().len()).expect("test DA chunk count fits u32");
+
+        let mut candidate = test_candidate_artifact_action(1, 24);
+        {
+            let artifact = candidate
+                .candidate_artifact
+                .as_mut()
+                .expect("candidate artifact payload");
+            artifact.da_root = da_encoding.root();
+            artifact.da_chunk_count = expected_count
+                .checked_add(1)
+                .unwrap_or(expected_count.saturating_sub(1))
+                .max(1);
+            candidate.public_args = SubmitCandidateArtifactArgs {
+                payload: artifact.clone(),
+            }
+            .encode();
+        }
+        candidate.tx_hash = pending_action_hash(&candidate);
+        let actions = vec![transfer, candidate];
+        validate_block_actions_locked(&state, &actions)
+            .expect("DA count mismatch is a block artifact binding error");
+
+        let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
+        let err = verify_native_block_artifacts_locked(&node, &state, &actions, &meta)
+            .expect_err("candidate artifact DA chunk count mismatch must be rejected");
+        assert!(
+            err.to_string()
+                .contains("candidate artifact DA chunk count mismatch"),
+            "unexpected artifact verification error: {err}"
+        );
     }
 
     #[test]

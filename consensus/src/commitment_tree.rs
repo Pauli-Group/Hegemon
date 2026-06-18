@@ -321,6 +321,12 @@ impl CommitmentTreeState {
     where
         I: IntoIterator<Item = Commitment>,
     {
+        let leaves = leaves.into_iter().collect::<Vec<_>>();
+        let capacity = 1u64.checked_shl(self.depth as u32).unwrap_or(u64::MAX);
+        let remaining = capacity.saturating_sub(self.leaf_count);
+        if (leaves.len() as u64) > remaining {
+            return Err(CommitmentTreeError::TreeFull);
+        }
         for leaf in leaves {
             self.append(leaf)?;
         }
@@ -808,6 +814,31 @@ mod tests {
         }
 
         assert_eq!(normal_tree, certified_tree);
+    }
+
+    #[test]
+    fn append_extend_rejects_oversized_batch_before_mutating_tree() {
+        let mut tree = CommitmentTreeState::new_empty(3, 8).expect("tree");
+        let initial = (1..=7).map(commitment_from_seed).collect::<Vec<_>>();
+        let expected_root = tree.extend(initial).expect("initial extend");
+        assert_eq!(tree.leaf_count(), 7);
+        assert_eq!(tree.root(), expected_root);
+
+        let before_root = tree.root();
+        let before_leaf_count = tree.leaf_count();
+        let before_frontier = tree.frontier.clone();
+        let before_history = tree.root_history().copied().collect::<Vec<_>>();
+        let err = tree
+            .extend([commitment_from_seed(90), commitment_from_seed(91)])
+            .expect_err("oversized extend must reject before mutation");
+        assert!(matches!(err, CommitmentTreeError::TreeFull));
+        assert_eq!(tree.root(), before_root);
+        assert_eq!(tree.leaf_count(), before_leaf_count);
+        assert_eq!(tree.frontier, before_frontier);
+        assert_eq!(
+            tree.root_history().copied().collect::<Vec<_>>(),
+            before_history
+        );
     }
 
     #[test]

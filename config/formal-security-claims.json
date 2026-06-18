@@ -194,6 +194,43 @@
       "residual_risks": []
     },
     {
+      "id": "formal.highest-standard-completion-certificate",
+      "component": "top-level highest-standard formal verification completion certificate",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean highest-standard completion certificate packages the internal theorem bundle for no counterfeiting, no double spend, no theft/input authorization, per-asset conservation, statement binding, proof-system residual boundary, canonical encoding/non-malleability, replay/reorg/startup refinement, DA binding, bridge mint/replay safety, PQ channel safety, resource bounds, privacy/ciphertext publication, admission safety, and release posture together with an explicit external-assumption bundle. The certificate does not pretend to prove primitive cryptographic hardness, simulator zero knowledge, external bridge proof soundness, scanner completeness, live GitHub enforcement, storage hardware durability, or complete native-node equivalence; those remain named Prop fields that must be supplied before the completion theorem can be used.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_top_level_certificate_over_internal_theorem_bundle_and_explicit_external_assumptions",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.HighestStandardCompletionCertificate.accepted_internal_bundle_and_release_gate_yield_highest_standard_completion_certificate",
+        "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_exposes_critical_chain_security_and_residuals",
+        "Hegemon.Release.HighestStandardCompletionCertificate.completion_certificate_binds_release_gate_and_native_backend_posture"
+      ],
+      "assumptions": [
+        "The completion certificate is a closure theorem for Hegemon's internal formal-verification target: all critical internal theorem surfaces and production-binding gates must be present, and the remaining primitive, proof-system, storage, DA-retention, external-bridge, release-infrastructure, and performance assumptions must be explicit fields.",
+        "This claim deliberately does not assert unconditional cryptographic security. ML-KEM, ML-DSA, AEAD, hash, STARK/FRI/PCS, simulator zero-knowledge, external-chain proof soundness, OS RNG quality, scanner completeness, live GitHub enforcement, filesystem durability below admitted storage gates, and complete native-node equivalence remain external assumptions carried by the certificate.",
+        "The certificate is zero-runtime-cost Lean packaging over existing production-bound surfaces. It adds no hot-path checks and requires the existing release/formal-core gates to keep runtime overhead bounded to the already-gated cheap prechecks."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean",
+        "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean",
+        "formal/lean/Hegemon/Release/ReleasePostureCertificate.lean",
+        "formal/lean/Hegemon.lean",
+        "config/highest-standard-formal-verification-matrix.json",
+        "config/formal-security-blueprint.json",
+        "scripts/check_formal_core.sh",
+        "DESIGN.md",
+        "METHODS.md"
+      ],
+      "gates": [
+        "cd formal/lean && lake build Hegemon.Release.HighestStandardCompletionCertificate Hegemon",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
+    },
+    {
       "id": "formal.transaction-balance",
       "component": "shielded transaction semantics",
       "claim_class": "lean_theorem",
@@ -513,7 +550,7 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "component": "transaction proof wrapper admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves representative raw outer TransactionProof wire admission for canonical dummy bincode, trailing bytes, invalid backend tags, truncated bytes, and malformed bytes before decoded admission is consumed; every accepted wrapper exposes the full statement surface as theorem-level facts; accepted wrapper metadata cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the existing statement-binding boundary; and the SmallWood candidate wrapper selector accepts only exact/canonical current or legacy wrappers with nonempty inner ARK proof bytes, using current-first precedence and fail-closed legacy fallback. Generated Lean vectors are checked against production transaction-circuit exact wrapper decoding/admission helpers, the consensus inline-tx artifact decoder, the default SmallWood verifier path, SmallWood candidate wrapper decoding, and the tx-proof manifest nested-proof verifier path.",
+      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves representative raw outer TransactionProof wire admission for canonical dummy bincode, trailing bytes, invalid backend tags, truncated bytes, and malformed bytes before decoded admission is consumed; schema-v2 wire vectors additionally include a raw canonical wrapper that exact-decodes and then fails decoded admission specifically on top-level/public nullifier-vector drift. Every accepted wrapper exposes the full statement surface as theorem-level facts; accepted wrapper metadata cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the existing statement-binding boundary; and the SmallWood candidate wrapper selector accepts only exact/canonical current or legacy wrappers with nonempty inner ARK proof bytes, using current-first precedence and fail-closed legacy fallback. Generated Lean vectors are checked against production transaction-circuit exact wrapper decoding/admission helpers, the consensus inline-tx artifact decoder, the default SmallWood verifier path, SmallWood candidate wrapper decoding, and the tx-proof manifest nested-proof verifier path; an additional arbitrary-byte mutation corpus compares production TransactionProof wrapper exact decode to the bincode parser, full-consumption, and canonical-reencode oracle over malformed, truncated, trailing-byte, inserted-byte, and mutated-valid wrappers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -541,6 +578,7 @@
         "Hegemon.Transaction.ProofWrapperWire.invalid_backend_proof_wrapper_rejects",
         "Hegemon.Transaction.ProofWrapperWire.malformed_proof_wrapper_rejects",
         "Hegemon.Transaction.ProofWrapperWire.trailing_dummy_proof_wrapper_rejects",
+        "Hegemon.Transaction.ProofWrapperWire.top_level_nullifier_drift_wire_accepts_admission_rejects",
         "Hegemon.Transaction.ProofWrapperWire.truncated_proof_wrapper_rejects",
         "Hegemon.Transaction.ProofWrapperWire.valid_dummy_proof_wrapper_accepts",
         "Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.accepted_current_wrapper_exposes_surface",
@@ -556,7 +594,8 @@
       ],
       "assumptions": [
         "The Lean model treats exact consumption, canonical re-encoding, raw wrapper parser outcomes, public-input validity, balance-slot agreement, and verifier acceptance as production-derived predicates. It proves representative outer TransactionProof wire cases but does not prove bincode correctness, STARK/SmallWood soundness, or the backend verifier implementation.",
-        "Generated Lean conformance vectors cover canonical raw TransactionProof wrapper bytes, trailing bytes, invalid backend tags, truncated bytes, malformed bytes, valid decoded wrapper acceptance, non-exact consumption, non-canonical re-encoding, unsupported backend, missing proof bytes, missing serialized public inputs, invalid public inputs, balance-slot mismatch, verifier rejection, rejection precedence, wrapper nullifier/commitment/balance metadata drift, serialized public-input projection drift, and public nullifier/ciphertext/asset row extension outside the statement boundary.",
+        "Generated Lean conformance vectors cover canonical raw TransactionProof wrapper bytes, trailing bytes, invalid backend tags, truncated bytes, malformed bytes, raw canonical bytes that exact-decode before decoded-admission nullifier drift rejection, valid decoded wrapper acceptance, non-exact consumption, non-canonical re-encoding, unsupported backend, missing proof bytes, missing serialized public inputs, invalid public inputs, balance-slot mismatch, verifier rejection, rejection precedence, wrapper nullifier/commitment/balance metadata drift, serialized public-input projection drift, and public nullifier/ciphertext/asset row extension outside the statement boundary.",
+        "The TransactionProof wrapper mutation corpus compares decode_transaction_proof_bytes_exact to an independent bincode deserialize/full-consumption/canonical-reencode oracle across malformed, truncated, trailing-byte, inserted-byte, pseudo-random, and mutated-valid wrappers; this reduces parser drift risk without claiming a proof of the bincode crate internals.",
         "Generated SmallWood candidate wrapper vectors cover current wrapper acceptance, legacy wrapper acceptance, current-first selection, empty inner ARK proof rejection, malformed wrapper rejection, and trailing-byte rejection for both current and legacy candidate wrapper encodings.",
         "The production consensus inline-tx artifact, Plonky3, default SmallWood, and manifest paths call exact/canonical wrapper decoding and the admission predicate around decoded-field admission and verifier acceptance. The wire theorem is a representative bincode boundary checked against production bytes, not a full proof of the bincode crate internals."
       ],
@@ -580,7 +619,8 @@
         "HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production --lib -- --nocapture",
         "cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture",
         "bash scripts/check_formal_core.sh",
-        "cargo test -p transaction-circuit lean_generated_transaction_proof_wrapper_wire_vectors_match_production -- --nocapture"
+        "cargo test -p transaction-circuit lean_generated_transaction_proof_wrapper_wire_vectors_match_production -- --nocapture",
+        "cargo test -p transaction-circuit transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus -- --nocapture"
       ],
       "residual_risks": []
     },
@@ -853,7 +893,9 @@
         "Hegemon.Transaction.ProofSystemBoundary.packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_production_review_certificate",
         "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_production_review_certificate_projects_compact_residual_certificate",
-        "Hegemon.Transaction.ProofSystemBoundary.accepted_canonical_surface_with_split_soundness_and_residuals_imply_proof_system_production_residual_certificate"
+        "Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.smallwood_compact_residual_certificate_exposes_residual_boundary_facts",
+        "Hegemon.Transaction.ProofSystemBoundary.accepted_canonical_surface_with_split_soundness_and_residuals_imply_proof_system_production_residual_certificate",
+        "Hegemon.Transaction.ProofSystemBoundary.canonical_proof_system_production_residual_certificate_exposes_residual_boundary_facts"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
@@ -873,7 +915,8 @@
         "The SmallWood formal soundness review certificate co-witnesses the explicit split spend/balance soundness assumptions with the concrete public-statement verifier export and no-theft/public-conservation consequences; it still does not discharge STARK/FRI soundness or witness extraction.",
         "The SmallWood residual verifier export canonical soundness certificate keeps STARK/AIR constraint soundness, PCS opening binding, transcript hash/random-oracle behavior, Merkle/commitment hash security, witness extraction completeness, and verifier implementation equivalence as explicit theorem fields rather than prose residuals.",
         "The proof-system production residual certificate keeps wrapper canonical decode equivalence, public-input serialization equivalence, statement-hash collision resistance, binding transcript hash soundness, deployed verifier implementation equivalence, STARK/AIR/PCS soundness, witness extraction, and Merkle/commitment hash security explicit.",
-        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_production_review_certificate` composes the concrete SmallWood residual certificate into `CanonicalProofSystemProductionResidualCertificate` through `packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate`; this packages review evidence without proving STARK/AIR/PCS soundness, witness extraction, hash security, wrapper decode equivalence, public-input serialization equivalence, or statement-hash collision resistance."
+        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_production_review_certificate` composes the concrete SmallWood residual certificate into `CanonicalProofSystemProductionResidualCertificate` through `packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate`; this packages review evidence without proving STARK/AIR/PCS soundness, witness extraction, hash security, wrapper decode equivalence, public-input serialization equivalence, or statement-hash collision resistance.",
+        "The residual-boundary projection theorems expose the proof artifact, no-theft, input/output slot, public/native delta, stablecoin exception, and explicit wrapper/serialization/hash/transcript/verifier/STARK/AIR/PCS/extraction residual fields from the canonical and compact SmallWood certificates, so downstream implementation-equivalence claims cannot cite the certificate while silently dropping residual assumptions."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
@@ -1101,7 +1144,7 @@
       "id": "formal.wallet-note-ciphertext-wire",
       "component": "wallet note ciphertext wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format, the wallet chain container plus SCALE compact KEM length grammar, and the raw DA sidecar container grammar; accepted parser summaries bind the active note-ciphertext version, expected ML-KEM ciphertext length, and chain/DA crypto suite, bounded accepted chain wires have the fixed production wire length and generically project to DA bytes that reparse with the same summary by deleting the canonical compact KEM-length field, every active native tx-leaf privacy-game output row now carries the projected-DA boundary, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, the wallet-level decrypt/hash residual certificate binds accepted decrypt, projected DA hash preimage, production AAD equality to decrypt material, malformed ciphertext fail-closed facts, and explicit ML-KEM/AEAD/KDF/RNG residual assumptions, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, selected native tx-leaf privacy-game rows compose with decrypt-to-commitment and projected-DA hash-boundary facts, and the all-active theorem now proves every active output row that successfully decrypts under matching recipient material reconstructs the exact statement/proof-bound public commitment while both worlds' DA preimages satisfy the explicit ciphertext-hash predicate. Schema-v6 generated Lean vectors check the production chain/DA parsers, chain/DA wrong-version rejection, the alternate same-summary/different-wire chain fixture, projected DA bytes, projected DA reparse summaries, production ciphertext hashing over that projected preimage, and decrypt-admission cases for valid decrypt, metadata mismatches, wrong recipient, and KEM/note/memo payload malleation; focused Rust regressions still cover wallet note-ciphertext version admission, full-view plaintext-to-commitment witness binding, wallet bundle/native tx-leaf commitment consistency, decoded chain/DA ciphertext byte hashing, and same-plaintext re-encryption freshness.",
+      "summary": "The Lean wallet note-ciphertext wire/decrypt/plaintext kernel proves executable accept/reject facts for the synthetic-crypto note ciphertext format, the wallet chain container plus SCALE compact KEM length grammar, and the raw DA sidecar container grammar; accepted parser summaries bind the active note-ciphertext version, expected ML-KEM ciphertext length, and chain/DA crypto suite, bounded accepted chain wires have the fixed production wire length and generically project to DA bytes that reparse with the same summary by deleting the canonical compact KEM-length field, every active native tx-leaf privacy-game output row now carries the projected-DA boundary, decrypt admission rejects version/crypto-suite/diversifier mismatches before crypto, decrypt success implies metadata agreement plus an explicit crypto-authentication predicate, the wallet-level decrypt/hash residual certificate binds accepted decrypt, projected DA hash preimage, production AAD equality to decrypt material, malformed ciphertext fail-closed facts, and explicit ML-KEM/AEAD/KDF/RNG residual assumptions, decrypted plaintext exports exactly the note fields used by the spend-authorization commitment relation, selected native tx-leaf privacy-game rows compose with decrypt-to-commitment and projected-DA hash-boundary facts, and the all-active theorem now proves every active output row that successfully decrypts under matching recipient material reconstructs the exact statement/proof-bound public commitment while both worlds' DA preimages satisfy the explicit ciphertext-hash predicate. Schema-v7 generated Lean vectors check the production chain/DA parsers, chain/DA wrong-version rejection, the alternate same-summary/different-wire chain fixture, projected DA bytes, projected DA reparse summaries, production ciphertext hashing over that projected preimage, and decrypt-admission cases for valid decrypt, metadata mismatches, wrong recipient, and KEM/note/memo payload malleation; an independent chain/DA byte-oracle mutation corpus now checks production parser behavior over malformed, truncated, trailing, noncanonical compact, overrun, padding, deterministic-noise, and mutated-valid ciphertext wires; focused Rust regressions still cover wallet note-ciphertext version admission, full-view plaintext-to-commitment witness binding, wallet bundle/native tx-leaf commitment consistency, decoded chain/DA ciphertext byte hashing, and same-plaintext re-encryption freshness.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -1177,7 +1220,7 @@
       ],
       "assumptions": [
         "The Lean model covers byte-level parser grammar for the production parser entry points: synthetic_crypto::note_encryption::NoteCiphertext::from_bytes, wallet::NoteCiphertext::from_chain_bytes, and wallet::NoteCiphertext::from_da_bytes as used by the node/archive wallet ciphertext RPC decoder.",
-        "Schema-v6 generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid and alternate-valid chain container bytes, chain memo overrun, nonzero fixed-container padding, unsupported chain ciphertext version rejection, noncanonical compact KEM length encoding, trailing chain bytes, valid DA sidecar bytes, DA memo overrun, DA nonzero padding, unsupported DA ciphertext version rejection, DA KEM truncation, DA trailing bytes, expected wire lengths, expected DA projection bytes for valid chain wires, projected DA reparse summaries, the fixed valid chain length, the fixed projected DA preimage length, a same-summary/different-wire alternate chain fixture whose projected DA bytes hash differently in production, and production decrypt-admission cases for valid decrypt, wrong version, wrong crypto suite, wrong diversifier, wrong recipient, KEM malleation, note-payload malleation, and memo-payload malleation.",
+        "Schema-v7 generated Lean conformance vectors cover valid crypto-format bytes, crypto truncation after the KEM payload, trailing crypto bytes, valid and alternate-valid chain container bytes, chain memo overrun, nonzero fixed-container padding, unsupported chain ciphertext version rejection, noncanonical compact KEM length encoding, trailing chain bytes, valid DA sidecar bytes, DA memo overrun, DA nonzero padding, unsupported DA ciphertext version rejection, DA KEM truncation, DA trailing bytes, expected wire lengths, expected DA projection bytes for valid chain wires, projected DA reparse summaries, the fixed valid chain length, the fixed projected DA preimage length, a same-summary/different-wire alternate chain fixture whose projected DA bytes hash differently in production, and production decrypt-admission cases for valid decrypt, wrong version, wrong crypto suite, wrong diversifier, wrong recipient, KEM malleation, note-payload malleation, and memo-payload malleation. The independent byte-oracle corpus compares production chain/DA parser summaries to separate fixed-container, compact-length, exact-size, padding, version, suite, and KEM-length semantics over valid, malformed, deterministic-noise, and mutated-valid wires.",
         "The decrypt-admission model treats wrong-recipient, wrong-secret-key, and malleated-byte rejection as the explicit Boolean predicate `cryptoAuthenticates = false`. Focused Rust regressions check that the production wallet and synthetic-crypto wrappers map wrong keys and KEM/note/memo payload malleation to failure and that wallet metadata mismatches fail before crypto.",
         "The plaintext-to-commitment model reuses `Hegemon.Transaction.SpendAuthorization.noteCommitmentFromWitness` as the abstract commitment relation, so decrypted wallet note data, input witness construction, and active public output commitment slots share one formal commitment formula. The native observer-surface composition now proves that every active native tx-leaf privacy-game output row exposes fixed projected DA preimage bytes under the explicit ML-KEM/AEAD/KDF/RNG assumptions, and that every active output row that successfully decrypts under matching recipient material reconstructs the plaintext-derived commitment carried by the public shape, statement preimage, and proof-binding message while the same left/right privacy-game rows expose fixed projected DA preimage bytes bound to the public ciphertext-hash row by an explicit predicate. The privacy game still exposes public metadata, batch/timing leakage, and the raw-wire indistinguishability obligation. Focused Rust regressions check both full-view decryption to `NoteData`/input/output witnesses and the tx-builder path from decrypted recipient ciphertext to bundle commitments, outgoing disclosures, decoded native tx-leaf public commitments, decoded native tx-leaf public ciphertext hashes recomputed from decoded note DA bytes, and native tx-leaf verification.",
         "A focused same-plaintext same-recipient re-encryption regression checks that wallet encryption consumes fresh KEM randomness and changes both the KEM ciphertext and full chain wire bytes under distinct RNG streams while preserving decrypt correctness.",
@@ -1202,6 +1245,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS=<generated-json> cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture",
+        "cargo test -p wallet note_ciphertext_chain_and_da_parsers_match_independent_byte_oracle_on_mutation_corpus --test note_ciphertext_wire_vectors -- --nocapture",
         "cargo test -p wallet note_ciphertext_version_gate_rejects_unsupported_wire_and_crypto_formats --lib -- --nocapture",
         "cargo test -p synthetic-crypto note_encryption --lib -- --nocapture",
         "cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture",
@@ -1556,7 +1600,7 @@
       "id": "shielded.nullifier-state",
       "component": "shielded nullifier anti-double-spend state",
       "claim_class": "lean_theorem",
-      "summary": "The Lean nullifier-state kernel proves zero, pending, and spent nullifier rejection, and generated Lean vectors are checked against the production protocol-shielded-pool helper used by the native node.",
+      "summary": "The Lean nullifier-state kernel proves zero, pending, and spent nullifier rejection, generated Lean vectors are checked against the production protocol-shielded-pool helper used by the native node, and focused independent Rust oracles now check protocol transition semantics plus consensus sorted-unique nullifier commitment behavior.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -1571,12 +1615,14 @@
       ],
       "assumptions": [
         "The Lean Nullifier equality model represents equality of canonical 48-byte nullifiers.",
-        "Generated Lean conformance vectors cover protocol-shielded-pool NullifierState stage/import behavior.",
+        "Generated Lean conformance vectors cover protocol-shielded-pool NullifierState stage/import behavior, and a deterministic independent transition oracle covers can-stage, stage, import, zero, pending, spent, restage, and reimport cases.",
+        "A separate consensus NullifierSet oracle checks sorted unique commitment preimages, duplicate rejection, and atomic batch-extend rejection without prefix mutation.",
         "The theorem covers native nullifier set state transitions, not full transaction balance conservation or AIR/proof soundness."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Shielded/Nullifier.lean",
         "formal/lean/Hegemon/Shielded/GenerateVectors.lean",
+        "consensus/src/nullifier.rs",
         "protocol/shielded-pool/src/nullifier.rs",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
@@ -1584,6 +1630,8 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
+        "cargo test -p protocol-shielded-pool nullifier_state_matches_independent_transition_oracle -- --nocapture",
+        "cargo test -p consensus nullifier_set_matches_sorted_unique_commitment_oracle_and_rejects_duplicates --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -2172,7 +2220,7 @@
       "id": "bridge.long-range-proof-shape",
       "component": "bridge long-range light-client proof shape",
       "claim_class": "lean_theorem",
-      "summary": "The Lean long-range bridge kernel proves executable admission facts for verifier hash binding, message-count binding, header/MMR length shape, checked trusted-checkpoint sample-start arithmetic, message-header ordering, message index/source binding, FlyClient sample height/opening-index agreement, confirmation policy, tip-work policy, and claimed-output agreement; generated Lean vectors are checked against the production helper called by the bridge long-range verifier.",
+      "summary": "The Lean long-range bridge kernel proves executable admission facts for verifier hash binding, message-count binding, header/MMR length shape, checked trusted-checkpoint sample-start arithmetic, message-header ordering, message index/source binding, FlyClient sample height/opening-index agreement, confirmation policy, tip-work policy, and claimed-output agreement; generated Lean vectors are checked against the production helper called by the bridge long-range verifier, and an independent raw-wire oracle corpus checks the long-range proof full/guest decoders over canonical wires, trailing/truncated input, noncanonical compact lengths, over-cap message/payload/MMR/sample vectors, output-tail tamper, and deterministic valid-wire mutations.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2198,7 +2246,7 @@
       ],
       "assumptions": [
         "The Lean model represents cheap long-range bridge proof control-flow over already-computed header hashes, sample indices, work values, and message metadata.",
-        "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, trusted checkpoint sample-start overflow, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification.",
+        "Generated Lean conformance vectors cover verifier hash mismatch, header message-count mismatch, header MMR length mismatch, trusted checkpoint sample-start overflow, stale tip/message ordering, message MMR opening leaf mismatch, out-of-bounds message index, message source chain/height mismatch, FlyClient sample count/height/opening-index mismatch, under-confirmed outputs, insufficient tip work, claimed-output mismatch, and output-omitted guest verification. The independent raw-wire oracle corpus mirrors the fixed long-range proof byte grammar and output-tail guest reconstruction semantics for canonical full/guest decode, trailing and truncation rejection, noncanonical compact payload/message/sample lengths, over-cap message/payload/MMR/sample vectors, output-tail tamper where full decode succeeds but guest decode rejects, and deterministic mutations over valid wire bytes.",
         "The theorem covers executable structural admission semantics, not SHA-256 implementation equivalence, PoW hash security, MMR hash binding, bridge message-root hashing, FlyClient sampling soundness, external-chain verifier behavior, checkpoint-output byte grammar, or complete long-range light-client soundness. Header MMR opening shape and path orientation are covered separately by bridge.header-mmr-opening-shape. Header MMR parent/root transcript bytes are covered separately by bridge.header-mmr-transcript-binding. FlyClient transcript/index derivation is covered separately by bridge.flyclient-sampling-transcript. Checkpoint output canonical/journal bytes are covered separately by bridge.checkpoint-output-binding."
       ],
       "evidence_paths": [
@@ -2209,11 +2257,12 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
-      "gates": [
-        "bash scripts/check_lean_formal.sh",
-        "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture",
-        "bash scripts/check_formal_core.sh"
-      ],
+    "gates": [
+      "bash scripts/check_lean_formal.sh",
+      "HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS=<generated-json> cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture",
+      "cargo test -p consensus-light-client long_range_proof_wire_decoders_match_independent_raw_oracle --lib -- --nocapture",
+      "bash scripts/check_formal_core.sh"
+    ],
       "residual_risks": []
     },
     {
@@ -2365,7 +2414,7 @@
       "id": "consensus.da-root-byte-binding",
       "component": "data-availability root byte grammar and shard-count admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean DA-root kernel proves executable byte and arithmetic facts for transaction ciphertext blob serialization, DA parameter rejection, data/parity/total shard counts, BLAKE3 leaf/node preimage domains, and Merkle proof-step orientation; generated Lean vectors are checked against production consensus and state-da helpers.",
+      "summary": "The Lean DA-root kernel proves executable byte and arithmetic facts for transaction ciphertext blob serialization, DA parameter rejection, data/parity/total shard counts, BLAKE3 leaf/node preimage domains, bounded chunk/page proof-path admission, and Merkle proof-step orientation; generated Lean vectors plus independent state-da Merkle and overlong-path oracles are checked against production consensus and state-da helpers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2374,6 +2423,9 @@
         "Hegemon.Consensus.DaRoot.empty_ciphertext_blob_hex",
         "Hegemon.Consensus.DaRoot.even_merkle_step_hex",
         "Hegemon.Consensus.DaRoot.even_merkle_step_uses_current_left",
+        "Hegemon.Consensus.DaRoot.chunk_proof_path_len_empty_accepts",
+        "Hegemon.Consensus.DaRoot.chunk_proof_path_len_max_accepts",
+        "Hegemon.Consensus.DaRoot.chunk_proof_path_len_over_cap_rejects",
         "Hegemon.Consensus.DaRoot.leaf_domain_bytes",
         "Hegemon.Consensus.DaRoot.leaf_max_index_preimage_hex",
         "Hegemon.Consensus.DaRoot.leaf_zero_preimage_hex",
@@ -2383,6 +2435,9 @@
         "Hegemon.Consensus.DaRoot.node_preimage_order_binds_children",
         "Hegemon.Consensus.DaRoot.odd_merkle_step_hex",
         "Hegemon.Consensus.DaRoot.odd_merkle_step_uses_sibling_left",
+        "Hegemon.Consensus.DaRoot.page_proof_path_len_empty_accepts",
+        "Hegemon.Consensus.DaRoot.page_proof_path_len_max_accepts",
+        "Hegemon.Consensus.DaRoot.page_proof_path_len_over_cap_rejects",
         "Hegemon.Consensus.DaRoot.sample_blob_hex",
         "Hegemon.Consensus.DaRoot.shard_count_empty_blob",
         "Hegemon.Consensus.DaRoot.shard_count_max_accepts",
@@ -2393,7 +2448,8 @@
       ],
       "assumptions": [
         "The Lean model represents the deterministic bytes and shard-count arithmetic that consensus uses before hashing and comparing a block's DA root.",
-        "Generated Lean conformance vectors cover empty and multi-transaction DA blobs, empty ciphertext length-prefixing, leaf preimages for index zero and max u32, ordered and reversed node preimages, empty/partial/max shard counts, zero chunk-size rejection, zero sample-count rejection, too-many-shards rejection, and even/odd Merkle proof-step orientation.",
+        "Generated Lean conformance vectors cover empty and multi-transaction DA blobs, empty ciphertext length-prefixing, leaf preimages for index zero and max u32, ordered and reversed node preimages, empty/partial/max shard counts, zero chunk-size rejection, zero sample-count rejection, too-many-shards rejection, chunk/page proof-path cap admission, and even/odd Merkle proof-step orientation.",
+        "The independent state-da oracle rebuilds da-leaf/da-node preimages, chunk and page Merkle levels, duplicate-last odd padding, production proof paths, and proof replay for empty, single-page, multipage, and odd-leaf cases while rejecting orientation/index/root mutations; the overlong-path regression requires chunk and page proof paths over their caps to fail before hash replay.",
         "The theorem covers executable DA byte grammar and shard-count admission only. It does not prove Reed-Solomon erasure-code correctness, BLAKE3 security or implementation equivalence, chunk network availability, sampling probability, ciphertext sidecar availability, or complete block proof validity."
       ],
       "evidence_paths": [
@@ -2407,6 +2463,8 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_DA_ROOT_VECTORS=<generated-json> cargo test -p consensus lean_generated_da_root_vectors_match_production -- --nocapture",
+        "cargo test -p state-da da_merkle_oracle_matches_production_and_rejects_orientation_mutations -- --nocapture",
+        "cargo test -p state-da da_proof_verifier_rejects_overlong_paths_before_hash_replay -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -2457,7 +2515,7 @@
       "id": "consensus.proven-batch-binding",
       "component": "proven batch block/header/proof artifact binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proven-batch binding kernel proves the executable acceptance predicate for proof route compatibility, tx-count binding, statement-commitment binding, DA-root binding, nonzero DA chunks, required recursive block-artifact presence, block-artifact envelope kind/profile agreement, and recursive-block receipt-root exclusion; generated Lean vectors are checked against the production consensus helper.",
+      "summary": "The Lean proven-batch binding kernel proves the executable acceptance predicate for proof route compatibility, tx-count binding, statement-commitment binding, DA-root binding, nonzero DA chunks, exact equality between the claimed DA chunk count and the recomputed DA encoding chunk count, required recursive block-artifact presence, block-artifact envelope kind/profile agreement, and recursive-block receipt-root exclusion; generated Lean vectors are checked against the production consensus helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2467,6 +2525,7 @@
         "Hegemon.Consensus.ProvenBatchBinding.rejects_artifact_kind_mismatch",
         "Hegemon.Consensus.ProvenBatchBinding.rejects_artifact_profile_mismatch",
         "Hegemon.Consensus.ProvenBatchBinding.rejects_da_chunk_count_zero",
+        "Hegemon.Consensus.ProvenBatchBinding.rejects_da_chunk_count_mismatch",
         "Hegemon.Consensus.ProvenBatchBinding.rejects_da_root_mismatch",
         "Hegemon.Consensus.ProvenBatchBinding.rejects_incompatible_receipt_route",
         "Hegemon.Consensus.ProvenBatchBinding.rejects_incompatible_recursive_route",
@@ -2481,7 +2540,7 @@
       ],
       "assumptions": [
         "The Lean model represents the cheap proven-batch binding gate after DA root computation succeeds and before recursive block or receipt-root proof verification.",
-        "Generated Lean conformance vectors cover valid recursive_block_v2 and receipt_root bindings plus incompatible routes, tx-count mismatch, statement-commitment mismatch, DA-root mismatch, zero DA chunk count, artifact kind mismatch, artifact verifier-profile mismatch, recursive-block receipt-root payload rejection, missing-artifact envelope skipping, recursive_block_v1 route compatibility, and tx_leaf route rejection.",
+        "Generated Lean conformance vectors cover valid recursive_block_v2 and receipt_root bindings plus incompatible routes, tx-count mismatch, statement-commitment mismatch, DA-root mismatch, zero DA chunk count, DA chunk-count mismatch against the recomputed DA encoding, artifact kind mismatch, artifact verifier-profile mismatch, recursive-block receipt-root payload rejection, missing-artifact envelope skipping, recursive_block_v1 route compatibility, and tx_leaf route rejection.",
         "The theorem covers executable proven-batch binding only. It does not prove DA erasure-code soundness, BLAKE3 security, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, native backend security, or complete block proof validity. DA byte grammar and shard-count binding are covered separately by consensus.da-root-byte-binding."
       ],
       "evidence_paths": [
@@ -2495,7 +2554,8 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS=<generated-json> cargo test -p consensus lean_generated_proven_batch_binding_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh",
-        "cargo test -p consensus proven_batch_binding_rejects_missing_recursive_block_artifact -- --nocapture"
+        "cargo test -p consensus proven_batch_binding_rejects_missing_recursive_block_artifact -- --nocapture",
+        "cargo test -p consensus proven_batch_binding_rejects_da_chunk_count_mismatch -- --nocapture"
       ],
       "residual_risks": []
     },
@@ -2503,7 +2563,7 @@
       "id": "consensus.recursive-block-admission",
       "component": "recursive block artifact admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean recursive-block admission kernel proves executable fail-closed facts for recursive_block_v1/v2 envelope kind, verifier-profile agreement, artifact byte caps before decode, artifact decoding, recursive header-version agreement, tx-count agreement, statement-commitment agreement, public replay agreement, direct registry-verifier semantic-replay rejection, a reusable bounded-request projection for accepted recursive artifact bytes, and the shipped recursive_block_v2 pre-proof verifier surface; generated Lean vectors are checked against the production consensus and block-recursion verifier helpers; the v2 verifier surface now also fail-closes when the runtime-derived header/proof/public tuple width does not match the exact versioned artifact byte cap.",
+      "summary": "The Lean recursive-block admission kernel proves executable fail-closed facts for recursive_block_v1/v2 envelope kind, verifier-profile agreement, artifact byte caps before decode, artifact decoding, recursive header-version agreement, tx-count agreement, statement-commitment agreement, public replay agreement, direct registry-verifier semantic-replay rejection, a reusable bounded-request projection for accepted recursive artifact bytes, and the shipped recursive_block_v2 pre-proof verifier surface; generated Lean vectors are checked against the production consensus and block-recursion verifier helpers. The Lean v1 fixture now uses the corrected fixed serializer width of 699,452 bytes, consensus/protocol caps match that width, and deterministic recursive_block_v1 and recursive_block_v2 raw-byte oracles check production fixed-width parser, cap/decode, header/count/commitment, and pre-proof surface ordering. The v2 verifier surface also fail-closes when the runtime-derived header/proof/public tuple width does not match the exact versioned artifact byte cap.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2543,7 +2603,8 @@
       ],
       "assumptions": [
         "The Lean model represents the cheap consensus admission and binding table around recursive_block_v1/v2 artifact verification after the ordered tx_leaf stream has already been verified, plus the rule that the generic registry ArtifactVerifier path must reject direct recursive-block verification because it lacks verified-record semantic replay inputs.",
-        "Generated Lean conformance vectors cover valid recursive_block_v2 and recursive_block_v1 product-path admission cases plus wrong artifact kind, verifier-profile mismatch, artifact-size over-cap before decode, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, rejection-precedence for wrong kind before decode failure, over-cap artifact bytes before decode failure, direct recursive_block_v1/v2 registry-verifier rejection with requires_semantic_replay, and shipped recursive_block_v2 pre-proof verifier-surface rejection for public mismatch, fixed proof-width mismatch, unsupported tx count, header mismatch, proof-prefix decode failure, and nonzero proof padding. The recursive_block_v2 surface vectors now also include versioned artifact-cap mismatch rejection, forcing production to bind the runtime projected proof/header/public width to the exact versioned cap before child proof verification.",
+        "Generated Lean conformance vectors cover valid recursive_block_v2 and corrected-width recursive_block_v1 product-path admission cases plus wrong artifact kind, verifier-profile mismatch, artifact-size over-cap before decode, artifact decode failure, recursive header-version mismatch, tx-count mismatch, statement-commitment mismatch, public replay mismatch, rejection-precedence for wrong kind before decode failure, over-cap artifact bytes before decode failure, direct recursive_block_v1/v2 registry-verifier rejection with requires_semantic_replay, and shipped recursive_block_v2 pre-proof verifier-surface rejection for public mismatch, fixed proof-width mismatch, unsupported tx count, header mismatch, proof-prefix decode failure, and nonzero proof padding. The recursive_block_v2 surface vectors now also include versioned artifact-cap mismatch rejection, forcing production to bind the runtime projected proof/header/public width to the exact versioned cap before child proof verification.",
+        "The independent recursive_block_v1 raw-byte oracle corpus covers valid fixed-width bytes, wrong kind/profile precedence, oversized-before-trailing precedence, empty/minimum/truncated decode failures, invalid profile/relation/proof-length header failures, header-version mismatch, tx-count mismatch, and statement-commitment mismatch. The independent recursive_block_v2 raw-byte oracle corpus covers exact fixed-width bytes, trailing/oversize rejection, header/proof/public truncation, header version mutation, proof/public boundary mutations, unsupported tx_count, public tx_count/header mismatch, serializer preservation, and production pre-proof surface rejection order through the fixed public/proof/header/cap boundary. These are parser/admission drift evidence and not proofs of recursive proof soundness.",
         "The theorem covers executable recursive-block envelope/profile/artifact-size/decode/header/count/statement/public-replay admission, accepted recursive artifact byte projection into reusable bounded-request facts, direct registry-verifier semantic-replay rejection, and recursive_block_v2 verifier-surface preconditions before cryptographic child proof verification. It does not prove native tx-leaf proof soundness, recursive proof cryptographic soundness, public replay semantic correctness beyond the separate recursive-public-replay field-propagation claim, BLAKE3 security or implementation equivalence, aggregation STARK soundness, or complete block proof validity. Proven-batch binding, native tx-leaf admission, native tx-leaf artifact wire grammar, and aggregation V5 header admission are covered separately."
       ],
       "evidence_paths": [
@@ -2560,8 +2621,10 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture",
-        "cargo test -p consensus artifact_rejects_oversized_bytes_before_deserialize -- --nocapture",
+    "cargo test -p consensus artifact_rejects_oversized_bytes_before_deserialize -- --nocapture",
+    "cargo test -p consensus recursive_block_v1_fixed_wire_cap_and_parser_match_oracle --lib -- --nocapture",
         "HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS=<generated-json> cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture",
+        "cargo test -p block-recursion recursive_block_v2_raw_fixed_width_oracle_matches_parser_boundaries -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -2781,7 +2844,7 @@
       "id": "consensus.aggregation-v5-header-admission",
       "component": "self-contained aggregation proof V5 header admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean aggregation V5 kernel proves executable header-admission facts for version, format, packed-public-values encoding, serialized tree_arity agreement with configured merge fan-in, statement-commitment binding, child/fan-in bounds, subtree tx-count binding, tree-level/root-level checks, binary-minimum merge fan-in, and packed public-input length agreement; generated Lean vectors are checked against the production consensus aggregation V5 header helper.",
+      "summary": "The Lean aggregation V5 kernel proves executable header-admission facts for version, format, packed-public-values encoding, serialized tree_arity agreement with configured merge fan-in, statement-commitment binding, child/fan-in bounds, subtree tx-count binding, tree-level/root-level checks, binary-minimum merge fan-in, and packed public-input length agreement; generated Lean vectors are checked against the production consensus aggregation V5 header helper, and a deterministic mutation corpus checks the production HGA0/zstd envelope plus exact-postcard V5 payload path against an independent envelope/postcard/header oracle before heavy proof verification.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -2810,7 +2873,8 @@
       "assumptions": [
         "The Lean model represents the cheap aggregation V5 payload header gate before representative child proof decoding and STARK batch verification, including the serialized tree_arity value that must equal the configured merge fan-in.",
         "Generated Lean conformance vectors cover valid singleton leaf and merge headers plus bad version, bad proof format, bad public-values encoding, tree_arity mismatch, bad statement-commitment length, statement-commitment mismatch, child-count underflow/overflow, subtree tx-count mismatch, tree-level mismatch, root-level overflow, leaf fan-in overflow, merge fan-in mismatch, and packed public-input length mismatch.",
-        "The theorem covers executable aggregation V5 header admission only. It does not prove postcard or zstd implementation equivalence, representative child proof decoding, transaction proof soundness, aggregation STARK soundness, packed public-value cryptographic binding, or complete block proof validity."
+        "The aggregation V5 envelope mutation corpus covers raw pass-through payloads, HGA0 compressed payloads, compression version mismatch, invalid declared uncompressed lengths, missing/garbage zstd payloads, zstd length mismatch, postcard truncation/trailing bytes, malformed random bytes, and mutated valid raw/compressed payloads against a separate marker/version/length/zstd/postcard/header oracle.",
+        "The theorem covers executable aggregation V5 header admission only. The corpus is parser-drift evidence for the production envelope/postcard boundary, not a proof of postcard or zstd implementation correctness, representative child proof decoding, transaction proof soundness, aggregation STARK soundness, packed public-value cryptographic binding, or complete block proof validity."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/AggregationV5.lean",
@@ -2822,6 +2886,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_AGGREGATION_V5_VECTORS=<generated-json> cargo test -p consensus lean_generated_aggregation_v5_header_vectors_match_production -- --nocapture",
+        "cargo test -p consensus aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -3559,7 +3624,7 @@
       "id": "native.storage-durability-admission",
       "component": "native critical storage durability barrier",
       "claim_class": "lean_theorem",
-      "summary": "The Lean storage-durability admission kernel proves the executable table that critical native storage mutations may publish or return as durable only after the operation is a supported storage durability operation, the transaction step accepts, and the durability flush step accepts; generated Lean vectors are checked against production Rust, including the native operation-label parser, and blueprint bindings require mined-block, canonical-reorg, canonical-index-repair, noncanonical block-record, pending-action, sidecar-staging, startup sidecar/pending-action repair, and genesis bootstrap/repair paths to propagate the typed durability barrier before publication or completion.",
+      "summary": "The Lean storage-durability admission kernel proves the executable table that critical native storage mutations may publish or return as durable only after the operation is a supported storage durability operation, the transaction step accepts, and the durability flush step accepts; generated Lean vectors are checked against production Rust, including the native operation-label parser, and blueprint bindings require mined-block, canonical-reorg, canonical-index-repair, noncanonical block-record, pending-action, sidecar-staging, startup sidecar/pending-action repair, genesis bootstrap/repair, and graceful shutdown paths to propagate the typed durability barrier before publication, completion, or process exit.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_blueprint_order_gate",
       "production_eligible": true,
@@ -3572,7 +3637,7 @@
       ],
       "assumptions": [
         "The Lean model represents the critical storage durability decision table over production-derived booleans: the storage operation label is supported, the sled transaction or write step accepted, and the explicit database durability flush accepted.",
-        "Generated Lean conformance vectors cover durable mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, startup-staged-ciphertext-repair, startup-staged-proof-repair, and startup-pending-action-repair operations plus unsupported-operation rejection, transaction-rejection precedence, and durability-flush failure rejection.",
+        "Generated Lean conformance vectors cover durable mined-block, canonical-reorg, canonical-index-repair, noncanonical-record, pending-action, ciphertext-sidecar, proof-sidecar, genesis-bootstrap, genesis-marker-repair, startup-staged-ciphertext-repair, startup-staged-proof-repair, startup-pending-action-repair, and shutdown-flush operations plus unsupported-operation rejection, transaction-rejection precedence, and durability-flush failure rejection.",
         "The theorem covers the executable admission table and blueprint wiring for the explicit durability barrier only. It does not prove sled's transaction implementation correctness, operating-system fsync semantics, disk firmware honesty, crash-consistency below sled, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -3595,7 +3660,7 @@
       "id": "native.atomic-commit-manifest-admission",
       "component": "native atomic commit manifest admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean atomic-commit manifest admission kernel proves the executable table that mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence include the expected row-family write/clear/remove counts before sled mutation. The companion canonical-reorg chain admission kernel proves that replacement chains and their block-record/height-index write-set projections are structurally admitted before canonical reorg replay/planning or atomic transaction execution. Generated Lean vectors are checked against production Rust, and blueprint bindings require both gates before canonical persistence.",
+      "summary": "The Lean atomic-commit manifest admission kernel proves the executable table that mined-block commits, canonical reorg commits, canonical-index repairs, and noncanonical block-record persistence include the expected row-family write/clear/remove counts before sled mutation. The companion canonical-reorg chain admission kernel proves that replacement chains and their block-record/height-index write-set projections are structurally admitted before canonical reorg replay/planning or atomic transaction execution. Generated Lean vectors are checked against production Rust, and blueprint bindings require both gates before canonical persistence. Focused native regressions now also require mined commits to reject ciphertext hash/size count drift before sled mutation and require canonical reorg commits to preserve valid pending sidecar actions while atomically cleaning staged ciphertext rows consumed by the winning chain.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_blueprint_order_gate",
       "production_eligible": true,
@@ -3647,6 +3712,8 @@
         "cargo test -p hegemon-node canonical_reorg_chain_admission_rejects_write_set_drift --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "cargo test -p hegemon-node mined_action_block_commit_reloads_canonical_sled_state reorg_action_block_commit_reloads_canonical_sled_state startup_canonical_index_repair_rebuilds_archive_atomically nonwinning_announced_side_branch_record_reloads_without_canonicalizing --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mined_commit_rejects_ciphertext_hash_size_count_mismatch_before_sled_mutation --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node reorg_preserves_valid_pending_sidecar_when_staged_ciphertext_survives --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -3726,7 +3793,7 @@
       "id": "native.sidecar-upload-admission",
       "component": "native DA sidecar upload admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sidecar upload admission kernel proves deterministic request-count, staged-capacity, proof metadata, decoded proof-byte admission, and decoded proof binding-hash equality with the upload key for da_submitCiphertexts and da_submitProofs; generated Lean vectors are checked against the production native helpers used by the unsafe DA staging RPCs. Startup proof reload is covered separately by native.staged-proof-reload.",
+      "summary": "The Lean native sidecar upload admission kernel proves deterministic request-count, staged-capacity, proof metadata, decoded proof-byte admission, and decoded proof binding-hash equality with the upload key for da_submitCiphertexts and da_submitProofs; generated Lean vectors are checked against the production native helpers used by the unsafe DA staging RPCs. The production RPC handlers now preflight every item in a ciphertext/proof upload batch, then write the accepted rows with one sled transaction and only publish the staged in-memory map after the durability barrier; mixed valid/invalid batches are gated to leave both memory and storage unchanged. Startup proof reload is covered separately by native.staged-proof-reload.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3761,6 +3828,7 @@
       ],
       "assumptions": [
         "The Lean model represents decoded upload-admission predicates after JSON field discovery and bounded byte parsing, with binding-hash presence/shape, proof-field presence, decoded proof byte length, and decoded native tx-leaf proof public-field binding-hash equality with the upload key represented as explicit inputs.",
+        "The production upload path treats a JSON batch as one admission unit for side effects: parsed/admitted rows are accumulated in memory, persisted by one sled transaction, then published to the node state only after the typed storage-durability barrier succeeds.",
         "Generated Lean conformance vectors cover empty/exact/over-limit ciphertext and proof request counts, new-vs-replacement staged ciphertext and proof capacity, proof binding-hash missing/invalid precedence, missing proof fields, empty proofs, exact proof-cap acceptance, oversized decoded proof rejection, proof binding-hash mismatch rejection, and oversized-proof-before-binding-mismatch precedence.",
         "Persisted ciphertext-sidecar reload is covered by the separate native.staged-ciphertext-reload claim: startup derives staged size metadata only from raw sidecar bytes whose ciphertext hash matches the 48-byte sled key, drops malformed/oversized/hash-mismatched cache entries, and enforces the staged ciphertext capacity while reloading.",
         "The theorem covers executable native sidecar upload admission only. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash cryptographic security or implementation equivalence, sled durability, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
@@ -3775,6 +3843,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node mixed_batch_atomically --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node sidecar_upload --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node submit_ciphertexts_rejects_ --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node submit_proofs_rejects_ --lib --no-default-features -- --nocapture",
@@ -3786,7 +3855,7 @@
       "id": "native.pre-heavy-resource-bound-surface",
       "component": "native pre-heavy-work resource and DoS boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, bridge action resource admission, candidate-artifact admission, recursive block artifact bounded-request facts, tx-leaf artifact byte-shape and bounded-request resource facts, receipt-root artifact schedule facts, sync decode/range/count/resource admission, pending/block action parser resource caps, sync response item-count caps, staged-proof upload pre-heavy ordering, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, sync exact-decode/count/range caps, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, bridge receipt/payload caps, recursive artifact byte/proof caps, tx-leaf raw/decoded/item/proof/aggregate/work caps, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, sync response import work, bridge payload-hash binding, bridge receipt decode/verification, tx-leaf artifact binding decode, response proof hashing, or mining work. The pre-heavy codec-canonical publication certificate now carries the same DoS/resource bounds together with accepted exact pending-action decode, exact block-action decode, sync no-trailing-byte facts, decoded/published action-row equality, and raw canonical publication facts. The staged-proof upload slice now has generic ordering theorems, not just sample vectors: metadata rejection precedes budget work, budget rejection precedes decoded proof work, and decoded proof rejection is reachable only after metadata and budget acceptance.",
+      "summary": "The Lean pre-heavy-work resource surface composes accepted resource-budget, RPC admission, sidecar upload, mineable-action admission, action-request projection, transfer-payload admission, bridge action resource admission, candidate-artifact admission, recursive block artifact bounded-request facts, tx-leaf artifact byte-shape and bounded-request resource facts, receipt-root artifact schedule facts, sync decode/range/count/resource admission, pending/block action parser resource caps, sync response item-count caps, staged-proof upload pre-heavy ordering, and the reusable bounded-request table into one theorem package exposing byte budgets, row/request caps, strict submit-action projection predicates, sidecar proof preconditions, sync exact-decode/count/range caps, block-template sidecar/candidate preconditions, transfer proof/ciphertext caps, bridge receipt/payload caps, recursive artifact byte/proof caps, tx-leaf raw/decoded/item/proof/aggregate/work caps, receipt-root leaf/fold schedule bounds, and generic raw/decoded/item/work caps before expensive proof, recursive verification, receipt-root folding, block-action decode, sync response import work, bridge payload-hash binding, bridge receipt decode/verification, tx-leaf artifact binding decode, response proof hashing, block-circuit commitment proof deserialization, or mining work. The pre-heavy codec-canonical publication certificate now carries the same DoS/resource bounds together with accepted exact pending-action decode, exact block-action decode, sync no-trailing-byte facts, decoded/published action-row equality, and raw canonical publication facts. The staged-proof upload slice now has generic ordering theorems, not just sample vectors: metadata rejection precedes budget work, budget rejection precedes decoded proof work, and decoded proof rejection is reachable only after metadata and budget acceptance. The legacy block-circuit commitment proof decoder now rejects empty and over-cap proof bytes before bincode, requires full byte consumption, and keeps canonical reserialization admission before proof verification.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -3840,6 +3909,7 @@
       "assumptions": [
         "The theorem composes already accepted predicates from native.resource-budget-admission, native.rpc-admission, native.sidecar-upload-admission, native.mineable-action-admission, native.action-request-projection-admission, native.transfer-action-payload-admission, native.candidate-artifact-admission, native tx-leaf artifact parsing/resource projection, native receipt-root artifact schedule/resource parsing, and staged-proof upload pre-heavy ordering; it inherits production conformance from those gates and adds no extra accepted-upload runtime helper beyond moving the existing staged proof byte-budget check before heavy binding decode work.",
         "The theorem exposes concrete pre-heavy-work resource facts: pending-action and staged-proof byte caps, timestamp row caps, hex/base64 decoded-byte caps, JSON-RPC batch caps, strict action-request JSON/kernel-envelope/route/nullifier/public-args/exact-payload predicates, sidecar request/capacity/proof metadata/proof-byte preconditions, mineable-action candidate/sidecar preconditions, transfer proof/ciphertext caps, recursive artifact tx/proof caps, recursive block artifact raw/decoded/item/aggregate/work bounds derived from the accepted pre-decode byte cap, tx-leaf artifact byte-shape plus raw/decoded/item/proof/aggregate/work request bounds, and receipt-root nonzero expected leaves, leaf/fold-count agreement, exact fold-shape schedule facts, plus receipt-root raw/decoded/item/max-item/aggregate/work request bounds.",
+        "The block-circuit commitment proof decoder uses a fixed pre-bincode proof-byte cap, rejects empty inputs before bincode, requires bincode to consume all bytes, and keeps canonical reserialization checks before proof verification; the focused regression prevents malformed or oversized commitment-block proof bytes from reaching allocation-heavy proof decoding unchecked.",
         "The staged-proof upload pre-heavy theorem and generated vectors prove metadata admission precedes budget work, the staged proof byte-budget gate precedes decoded proof binding/hash mismatch and decoded oversize rejection, and production `da_submitProofs` rejects over-budget staged uploads before native tx-leaf artifact binding decode, response proof hashing, capacity admission, or staging.",
         "Pending/block action parser resource binding now composes accepted bounded-request caps with exact pending-action decode, block-action count binding, pending reload, and wire replay projection; production `decode_block_actions` rejects over-cap action counts, per-action payloads, and aggregate action bytes before SCALE action decode.",
         "Sync response resource binding now composes accepted bounded-request caps with accepted sync decode/count, exact block-action decode, wire replay projection, and raw canonical publication; production inbound response-count admission calls the generic bounded-request helper before sorting or importing response blocks.",
@@ -3865,6 +3935,7 @@
         "formal/lean/Hegemon/Resource/GenerateBoundedRequestAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean",
+        "circuits/block/src/p3_commitment_verifier.rs",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -3885,6 +3956,7 @@
         "cargo test -p hegemon-node bridge_inbound_proof_receipt_resource_rejects_before_receipt_decode_or_verify --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node bridge_inbound_message_payload_resource_rejects_before_receipt_verify --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture",
+        "cargo test -p block-circuit commitment_block_proof_decode_rejects --lib -- --nocapture",
         "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh",
         "HEGEMON_LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_preheavy_resource_bound_surface_vectors_match_production --lib --no-default-features -- --nocapture"
@@ -4120,7 +4192,7 @@
       "id": "native.block-artifact-binding-admission",
       "component": "native block artifact binding admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-artifact binding kernel proves the executable native equality gates that bind decoded tx-leaf public fields, input/output flag counts, balance tag projection, receipt statement hash, public-input digest, proof digest/backend profile, fee, stablecoin public payload, and ciphertext payload hashes to shielded transfer action metadata, and bind recursive candidate artifacts to the computed DA root, tx statement commitment, and verified recursive state root; generated Lean vectors are checked against the production helpers used by native block artifact verification, and the blueprint/regression gate now requires that verification before mined import commits, announced import persists or reorganizes, and canonical replay applies memory effects. Native block artifact verification now builds tx-leaf transactions from the same canonical materialized sidecar ciphertext bytes used by replay planning.",
+      "summary": "The Lean block-artifact binding kernel proves the executable native equality gates that bind decoded tx-leaf public fields, input/output flag counts, balance tag projection, receipt statement hash, public-input digest, proof digest/backend profile, fee, stablecoin public payload, and ciphertext payload hashes to shielded transfer action metadata, and bind recursive candidate artifacts to the computed DA root, recomputed DA chunk count, tx statement commitment, and verified recursive state root; generated Lean vectors are checked against the production helpers used by native block artifact verification, and the blueprint/regression gate now requires that verification before mined import commits, announced import persists or reorganizes, and canonical replay applies memory effects. Native block artifact verification now builds tx-leaf transactions from the same canonical materialized sidecar ciphertext bytes used by replay planning.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4128,6 +4200,8 @@
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_artifact_binding_accepts_iff_preconditions",
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_root_mismatch_rejects",
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_root_precedes_statement_commitment",
+        "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_chunk_count_mismatch_rejects",
+        "Hegemon.Native.BlockArtifactBindingAdmission.candidate_da_chunk_count_precedes_statement_commitment",
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_recursive_state_root_mismatch_rejects",
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_statement_commitment_mismatch_rejects",
         "Hegemon.Native.BlockArtifactBindingAdmission.candidate_statement_precedes_state_root",
@@ -4163,8 +4237,8 @@
         "Hegemon.Native.BlockArtifactBindingAdmission.valid_tx_leaf_action_binding_accepts"
       ],
       "assumptions": [
-        "The Lean model treats decoded tx-leaf public fields, computed ciphertext hashes, computed DA roots, computed tx statement commitments, and verified recursive state roots as production-derived predicates. The hash functions and recursive verifier are covered by separate claims and residual assumptions.",
-        "Generated Lean conformance vectors cover valid tx-leaf/action binding, nullifier/commitment/ciphertext-hash/input-count/output-count/version/fee/stablecoin-payload/balance-tag/receipt-statement-hash/public-inputs-digest/proof-digest/proof-backend/ciphertext-payload-hash mismatches, candidate DA-root mismatch, tx-statement commitment mismatch, recursive state-root mismatch, and rejection precedence.",
+        "The Lean model treats decoded tx-leaf public fields, computed ciphertext hashes, computed DA roots, recomputed DA chunk counts, computed tx statement commitments, and verified recursive state roots as production-derived predicates. The hash functions and recursive verifier are covered by separate claims and residual assumptions.",
+        "Generated Lean conformance vectors cover valid tx-leaf/action binding, nullifier/commitment/ciphertext-hash/input-count/output-count/version/fee/stablecoin-payload/balance-tag/receipt-statement-hash/public-inputs-digest/proof-digest/proof-backend/ciphertext-payload-hash mismatches, candidate DA-root mismatch, candidate DA chunk-count mismatch, tx-statement commitment mismatch, recursive state-root mismatch, and rejection precedence.",
         "The theorem covers only deterministic equality-gate admission after candidate-artifact coupling and tx-leaf decoding. The production helper is called by mined import, announced import, and canonical branch replay before artifact-bearing effects can be committed, persisted as winning branch state, or applied to replay memory. The artifact construction path is now bound to canonical sidecar materialization before tx-leaf transaction construction, so missing, oversized, size-drifted, or hash-drifted sidecar ciphertexts reject under the same materialization checks as replay planning. It does not prove recursive proof cryptographic soundness, native tx-leaf proof soundness, DA-root hash security/equivalence, statement-commitment hash security/equivalence, ciphertext hash security/equivalence, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -4180,6 +4254,7 @@
         "cargo test -p hegemon-node block_artifact_binding_ --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_artifact_binding_rejects_size_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_artifact_binding_rejects_hash_mismatched_materialized_sidecar_ciphertext --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node shielded_transfer_rejects_candidate_da_chunk_count_mismatch --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node reorg_replay_rechecks_historical_side_branch_artifacts_before_publish --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -4483,7 +4558,7 @@
       "id": "native.action-plan-application-admission",
       "component": "native action plan application",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action-plan application kernel proves the executable predicate that accepted native action-effect plans have exactly one planned commitment start per action, each planned start equals the current commitment leaf cursor, and cumulative commitment-count advancement uses checked u64 arithmetic. Generated Lean vectors are checked against the production Rust helper, and native preview/memory/rebuild planning now propagates this gate before roots, in-memory state, or canonical index rows are derived.",
+      "summary": "The Lean action-plan application kernel proves the executable predicate that accepted native action-effect plans have exactly one planned commitment start per action, each planned start equals the current commitment leaf cursor, and cumulative commitment-count advancement uses checked u64 arithmetic. Generated Lean vectors are checked against the production Rust helper, and native preview/memory/rebuild planning now propagates this gate before roots, in-memory state, or canonical index rows are derived. Native memory application now builds the next commitment tree off-state and swaps it in only after the whole commitment batch accepts, so near-full-tree overflow cannot leave partial commitment/nullifier/pending mutations behind.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4502,7 +4577,7 @@
       "assumptions": [
         "The Lean model covers decoded action commitment counts and planned commitment starts. It does not prove SCALE decoding, commitment hash security, ciphertext byte materialization, row-value correctness, nullifier derivation, tx proof soundness, or sled transaction correctness.",
         "Generated Lean conformance vectors cover valid two-action and empty plans, missing and extra planned-start entries, first and later planned-start mismatch, u64 commitment-index overflow, rejection precedence before overflow, and zero-commitment acceptance at max leaf count.",
-        "The production wiring propagates the application gate in materialized action planning, root preview, in-memory action application, and canonical-index rebuild planning before those paths zip starts with actions, append commitments, derive roots, or derive canonical index rows."
+        "The production wiring propagates the application gate in materialized action planning, root preview, in-memory action application, and canonical-index rebuild planning before those paths zip starts with actions, append commitments, derive roots, or derive canonical index rows. The in-memory action application path also applies commitments to a cloned tree and publishes that clone only after batch append succeeds, with a near-full-tree regression covering the previous partial-mutation failure shape."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionPlanApplicationAdmission.lean",
@@ -4515,6 +4590,7 @@
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_ACTION_PLAN_APPLICATION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_plan_application_admission_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node apply_planned_actions_rejects_ --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node apply_planned_actions_rejects_commitment_batch_overflow_atomically --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh"
       ],
@@ -4583,7 +4659,7 @@
       "id": "native.da-sidecar-replay-binding",
       "component": "native DA sidecar replay binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean DA/sidecar replay-binding composition packages accepted candidate artifact admission, candidate DA-root/artifact binding, candidate coupling, proven-batch DA binding, recursive semantic DA field sourcing, sidecar upload admission, action stream acceptance, wire replay projection acceptance, projected replay startup equivalence, and raw-decoded projected replay startup equivalence into theorem surfaces.",
+      "summary": "The Lean DA/sidecar replay-binding composition packages accepted candidate artifact admission, candidate DA-root/artifact and DA chunk-count binding, candidate coupling, proven-batch DA root and expected chunk-count binding, recursive semantic DA field sourcing, sidecar upload admission, action stream acceptance, wire replay projection acceptance, projected replay startup equivalence, and raw-decoded projected replay startup equivalence into theorem surfaces.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4601,7 +4677,7 @@
       ],
       "assumptions": [
         "This is a composition theorem over existing production-derived predicates. It relies on the separate DA-root, proven-batch, recursive semantic input, sidecar upload, candidate artifact, block-artifact binding, action-stream, wire-replay projection, and projected replay/refinement claims for their individual executable predicates and production conformance.",
-        "The theorem exposes that accepted candidate bindings have matching DA root, transaction-statement commitment, and recursive state root predicates; accepted proven-batch bindings have matching DA root and nonzero DA chunks; recursive semantic fields source `daRoot` from the same source field; accepted sidecar upload gates satisfy request, capacity, metadata, and decoded-proof preconditions; and accepted wire replay projection has matching action/planned counts.",
+        "The theorem exposes that accepted candidate bindings have matching DA root, DA chunk count, transaction-statement commitment, and recursive state root predicates; accepted proven-batch bindings have matching DA root, nonzero DA chunks, and equality to the expected recomputed chunk count; recursive semantic fields source `daRoot` from the same source field; accepted sidecar upload gates satisfy request, capacity, metadata, and decoded-proof preconditions; and accepted wire replay projection has matching action/planned counts.",
         "The projected replay theorem composes those DA/sidecar facts with `accepted_projected_ledger_state_after_startup_equivalence`, preserving projected carried-state preconditions and final nullifier/bridge-replay uniqueness for accepted projected replay.",
         "The raw projected replay theorem composes the same DA/sidecar facts with `accepted_raw_projected_ledger_state_after_startup_equivalence`, exposing accepted replay over raw replay inputs, replayed supply equality, replayed leaf-cursor equality, native commitment-plan preconditions, raw carried-state preconditions, and final nullifier/bridge-replay uniqueness.",
         "The theorem does not prove raw SCALE PendingAction byte projection, BLAKE3/DA-root hash security or implementation equivalence, Reed-Solomon availability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
@@ -4645,7 +4721,7 @@
       "id": "native.raw-ingress-sidecar-replay-recoverability",
       "component": "native raw ingress sidecar replay recoverability",
       "claim_class": "lean_theorem",
-      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, projected replay startup equivalence, raw-decoded projected replay startup equivalence, and raw-decoded ledger/tree replay publication into one theorem surface, with a first-class raw-ingress publication fact package for production review.",
+      "summary": "The Lean raw-ingress sidecar replay recoverability composition packages accepted action-request projection, pending-action reload, staged ciphertext reload, staged proof reload, transfer-state sidecar materialization, the DA/sidecar replay-binding facts, projected replay startup equivalence, raw-decoded projected replay startup equivalence, and raw-decoded ledger/tree replay publication into one theorem surface, with a first-class raw-ingress publication fact package for production review. The native ingress path also regression-checks that sidecar transfers consuming an embedded staged proof insert the pending action and remove the proof sidecar in one sled transaction after rechecking proof bytes.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_production_bound_predicates",
       "production_eligible": true,
@@ -4667,6 +4743,7 @@
         "The theorem exposes that accepted raw ingress predicates satisfy request projection, pending reload, staged sidecar reload, staged proof reload, and transfer-state preconditions. When the accepted transfer uses the sidecar route, it proves sidecar ciphertext bytes are available, sidecar sizes are present, and sidecar sizes match before composing with DA-root and projected replay facts.",
         "The projected and raw-projected replay theorems compose those raw-ingress and sidecar-materialization facts with accepted DA/sidecar replay facts, preserving carried-state preconditions, replayed supply and leaf equality for the raw-decoded surface, and final nullifier/bridge-replay uniqueness for accepted projected replay.",
         "The raw-ingress publication equivalence theorem exposes the same ledger/tree replay result as a named fact package, including sidecar availability and size agreement, DA candidate/proven-batch/semantic binding, accepted ledger-tree replay, commitment-root publication, accepted ledger replay, replayed supply and leaf cursor, commitment-plan preconditions, carried-state preconditions, and final replay-set uniqueness.",
+        "Production regression coverage requires sidecar proof consumption to be atomic with pending-action insertion and to avoid deleting a replacement proof value when staged proof bytes change between validation and commit.",
         "The theorem does not prove full SCALE parser correctness, BLAKE3 hash security or implementation equivalence, DA erasure-code recoverability, hot/cold sidecar retention, recursive proof soundness, native tx-leaf proof soundness, sled durability, or complete native-node refinement."
       ],
       "evidence_paths": [
@@ -4686,6 +4763,7 @@
         "bash scripts/check_lean_formal.sh",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "cargo test -p hegemon-node submit_sidecar_action_consumes_embedded_staged_proof_atomically --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
@@ -4845,11 +4923,11 @@
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.parsed_tx_leaf_artifact_projects_serialized_public_vectors"
       ],
       "assumptions": [
-        "`NativeTxLeafArtifactCanonicalProjectionAssumptions` can now be derived from accepted parser bytes, explicit vector-count evidence, canonical transaction statement surface facts, and accepted native tx-leaf/action binding gates. The vector-count evidence still explicitly carries the remaining projection from parsed artifact summary counts into serialized public inputs, bound public inputs, public-input shape vectors, statement vectors, and proof-binding vectors.",
+        "`NativeTxLeafArtifactCanonicalProjectionAssumptions` can now be derived from accepted parser bytes, generated active-count/vector-count evidence, canonical transaction statement surface facts, and accepted native tx-leaf/action binding gates. The generated tx-leaf artifact vectors now check active input/output flag counts against compact nullifier, commitment, and ciphertext-hash counts, while the remaining explicit evidence carries the broader projection from parsed artifact fields into serialized public inputs, bound public inputs, public-input shape vectors, statement vectors, and proof-binding vectors.",
         "The package reuses the existing `CanonicalTxStatementSurface`, pending-action byte publication, and raw-ingress pending-action publication predicates. It does not prove deployed STARK/AIR or SmallWood soundness, hash collision resistance, proof privacy, tx-leaf proof soundness, or complete native-node equivalence.",
         "The canonical artifact boundary theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while pairing parser/projection facts with `NativeTxLeafCanonicalArtifactBoundaryFacts`, including canonical deployed verifier boundary facts, native tx-leaf equality gates, spend/balance exposure, and authorized asset-delta facts.",
         "The deployed-boundary and spend-boundary theorems keep `DeployedTxVerifierSoundnessAssumption` and `DeployedTxVerifierSpendSoundnessAssumption` explicit; they prove the raw-ingress parsed tx-leaf publication path carries the exact future verifier/AIR/refinement target rather than discharging that target.",
-        "The production regression suite checks canonical statement vector projection, active-flag/vector-count alias rejection, and stablecoin payload projection drift rejection. No runtime hot path is changed by the Lean proof; the Rust tests gate existing verifier/parser behavior."
+        "The production regression suite and generated-vector conformance check canonical statement vector projection, active-flag/vector-count alias rejection, non-binary flag rejection, and stablecoin payload projection drift rejection. No runtime hot path is changed by the Lean proof; the Rust tests gate existing verifier/parser behavior."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafArtifactProjectionRefinement.lean",
@@ -4876,7 +4954,7 @@
       "residual_risks": [
         {
           "id": "native-tx-leaf-artifact-projection-assumption-open",
-          "description": "The theorem now derives the projection assumption package from parser bytes, explicit vector-count evidence, canonical statement facts, and accepted native binding gates, but still keeps the remaining parsed-count-to-serialized/vector projection evidence explicit rather than proving the full arbitrary-byte production serialization path end to end.",
+          "description": "The theorem now derives the projection assumption package from parser bytes, generated active-count/vector-count evidence, canonical statement facts, and accepted native binding gates, but still keeps broader parsed-field-to-serialized/vector projection evidence explicit rather than proving the full arbitrary-byte production serialization path end to end.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },
@@ -5224,7 +5302,7 @@
       "id": "native.codec-admission",
       "component": "native sync and action codec admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, current-first/legacy-fallback native metadata decode selection, native block action payload counts, pending/block action parser resource-cap composition, a concrete PendingAction SCALE wire grammar covering no-candidate actions plus recursive-block and bounded receipt-root CandidateArtifact::Some lanes with route public_args bytes, a concrete shielded coinbase MintCoinbaseArgs SCALE wire grammar, a concrete shielded transfer inline ShieldedTransferInlineArgs SCALE route-payload grammar including bounded empty, one-output, and stablecoin-some product lanes, a concrete shielded transfer sidecar ShieldedTransferSidecarArgs SCALE route-payload grammar including bounded empty, one-output, and stablecoin-some product lanes, concrete outbound and inbound bridge OutboundBridgeArgsV1/InboundBridgeArgsV1 SCALE route-payload grammars, and a concrete BridgeVerifierRegistrationV1 SCALE route-payload grammar; generated Lean vectors are checked against production decode helpers, native metadata fallback decode, block-action decoding, PendingAction exact decode, MintCoinbaseArgs exact decode, ShieldedTransferInlineArgs exact decode, ShieldedTransferSidecarArgs exact decode, OutboundBridgeArgsV1 exact decode, InboundBridgeArgsV1 exact decode, and BridgeVerifierRegistrationV1 exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, canonical publication facts, and one codec-canonical publication boundary certificate. The pre-heavy codec-canonical publication certificate now composes this exact/canonical publication boundary with the pre-heavy DoS/resource certificate over the same sync decode, so accepted sync/import and pending-action publication paths expose exact decode, canonical re-encode, decoded/published row equality, and cheap resource bounds together before heavy work. The metadata-aware codec publication theorem now carries current-first/legacy-fallback native metadata exact-decode facts, including current precedence, legacy-only-after-current-rejection, and both-exact-decoders-fail-closed behavior, together with the pending/block-action canonical publication certificate. The bounded codec gate theorem additionally requires concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE wire witnesses, with PendingAction exact-decode adapter equality, on the same abstract exact-decode review surface, closing the loose accepted-predicate-to-wire-witness gap for those production lanes while retaining parser-internal residual assumptions.",
+      "summary": "The Lean codec-admission kernel proves strict exact-decoding admission for bounded native sync messages, canonical round-trip SCALE action payloads, canonical round-trip bincode native metadata, current-first/legacy-fallback native metadata decode selection, native metadata bincode budget admission, native block action payload counts, pending/block action parser resource-cap composition, a concrete PendingAction SCALE wire grammar covering no-candidate actions plus recursive-block and bounded receipt-root CandidateArtifact::Some lanes with route public_args bytes, a concrete shielded coinbase MintCoinbaseArgs SCALE wire grammar, a concrete shielded transfer inline ShieldedTransferInlineArgs SCALE route-payload grammar including bounded empty, one-output, and stablecoin-some product lanes, a concrete shielded transfer sidecar ShieldedTransferSidecarArgs SCALE route-payload grammar including bounded empty, one-output, and stablecoin-some product lanes, concrete outbound and inbound bridge OutboundBridgeArgsV1/InboundBridgeArgsV1 SCALE route-payload grammars, and a concrete BridgeVerifierRegistrationV1 SCALE route-payload grammar; generated Lean vectors are checked against production decode helpers, native metadata fallback decode and bincode pre-scan budgets, block-action decoding, PendingAction exact decode, MintCoinbaseArgs exact decode, ShieldedTransferInlineArgs exact decode, ShieldedTransferSidecarArgs exact decode, OutboundBridgeArgsV1 exact decode, InboundBridgeArgsV1 exact decode, and BridgeVerifierRegistrationV1 exact decode, and blueprint bindings require outbound native sync messages to encode successfully before queueing or peer sends. The byte parser/publication refinement theorem now proves accepted exact pending-action decode and accepted block-action decode declared counts can be carried together with bounded-request caps, pending reload, action-hash, wire replay, canonical publication facts, and one codec-canonical publication boundary certificate. The pre-heavy codec-canonical publication certificate now composes this exact/canonical publication boundary with the pre-heavy DoS/resource certificate over the same sync decode, so accepted sync/import and pending-action publication paths expose exact decode, canonical re-encode, decoded/published row equality, and cheap resource bounds together before heavy work. The metadata-aware codec publication theorem now carries current-first/legacy-fallback native metadata exact-decode facts, including current precedence, legacy-only-after-current-rejection, and both-exact-decoders-fail-closed behavior, together with the pending/block-action canonical publication certificate. The bounded codec gate theorem additionally requires concrete PendingAction, MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs, OutboundBridgeArgsV1, InboundBridgeArgsV1, and BridgeVerifierRegistrationV1 SCALE wire witnesses, with PendingAction exact-decode adapter equality, on the same abstract exact-decode review surface, closing the loose accepted-predicate-to-wire-witness gap for those production lanes while retaining parser-internal residual assumptions.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5247,6 +5325,7 @@
         "Hegemon.Native.CodecAdmission.native_metadata_decode_rejects_when_current_and_legacy_reject",
         "Hegemon.Native.CodecAdmission.native_metadata_legacy_decode_requires_current_rejection",
         "Hegemon.Native.CodecAdmission.native_metadata_decode_facts",
+        "Hegemon.Native.CodecAdmission.native_metadata_bincode_budget_acceptance_excludes_overruns",
         "Hegemon.Native.CodecAdmission.trailing_native_metadata_current_rejects",
         "Hegemon.Native.CodecAdmission.trailing_native_metadata_legacy_rejects",
         "Hegemon.Native.CodecAdmission.valid_native_metadata_current_selects_current",
@@ -5428,7 +5507,7 @@
       "id": "native.action-request-projection-admission",
       "component": "native hegemon_submitAction RPC projection boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean action-request projection admission kernel proves that native RPC action submission accepts only strict known JSON fields, empty unimplemented kernel-envelope compatibility fields, supported native routes, scoped and bounded nullifiers, bounded base64 public_args, and exact route-payload decoding before a PendingAction can be staged.",
+      "summary": "The Lean action-request projection admission kernel proves that native RPC action submission accepts only strict known JSON fields, empty unimplemented kernel-envelope compatibility fields, supported native routes, scoped and bounded nullifiers, bounded base64 public_args, and exact route-payload decoding before a PendingAction can be staged; generated fixtures now exercise every supported submitAction route shape.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_blueprint_call_order_bindings",
       "production_eligible": true,
@@ -5451,7 +5530,7 @@
       "assumptions": [
         "The native JSON-RPC action boundary intentionally accepts the wallet's empty ActionEnvelope compatibility fields but treats any non-empty object_refs, authorization_proof, authorization_signatures, or aux_data as unsupported until native consensus implements and binds those semantics.",
         "The Lean model proves the executable decision table over parser/result predicates; serde_json, base64, SCALE Decode, and Encode implementation correctness remain outside this claim.",
-        "Generated vectors cover valid native requests, wallet-compatible empty envelope fields, unknown-field rejection, non-empty kernel-envelope field rejection, unsupported routes, nullifier scope/count/hex rejection, encoded and decoded public_args bounds, base64 rejection, and non-exact route payload rejection."
+        "Generated vectors cover valid native requests, wallet-compatible empty envelope fields, all supported route fixture families (outbound bridge, inbound bridge, bridge verifier registration, inline transfer, sidecar transfer, sidecar transfer with empty staged proof bytes, candidate artifact, and coinbase), unknown-field rejection, non-empty kernel-envelope field rejection, unsupported routes, nullifier scope/count/hex rejection, encoded and decoded public_args bounds, base64 rejection, and non-exact route payload rejection."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ActionRequestProjectionAdmission.lean",
@@ -5463,6 +5542,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_action_request_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node action_request_projection_accepts_supported_route_fixtures --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node submit_action_rejects_unknown_or_nonempty_kernel_projection_fields --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
@@ -6171,13 +6251,19 @@
       "id": "formal.native-tx-leaf-artifact-wire",
       "component": "native tx-leaf artifact wire grammar",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native tx-leaf artifact kernel proves executable parse facts for the bounded wire grammar, including fixed headers, serialized STARK/public-tx count caps, proof-length caps, commitment row caps, backend-byte defaults, strict canonical backend-byte admission, bad backend rejection, trailing-byte rejection, and truncation rejection; generated Lean vectors are checked against the production superneo-hegemon decoder, canonical decoder, and canonical encoder.",
+      "summary": "The Lean native tx-leaf artifact kernel proves executable parse facts for the bounded wire grammar, including fixed headers, serialized STARK/public-tx count caps, active-flag projection count binding, proof-length caps, commitment row caps, backend-byte defaults, strict canonical backend-byte admission, bad backend rejection, trailing-byte rejection, and truncation rejection; generated Lean vectors are checked against the production superneo-hegemon decoder, canonical decoder, canonical encoder, and active-count projection helpers, and a deterministic raw-byte oracle corpus checks production parser, canonical-admission, summary-projection, and canonical re-encode behavior over malformed and mutated artifacts.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.TxLeafArtifact.legacy_missing_backend_defaults_to_plonky3",
         "Hegemon.Native.TxLeafArtifact.missing_backend_defaults_to_current_backend",
+        "Hegemon.Native.TxLeafArtifact.valid_projection_counts_accept",
+        "Hegemon.Native.TxLeafArtifact.input_count_mismatch_projection_rejects",
+        "Hegemon.Native.TxLeafArtifact.output_commitment_count_mismatch_projection_rejects",
+        "Hegemon.Native.TxLeafArtifact.output_ciphertext_count_mismatch_projection_rejects",
+        "Hegemon.Native.TxLeafArtifact.nonbinary_input_flag_projection_rejects",
+        "Hegemon.Native.TxLeafArtifact.nonbinary_output_flag_projection_rejects",
         "Hegemon.Native.TxLeafArtifact.rejects_bad_backend",
         "Hegemon.Native.TxLeafArtifact.rejects_oversized_proof_len",
         "Hegemon.Native.TxLeafArtifact.rejects_too_many_balance_slots",
@@ -6198,8 +6284,9 @@
       ],
       "assumptions": [
         "The Lean model covers the native tx-leaf artifact byte grammar and parser control flow, not lattice commitment security, STARK proof soundness, or statement-digest collision resistance.",
-        "Generated Lean conformance vectors cover valid explicit-backend artifacts, permissive parser missing-backend default behavior, strict canonical rejection of missing-backend artifacts, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, proof-length cap rejection, row/coeff caps, and truncation rejection.",
-        "The production conformance test checks decoder agreement, strict canonical decoder agreement, canonical re-encoding behavior, and the Lean resource projection for raw bytes, decoded bytes, dynamic item count, max proof bytes, aggregate bytes, and work units in superneo-hegemon; production verification uses the strict canonical admission path before proof verification, while consensus receipt binding and statement-hash semantics are covered by separate claims."
+        "Generated Lean conformance vectors cover valid explicit-backend artifacts, permissive parser missing-backend default behavior, strict canonical rejection of missing-backend artifacts, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, active input/output flag count agreement with nullifier/commitment/ciphertext-hash counts, non-binary active flag rejection, proof-length cap rejection, row/coeff caps, and truncation rejection.",
+        "The production conformance test checks decoder agreement, strict canonical decoder agreement, canonical re-encoding behavior, active-count projection behavior, and the Lean resource projection for raw bytes, decoded bytes, dynamic item count, max proof bytes, aggregate bytes, and work units in superneo-hegemon; production verification uses the strict canonical admission path before proof verification, while consensus receipt binding and statement-hash semantics are covered by separate claims.",
+        "The independent raw-byte oracle corpus covers valid explicit backend bytes, missing-backend permissive defaulting, trailing bytes, truncation, bad-backend mutation, over-cap serialized/public/commitment counts, oversized declared STARK proof length, summary projection, and canonical re-encoding. This is parser-drift evidence and not a proof of the Rust parser implementation."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/TxLeafArtifact.lean",
@@ -6212,6 +6299,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture",
+        "cargo test -p superneo-hegemon native_tx_leaf_artifact_parser_matches_raw_byte_oracle_regression --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -6220,7 +6308,7 @@
       "id": "formal.native-receipt-root-wire",
       "component": "native receipt-root artifact wire grammar and fold schedule",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native receipt-root kernel proves executable parse, structural schedule, and bounded-request resource facts for the bounded artifact grammar, including leaf/fold caps, trailing/truncation rejection, exact non-empty expected leaf agreement, fold_count = leaf_count - 1, exact fold challenge count, exact fold row/coeff dimensions, and raw/decoded/item/max-item/aggregate/work request projections; generated Lean vectors are checked against the production superneo-hegemon decoder and structural validator used before backend fold verification.",
+      "summary": "The Lean native receipt-root kernel proves executable parse, structural schedule, and bounded-request resource facts for the bounded artifact grammar, including leaf/fold caps, trailing/truncation rejection, exact non-empty expected leaf agreement, fold_count = leaf_count - 1, exact fold challenge count, exact fold row/coeff dimensions, and raw/decoded/item/max-item/aggregate/work request projections; generated Lean vectors are checked against the production superneo-hegemon decoder and structural validator used before backend fold verification, and a deterministic arbitrary-byte mutation corpus checks the production parser/schedule gate against an independent raw-byte oracle.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -6251,7 +6339,8 @@
       "assumptions": [
         "The Lean model covers native receipt-root artifact byte parsing and the cheap structural fold-schedule gate, not cryptographic validity of the lattice fold proof, transcript challenge derivation, or commitment binding security.",
         "Generated Lean conformance vectors cover one-, two-, and three-leaf valid schedules plus zero expected leaves, leaf-count mismatch, missing/extra folds, bad challenge counts, bad row counts, bad row coefficient counts, over-cap leaf/fold counts, trailing bytes, truncation, and resource requests for valid parsed artifacts.",
-        "The production conformance test checks decoder agreement, canonical re-encoding, the structural validator now called by both native receipt-root verifier entry points before backend fold verification, and the Lean resource projection for raw bytes, decoded bytes, dynamic item count, max item bytes, aggregate bytes, and work units."
+        "The production conformance test checks decoder agreement, canonical re-encoding, the structural validator now called by both native receipt-root verifier entry points before backend fold verification, and the Lean resource projection for raw bytes, decoded bytes, dynamic item count, max item bytes, aggregate bytes, and work units.",
+        "The independent mutation corpus covers empty, valid one-/two-leaf, wrong expected-count, trailing-byte, zero-leaf, over-cap leaf/fold/challenge/row/coeff counts, overstated bodies, truncation, deterministic noise, oversized envelopes, and mutated valid receipt-root bytes; this is parser-drift evidence and not a proof of the Rust parser implementation."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/ReceiptRoot.lean",
@@ -6263,6 +6352,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS=<generated-json> cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture",
+        "cargo test -p superneo-hegemon native_receipt_root_parser_matches_independent_oracle_on_mutation_corpus --lib -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -6445,7 +6535,7 @@
       "id": "consensus.commitment-tree-membership-handoff",
       "component": "consensus commitment-tree membership handoff",
       "claim_class": "lean_theorem",
-      "summary": "The Lean commitment-tree membership handoff package proves that accepted handoff facts require consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. Formal-core Rust regressions give finite production conformance evidence for the real Poseidon2 hash handoff between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node, including wrong-leaf, wrong-position, pre-append-root, and later-leaf rejection cases. The same gate now covers the opt-in production append-transition certificate path, and Lean-generated append mutation vectors check leaf-index/count progression, sibling orientation/default selection, root-history retention, and real Merkle-combiner replay against that certificate.",
+      "summary": "The Lean commitment-tree membership handoff package proves that accepted handoff facts require consensus root equality with the state-merkle root, provided-root equality with the state-merkle root, parent root-history membership, state-merkle path export, and transaction Merkle-path verifier acceptance. Formal-core Rust regressions give finite production conformance evidence for the real Poseidon2 hash handoff between consensus CommitmentTreeState append roots, state-merkle authentication paths, and transaction-circuit MerklePath::verify_with_depth_and_node, including wrong-leaf, wrong-position, pre-append-root, and later-leaf rejection cases. The same gate now covers the opt-in production append-transition certificate path, Lean-generated append mutation vectors check leaf-index/count progression, sibling orientation/default selection, root-history retention, and real Merkle-combiner replay against that certificate, and focused consensus/state-merkle oracles independently rebuild append roots, authentication paths, root history, stale-root rejection, full-tree rejection, path bounds, and atomic oversized batch-extension rejection.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_plus_rust_conformance_regression",
       "production_eligible": true,
@@ -6469,7 +6559,9 @@
       "assumptions": [
         "The Lean theorem models the membership handoff predicate over abstract digests using the existing transaction Merkle-path kernel; the production Rust regression checks the real consensus/state-merkle/transaction hash implementations against each other.",
         "The Rust regression intentionally uses raw tree append APIs where a zero commitment is a real leaf; block-level zero-commitment filtering remains covered by the separate tree-transition and block-action admission paths.",
-        "This claim provides Lean handoff facts plus finite production conformance regressions and Lean-generated vectors for append-root, membership-path interoperability, and replayable append-transition certificates. It does not prove full production implementation equivalence, Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, complete block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
+        "The independent state-merkle oracle covers a deterministic depth-5 tree, recomputes default nodes and every append root/path without using the tree state, rejects stale roots after later appends, and checks tree-full, out-of-range path errors, and oversized batch-extension rejection without mutation.",
+        "The consensus append regression checks that CommitmentTreeState rejects oversized batch extension before mutating the root, leaf count, frontier, or root history.",
+        "This claim provides Lean handoff facts plus finite production conformance regressions, Lean-generated vectors for append-root/membership-path interoperability and replayable append-transition certificates, and focused state-merkle implementation-equivalence evidence. It does not prove full production implementation equivalence, Poseidon2 collision resistance, note commitment correctness, arbitrary raw-byte action decoding, complete block replay/reorg/startup equivalence, transaction proof soundness, or complete native-node refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/CommitmentTreeMembershipRefinement.lean",
@@ -6477,6 +6569,7 @@
         "formal/lean/Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean",
         "formal/lean/Hegemon/Transaction/MerklePath.lean",
         "consensus/src/commitment_tree.rs",
+        "state/merkle/src/lib.rs",
         "formal/lean/Hegemon.lean",
         "scripts/check_formal_core.sh",
         "scripts/hegemon_formal_core/src/lib.rs",
@@ -6485,6 +6578,7 @@
       "gates": [
         "cd formal/lean && lake build Hegemon.Native.CommitmentTreeMembershipRefinement Hegemon",
         "cargo test -p consensus append_ -- --nocapture",
+        "cargo test -p state-merkle commitment_tree_independent_oracle_append_roots_paths_and_bounds -- --nocapture",
         "tmp=$(mktemp); (cd formal/lean && lake exe gen_commitment_tree_append_vectors > $tmp); HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=$tmp cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture; rm -f $tmp",
         "bash scripts/check_formal_core.sh"
       ],
@@ -6501,7 +6595,7 @@
       "id": "formal.native-commitment-tree-refinement",
       "component": "native commitment-tree refinement boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, that accepted raw-ingress full-byte publication binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows, that the same raw-ingress field-projection surface binds canonical nullifier and bridge replay rows to exact ordered decoded/planned replay-set content, and that accepted raw-ingress publication carries the append-summary/count surface tied to the Lean-generated append mutation vectors under accepted action-plan row-start gating over decoded commitment starts and counts. The new raw-ingress ledger-integrity certificate packages field projection, append publication, replay-set content, accepted ledger/tree replay, replayed supply, commitment-root publication, leaf-cursor publication, final nullifier uniqueness, final bridge replay uniqueness, exact canonical commitment/nullifier/bridge replay rows, ordered row content, and append-summary index/count agreement in one review surface. Production consensus code exposes an opt-in append-transition certificate checked by Lean-generated append mutation vectors without changing the hot append API. The raw-ingress commitment/nullifier integrity certificate now composes accepted full-byte field projection, ordered canonical commitment/nullifier/bridge replay rows, root and leaf-cursor publication, append mutation index/count binding, final nullifier uniqueness, final replay uniqueness, and replayed supply. The path-family ledger-integrity certificate composes that raw-ingress certificate with raw-ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence content, exposing exact canonical rows, final uniqueness, and mined/startup plus rebuild/block_range row agreement in one implementation-equivalence surface.",
+      "summary": "The Lean native commitment-tree refinement boundary proves that an accepted native action stream determines a canonical action-plan application with the same planned commitment starts and next leaf cursor, that an accepted consensus tree transition publishes the applied commitment-tree root, that accepted ledger/tree replay chains thread a commitment-root cursor in lockstep with accepted ledger replay, canonical commitment plans, supply replay, nullifier uniqueness, and bridge replay uniqueness, that raw-decoded native ledger/tree replay projections inherit those same root and ledger facts, that accepted canonical publication/reload/commit/durability predicates preserve those replay facts at the publication boundary, that accepted raw-ingress full-byte publication binds canonical commitment rows to the exact ordered commitments and indexes decoded from accepted action rows, that the same raw-ingress field-projection surface binds canonical nullifier and bridge replay rows to exact ordered decoded/planned replay-set content, and that accepted raw-ingress publication carries the append-summary/count surface tied to the Lean-generated append mutation vectors under accepted action-plan row-start gating over decoded commitment starts and counts. The new raw-ingress ledger-integrity certificate packages field projection, append publication, replay-set content, accepted ledger/tree replay, replayed supply, commitment-root publication, leaf-cursor publication, final nullifier uniqueness, final bridge replay uniqueness, exact canonical commitment/nullifier/bridge replay rows, ordered row content, and append-summary index/count agreement in one review surface. Production consensus code exposes an opt-in append-transition certificate checked by Lean-generated append mutation vectors without changing the hot append API, and the state-merkle crate now has an independent append-root/path/root-history oracle gate over the production Merkle mutation surface. The raw-ingress commitment/nullifier integrity certificate now composes accepted full-byte field projection, ordered canonical commitment/nullifier/bridge replay rows, root and leaf-cursor publication, append mutation index/count binding, final nullifier uniqueness, final replay uniqueness, and replayed supply. The path-family ledger-integrity certificate composes that raw-ingress certificate with raw-ingress, mined commit, announced import, sync import, reorg replay, canonical-index rebuild, block_range, and startup repair row-equivalence content, exposing exact canonical rows, final uniqueness, and mined/startup plus rebuild/block_range row agreement in one implementation-equivalence surface.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_nonproduction_refinement",
       "production_eligible": false,
@@ -6576,6 +6670,7 @@
         "The refinement is over already-decoded native action summaries and abstract commitment-tree roots.",
         "The theorem reuses existing production-bound action-stream, action-plan application, and consensus tree-transition executable models; the replay-set content slice is production-bound by a focused canonical-index rebuild regression that compares decoded nullifier rows, materialized/planned replay keys, rebuild-plan rows, and persisted sled markers.",
         "The production append-transition certificate records the exact sibling orientation/default choices, parents, prior/result root-history tails, leaf index/value, and result root/count while sharing the same mutation body as the hot append path; Lean-generated append mutation vectors now check the modeled leaf-index/count, sibling-orientation, default-sibling, and history-retention rules against that production certificate and its real Merkle replay. The accepted raw-ingress append-publication theorem carries that append-summary/count surface with commitment-root and leaf-cursor publication over the same raw witness, derives the pure flattened append-index equality from the executable action-plan row-start gate over decoded commitment starts/counts, and exposes equality between append-summary leaf indexes, ordered decoded commitment indexes, and canonical commitment-row indexes.",
+        "The independent state-merkle oracle recomputes default-node trees, append roots, root history, authentication paths, stale-root rejection, full-tree rejection, and path bounds against the production state-merkle implementation without using the production tree state as the oracle.",
         "The raw-ingress ledger-integrity publication certificate is a zero-runtime-cost Lean package over existing production-bound field-projection, append-publication, and replay-set content facts. It does not add a new parser or hash proof; it makes the supply, nullifier, bridge replay, commitment-row, and append-mutation obligations reviewable as one theorem over the same raw witness.",
         "This slice does not prove commitment-tree hash security, complete Merkle tree implementation equivalence, note commitment correctness, raw byte decoding, full production tree mutation equivalence, reorg/startup replay equivalence, sled durability, or complete native-node refinement.",
         "The commitment/nullifier integrity certificate is over accepted raw-ingress projection and replay predicates; hash implementation equivalence, arbitrary parser internals, storage below admitted predicates, and complete native-node equivalence remain explicit residuals.",
@@ -6594,6 +6689,7 @@
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean",
         "formal/lean/Hegemon/Native/CommitmentTreeRefinement.lean",
         "consensus/src/commitment_tree.rs",
+        "state/merkle/src/lib.rs",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -6601,6 +6697,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "cargo test -p consensus append_ -- --nocapture",
+        "cargo test -p state-merkle commitment_tree_independent_oracle_append_roots_paths_and_bounds -- --nocapture",
         "tmp=$(mktemp); (cd formal/lean && lake exe gen_commitment_tree_append_vectors > $tmp); HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS=$tmp cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture; rm -f $tmp",
         "cargo test -p hegemon-node canonical_index_rebuild_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
@@ -7004,13 +7101,14 @@
         "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_publication_from_smallwood_native_policy_certificate",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.smallwood_public_statement_export_yields_native_live_public_asset_isolation_certificate",
         "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_publication_output_slot_statement_artifact_facts",
-        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_from_smallwood_residuals_yields_implementation_equivalence_certificate"
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.accepted_materialized_transfer_no_theft_from_smallwood_residuals_yields_implementation_equivalence_certificate",
+        "Hegemon.Native.MaterializedTransferNoTheftPublication.materialized_transfer_no_theft_implementation_equivalence_certificate_exposes_residual_boundary_facts"
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition over accepted materialized DA publication, accepted transfer payload admission, accepted tx-leaf/action binding, canonical transaction statement facts, and the existing explicit deployed verifier soundness assumptions.",
         "The full theorem keeps `DeployedTxVerifierSoundnessAssumption` explicit while exposing authorized per-asset delta values and output-slot statement/proof artifact rows at the materialized publication boundary; the no-theft/input-slot variant narrows this to `DeployedTxVerifierSpendSoundnessAssumption`, and the public stablecoin-exception theorem pairs spend-only no-theft publication with `DeployedTxVerifierBalancePublicFieldSoundnessAssumption`. The spend-boundary variant consumes already-packaged `CanonicalDeployedVerifierSpendBoundaryFacts`, and the SmallWood/native-policy certificate consumes `SmallWoodPublicStatementVerifierExportFacts`, exact public-authorized delta equality, a native policy-authorized stablecoin exception surface, and native live authorization facts over the materialized DA publication surface. It still does not claim deployed STARK/AIR, native tx-leaf proof, witness extraction, wallet custody, recursive proof soundness, or production live-policy lookup validity.",
         "The theorem inherits the materialized sidecar assumptions: row-to-Transaction::new equivalence, consensus DA blob construction equivalence, DA-root hash/security equivalence, DA availability, proof-system soundness, storage durability, and complete native-node equivalence remain explicit work.",
-        "The no-theft implementation-equivalence certificate keeps parser/codec projection, materialized row-to-transaction, transaction-to-DA blob, DA hash/security, DA retention, proof-system soundness, storage durability, and complete native-node equivalence as explicit residual fields."
+        "The no-theft implementation-equivalence certificate keeps parser/codec projection, materialized row-to-transaction, transaction-to-DA blob, DA hash/security, DA retention, proof-system soundness, storage durability, and complete native-node equivalence as explicit residual fields, and its residual-boundary projection theorem exposes those fields together with the materialized publication, SmallWood verifier export, active-input no-theft, total input-slot authorization, tx-leaf statement artifact, replayed-supply, and final replay-set facts."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MaterializedTransferNoTheftPublication.lean",
@@ -7052,7 +7150,7 @@
       "id": "native.mined-block-commit-publication",
       "component": "native mined block commit publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean mined-block commit publication surface composes local mined-work freshness, native block-commitment admission, and atomic mined-block commit-manifest admission into one accepted publication package. Accepted local mined publication now exposes fresh parent/height preconditions, header/body/supply commitment preconditions, the mined-block manifest kind, and atomic manifest preconditions before production order gates publish state or broadcast.",
+      "summary": "The Lean mined-block commit publication surface composes local mined-work freshness, native block-commitment admission, and atomic mined-block commit-manifest admission into one accepted publication package. Accepted local mined publication now exposes fresh parent/height preconditions, header/body/supply commitment preconditions, the mined-block manifest kind, atomic manifest preconditions, and a production persisted-head readback regression before state publication or broadcast.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_mined_work_commitment_atomic_manifest_composition",
       "production_eligible": true,
@@ -7063,7 +7161,7 @@
       ],
       "assumptions": [
         "This is a zero-runtime-cost Lean composition over existing executable mined-work, block-commitment, and atomic-commit manifest admission predicates.",
-        "The theorem packages the predicates that production order bindings already require before mined state publication or broadcast; it does not add runtime checks beyond the existing helpers.",
+        "The theorem packages the predicates that production order bindings already require before mined state publication or broadcast; production now additionally reads back the persisted best pointer, height index, and block record after the durability barrier and before mined/reorg state publication.",
         "The theorem keeps proof-of-work hash-threshold soundness, parent-hash computation, body/replay implementation equivalence, supply-accounting implementation equivalence, sled transaction correctness, filesystem durability, and complete native-node refinement explicit."
       ],
       "evidence_paths": [
@@ -7071,6 +7169,7 @@
         "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
         "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
         "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "node/src/native/mod.rs",
         "formal/lean/Hegemon.lean",
         "formal/lean/README.md",
         "scripts/hegemon_formal_core/src/lib.rs",
@@ -7079,6 +7178,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.MinedBlockCommitPublication Hegemon",
+        "cargo test -p hegemon-node action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
         "bash scripts/check_formal_core.sh"
@@ -7096,7 +7196,7 @@
       "id": "network.frame-resource-admission",
       "component": "network and PQ Noise frame codecs plus bounded network queues",
       "claim_class": "lean_theorem",
-      "summary": "The Lean network resource-admission kernels prove executable frame decode acceptance exactly requires the configured frame-size bound, domain-separated codec marker, successful postcard decode, and full byte consumption, with fail-closed precedence for oversize, missing marker, postcard failure, and trailing bytes. They also prove encode acceptance is exactly the marker-plus-body size bound, every modeled frame marker is four bytes, PQ session plaintext plus AEAD tag equals the ciphertext frame bound, PQ session plaintext is below the ciphertext bound, and network/PQ frame markers are domain-separated. The companion queue-resource admission kernel proves peer-send and event-channel byte-budget reserve/send accounting: messages over cap reject first, counter overflow rejects before aggregate-budget acceptance, aggregate queue over-budget rejects, successful sends increment queued bytes, channel-full/closed send failures roll queued bytes back, and reserve rejection precedes channel state. Generated Lean vectors are checked against the production network HNW codec, pq-noise handshake/session/transcript codecs, and network queue accounting helpers. The peer-store capacity kernel separately proves retained peer records are bounded by max_entries, are exactly the recency-prefix subset, and partition with the dropped recency suffix; generated vectors check that production peer-store retention enforces the retained and dropped sets.",
+      "summary": "The Lean network resource-admission kernels prove executable frame decode acceptance exactly requires the configured frame-size bound, domain-separated codec marker, successful postcard decode, and full byte consumption, with fail-closed precedence for oversize, missing marker, postcard failure, and trailing bytes. They also prove encode acceptance is exactly the marker-plus-body size bound, every modeled frame marker is four bytes, PQ session plaintext plus AEAD tag equals the ciphertext frame bound, PQ session plaintext is below the ciphertext bound, and network/PQ frame markers are domain-separated. The companion queue-resource admission kernel proves peer-send and event-channel byte-budget reserve/send accounting: messages over cap reject first, counter overflow rejects before aggregate-budget acceptance, aggregate queue over-budget rejects, successful sends increment queued bytes, channel-full/closed send failures roll queued bytes back, and reserve rejection precedes channel state. Generated Lean vectors are checked against the production network HNW codec, pq-noise handshake/session/transcript codecs, and network queue accounting helpers; focused arbitrary-byte mutation corpora additionally compare production network/PQ frame decoders against the marker, bound, postcard success, and full-consumption oracle across malformed, oversized, truncated, trailing-byte, marker-prefixed, and mutated-valid frames. The peer-store capacity kernel separately proves retained peer records are bounded by max_entries, are exactly the recency-prefix subset, and partition with the dropped recency suffix; generated vectors check that production peer-store retention enforces the retained and dropped sets. Focused network regressions additionally require P2P handshake frames to stay under the smaller handshake cap until secure-wire promotion, inbound handshake backlog/timeouts to bound half-open work, address exchange and address books to filter/cap dialable addresses, and peer send loops to avoid awaiting full queues.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -7114,6 +7214,7 @@
         "Hegemon.Network.FrameResourceAdmission.pq_session_plaintext_bound_below_ciphertext_bound",
         "Hegemon.Network.FrameResourceAdmission.pq_handshake_magic_distinct_from_session",
         "Hegemon.Network.FrameResourceAdmission.pq_transcript_magic_distinct_from_session",
+        "Hegemon.Network.FrameResourceAdmission.pq_transcript_magic_distinct_from_handshake",
         "Hegemon.Network.FrameResourceAdmission.network_magic_distinct_from_pq_handshake",
         "Hegemon.Network.QueueResourceAdmission.queue_reserve_accepts_iff",
         "Hegemon.Network.QueueResourceAdmission.accepted_queue_reserve_exposes_facts",
@@ -7152,6 +7253,7 @@
       "assumptions": [
         "The Lean model covers frame-size, marker-domain, postcard-success, and no-trailing-byte admission logic, not postcard parser implementation correctness or cryptographic primitive security.",
         "Generated vectors bind the modeled frame admission table to production network::wire and pq-noise::codec constants and representative production encode/decode rejection paths without adding runtime work.",
+        "Focused arbitrary-byte mutation corpora compare production network::wire and pq-noise::codec frame decoding to an independent marker/bound/postcard/full-consumption oracle over malformed, marker-prefixed, oversized, truncated, trailing-byte, and mutated-valid byte streams; this narrows parser drift risk without claiming a proof of postcard internals.",
         "The Lean queue-resource model covers byte-budget reserve/send accounting for peer-send queues and network event channels, including overflow, over-budget rejection, accepted-send increments, and full/closed rollback; it does not prove tokio mpsc internals, scheduler fairness, peer honesty, or network liveness.",
         "Generated queue-resource vectors bind the modeled queue caps and reserve/send outcomes to production network_backend queue accounting helpers and representative event enqueue accounting without adding runtime work.",
         "The PQ session ciphertext cap is represented through the plaintext-plus-AEAD-tag theorem and production session constants; this claim does not prove tokio length-delimited transport liveness or full session completion equivalence.",
@@ -7164,6 +7266,9 @@
         "formal/lean/Hegemon/Network/GenerateQueueResourceAdmissionVectors.lean",
         "network/src/wire.rs",
         "network/src/network_backend.rs",
+        "network/src/p2p.rs",
+        "network/src/service.rs",
+        "network/src/peer_manager.rs",
         "pq-noise/src/codec.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -7175,10 +7280,15 @@
         "bash scripts/check_lean_formal.sh",
         "cd formal/lean && lake build Hegemon.Network.FrameResourceAdmission Hegemon.Network.GenerateFrameResourceAdmissionVectors Hegemon.Network.QueueResourceAdmission Hegemon.Network.GenerateQueueResourceAdmissionVectors Hegemon",
         "HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_frame_resource_admission_vectors_match_production -- --nocapture",
+        "cargo test -p network network_wire_decode_matches_marker_limit_postcard_oracle_on_mutation_corpus -- --nocapture",
         "HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p pq-noise lean_generated_frame_resource_admission_vectors_match_production -- --nocapture",
+        "cargo test -p pq-noise pq_noise_decode_matches_marker_limit_postcard_oracle_on_mutation_corpus -- --nocapture",
         "HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh",
-        "HEGEMON_LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_peer_store_capacity_vectors_match_production -- --nocapture"
+        "HEGEMON_LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS=<generated-json> cargo test -p network lean_generated_peer_store_capacity_vectors_match_production -- --nocapture",
+        "cargo test -p network oversized_handshake_frame_is_rejected --lib -- --nocapture",
+        "cargo test -p network record_addresses_filters_and_caps_per_peer_entries --lib -- --nocapture",
+        "cargo test -p network peer_sends_do_not_await_full_queues --lib -- --nocapture"
       ],
       "residual_risks": []
     }

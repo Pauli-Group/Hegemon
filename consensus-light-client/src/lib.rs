@@ -3168,6 +3168,739 @@ mod tests {
         );
     }
 
+    #[test]
+    fn long_range_proof_wire_decoders_match_independent_raw_oracle() {
+        let proof = long_range_test_proof();
+        let wire = proof.encode();
+        assert_long_range_wire_matches_oracle("canonical-full-and-guest", &wire);
+
+        let offsets = oracle_long_range_offsets(&wire).expect("valid wire offsets");
+
+        let mut trailing = wire.clone();
+        trailing.push(0);
+        assert_long_range_wire_matches_oracle("trailing-byte", &trailing);
+
+        let truncated = &wire[..wire.len() - 1];
+        assert_long_range_wire_matches_oracle("truncated-tail", truncated);
+
+        let noncanonical_payload_len = with_two_byte_noncanonical_len(
+            &wire,
+            offsets.first_payload_len,
+            b"long range bridge".len(),
+        );
+        assert_long_range_wire_matches_oracle(
+            "noncanonical-compact-payload-len",
+            &noncanonical_payload_len,
+        );
+
+        let noncanonical_message_len =
+            with_two_byte_noncanonical_len(&wire, offsets.messages_len, proof.messages.len());
+        assert_long_range_wire_matches_oracle(
+            "noncanonical-compact-message-len",
+            &noncanonical_message_len,
+        );
+
+        let noncanonical_sample_len = with_two_byte_noncanonical_len(
+            &wire,
+            offsets.sample_headers_len,
+            proof.sample_headers.len(),
+        );
+        assert_long_range_wire_matches_oracle(
+            "noncanonical-compact-sample-len",
+            &noncanonical_sample_len,
+        );
+
+        let mut over_message_cap = proof.clone();
+        over_message_cap.messages =
+            vec![proof.messages[0].clone(); HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1 + 1];
+        over_message_cap.message_header.message_count = over_message_cap.messages.len() as u32;
+        assert_long_range_wire_matches_oracle("over-message-cap", &over_message_cap.encode());
+
+        let mut over_payload_cap = proof.clone();
+        over_payload_cap.messages[0].payload =
+            vec![0x2a; HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1 + 1];
+        over_payload_cap.messages[0].payload_hash =
+            bridge_payload_hash(&over_payload_cap.messages[0].payload);
+        assert_long_range_wire_matches_oracle("over-payload-cap", &over_payload_cap.encode());
+
+        let mut over_mmr_cap = proof.clone();
+        over_mmr_cap.message_header_opening.sibling_hashes =
+            vec![[0x5au8; 32]; HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1 + 1];
+        assert_long_range_wire_matches_oracle("over-mmr-sibling-cap", &over_mmr_cap.encode());
+
+        let mut over_sample_vector_cap = proof.clone();
+        over_sample_vector_cap.sample_headers = vec![
+            proof.sample_headers[0].clone();
+            HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1
+                + 1
+        ];
+        over_sample_vector_cap.sample_count = over_sample_vector_cap.sample_headers.len() as u32;
+        assert_long_range_wire_matches_oracle(
+            "over-sample-vector-cap",
+            &over_sample_vector_cap.encode(),
+        );
+
+        let mut over_sample_count_cap = proof.clone();
+        over_sample_count_cap.sample_count =
+            (HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32) + 1;
+        assert_long_range_wire_matches_oracle(
+            "over-sample-count-cap",
+            &over_sample_count_cap.encode(),
+        );
+
+        let mut output_tail_tamper = wire.clone();
+        let output_start = output_tail_tamper.len() - BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1;
+        output_tail_tamper[output_start] ^= 0x01;
+        assert!(
+            oracle_decode_long_range_full(&output_tail_tamper).is_ok(),
+            "oracle full decode must accept structurally valid output-tail tamper"
+        );
+        assert_eq!(
+            oracle_decode_long_range_guest(&output_tail_tamper).map(|_| ()),
+            Err(LightClientError::ReceiptOutputMismatch),
+            "oracle guest decode must reject output-tail tamper"
+        );
+        assert_long_range_wire_matches_oracle("output-tail-tamper", &output_tail_tamper);
+
+        let mut state = 0xd1b5_4a32_d192_ed03u64;
+        for case_index in 0..64 {
+            state = state
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .wrapping_add(0xbf58_476d_1ce4_e5b9);
+            let offset = (state as usize) % wire.len();
+            let bit = 1u8 << ((state >> 17) & 7);
+            let mut mutated = wire.clone();
+            mutated[offset] ^= bit;
+            assert_long_range_wire_matches_oracle(
+                &format!("deterministic-mutation-{case_index}-{offset}-{bit}"),
+                &mutated,
+            );
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct LongRangeOracleOffsets {
+        messages_len: usize,
+        first_payload_len: usize,
+        sample_headers_len: usize,
+    }
+
+    fn assert_long_range_wire_matches_oracle(name: &str, wire: &[u8]) {
+        let production_full = decode_hegemon_long_range_proof_wire_v1(wire);
+        let oracle_full = oracle_decode_long_range_full(wire);
+        assert_eq!(
+            production_full.is_ok(),
+            oracle_full.is_ok(),
+            "{name}: full decoder acceptance mismatch: production={production_full:?} oracle={oracle_full:?}"
+        );
+        if let (Ok(production), Ok(oracle)) = (&production_full, &oracle_full) {
+            assert_eq!(
+                production, oracle,
+                "{name}: full decoder parsed proof mismatch"
+            );
+        }
+        let production_guest = decode_hegemon_long_range_proof_guest_wire_v1(wire);
+        let oracle_guest = oracle_decode_long_range_guest(wire);
+        assert_eq!(
+            production_guest.is_ok(),
+            oracle_guest.is_ok(),
+            "{name}: guest decoder acceptance mismatch: production={production_guest:?} oracle={oracle_guest:?}"
+        );
+        if let (Ok(production), Ok(oracle)) = (&production_guest, &oracle_guest) {
+            assert_eq!(
+                production, oracle,
+                "{name}: guest decoder parsed tuple mismatch"
+            );
+        }
+    }
+
+    fn with_two_byte_noncanonical_len(wire: &[u8], offset: usize, len: usize) -> Vec<u8> {
+        assert!(len < 1 << 6, "fixture len must fit one-byte compact form");
+        assert_eq!(
+            wire[offset],
+            (len as u8) << 2,
+            "fixture offset must point at one-byte compact length"
+        );
+        let wide = (((len as u16) << 2) | 0b01).to_le_bytes();
+        let mut out = wire.to_vec();
+        out[offset] = wide[0];
+        out.insert(offset + 1, wide[1]);
+        out
+    }
+
+    fn oracle_decode_long_range_full(
+        wire: &[u8],
+    ) -> Result<HegemonLongRangeProofV1, LightClientError> {
+        let mut cursor = 0usize;
+        let proof = oracle_read_long_range_proof(wire, &mut cursor)?;
+        if cursor != wire.len() {
+            return Err(LightClientError::ProofInputMismatch);
+        }
+        Ok(proof)
+    }
+
+    fn oracle_decode_long_range_guest(
+        wire: &[u8],
+    ) -> Result<(HegemonLongRangeProofV1, u32, Work48), LightClientError> {
+        let mut cursor = 0usize;
+        let mut proof = oracle_read_long_range_proof_without_output(wire, &mut cursor)?;
+        let output_end = cursor
+            .checked_add(BRIDGE_CHECKPOINT_OUTPUT_WIRE_LEN_V1)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        if output_end != wire.len() {
+            return Err(LightClientError::ProofInputMismatch);
+        }
+        let mut output_cursor = cursor;
+        let output = oracle_read_bridge_checkpoint_output(wire, &mut output_cursor)?;
+        if output_cursor != output_end {
+            return Err(LightClientError::ProofInputMismatch);
+        }
+        let min_confirmations = output.confirmations_checked;
+        let min_tip_work = output.min_work_checked;
+        proof.output = output.clone();
+        if oracle_expected_long_range_output(&proof, min_tip_work)? != output {
+            return Err(LightClientError::ReceiptOutputMismatch);
+        }
+        Ok((proof, min_confirmations, min_tip_work))
+    }
+
+    fn oracle_long_range_offsets(wire: &[u8]) -> Result<LongRangeOracleOffsets, LightClientError> {
+        let mut cursor = 0usize;
+        oracle_skip(wire, &mut cursor, 32)?;
+        oracle_skip_trusted_checkpoint(wire, &mut cursor)?;
+        oracle_skip_pow_header(wire, &mut cursor)?;
+        oracle_skip_pow_header(wire, &mut cursor)?;
+        oracle_skip_header_mmr_opening(wire, &mut cursor)?;
+
+        let messages_len = cursor;
+        let message_count = oracle_read_compact_len_with_cap(
+            wire,
+            &mut cursor,
+            HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1,
+        )?;
+        let mut first_payload_len = None;
+        for index in 0..message_count {
+            oracle_skip(wire, &mut cursor, 32 + 32 + 2 + 16 + 8 + 48)?;
+            if index == 0 {
+                first_payload_len = Some(cursor);
+            }
+            let payload_len = oracle_read_compact_len_with_cap(
+                wire,
+                &mut cursor,
+                HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+            )?;
+            oracle_skip(wire, &mut cursor, payload_len)?;
+        }
+        oracle_skip(wire, &mut cursor, 4)?;
+        let sample_headers_len = cursor;
+
+        Ok(LongRangeOracleOffsets {
+            messages_len,
+            first_payload_len: first_payload_len.ok_or(LightClientError::ProofInputMismatch)?,
+            sample_headers_len,
+        })
+    }
+
+    fn oracle_read_long_range_proof(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<HegemonLongRangeProofV1, LightClientError> {
+        let mut proof = oracle_read_long_range_proof_without_output(wire, cursor)?;
+        proof.output = oracle_read_bridge_checkpoint_output(wire, cursor)?;
+        Ok(proof)
+    }
+
+    fn oracle_read_long_range_proof_without_output(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<HegemonLongRangeProofV1, LightClientError> {
+        let verifier_hash = oracle_read_array::<32>(wire, cursor)?;
+        let trusted_checkpoint = oracle_read_trusted_checkpoint(wire, cursor)?;
+        let tip_header = oracle_read_pow_header(wire, cursor)?;
+        let message_header = oracle_read_pow_header(wire, cursor)?;
+        let message_header_opening = oracle_read_header_mmr_opening(wire, cursor)?;
+        let messages = oracle_read_bridge_messages(wire, cursor)?;
+        let message_index = oracle_read_u32(wire, cursor)?;
+        let sample_headers = oracle_read_header_mmr_leaf_witnesses(wire, cursor)?;
+        let sample_count = oracle_read_u32(wire, cursor)?;
+        if sample_count > HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1 as u32 {
+            return Err(LightClientError::ProofInputMismatch);
+        }
+        Ok(HegemonLongRangeProofV1 {
+            verifier_hash,
+            trusted_checkpoint,
+            tip_header,
+            message_header,
+            message_header_opening,
+            messages,
+            message_index,
+            sample_headers,
+            sample_count,
+            output: empty_bridge_checkpoint_output(),
+        })
+    }
+
+    fn oracle_read_pow_header(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<PowHeaderV1, LightClientError> {
+        Ok(PowHeaderV1 {
+            chain_id: oracle_read_array::<32>(wire, cursor)?,
+            rules_hash: oracle_read_array::<32>(wire, cursor)?,
+            height: oracle_read_u64(wire, cursor)?,
+            timestamp_ms: oracle_read_u64(wire, cursor)?,
+            parent_hash: oracle_read_array::<32>(wire, cursor)?,
+            state_root: oracle_read_array::<48>(wire, cursor)?,
+            kernel_root: oracle_read_array::<48>(wire, cursor)?,
+            nullifier_root: oracle_read_array::<48>(wire, cursor)?,
+            proof_commitment: oracle_read_array::<48>(wire, cursor)?,
+            da_root: oracle_read_array::<48>(wire, cursor)?,
+            action_root: oracle_read_array::<32>(wire, cursor)?,
+            tx_statements_commitment: oracle_read_array::<48>(wire, cursor)?,
+            version_commitment: oracle_read_array::<48>(wire, cursor)?,
+            fee_commitment: oracle_read_array::<48>(wire, cursor)?,
+            supply_digest: oracle_read_u128(wire, cursor)?,
+            tx_count: oracle_read_u32(wire, cursor)?,
+            message_root: oracle_read_array::<48>(wire, cursor)?,
+            message_count: oracle_read_u32(wire, cursor)?,
+            header_mmr_root: oracle_read_array::<32>(wire, cursor)?,
+            header_mmr_len: oracle_read_u64(wire, cursor)?,
+            pow_bits: oracle_read_u32(wire, cursor)?,
+            nonce: oracle_read_array::<32>(wire, cursor)?,
+            cumulative_work: oracle_read_array::<48>(wire, cursor)?,
+        })
+    }
+
+    fn oracle_read_trusted_checkpoint(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<TrustedCheckpointV1, LightClientError> {
+        Ok(TrustedCheckpointV1 {
+            chain_id: oracle_read_array::<32>(wire, cursor)?,
+            rules_hash: oracle_read_array::<32>(wire, cursor)?,
+            height: oracle_read_u64(wire, cursor)?,
+            header_hash: oracle_read_array::<32>(wire, cursor)?,
+            timestamp_ms: oracle_read_u64(wire, cursor)?,
+            pow_bits: oracle_read_u32(wire, cursor)?,
+            cumulative_work: oracle_read_array::<48>(wire, cursor)?,
+            header_mmr_root: oracle_read_array::<32>(wire, cursor)?,
+            header_mmr_len: oracle_read_u64(wire, cursor)?,
+        })
+    }
+
+    fn oracle_read_bridge_messages(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<Vec<BridgeMessageV1>, LightClientError> {
+        let len = oracle_read_compact_len_with_cap(
+            wire,
+            cursor,
+            HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1,
+        )?;
+        let mut messages = Vec::with_capacity(len);
+        for _ in 0..len {
+            messages.push(oracle_read_bridge_message(wire, cursor)?);
+        }
+        Ok(messages)
+    }
+
+    fn oracle_read_bridge_message(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<BridgeMessageV1, LightClientError> {
+        Ok(BridgeMessageV1 {
+            source_chain_id: oracle_read_array::<32>(wire, cursor)?,
+            destination_chain_id: oracle_read_array::<32>(wire, cursor)?,
+            app_family_id: oracle_read_u16(wire, cursor)?,
+            message_nonce: oracle_read_u128(wire, cursor)?,
+            source_height: oracle_read_u64(wire, cursor)?,
+            payload_hash: oracle_read_array::<48>(wire, cursor)?,
+            payload: oracle_read_vec_bytes(
+                wire,
+                cursor,
+                HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+            )?,
+        })
+    }
+
+    fn oracle_read_header_mmr_opening(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<HeaderMmrOpeningV1, LightClientError> {
+        Ok(HeaderMmrOpeningV1 {
+            leaf_index: oracle_read_u64(wire, cursor)?,
+            leaf_count: oracle_read_u64(wire, cursor)?,
+            sibling_hashes: oracle_read_hash32_vec(
+                wire,
+                cursor,
+                HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1,
+            )?,
+            peak_hashes: oracle_read_hash32_vec(
+                wire,
+                cursor,
+                HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1,
+            )?,
+        })
+    }
+
+    fn oracle_read_header_mmr_leaf_witnesses(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<Vec<HeaderMmrLeafWitnessV1>, LightClientError> {
+        let len = oracle_read_compact_len_with_cap(
+            wire,
+            cursor,
+            HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1,
+        )?;
+        let mut samples = Vec::with_capacity(len);
+        for _ in 0..len {
+            samples.push(HeaderMmrLeafWitnessV1 {
+                header: oracle_read_pow_header(wire, cursor)?,
+                opening: oracle_read_header_mmr_opening(wire, cursor)?,
+            });
+        }
+        Ok(samples)
+    }
+
+    fn oracle_read_bridge_checkpoint_output(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<BridgeCheckpointOutputV1, LightClientError> {
+        Ok(BridgeCheckpointOutputV1 {
+            source_chain_id: oracle_read_array::<32>(wire, cursor)?,
+            rules_hash: oracle_read_array::<32>(wire, cursor)?,
+            checkpoint_height: oracle_read_u64(wire, cursor)?,
+            checkpoint_header_hash: oracle_read_array::<32>(wire, cursor)?,
+            checkpoint_cumulative_work: oracle_read_array::<48>(wire, cursor)?,
+            canonical_tip_height: oracle_read_u64(wire, cursor)?,
+            canonical_tip_header_hash: oracle_read_array::<32>(wire, cursor)?,
+            canonical_tip_cumulative_work: oracle_read_array::<48>(wire, cursor)?,
+            message_root: oracle_read_array::<48>(wire, cursor)?,
+            message_hash: oracle_read_array::<48>(wire, cursor)?,
+            message_nonce: oracle_read_u128(wire, cursor)?,
+            confirmations_checked: oracle_read_u32(wire, cursor)?,
+            min_work_checked: oracle_read_array::<48>(wire, cursor)?,
+        })
+    }
+
+    fn oracle_expected_long_range_output(
+        proof: &HegemonLongRangeProofV1,
+        min_tip_work: Work48,
+    ) -> Result<BridgeCheckpointOutputV1, LightClientError> {
+        let message_index = usize::try_from(proof.message_index)
+            .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
+        let message = proof
+            .messages
+            .get(message_index)
+            .ok_or(LightClientError::MessageIndexOutOfBounds)?;
+        let message_checkpoint = oracle_checkpoint_from_header_hash(
+            &proof.message_header,
+            oracle_pow_hash(&proof.message_header),
+        );
+        let tip_checkpoint = oracle_checkpoint_from_header_hash(
+            &proof.tip_header,
+            oracle_pow_hash(&proof.tip_header),
+        );
+        Ok(BridgeCheckpointOutputV1 {
+            source_chain_id: message_checkpoint.chain_id,
+            rules_hash: message_checkpoint.rules_hash,
+            checkpoint_height: message_checkpoint.height,
+            checkpoint_header_hash: message_checkpoint.header_hash,
+            checkpoint_cumulative_work: message_checkpoint.cumulative_work,
+            canonical_tip_height: tip_checkpoint.height,
+            canonical_tip_header_hash: tip_checkpoint.header_hash,
+            canonical_tip_cumulative_work: tip_checkpoint.cumulative_work,
+            message_root: proof.message_header.message_root,
+            message_hash: oracle_bridge_message_hash(message),
+            message_nonce: message.message_nonce,
+            confirmations_checked: oracle_long_range_confirmations_checked(
+                proof.tip_header.height,
+                proof.message_header.height,
+            ),
+            min_work_checked: min_tip_work,
+        })
+    }
+
+    fn oracle_checkpoint_from_header_hash(
+        header: &PowHeaderV1,
+        header_hash: Hash32,
+    ) -> TrustedCheckpointV1 {
+        TrustedCheckpointV1 {
+            chain_id: header.chain_id,
+            rules_hash: header.rules_hash,
+            height: header.height,
+            header_hash,
+            timestamp_ms: header.timestamp_ms,
+            pow_bits: header.pow_bits,
+            cumulative_work: header.cumulative_work,
+            header_mmr_root: header.header_mmr_root,
+            header_mmr_len: header.header_mmr_len,
+        }
+    }
+
+    fn oracle_pow_hash(header: &PowHeaderV1) -> Hash32 {
+        let pre_hash = blake3::hash(&oracle_pow_header_canonical_bytes(header));
+        let mut payload = [0u8; 64];
+        payload[..32].copy_from_slice(pre_hash.as_bytes());
+        payload[32..].copy_from_slice(&header.nonce);
+        let first = sha2::Sha256::digest(payload);
+        let second = sha2::Sha256::digest(first);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&second);
+        out
+    }
+
+    fn oracle_pow_header_canonical_bytes(header: &PowHeaderV1) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(713);
+        bytes.extend_from_slice(b"hegemon.pow.header-v1");
+        bytes.extend_from_slice(&header.chain_id);
+        bytes.extend_from_slice(&header.rules_hash);
+        bytes.extend_from_slice(&header.height.to_le_bytes());
+        bytes.extend_from_slice(&header.timestamp_ms.to_le_bytes());
+        bytes.extend_from_slice(&header.parent_hash);
+        bytes.extend_from_slice(&header.state_root);
+        bytes.extend_from_slice(&header.kernel_root);
+        bytes.extend_from_slice(&header.nullifier_root);
+        bytes.extend_from_slice(&header.proof_commitment);
+        bytes.extend_from_slice(&header.da_root);
+        bytes.extend_from_slice(&header.action_root);
+        bytes.extend_from_slice(&header.tx_statements_commitment);
+        bytes.extend_from_slice(&header.version_commitment);
+        bytes.extend_from_slice(&header.fee_commitment);
+        bytes.extend_from_slice(&header.supply_digest.to_le_bytes());
+        bytes.extend_from_slice(&header.tx_count.to_le_bytes());
+        bytes.extend_from_slice(&header.message_root);
+        bytes.extend_from_slice(&header.message_count.to_le_bytes());
+        bytes.extend_from_slice(&header.header_mmr_root);
+        bytes.extend_from_slice(&header.header_mmr_len.to_le_bytes());
+        bytes.extend_from_slice(&header.pow_bits.to_le_bytes());
+        bytes.extend_from_slice(&header.cumulative_work);
+        bytes
+    }
+
+    fn oracle_bridge_message_hash(message: &BridgeMessageV1) -> MessageHash {
+        let encoded = oracle_bridge_message_encoded(message);
+        oracle_hash48_with_domain(b"hegemon.bridge.message-v1", &[&encoded])
+    }
+
+    fn oracle_bridge_message_encoded(message: &BridgeMessageV1) -> Vec<u8> {
+        let mut encoded = Vec::with_capacity(170 + message.payload.len());
+        encoded.extend_from_slice(&message.source_chain_id);
+        encoded.extend_from_slice(&message.destination_chain_id);
+        encoded.extend_from_slice(&message.app_family_id.to_le_bytes());
+        encoded.extend_from_slice(&message.message_nonce.to_le_bytes());
+        encoded.extend_from_slice(&message.source_height.to_le_bytes());
+        encoded.extend_from_slice(&message.payload_hash);
+        oracle_push_scale_compact_len(&mut encoded, message.payload.len());
+        encoded.extend_from_slice(&message.payload);
+        encoded
+    }
+
+    fn oracle_hash48_with_domain(domain: &[u8], chunks: &[&[u8]]) -> Digest48 {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(domain);
+        for chunk in chunks {
+            hasher.update(&(chunk.len() as u32).to_le_bytes());
+            hasher.update(chunk);
+        }
+        let mut out = [0u8; 48];
+        hasher.finalize_xof().fill(&mut out);
+        out
+    }
+
+    fn oracle_long_range_confirmations_checked(tip_height: u64, message_height: u64) -> u32 {
+        tip_height
+            .saturating_sub(message_height)
+            .saturating_add(1)
+            .min(u32::MAX as u64) as u32
+    }
+
+    fn oracle_read_hash32_vec(
+        wire: &[u8],
+        cursor: &mut usize,
+        cap: usize,
+    ) -> Result<Vec<Hash32>, LightClientError> {
+        let len = oracle_read_compact_len_with_cap(wire, cursor, cap)?;
+        let mut values = Vec::with_capacity(len);
+        for _ in 0..len {
+            values.push(oracle_read_array::<32>(wire, cursor)?);
+        }
+        Ok(values)
+    }
+
+    fn oracle_read_vec_bytes(
+        wire: &[u8],
+        cursor: &mut usize,
+        cap: usize,
+    ) -> Result<Vec<u8>, LightClientError> {
+        let len = oracle_read_compact_len_with_cap(wire, cursor, cap)?;
+        let end = cursor
+            .checked_add(len)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        let chunk = wire
+            .get(*cursor..end)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        *cursor = end;
+        Ok(chunk.to_vec())
+    }
+
+    fn oracle_read_compact_len_with_cap(
+        wire: &[u8],
+        cursor: &mut usize,
+        cap: usize,
+    ) -> Result<usize, LightClientError> {
+        let first = *wire
+            .get(*cursor)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        *cursor = cursor
+            .checked_add(1)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        let mode = first & 0b11;
+        let value = match mode {
+            0 => (first >> 2) as u64,
+            1 => {
+                let second = *wire
+                    .get(*cursor)
+                    .ok_or(LightClientError::ProofInputMismatch)?;
+                *cursor = cursor
+                    .checked_add(1)
+                    .ok_or(LightClientError::ProofInputMismatch)?;
+                u16::from_le_bytes([first, second]) as u64 >> 2
+            }
+            2 => {
+                let end = cursor
+                    .checked_add(3)
+                    .ok_or(LightClientError::ProofInputMismatch)?;
+                let chunk = wire
+                    .get(*cursor..end)
+                    .ok_or(LightClientError::ProofInputMismatch)?;
+                let raw = [first, chunk[0], chunk[1], chunk[2]];
+                *cursor = end;
+                u32::from_le_bytes(raw) as u64 >> 2
+            }
+            _ => return Err(LightClientError::ProofInputMismatch),
+        };
+        let canonical = match mode {
+            0 => value < (1 << 6),
+            1 => (1 << 6) <= value && value < (1 << 14),
+            2 => (1 << 14) <= value && value < (1 << 30),
+            _ => false,
+        };
+        if !canonical || value > u64::try_from(cap).unwrap_or(u64::MAX) {
+            return Err(LightClientError::ProofInputMismatch);
+        }
+        usize::try_from(value).map_err(|_| LightClientError::ProofInputMismatch)
+    }
+
+    fn oracle_push_scale_compact_len(out: &mut Vec<u8>, len: usize) {
+        let len = len as u64;
+        if len < 1 << 6 {
+            out.push((len as u8) << 2);
+        } else if len < 1 << 14 {
+            out.extend_from_slice(&(((len as u16) << 2) | 0b01).to_le_bytes());
+        } else {
+            assert!(len < 1 << 30, "test oracle compact length out of range");
+            out.extend_from_slice(&(((len as u32) << 2) | 0b10).to_le_bytes());
+        }
+    }
+
+    fn oracle_read_u16(wire: &[u8], cursor: &mut usize) -> Result<u16, LightClientError> {
+        Ok(u16::from_le_bytes(oracle_read_array::<2>(wire, cursor)?))
+    }
+
+    fn oracle_read_u32(wire: &[u8], cursor: &mut usize) -> Result<u32, LightClientError> {
+        Ok(u32::from_le_bytes(oracle_read_array::<4>(wire, cursor)?))
+    }
+
+    fn oracle_read_u64(wire: &[u8], cursor: &mut usize) -> Result<u64, LightClientError> {
+        Ok(u64::from_le_bytes(oracle_read_array::<8>(wire, cursor)?))
+    }
+
+    fn oracle_read_u128(wire: &[u8], cursor: &mut usize) -> Result<u128, LightClientError> {
+        Ok(u128::from_le_bytes(oracle_read_array::<16>(wire, cursor)?))
+    }
+
+    fn oracle_read_array<const N: usize>(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<[u8; N], LightClientError> {
+        let end = cursor
+            .checked_add(N)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        let chunk = wire
+            .get(*cursor..end)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        let mut out = [0u8; N];
+        out.copy_from_slice(chunk);
+        *cursor = end;
+        Ok(out)
+    }
+
+    fn oracle_skip(wire: &[u8], cursor: &mut usize, len: usize) -> Result<(), LightClientError> {
+        let end = cursor
+            .checked_add(len)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        wire.get(*cursor..end)
+            .ok_or(LightClientError::ProofInputMismatch)?;
+        *cursor = end;
+        Ok(())
+    }
+
+    fn oracle_skip_trusted_checkpoint(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<(), LightClientError> {
+        oracle_skip(wire, cursor, 32 + 32 + 8 + 32 + 8 + 4 + 48 + 32 + 8)
+    }
+
+    fn oracle_skip_pow_header(wire: &[u8], cursor: &mut usize) -> Result<(), LightClientError> {
+        oracle_skip(
+            wire,
+            cursor,
+            32 + 32
+                + 8
+                + 8
+                + 32
+                + 48
+                + 48
+                + 48
+                + 48
+                + 48
+                + 32
+                + 48
+                + 48
+                + 48
+                + 16
+                + 4
+                + 48
+                + 4
+                + 32
+                + 8
+                + 4
+                + 32
+                + 48,
+        )
+    }
+
+    fn oracle_skip_header_mmr_opening(
+        wire: &[u8],
+        cursor: &mut usize,
+    ) -> Result<(), LightClientError> {
+        oracle_skip(wire, cursor, 8 + 8)?;
+        let sibling_len = oracle_read_compact_len_with_cap(
+            wire,
+            cursor,
+            HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1,
+        )?;
+        oracle_skip(wire, cursor, sibling_len.saturating_mul(32))?;
+        let peak_len = oracle_read_compact_len_with_cap(
+            wire,
+            cursor,
+            HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1,
+        )?;
+        oracle_skip(wire, cursor, peak_len.saturating_mul(32))
+    }
+
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         haystack
             .windows(needle.len())

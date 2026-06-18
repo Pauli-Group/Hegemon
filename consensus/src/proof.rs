@@ -49,7 +49,10 @@ pub struct CommitmentNullifierLists {
 }
 
 const DEFAULT_NATIVE_TX_LEAF_VERIFY_CACHE_CAPACITY: usize = 4096;
-const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize = 699_404;
+const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize =
+    block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
+        + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1
+        + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
 const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 522_159;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2213,6 +2216,7 @@ struct ProvenBatchBindingInput {
     statement_commitment_matches: bool,
     da_root_matches: bool,
     da_chunk_count: u32,
+    expected_da_chunk_count: u32,
     artifact_kind: Option<ProofArtifactKind>,
     artifact_verifier_profile_matches: bool,
     has_receipt_root: bool,
@@ -2225,6 +2229,7 @@ enum ProvenBatchBindingRejection {
     StatementCommitmentMismatch,
     DaRootMismatch,
     DaChunkCountZero,
+    DaChunkCountMismatch,
     MissingRecursiveBlockArtifact,
     ArtifactKindMismatch,
     ArtifactVerifierProfileMismatch,
@@ -2240,6 +2245,7 @@ impl ProvenBatchBindingRejection {
             Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
             Self::DaRootMismatch => "da_root_mismatch",
             Self::DaChunkCountZero => "da_chunk_count_zero",
+            Self::DaChunkCountMismatch => "da_chunk_count_mismatch",
             Self::MissingRecursiveBlockArtifact => "missing_recursive_block_artifact",
             Self::ArtifactKindMismatch => "artifact_kind_mismatch",
             Self::ArtifactVerifierProfileMismatch => "artifact_verifier_profile_mismatch",
@@ -2267,6 +2273,9 @@ fn evaluate_proven_batch_binding(
     }
     if input.da_chunk_count == 0 {
         return Err(ProvenBatchBindingRejection::DaChunkCountZero);
+    }
+    if input.da_chunk_count != input.expected_da_chunk_count {
+        return Err(ProvenBatchBindingRejection::DaChunkCountMismatch);
     }
     if matches!(input.proven_batch_mode, ProvenBatchMode::RecursiveBlock)
         && input.artifact_kind.is_none()
@@ -2297,8 +2306,12 @@ fn validate_proven_batch_binding<BH>(
 where
     BH: HeaderProofExt,
 {
-    let expected_da_root = da_root(&block.transactions, block.header.da_params())
-        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    let expected_da_encoding =
+        crate::types::encode_da_blob(&block.transactions, block.header.da_params())
+            .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    let expected_da_root = expected_da_encoding.root();
+    let expected_da_chunk_count = u32::try_from(expected_da_encoding.chunks().len())
+        .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
     let artifact_kind = block_artifact.map(|artifact| artifact.kind);
     let artifact_verifier_profile_matches = block_artifact
         .map(|artifact| artifact.verifier_profile == proven_batch.verifier_profile)
@@ -2311,6 +2324,7 @@ where
         statement_commitment_matches: proven_batch.tx_statements_commitment == *expected_commitment,
         da_root_matches: proven_batch.da_root == expected_da_root,
         da_chunk_count: proven_batch.da_chunk_count,
+        expected_da_chunk_count,
         artifact_kind,
         artifact_verifier_profile_matches,
         has_receipt_root: proven_batch.receipt_root.is_some(),
@@ -2341,6 +2355,12 @@ where
         ProvenBatchBindingRejection::DaChunkCountZero => ProofError::ProvenBatchBindingMismatch(
             "proven batch DA chunk count must be non-zero".to_string(),
         ),
+        ProvenBatchBindingRejection::DaChunkCountMismatch => {
+            ProofError::ProvenBatchBindingMismatch(format!(
+                "proven batch DA chunk count mismatch (payload {}, expected {})",
+                proven_batch.da_chunk_count, expected_da_chunk_count
+            ))
+        }
         ProvenBatchBindingRejection::MissingRecursiveBlockArtifact => {
             ProofError::ProvenBatchBindingMismatch(
                 "recursive block proven batch requires block artifact".to_string(),
@@ -3273,6 +3293,7 @@ mod tests {
         statement_commitment_matches: bool,
         da_root_matches: bool,
         da_chunk_count: u32,
+        expected_da_chunk_count: u32,
         has_artifact: bool,
         artifact_kind: String,
         artifact_verifier_profile_matches: bool,
@@ -3486,7 +3507,10 @@ mod tests {
             chunk_size: 1024,
             sample_count: 4,
         };
-        let da_root = da_root(&transactions, da_params).expect("da root");
+        let da_encoding = crate::types::encode_da_blob(&transactions, da_params).expect("da blob");
+        let da_root = da_encoding.root();
+        let da_chunk_count =
+            u32::try_from(da_encoding.chunks().len()).expect("DA chunk count fits u32");
         let tx_statements_commitment = [0x44u8; 48];
         let verifier_profile = backend_recursive_block_profile_v2();
         let artifact = ProofEnvelope {
@@ -3507,7 +3531,7 @@ mod tests {
                 tx_count: 1,
                 tx_statements_commitment,
                 da_root,
-                da_chunk_count: 1,
+                da_chunk_count,
                 commitment_proof: empty_commitment_block_proof(),
                 mode: ProvenBatchMode::RecursiveBlock,
                 proof_kind: ProofArtifactKind::RecursiveBlockV2,
@@ -4698,6 +4722,7 @@ mod tests {
             statement_commitment_matches: case.statement_commitment_matches,
             da_root_matches: case.da_root_matches,
             da_chunk_count: case.da_chunk_count,
+            expected_da_chunk_count: case.expected_da_chunk_count,
             artifact_kind: case
                 .has_artifact
                 .then(|| parse_lean_proof_artifact_kind(&case.artifact_kind)),
@@ -4772,6 +4797,27 @@ mod tests {
             validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
                 .expect_err("DA root mismatch must fail");
         assert!(matches!(err, ProofError::ProvenBatchBindingMismatch(_)));
+    }
+
+    #[test]
+    fn proven_batch_binding_rejects_da_chunk_count_mismatch() {
+        let (mut block, expected_commitment, artifact) = block_for_proven_batch_binding();
+        let mut batch = block.proven_batch.clone().expect("batch");
+        batch.da_chunk_count = batch.da_chunk_count.saturating_add(1).max(1);
+        block.proven_batch = Some(batch.clone());
+
+        let err =
+            validate_proven_batch_binding(&block, &batch, &expected_commitment, Some(&artifact))
+                .expect_err("DA chunk count mismatch must fail");
+        match err {
+            ProofError::ProvenBatchBindingMismatch(message) => {
+                assert!(
+                    message.contains("DA chunk count mismatch"),
+                    "unexpected proven-batch binding error: {message}"
+                );
+            }
+            other => panic!("unexpected proven-batch binding error: {other:?}"),
+        }
     }
 
     #[test]
@@ -5078,7 +5124,11 @@ mod tests {
             chunk_size: 1024,
             sample_count: 4,
         };
-        let da_root = da_root(&transactions, da_params).expect("fixture da root");
+        let da_encoding =
+            crate::types::encode_da_blob(&transactions, da_params).expect("fixture da blob");
+        let da_root = da_encoding.root();
+        let da_chunk_count =
+            u32::try_from(da_encoding.chunks().len()).expect("fixture DA chunk count fits u32");
         let native_tx_profile = experimental_native_tx_leaf_verifier_profile();
         let receipt =
             TxValidityReceipt::new([0x11u8; 48], [0x12u8; 48], [0x13u8; 48], native_tx_profile);
@@ -5147,7 +5197,7 @@ mod tests {
                 tx_count: transactions.len() as u32,
                 tx_statements_commitment: statement_commitment,
                 da_root,
-                da_chunk_count: 1,
+                da_chunk_count,
                 commitment_proof,
                 mode: ProvenBatchMode::ReceiptRoot,
                 proof_kind: ProofArtifactKind::ReceiptRoot,
@@ -5561,6 +5611,356 @@ mod tests {
             kind,
             verifier_profile,
             artifact_bytes: vec![0xa5; max_len + 1],
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct RecursiveBlockV1OracleSummary {
+        header_version: u32,
+        tx_count: u32,
+        tx_statements_commitment: [u8; 48],
+    }
+
+    fn put_recursive_v1_oracle_u32(out: &mut Vec<u8>, value: u32) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_recursive_v1_oracle_digest32(out: &mut Vec<u8>, seed: u8) {
+        out.extend_from_slice(&[seed; 32]);
+    }
+
+    fn put_recursive_v1_oracle_digest48(out: &mut Vec<u8>, seed: u8) {
+        out.extend_from_slice(&[seed; 48]);
+    }
+
+    fn synthetic_recursive_block_v1_artifact_bytes(
+        tx_count: u32,
+        tx_statements_commitment: [u8; 48],
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES);
+        put_recursive_v1_oracle_u32(&mut out, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1);
+        put_recursive_v1_oracle_digest32(&mut out, 0x11);
+        put_recursive_v1_oracle_u32(&mut out, 1);
+        put_recursive_v1_oracle_u32(&mut out, 1);
+        for seed in 0x21..=0x28 {
+            put_recursive_v1_oracle_digest32(&mut out, seed);
+        }
+        put_recursive_v1_oracle_u32(
+            &mut out,
+            block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32,
+        );
+        put_recursive_v1_oracle_digest32(&mut out, 0x31);
+        assert_eq!(out.len(), block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1);
+
+        out.extend(std::iter::repeat_n(
+            0x42,
+            block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1,
+        ));
+
+        put_recursive_v1_oracle_u32(&mut out, tx_count);
+        out.extend_from_slice(&tx_statements_commitment);
+        for seed in 0x51..=0x5b {
+            put_recursive_v1_oracle_digest48(&mut out, seed);
+        }
+        assert_eq!(out.len(), RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES);
+        out
+    }
+
+    fn recursive_v1_oracle_read<const N: usize>(
+        bytes: &[u8],
+        cursor: &mut usize,
+    ) -> Option<[u8; N]> {
+        let end = cursor.checked_add(N)?;
+        let slice = bytes.get(*cursor..end)?;
+        *cursor = end;
+        slice.try_into().ok()
+    }
+
+    fn recursive_v1_oracle_read_u32(bytes: &[u8], cursor: &mut usize) -> Option<u32> {
+        Some(u32::from_le_bytes(recursive_v1_oracle_read::<4>(
+            bytes, cursor,
+        )?))
+    }
+
+    fn recursive_block_v1_parse_oracle(bytes: &[u8]) -> Option<RecursiveBlockV1OracleSummary> {
+        let minimum_len = block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
+            + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
+        if bytes.len() < minimum_len {
+            return None;
+        }
+
+        let mut cursor = 0usize;
+        let header_version = recursive_v1_oracle_read_u32(bytes, &mut cursor)?;
+        let _tx_line_digest = recursive_v1_oracle_read::<32>(bytes, &mut cursor)?;
+        let profile_tag = recursive_v1_oracle_read_u32(bytes, &mut cursor)?;
+        if profile_tag != 1 && profile_tag != 2 {
+            return None;
+        }
+        let relation_kind = recursive_v1_oracle_read_u32(bytes, &mut cursor)?;
+        if !(1..=3).contains(&relation_kind) {
+            return None;
+        }
+        for _ in 0..8 {
+            let _digest = recursive_v1_oracle_read::<32>(bytes, &mut cursor)?;
+        }
+        let proof_bytes = recursive_v1_oracle_read_u32(bytes, &mut cursor)? as usize;
+        if proof_bytes != block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1 {
+            return None;
+        }
+        let _statement_digest = recursive_v1_oracle_read::<32>(bytes, &mut cursor)?;
+        if cursor != block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1 {
+            return None;
+        }
+
+        let proof_end = cursor.checked_add(proof_bytes)?;
+        let public_end = proof_end.checked_add(block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1)?;
+        if public_end > bytes.len() {
+            return None;
+        }
+        cursor = proof_end;
+        let tx_count = recursive_v1_oracle_read_u32(bytes, &mut cursor)?;
+        let tx_statements_commitment = recursive_v1_oracle_read::<48>(bytes, &mut cursor)?;
+        for _ in 0..11 {
+            let _digest = recursive_v1_oracle_read::<48>(bytes, &mut cursor)?;
+        }
+        if cursor != bytes.len() {
+            return None;
+        }
+
+        Some(RecursiveBlockV1OracleSummary {
+            header_version,
+            tx_count,
+            tx_statements_commitment,
+        })
+    }
+
+    fn recursive_block_v1_oracle_admission_label(
+        envelope: &ProofEnvelope,
+        expected_tx_count: usize,
+        expected_commitment: &[u8; 48],
+    ) -> Option<&'static str> {
+        if envelope.kind != ProofArtifactKind::RecursiveBlockV1 {
+            return Some("artifact_kind_mismatch");
+        }
+        if envelope.verifier_profile != backend_recursive_block_profile_v1() {
+            return Some("verifier_profile_mismatch");
+        }
+        if envelope.artifact_bytes.len() > RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES {
+            return Some("artifact_too_large");
+        }
+        let Some(parsed) = recursive_block_v1_parse_oracle(&envelope.artifact_bytes) else {
+            return Some("artifact_decode_failed");
+        };
+        if parsed.header_version != RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 {
+            return Some("header_version_mismatch");
+        }
+        if parsed.tx_count as usize != expected_tx_count {
+            return Some("tx_count_mismatch");
+        }
+        if parsed.tx_statements_commitment != *expected_commitment {
+            return Some("statement_commitment_mismatch");
+        }
+        None
+    }
+
+    fn recursive_block_v1_production_admission_label(
+        envelope: &ProofEnvelope,
+        expected_tx_count: usize,
+        expected_commitment: &[u8; 48],
+    ) -> Option<&'static str> {
+        let admission = recursive_block_admission_input_for_predecode(
+            ProofArtifactKind::RecursiveBlockV1,
+            envelope,
+            envelope.verifier_profile == backend_recursive_block_profile_v1(),
+        );
+        if let Err(rejection) = evaluate_recursive_block_artifact_admission(admission) {
+            return Some(rejection.label());
+        }
+        let parsed = match deserialize_recursive_block_artifact_v1(&envelope.artifact_bytes) {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                let rejection = evaluate_recursive_block_artifact_admission(
+                    recursive_block_decode_admission_input(admission),
+                )
+                .expect_err("failed recursive-block decode must reject");
+                return Some(rejection.label());
+            }
+        };
+        let decoded = RecursiveBlockArtifactAdmissionInput {
+            header_version_matches: parsed.artifact.header.artifact_version_rec
+                == RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
+            tx_count_matches: parsed.public.tx_count as usize == expected_tx_count,
+            statement_commitment_matches: parsed.public.tx_statements_commitment
+                == *expected_commitment,
+            public_replay_matches: true,
+            ..admission
+        };
+        evaluate_recursive_block_artifact_admission(decoded)
+            .err()
+            .map(RecursiveBlockArtifactAdmissionRejection::label)
+    }
+
+    #[test]
+    fn recursive_block_v1_fixed_wire_cap_and_parser_match_oracle() {
+        assert_eq!(
+            RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES,
+            block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
+                + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1
+                + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1,
+            "consensus pre-decode cap must match the fixed v1 serializer width"
+        );
+
+        let expected_commitment = [0x33u8; 48];
+        let valid = synthetic_recursive_block_v1_artifact_bytes(2, expected_commitment);
+        assert_eq!(valid.len(), RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES);
+
+        const PROFILE_TAG_OFFSET: usize = 36;
+        const RELATION_KIND_OFFSET: usize = 40;
+        const PROOF_BYTES_OFFSET: usize = 300;
+        let public_offset = block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
+            + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1;
+        let tx_count_offset = public_offset;
+        let tx_commitment_offset = public_offset + 4;
+
+        let mut corpus = vec![
+            (
+                "valid",
+                ProofEnvelope {
+                    kind: ProofArtifactKind::RecursiveBlockV1,
+                    verifier_profile: backend_recursive_block_profile_v1(),
+                    artifact_bytes: valid.clone(),
+                },
+            ),
+            (
+                "wrong-kind-precedes-decode",
+                ProofEnvelope {
+                    kind: ProofArtifactKind::ReceiptRoot,
+                    verifier_profile: backend_recursive_block_profile_v1(),
+                    artifact_bytes: Vec::new(),
+                },
+            ),
+            (
+                "profile-mismatch-precedes-decode",
+                ProofEnvelope {
+                    kind: ProofArtifactKind::RecursiveBlockV1,
+                    verifier_profile: [0x99; 48],
+                    artifact_bytes: Vec::new(),
+                },
+            ),
+        ];
+
+        let mut oversized = valid.clone();
+        oversized.push(0);
+        corpus.push((
+            "oversized-precedes-trailing-decode",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: oversized,
+            },
+        ));
+
+        for (name, bytes) in [
+            ("empty-decode-failed", Vec::new()),
+            (
+                "minimum-without-proof-decode-failed",
+                valid[..block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
+                    + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1]
+                    .to_vec(),
+            ),
+            ("truncated-decode-failed", valid[..valid.len() - 1].to_vec()),
+        ] {
+            corpus.push((
+                name,
+                ProofEnvelope {
+                    kind: ProofArtifactKind::RecursiveBlockV1,
+                    verifier_profile: backend_recursive_block_profile_v1(),
+                    artifact_bytes: bytes,
+                },
+            ));
+        }
+
+        let mut bad_profile_tag = valid.clone();
+        bad_profile_tag[PROFILE_TAG_OFFSET..PROFILE_TAG_OFFSET + 4]
+            .copy_from_slice(&9u32.to_le_bytes());
+        corpus.push((
+            "bad-profile-tag-decode-failed",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: bad_profile_tag,
+            },
+        ));
+
+        let mut bad_relation_kind = valid.clone();
+        bad_relation_kind[RELATION_KIND_OFFSET..RELATION_KIND_OFFSET + 4]
+            .copy_from_slice(&8u32.to_le_bytes());
+        corpus.push((
+            "bad-relation-kind-decode-failed",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: bad_relation_kind,
+            },
+        ));
+
+        let mut bad_proof_len = valid.clone();
+        bad_proof_len[PROOF_BYTES_OFFSET..PROOF_BYTES_OFFSET + 4].copy_from_slice(
+            &(block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1 as u32 + 1).to_le_bytes(),
+        );
+        corpus.push((
+            "bad-proof-len-decode-failed",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: bad_proof_len,
+            },
+        ));
+
+        let mut bad_header_version = valid.clone();
+        bad_header_version[0..4]
+            .copy_from_slice(&(RECURSIVE_BLOCK_ARTIFACT_VERSION_V1 + 1).to_le_bytes());
+        corpus.push((
+            "header-version-mismatch",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: bad_header_version,
+            },
+        ));
+
+        let mut tx_count_mismatch = valid.clone();
+        tx_count_mismatch[tx_count_offset..tx_count_offset + 4]
+            .copy_from_slice(&3u32.to_le_bytes());
+        corpus.push((
+            "tx-count-mismatch",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: tx_count_mismatch,
+            },
+        ));
+
+        let mut commitment_mismatch = valid.clone();
+        commitment_mismatch[tx_commitment_offset] ^= 0x5a;
+        corpus.push((
+            "statement-commitment-mismatch",
+            ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV1,
+                verifier_profile: backend_recursive_block_profile_v1(),
+                artifact_bytes: commitment_mismatch,
+            },
+        ));
+
+        for (name, envelope) in corpus {
+            let expected =
+                recursive_block_v1_oracle_admission_label(&envelope, 2, &expected_commitment);
+            let actual =
+                recursive_block_v1_production_admission_label(&envelope, 2, &expected_commitment);
+            assert_eq!(
+                actual, expected,
+                "{name}: recursive_block_v1 production admission drifted from byte oracle"
+            );
         }
     }
 

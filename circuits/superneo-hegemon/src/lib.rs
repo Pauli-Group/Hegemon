@@ -5410,6 +5410,8 @@ mod tests {
     struct LeanNativeTxLeafArtifactVectorFile {
         schema_version: u32,
         native_tx_leaf_artifact_cases: Vec<LeanNativeTxLeafArtifactCase>,
+        #[serde(default)]
+        native_tx_leaf_projection_count_cases: Vec<LeanNativeTxLeafProjectionCountCase>,
     }
 
     #[derive(serde::Deserialize)]
@@ -5464,6 +5466,17 @@ mod tests {
         max_item_bytes: usize,
         aggregate_bytes: usize,
         work_units: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanNativeTxLeafProjectionCountCase {
+        name: String,
+        input_flags: Vec<u8>,
+        output_flags: Vec<u8>,
+        nullifier_count: usize,
+        commitment_count: usize,
+        ciphertext_hash_count: usize,
+        expected_valid: bool,
     }
 
     #[derive(serde::Deserialize)]
@@ -5533,6 +5546,564 @@ mod tests {
         let mut out = [0u8; 48];
         out[0..8].copy_from_slice(&value.to_be_bytes());
         out
+    }
+
+    fn production_tx_leaf_projection_count_accepts(
+        case: &LeanNativeTxLeafProjectionCountCase,
+    ) -> bool {
+        let compact_nullifiers = (0..case.nullifier_count)
+            .map(|index| bytes48_from_lean_digest(0x7000 + index as u64))
+            .collect::<Vec<_>>();
+        let input_count_valid =
+            materialize_tx_leaf_input_nullifier_slots(&case.input_flags, &compact_nullifiers)
+                .is_ok();
+        let output_count_valid = active_flag_count(&case.output_flags)
+            .map(|active| active == case.commitment_count && active == case.ciphertext_hash_count)
+            .unwrap_or(false);
+        input_count_valid && output_count_valid
+    }
+
+    const TX_LEAF_ORACLE_DIGEST_WIDTH: usize = 48;
+    const TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH: usize = 32;
+    const TX_LEAF_ORACLE_MAX_INPUTS: usize = 2;
+    const TX_LEAF_ORACLE_MAX_OUTPUTS: usize = 2;
+    const TX_LEAF_ORACLE_BALANCE_SLOTS: usize = 4;
+    const TX_LEAF_ORACLE_MATRIX_ROWS: usize = 11;
+    const TX_LEAF_ORACLE_MATRIX_COLS: usize = 54;
+    const TX_LEAF_ORACLE_MAX_PROOF_BYTES: usize = 512 * 1024;
+    const TX_LEAF_ORACLE_PLONKY3_BACKEND: u8 = 1;
+    const TX_LEAF_ORACLE_SMALLWOOD_BACKEND: u8 = 2;
+    const TX_LEAF_ORACLE_CIRCUIT_V2: u16 = 2;
+    const TX_LEAF_ORACLE_CRYPTO_BETA: u16 = 2;
+    const TX_LEAF_ORACLE_CRYPTO_GAMMA: u16 = 3;
+
+    #[derive(Clone, Debug)]
+    struct TxLeafOracleFields {
+        version: u16,
+        input_flags: Vec<u8>,
+        output_flags: Vec<u8>,
+        fee: u64,
+        value_balance_sign: u8,
+        value_balance_magnitude: u64,
+        balance_slot_asset_ids: Vec<u64>,
+        stablecoin_enabled: u8,
+        stablecoin_asset_id: u64,
+        stablecoin_policy_version: u32,
+        stablecoin_issuance_sign: u8,
+        stablecoin_issuance_magnitude: u64,
+        nullifiers: Vec<Vec<u8>>,
+        commitments: Vec<Vec<u8>>,
+        ciphertext_hashes: Vec<Vec<u8>>,
+        circuit_version: u16,
+        crypto_suite: u16,
+        stark_proof_len: usize,
+        stark_proof_bytes: Vec<u8>,
+        commitment_rows: Vec<Vec<u64>>,
+        leaf_version: u16,
+        proof_backend: Option<u8>,
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct TxLeafOracleSummary {
+        version: u16,
+        input_flag_count: usize,
+        output_flag_count: usize,
+        balance_slot_count: usize,
+        nullifier_count: usize,
+        commitment_count: usize,
+        ciphertext_hash_count: usize,
+        circuit_version: u16,
+        crypto_suite: u16,
+        stark_proof_len: usize,
+        row_count: usize,
+        row_coeff_counts: Vec<usize>,
+        leaf_version: u16,
+        has_explicit_backend: bool,
+        proof_backend: u8,
+    }
+
+    struct TxLeafOracleCursor<'a> {
+        bytes: &'a [u8],
+        cursor: usize,
+    }
+
+    impl<'a> TxLeafOracleCursor<'a> {
+        fn new(bytes: &'a [u8]) -> Self {
+            Self { bytes, cursor: 0 }
+        }
+
+        fn take(&mut self, count: usize) -> Option<&'a [u8]> {
+            let end = self.cursor.checked_add(count)?;
+            if end > self.bytes.len() {
+                return None;
+            }
+            let out = &self.bytes[self.cursor..end];
+            self.cursor = end;
+            Some(out)
+        }
+
+        fn skip(&mut self, count: usize) -> Option<()> {
+            self.take(count).map(|_| ())
+        }
+
+        fn read_u8(&mut self) -> Option<u8> {
+            Some(*self.take(1)?.first()?)
+        }
+
+        fn read_u16(&mut self) -> Option<u16> {
+            Some(u16::from_le_bytes(self.take(2)?.try_into().ok()?))
+        }
+
+        fn read_u32(&mut self) -> Option<u32> {
+            Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+        }
+
+        fn read_capped_u32(&mut self, cap: usize) -> Option<usize> {
+            let value = self.read_u32()? as usize;
+            (value <= cap).then_some(value)
+        }
+    }
+
+    fn tx_leaf_oracle_patterned_bytes(length: usize, seed: u8) -> Vec<u8> {
+        (0..length)
+            .map(|index| seed.wrapping_add((index as u8).wrapping_mul(17)))
+            .collect()
+    }
+
+    fn tx_leaf_oracle_digest48(seed: u8) -> Vec<u8> {
+        tx_leaf_oracle_patterned_bytes(TX_LEAF_ORACLE_DIGEST_WIDTH, seed)
+    }
+
+    fn tx_leaf_oracle_digest32(seed: u8) -> Vec<u8> {
+        tx_leaf_oracle_patterned_bytes(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH, seed)
+    }
+
+    fn tx_leaf_oracle_valid_fields() -> TxLeafOracleFields {
+        TxLeafOracleFields {
+            version: 7,
+            input_flags: vec![1, 0],
+            output_flags: vec![1],
+            fee: 99,
+            value_balance_sign: 1,
+            value_balance_magnitude: 5,
+            balance_slot_asset_ids: vec![3, 4],
+            stablecoin_enabled: 1,
+            stablecoin_asset_id: 77,
+            stablecoin_policy_version: 2,
+            stablecoin_issuance_sign: 0,
+            stablecoin_issuance_magnitude: 11,
+            nullifiers: vec![tx_leaf_oracle_digest48(0x70), tx_leaf_oracle_digest48(0x71)],
+            commitments: vec![tx_leaf_oracle_digest48(0x72)],
+            ciphertext_hashes: vec![tx_leaf_oracle_digest48(0x73), tx_leaf_oracle_digest48(0x74)],
+            circuit_version: 13,
+            crypto_suite: 21,
+            stark_proof_len: 3,
+            stark_proof_bytes: vec![0xaa, 0xbb, 0xcc],
+            commitment_rows: vec![vec![1, 2, 3], vec![4]],
+            leaf_version: 5,
+            proof_backend: Some(TX_LEAF_ORACLE_SMALLWOOD_BACKEND),
+        }
+    }
+
+    fn tx_leaf_oracle_push_u16(bytes: &mut Vec<u8>, value: u16) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn tx_leaf_oracle_push_u32(bytes: &mut Vec<u8>, value: usize) {
+        bytes.extend_from_slice(&(value as u32).to_le_bytes());
+    }
+
+    fn tx_leaf_oracle_push_u64(bytes: &mut Vec<u8>, value: u64) {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn tx_leaf_oracle_push_digest_list(bytes: &mut Vec<u8>, values: &[Vec<u8>]) {
+        for value in values {
+            bytes.extend_from_slice(value);
+        }
+    }
+
+    fn tx_leaf_oracle_artifact_bytes(fields: &TxLeafOracleFields) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        tx_leaf_oracle_push_u16(&mut bytes, fields.version);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x10));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest32(0x20));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest32(0x30));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest32(0x40));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x50));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x60));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x61));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x62));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x63));
+
+        tx_leaf_oracle_push_u32(&mut bytes, fields.input_flags.len());
+        bytes.extend_from_slice(&fields.input_flags);
+        tx_leaf_oracle_push_u32(&mut bytes, fields.output_flags.len());
+        bytes.extend_from_slice(&fields.output_flags);
+        tx_leaf_oracle_push_u64(&mut bytes, fields.fee);
+        bytes.push(fields.value_balance_sign);
+        tx_leaf_oracle_push_u64(&mut bytes, fields.value_balance_magnitude);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0x90));
+        tx_leaf_oracle_push_u32(&mut bytes, fields.balance_slot_asset_ids.len());
+        for asset_id in &fields.balance_slot_asset_ids {
+            tx_leaf_oracle_push_u64(&mut bytes, *asset_id);
+        }
+        bytes.push(fields.stablecoin_enabled);
+        tx_leaf_oracle_push_u64(&mut bytes, fields.stablecoin_asset_id);
+        tx_leaf_oracle_push_u32(&mut bytes, fields.stablecoin_policy_version as usize);
+        bytes.push(fields.stablecoin_issuance_sign);
+        tx_leaf_oracle_push_u64(&mut bytes, fields.stablecoin_issuance_magnitude);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xa0));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xb0));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xc0));
+
+        tx_leaf_oracle_push_u32(&mut bytes, fields.nullifiers.len());
+        tx_leaf_oracle_push_digest_list(&mut bytes, &fields.nullifiers);
+        tx_leaf_oracle_push_u32(&mut bytes, fields.commitments.len());
+        tx_leaf_oracle_push_digest_list(&mut bytes, &fields.commitments);
+        tx_leaf_oracle_push_u32(&mut bytes, fields.ciphertext_hashes.len());
+        tx_leaf_oracle_push_digest_list(&mut bytes, &fields.ciphertext_hashes);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xd0));
+        tx_leaf_oracle_push_u16(&mut bytes, fields.circuit_version);
+        tx_leaf_oracle_push_u16(&mut bytes, fields.crypto_suite);
+
+        tx_leaf_oracle_push_u32(&mut bytes, fields.stark_proof_len);
+        bytes.extend_from_slice(&fields.stark_proof_bytes);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xe0));
+        tx_leaf_oracle_push_u32(&mut bytes, fields.commitment_rows.len());
+        for row in &fields.commitment_rows {
+            tx_leaf_oracle_push_u32(&mut bytes, row.len());
+            for coeff in row {
+                tx_leaf_oracle_push_u64(&mut bytes, *coeff);
+            }
+        }
+
+        tx_leaf_oracle_push_u16(&mut bytes, fields.leaf_version);
+        bytes.extend_from_slice(&tx_leaf_oracle_digest32(0xf0));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest32(0xf1));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xf2));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xf3));
+        bytes.extend_from_slice(&tx_leaf_oracle_digest48(0xf4));
+        if let Some(proof_backend) = fields.proof_backend {
+            bytes.push(proof_backend);
+        }
+        bytes
+    }
+
+    fn tx_leaf_oracle_default_backend(circuit_version: u16, crypto_suite: u16) -> u8 {
+        if circuit_version == TX_LEAF_ORACLE_CIRCUIT_V2
+            && crypto_suite == TX_LEAF_ORACLE_CRYPTO_GAMMA
+        {
+            TX_LEAF_ORACLE_PLONKY3_BACKEND
+        } else if circuit_version == TX_LEAF_ORACLE_CIRCUIT_V2
+            && crypto_suite == TX_LEAF_ORACLE_CRYPTO_BETA
+        {
+            TX_LEAF_ORACLE_SMALLWOOD_BACKEND
+        } else {
+            TX_LEAF_ORACLE_SMALLWOOD_BACKEND
+        }
+    }
+
+    fn tx_leaf_oracle_parse(bytes: &[u8]) -> Option<TxLeafOracleSummary> {
+        let mut cursor = TxLeafOracleCursor::new(bytes);
+        let version = cursor.read_u16()?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH * 4)?;
+
+        let input_flag_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_INPUTS)?;
+        cursor.skip(input_flag_count)?;
+        let output_flag_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_OUTPUTS)?;
+        cursor.skip(output_flag_count)?;
+        cursor.skip(8 + 1 + 8 + TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        let balance_slot_count = cursor.read_capped_u32(TX_LEAF_ORACLE_BALANCE_SLOTS)?;
+        cursor.skip(balance_slot_count * 8)?;
+        cursor.skip(1 + 8 + 4 + 1 + 8 + (TX_LEAF_ORACLE_DIGEST_WIDTH * 3))?;
+
+        let nullifier_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_INPUTS)?;
+        cursor.skip(nullifier_count * TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        let commitment_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_OUTPUTS)?;
+        cursor.skip(commitment_count * TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        let ciphertext_hash_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_OUTPUTS)?;
+        cursor.skip(ciphertext_hash_count * TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        let circuit_version = cursor.read_u16()?;
+        let crypto_suite = cursor.read_u16()?;
+
+        let stark_proof_len = cursor.read_capped_u32(TX_LEAF_ORACLE_MAX_PROOF_BYTES)?;
+        cursor.skip(stark_proof_len)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        let row_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MATRIX_ROWS)?;
+        let mut row_coeff_counts = Vec::with_capacity(row_count);
+        for _ in 0..row_count {
+            let coeff_count = cursor.read_capped_u32(TX_LEAF_ORACLE_MATRIX_COLS)?;
+            cursor.skip(coeff_count * 8)?;
+            row_coeff_counts.push(coeff_count);
+        }
+
+        let leaf_version = cursor.read_u16()?;
+        cursor.skip(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_SHORT_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+        cursor.skip(TX_LEAF_ORACLE_DIGEST_WIDTH)?;
+
+        let default_backend = tx_leaf_oracle_default_backend(circuit_version, crypto_suite);
+        let (has_explicit_backend, proof_backend) = match bytes.len().checked_sub(cursor.cursor)? {
+            0 => (false, default_backend),
+            1 => {
+                let backend = cursor.read_u8()?;
+                if backend == TX_LEAF_ORACLE_PLONKY3_BACKEND
+                    || backend == TX_LEAF_ORACLE_SMALLWOOD_BACKEND
+                {
+                    (true, backend)
+                } else {
+                    return None;
+                }
+            }
+            _ => return None,
+        };
+
+        (cursor.cursor == bytes.len()).then_some(TxLeafOracleSummary {
+            version,
+            input_flag_count,
+            output_flag_count,
+            balance_slot_count,
+            nullifier_count,
+            commitment_count,
+            ciphertext_hash_count,
+            circuit_version,
+            crypto_suite,
+            stark_proof_len,
+            row_count,
+            row_coeff_counts,
+            leaf_version,
+            has_explicit_backend,
+            proof_backend,
+        })
+    }
+
+    fn tx_leaf_oracle_cases() -> Vec<(&'static str, Vec<u8>)> {
+        let valid = tx_leaf_oracle_valid_fields();
+        let mut cases = Vec::new();
+
+        cases.push((
+            "valid-smallwood-backend",
+            tx_leaf_oracle_artifact_bytes(&valid),
+        ));
+
+        let mut mutated = tx_leaf_oracle_artifact_bytes(&valid);
+        mutated[2 + 7] ^= 0x5a;
+        cases.push(("mutated-fixed-digest-byte-still-canonical", mutated));
+
+        let mut missing_backend = valid.clone();
+        missing_backend.proof_backend = None;
+        cases.push((
+            "valid-missing-backend-defaults-current-backend",
+            tx_leaf_oracle_artifact_bytes(&missing_backend),
+        ));
+
+        let mut legacy_missing_backend = missing_backend.clone();
+        legacy_missing_backend.circuit_version = TX_LEAF_ORACLE_CIRCUIT_V2;
+        legacy_missing_backend.crypto_suite = TX_LEAF_ORACLE_CRYPTO_GAMMA;
+        cases.push((
+            "valid-legacy-missing-backend-defaults-plonky3",
+            tx_leaf_oracle_artifact_bytes(&legacy_missing_backend),
+        ));
+
+        let mut trailing = tx_leaf_oracle_artifact_bytes(&valid);
+        trailing.push(0);
+        cases.push(("trailing-byte-rejected", trailing));
+
+        let mut bad_backend = valid.clone();
+        bad_backend.proof_backend = Some(9);
+        cases.push((
+            "bad-backend-rejected",
+            tx_leaf_oracle_artifact_bytes(&bad_backend),
+        ));
+
+        let mut too_many_input_flags = valid.clone();
+        too_many_input_flags.input_flags = vec![0, 1, 0];
+        cases.push((
+            "too-many-input-flags-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_input_flags),
+        ));
+
+        let mut too_many_output_flags = valid.clone();
+        too_many_output_flags.output_flags = vec![0, 1, 0];
+        cases.push((
+            "too-many-output-flags-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_output_flags),
+        ));
+
+        let mut too_many_balance_slots = valid.clone();
+        too_many_balance_slots.balance_slot_asset_ids = vec![1, 2, 3, 4, 5];
+        cases.push((
+            "too-many-balance-slots-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_balance_slots),
+        ));
+
+        let mut too_many_nullifiers = valid.clone();
+        too_many_nullifiers.nullifiers = vec![
+            tx_leaf_oracle_digest48(1),
+            tx_leaf_oracle_digest48(2),
+            tx_leaf_oracle_digest48(3),
+        ];
+        cases.push((
+            "too-many-nullifiers-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_nullifiers),
+        ));
+
+        let mut too_many_commitments = valid.clone();
+        too_many_commitments.commitments = vec![
+            tx_leaf_oracle_digest48(1),
+            tx_leaf_oracle_digest48(2),
+            tx_leaf_oracle_digest48(3),
+        ];
+        cases.push((
+            "too-many-commitments-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_commitments),
+        ));
+
+        let mut too_many_ciphertext_hashes = valid.clone();
+        too_many_ciphertext_hashes.ciphertext_hashes = vec![
+            tx_leaf_oracle_digest48(1),
+            tx_leaf_oracle_digest48(2),
+            tx_leaf_oracle_digest48(3),
+        ];
+        cases.push((
+            "too-many-ciphertext-hashes-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_ciphertext_hashes),
+        ));
+
+        let mut too_many_rows = valid.clone();
+        too_many_rows.commitment_rows = vec![Vec::new(); TX_LEAF_ORACLE_MATRIX_ROWS + 1];
+        cases.push((
+            "too-many-commitment-rows-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_rows),
+        ));
+
+        let mut too_many_row_coeffs = valid.clone();
+        too_many_row_coeffs.commitment_rows =
+            vec![(0..=TX_LEAF_ORACLE_MATRIX_COLS as u64).collect()];
+        cases.push((
+            "too-many-row-coefficients-rejected",
+            tx_leaf_oracle_artifact_bytes(&too_many_row_coeffs),
+        ));
+
+        let mut oversized_proof_len = valid.clone();
+        oversized_proof_len.stark_proof_len = TX_LEAF_ORACLE_MAX_PROOF_BYTES + 1;
+        oversized_proof_len.stark_proof_bytes = Vec::new();
+        cases.push((
+            "oversized-stark-proof-len-rejected",
+            tx_leaf_oracle_artifact_bytes(&oversized_proof_len),
+        ));
+
+        let mut truncated = tx_leaf_oracle_artifact_bytes(&valid);
+        truncated.truncate(truncated.len() - 2);
+        cases.push(("truncated-artifact-rejected", truncated));
+
+        cases
+    }
+
+    #[test]
+    fn native_tx_leaf_artifact_parser_matches_raw_byte_oracle_regression() {
+        for (name, artifact_bytes) in tx_leaf_oracle_cases() {
+            let expected = tx_leaf_oracle_parse(&artifact_bytes);
+            let decoded = decode_native_tx_leaf_artifact_bytes(&artifact_bytes);
+            assert_eq!(
+                decoded.is_ok(),
+                expected.is_some(),
+                "{name}: production decode drifted from raw-byte oracle: {:?}",
+                decoded.as_ref().err()
+            );
+
+            let canonical_decoded = decode_native_tx_leaf_artifact_canonical_bytes(&artifact_bytes);
+            let expected_canonical_valid = expected
+                .as_ref()
+                .map(|summary| summary.has_explicit_backend)
+                .unwrap_or(false);
+            assert_eq!(
+                canonical_decoded.is_ok(),
+                expected_canonical_valid,
+                "{name}: production canonical admission drifted from raw-byte oracle: {:?}",
+                canonical_decoded.as_ref().err()
+            );
+
+            let Some(summary) = expected else {
+                continue;
+            };
+            let artifact = decoded.expect("oracle-valid artifact must production-decode");
+            assert_eq!(artifact.version, summary.version, "{name}");
+            assert_eq!(
+                artifact.stark_public_inputs.input_flags.len(),
+                summary.input_flag_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.stark_public_inputs.output_flags.len(),
+                summary.output_flag_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.stark_public_inputs.balance_slot_asset_ids.len(),
+                summary.balance_slot_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.tx.nullifiers.len(),
+                summary.nullifier_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.tx.commitments.len(),
+                summary.commitment_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.tx.ciphertext_hashes.len(),
+                summary.ciphertext_hash_count,
+                "{name}"
+            );
+            assert_eq!(
+                artifact.tx.version.circuit, summary.circuit_version,
+                "{name}"
+            );
+            assert_eq!(artifact.tx.version.crypto, summary.crypto_suite, "{name}");
+            assert_eq!(
+                artifact.stark_proof.len(),
+                summary.stark_proof_len,
+                "{name}"
+            );
+            assert_eq!(artifact.commitment.rows.len(), summary.row_count, "{name}");
+            let row_coeff_counts = artifact
+                .commitment
+                .rows
+                .iter()
+                .map(|row| row.coeffs.len())
+                .collect::<Vec<_>>();
+            assert_eq!(row_coeff_counts, summary.row_coeff_counts, "{name}");
+            assert_eq!(artifact.leaf.version, summary.leaf_version, "{name}");
+            assert_eq!(
+                artifact.proof_backend.wire_id(),
+                summary.proof_backend,
+                "{name}"
+            );
+
+            let mut expected_canonical = artifact_bytes.clone();
+            if !summary.has_explicit_backend {
+                expected_canonical.push(summary.proof_backend);
+            }
+            let production_canonical =
+                encode_native_tx_leaf_artifact_bytes(&artifact).expect("production re-encode");
+            assert_eq!(
+                production_canonical, expected_canonical,
+                "{name}: canonical re-encode drifted from raw-byte oracle"
+            );
+        }
     }
 
     #[test]
@@ -6288,9 +6859,9 @@ mod tests {
         let raw = fs::read(&path).expect("read Lean native tx-leaf artifact vector file");
         let vectors: LeanNativeTxLeafArtifactVectorFile =
             serde_json::from_slice(&raw).expect("parse Lean native tx-leaf artifact vectors");
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
 
-        for case in vectors.native_tx_leaf_artifact_cases {
+        for case in &vectors.native_tx_leaf_artifact_cases {
             let artifact_bytes = decode_lean_hex(&case.artifact_hex);
             let decoded = decode_native_tx_leaf_artifact_bytes(&artifact_bytes);
             assert_eq!(
@@ -6309,7 +6880,7 @@ mod tests {
                 canonical_decoded.as_ref().err()
             );
 
-            let Some(expected) = case.expected_summary else {
+            let Some(expected) = case.expected_summary.as_ref() else {
                 continue;
             };
             let artifact = decoded.expect("valid Lean vector must decode in production");
@@ -6456,6 +7027,19 @@ mod tests {
                 expected_canonical.push(expected.proof_backend);
                 assert_eq!(canonical, expected_canonical, "{}", case.name);
             }
+        }
+
+        assert!(
+            !vectors.native_tx_leaf_projection_count_cases.is_empty(),
+            "Lean native tx-leaf vectors must include projection-count cases"
+        );
+        for case in &vectors.native_tx_leaf_projection_count_cases {
+            assert_eq!(
+                production_tx_leaf_projection_count_accepts(case),
+                case.expected_valid,
+                "{}: production tx-leaf active-count projection drifted from Lean spec",
+                case.name
+            );
         }
     }
 
@@ -6605,6 +7189,361 @@ mod tests {
                     artifact.folds.len(),
                     "{}",
                     case.name
+                );
+            }
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct ReceiptRootOracleParse {
+        leaf_count: usize,
+        fold_count: usize,
+        fold_challenge_counts: Vec<usize>,
+        fold_row_coeff_counts: Vec<Vec<usize>>,
+    }
+
+    fn read_oracle_array<const N: usize>(
+        bytes: &[u8],
+        cursor: &mut usize,
+    ) -> std::result::Result<[u8; N], ()> {
+        let end = cursor.checked_add(N).ok_or(())?;
+        let slice = bytes.get(*cursor..end).ok_or(())?;
+        *cursor = end;
+        slice.try_into().map_err(|_| ())
+    }
+
+    fn read_oracle_u16(bytes: &[u8], cursor: &mut usize) -> std::result::Result<u16, ()> {
+        Ok(u16::from_le_bytes(read_oracle_array::<2>(bytes, cursor)?))
+    }
+
+    fn read_oracle_u32(bytes: &[u8], cursor: &mut usize) -> std::result::Result<u32, ()> {
+        Ok(u32::from_le_bytes(read_oracle_array::<4>(bytes, cursor)?))
+    }
+
+    fn read_oracle_u64(bytes: &[u8], cursor: &mut usize) -> std::result::Result<u64, ()> {
+        Ok(u64::from_le_bytes(read_oracle_array::<8>(bytes, cursor)?))
+    }
+
+    fn read_oracle_u32_capped(
+        bytes: &[u8],
+        cursor: &mut usize,
+        cap: usize,
+    ) -> std::result::Result<usize, ()> {
+        let value = read_oracle_u32(bytes, cursor)? as usize;
+        if value > cap {
+            return Err(());
+        }
+        Ok(value)
+    }
+
+    fn receipt_root_parser_oracle(
+        params: &NativeBackendParams,
+        bytes: &[u8],
+    ) -> std::result::Result<ReceiptRootOracleParse, ()> {
+        let max_bytes = max_native_receipt_root_artifact_bytes_with_params(
+            params.max_claimed_receipt_root_leaves as usize,
+            params,
+        );
+        if bytes.len() > max_bytes {
+            return Err(());
+        }
+
+        let mut cursor = 0usize;
+        let _version = read_oracle_u16(bytes, &mut cursor)?;
+        let _params_fingerprint = read_oracle_array::<48>(bytes, &mut cursor)?;
+        let _spec_digest = read_oracle_array::<32>(bytes, &mut cursor)?;
+        let _relation_id = read_oracle_array::<32>(bytes, &mut cursor)?;
+        let _shape_digest = read_oracle_array::<32>(bytes, &mut cursor)?;
+        let leaf_count = read_oracle_u32_capped(
+            bytes,
+            &mut cursor,
+            params.max_claimed_receipt_root_leaves as usize,
+        )?;
+        let fold_count = read_oracle_u32_capped(
+            bytes,
+            &mut cursor,
+            params.max_claimed_receipt_root_leaves.saturating_sub(1) as usize,
+        )?;
+
+        for _ in 0..leaf_count {
+            let _statement_digest = read_oracle_array::<48>(bytes, &mut cursor)?;
+            let _witness_commitment = read_oracle_array::<48>(bytes, &mut cursor)?;
+            let _proof_digest = read_oracle_array::<48>(bytes, &mut cursor)?;
+        }
+
+        let mut fold_challenge_counts = Vec::with_capacity(fold_count);
+        let mut fold_row_coeff_counts = Vec::with_capacity(fold_count);
+        for _ in 0..fold_count {
+            let challenge_count =
+                read_oracle_u32_capped(bytes, &mut cursor, params.fold_challenge_count as usize)?;
+            fold_challenge_counts.push(challenge_count);
+            for _ in 0..challenge_count {
+                let _challenge = read_oracle_u64(bytes, &mut cursor)?;
+            }
+            let _parent_statement_digest = read_oracle_array::<48>(bytes, &mut cursor)?;
+            let _parent_commitment = read_oracle_array::<48>(bytes, &mut cursor)?;
+            let row_count = read_oracle_u32_capped(bytes, &mut cursor, params.matrix_rows)?;
+            let mut row_coeff_counts = Vec::with_capacity(row_count);
+            for _ in 0..row_count {
+                let coeff_count = read_oracle_u32_capped(bytes, &mut cursor, params.matrix_cols)?;
+                row_coeff_counts.push(coeff_count);
+                for _ in 0..coeff_count {
+                    let _coeff = read_oracle_u64(bytes, &mut cursor)?;
+                }
+            }
+            fold_row_coeff_counts.push(row_coeff_counts);
+            let _proof_digest = read_oracle_array::<48>(bytes, &mut cursor)?;
+        }
+
+        let _root_statement_digest = read_oracle_array::<48>(bytes, &mut cursor)?;
+        let _root_commitment = read_oracle_array::<48>(bytes, &mut cursor)?;
+        if cursor != bytes.len() {
+            return Err(());
+        }
+
+        Ok(ReceiptRootOracleParse {
+            leaf_count,
+            fold_count,
+            fold_challenge_counts,
+            fold_row_coeff_counts,
+        })
+    }
+
+    fn receipt_root_schedule_oracle(
+        params: &NativeBackendParams,
+        parsed: &ReceiptRootOracleParse,
+        expected_record_count: usize,
+    ) -> bool {
+        if expected_record_count == 0 {
+            return false;
+        }
+        if parsed.leaf_count != expected_record_count {
+            return false;
+        }
+        if parsed.leaf_count > params.max_claimed_receipt_root_leaves as usize {
+            return false;
+        }
+        if parsed.fold_count != expected_record_count - 1 {
+            return false;
+        }
+        parsed
+            .fold_challenge_counts
+            .iter()
+            .all(|count| *count == params.fold_challenge_count as usize)
+            && parsed.fold_row_coeff_counts.iter().all(|rows| {
+                rows.len() == params.matrix_rows
+                    && rows
+                        .iter()
+                        .all(|coeff_count| *coeff_count == params.matrix_cols)
+            })
+    }
+
+    fn oracle_receipt_root_artifact(
+        params: &NativeBackendParams,
+        leaf_count: usize,
+    ) -> ReceiptRootArtifact {
+        let leaves = (0..leaf_count)
+            .map(|idx| ReceiptRootLeaf {
+                statement_digest: [0x10u8.wrapping_add(idx as u8); 48],
+                witness_commitment: [0x20u8.wrapping_add(idx as u8); 48],
+                proof_digest: [0x30u8.wrapping_add(idx as u8); 48],
+            })
+            .collect::<Vec<_>>();
+        let fold_count = leaf_count.saturating_sub(1);
+        let folds = (0..fold_count)
+            .map(|idx| ReceiptRootFoldStep {
+                challenges: (0..params.fold_challenge_count)
+                    .map(|challenge| (idx as u64) << 32 | u64::from(challenge))
+                    .collect(),
+                parent_statement_digest: [0x40u8.wrapping_add(idx as u8); 48],
+                parent_commitment: [0x50u8.wrapping_add(idx as u8); 48],
+                parent_rows: (0..params.matrix_rows)
+                    .map(|row| {
+                        RingElem::from_coeffs(
+                            (0..params.matrix_cols)
+                                .map(|coeff| {
+                                    ((idx as u64) << 48) | ((row as u64) << 24) | coeff as u64
+                                })
+                                .collect(),
+                        )
+                    })
+                    .collect(),
+                proof_digest: [0x60u8.wrapping_add(idx as u8); 48],
+            })
+            .collect();
+        ReceiptRootArtifact {
+            version: receipt_root_artifact_version(params),
+            params_fingerprint: params.parameter_fingerprint(),
+            spec_digest: params.spec_digest(),
+            relation_id: [0x70; 32],
+            shape_digest: [0x80; 32],
+            leaves,
+            folds,
+            root_statement_digest: [0x90; 48],
+            root_commitment: [0xa0; 48],
+        }
+    }
+
+    fn put_u32_le(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn native_receipt_root_parser_matches_independent_oracle_on_mutation_corpus() {
+        const LEAF_COUNT_OFFSET: usize = 146;
+        const FOLD_COUNT_OFFSET: usize = 150;
+        const BODY_OFFSET: usize = 154;
+        const LEAF_WIRE_BYTES: usize = 48 * 3;
+
+        let params = native_backend_params();
+        let valid_one = encode_receipt_root_artifact(&oracle_receipt_root_artifact(&params, 1));
+        let valid_two = encode_receipt_root_artifact(&oracle_receipt_root_artifact(&params, 2));
+        let fold_offset = BODY_OFFSET + 2 * LEAF_WIRE_BYTES;
+        let row_count_offset =
+            fold_offset + 4 + (params.fold_challenge_count as usize * 8) + 48 + 48;
+        let first_coeff_count_offset = row_count_offset + 4;
+
+        let mut corpus = vec![
+            ("empty", Vec::new(), 1usize),
+            ("valid-one", valid_one.clone(), 1),
+            ("valid-two", valid_two.clone(), 2),
+            ("valid-two-wrong-expected-count", valid_two.clone(), 1),
+            (
+                "oversized-envelope",
+                vec![
+                    0u8;
+                    max_native_receipt_root_artifact_bytes_with_params(
+                        params.max_claimed_receipt_root_leaves as usize,
+                        &params,
+                    ) + 1
+                ],
+                1,
+            ),
+        ];
+
+        let mut trailing = valid_two.clone();
+        trailing.push(0);
+        corpus.push(("valid-two-trailing-byte", trailing, 2));
+
+        let mut zero_leaf = valid_one.clone();
+        put_u32_le(&mut zero_leaf, LEAF_COUNT_OFFSET, 0);
+        put_u32_le(&mut zero_leaf, FOLD_COUNT_OFFSET, 0);
+        zero_leaf.truncate(BODY_OFFSET + 48 + 48);
+        corpus.push(("zero-leaf-parses-schedule-rejects", zero_leaf, 0));
+
+        let mut too_many_leaves = valid_one.clone();
+        put_u32_le(
+            &mut too_many_leaves,
+            LEAF_COUNT_OFFSET,
+            params.max_claimed_receipt_root_leaves + 1,
+        );
+        corpus.push(("leaf-count-over-cap", too_many_leaves, 1));
+
+        let mut too_many_folds = valid_one.clone();
+        put_u32_le(
+            &mut too_many_folds,
+            FOLD_COUNT_OFFSET,
+            params.max_claimed_receipt_root_leaves,
+        );
+        corpus.push(("fold-count-over-cap", too_many_folds, 1));
+
+        let mut leaf_count_overstates_body = valid_one.clone();
+        put_u32_le(&mut leaf_count_overstates_body, LEAF_COUNT_OFFSET, 2);
+        corpus.push(("leaf-count-overstates-body", leaf_count_overstates_body, 2));
+
+        let mut challenge_over_cap = valid_two.clone();
+        put_u32_le(
+            &mut challenge_over_cap,
+            fold_offset,
+            params.fold_challenge_count + 1,
+        );
+        corpus.push(("fold-challenge-count-over-cap", challenge_over_cap, 2));
+
+        let mut row_over_cap = valid_two.clone();
+        put_u32_le(
+            &mut row_over_cap,
+            row_count_offset,
+            params.matrix_rows as u32 + 1,
+        );
+        corpus.push(("fold-row-count-over-cap", row_over_cap, 2));
+
+        let mut coeff_over_cap = valid_two.clone();
+        put_u32_le(
+            &mut coeff_over_cap,
+            first_coeff_count_offset,
+            params.matrix_cols as u32 + 1,
+        );
+        corpus.push(("fold-coeff-count-over-cap", coeff_over_cap, 2));
+
+        for cut in [
+            0usize,
+            1,
+            BODY_OFFSET - 1,
+            BODY_OFFSET,
+            BODY_OFFSET + LEAF_WIRE_BYTES - 1,
+            fold_offset + 3,
+            valid_two.len().saturating_sub(1),
+        ] {
+            corpus.push(("valid-two-truncated", valid_two[..cut].to_vec(), 2));
+        }
+
+        for offset in [
+            0usize,
+            LEAF_COUNT_OFFSET,
+            FOLD_COUNT_OFFSET,
+            BODY_OFFSET,
+            fold_offset,
+            row_count_offset,
+            first_coeff_count_offset,
+            valid_two.len() - 1,
+        ] {
+            let mut mutated = valid_two.clone();
+            mutated[offset] ^= 0x5a;
+            corpus.push(("valid-two-bitflip", mutated, 2));
+        }
+
+        for len in [
+            1usize,
+            2,
+            7,
+            BODY_OFFSET - 3,
+            BODY_OFFSET + 11,
+            valid_two.len() / 2,
+        ] {
+            let noise = (0..len)
+                .map(|idx| ((idx * 37 + len) & 0xff) as u8)
+                .collect::<Vec<_>>();
+            corpus.push(("deterministic-noise", noise, 1));
+        }
+
+        for (name, raw, expected_count) in corpus {
+            let oracle = receipt_root_parser_oracle(&params, &raw);
+            let decoded = decode_receipt_root_artifact_with_params(&params, &raw);
+            assert_eq!(
+                decoded.is_ok(),
+                oracle.is_ok(),
+                "{name}: production parser drifted from independent oracle: {:?}",
+                decoded.as_ref().err()
+            );
+
+            if let (Ok(parsed), Ok(artifact)) = (oracle, decoded) {
+                assert_eq!(
+                    encode_receipt_root_artifact(&artifact),
+                    raw,
+                    "{name}: accepted receipt-root artifact must re-encode canonically"
+                );
+                let oracle_schedule =
+                    receipt_root_schedule_oracle(&params, &parsed, expected_count);
+                let production_schedule =
+                    validate_native_receipt_root_artifact_structure_with_params(
+                        &params,
+                        &artifact,
+                        expected_count,
+                    )
+                    .is_ok();
+                assert_eq!(
+                    production_schedule, oracle_schedule,
+                    "{name}: production schedule gate drifted from independent oracle"
                 );
             }
         }

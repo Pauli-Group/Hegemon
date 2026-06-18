@@ -962,4 +962,272 @@ mod tests {
             case.name
         );
     }
+
+    #[test]
+    fn aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus() {
+        let expected_commitment = [0x7bu8; 48];
+        let valid_payload = oracle_valid_v5_payload(&expected_commitment, 16 * 1024);
+        let valid_payload_bytes = postcard::to_allocvec(&valid_payload).expect("encode V5 payload");
+        let compressed_valid =
+            super::super::encode_aggregation_proof_bytes(valid_payload_bytes.clone());
+        assert!(
+            compressed_valid.starts_with(&AGGREGATION_PROOF_MAGIC),
+            "valid aggregation V5 corpus needs a compressed envelope case"
+        );
+
+        let corpus = aggregation_v5_envelope_oracle_corpus(&valid_payload_bytes, &compressed_valid);
+        assert!(
+            corpus.len() >= 512,
+            "aggregation V5 corpus must stay broad enough to catch parser drift"
+        );
+
+        for (idx, raw) in corpus.iter().enumerate() {
+            let expected = aggregation_v5_header_oracle_accepts(raw, 1, &expected_commitment);
+            let actual =
+                production_aggregation_v5_header_path_accepts(raw, 1, &expected_commitment);
+            assert_eq!(
+                actual,
+                expected,
+                "aggregation V5 envelope oracle mismatch at corpus index {idx}, len={}, prefix={}",
+                raw.len(),
+                hex::encode(&raw[..raw.len().min(16)])
+            );
+        }
+    }
+
+    fn production_aggregation_v5_header_path_accepts(
+        raw: &[u8],
+        tx_count: usize,
+        expected_statement_commitment: &[u8; 48],
+    ) -> bool {
+        let Ok(decoded) = super::super::decode_aggregation_proof_bytes(raw) else {
+            return false;
+        };
+        let Ok(payload) = decode_payload(&decoded) else {
+            return false;
+        };
+        evaluate_header(&payload, tx_count, expected_statement_commitment).is_ok()
+    }
+
+    fn aggregation_v5_header_oracle_accepts(
+        raw: &[u8],
+        tx_count: usize,
+        expected_statement_commitment: &[u8; 48],
+    ) -> bool {
+        let Ok(decoded) = oracle_decode_aggregation_envelope(raw) else {
+            return false;
+        };
+        let Ok((payload, remaining)) =
+            postcard::take_from_bytes::<AggregationProofV5Payload>(&decoded)
+        else {
+            return false;
+        };
+        if !remaining.is_empty() {
+            return false;
+        }
+        evaluate_header(&payload, tx_count, expected_statement_commitment).is_ok()
+    }
+
+    fn oracle_decode_aggregation_envelope(raw: &[u8]) -> Result<Vec<u8>, ()> {
+        if raw.len() < AGGREGATION_PROOF_HEADER_LEN {
+            return Ok(raw.to_vec());
+        }
+        if &raw[..AGGREGATION_PROOF_MAGIC.len()] != AGGREGATION_PROOF_MAGIC.as_slice() {
+            return Ok(raw.to_vec());
+        }
+        if raw[4] != AGGREGATION_PROOF_VERSION {
+            return Err(());
+        }
+
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&raw[5..9]);
+        let expected_len = u32::from_le_bytes(len_bytes) as usize;
+        if expected_len == 0 || expected_len > MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN {
+            return Err(());
+        }
+
+        let compressed = &raw[AGGREGATION_PROOF_HEADER_LEN..];
+        if compressed.is_empty() {
+            return Err(());
+        }
+        let decoded = zstd::stream::decode_all(compressed).map_err(|_| ())?;
+        if decoded.len() != expected_len {
+            return Err(());
+        }
+        Ok(decoded)
+    }
+
+    fn oracle_valid_v5_payload(
+        expected_statement_commitment: &[u8; 48],
+        outer_proof_len: usize,
+    ) -> AggregationProofV5Payload {
+        AggregationProofV5Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V5,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V5,
+            node_kind: AggregationNodeKind::Leaf,
+            fan_in: leaf_fan_in() as u16,
+            child_count: 1,
+            subtree_tx_count: 1,
+            tree_arity: merge_fan_in() as u16,
+            tree_levels: tree_levels_for_tx_count(1),
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_statements_commitment: expected_statement_commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V2,
+            inner_public_inputs_len: 1,
+            representative_child_proof: vec![0xa5],
+            packed_public_values: vec![0],
+            outer_proof: vec![0x5a; outer_proof_len],
+        }
+    }
+
+    fn aggregation_v5_envelope_oracle_corpus(
+        valid_payload_bytes: &[u8],
+        compressed_valid: &[u8],
+    ) -> Vec<Vec<u8>> {
+        let mut corpus = vec![
+            Vec::new(),
+            vec![0],
+            b"HGA0".to_vec(),
+            valid_payload_bytes.to_vec(),
+            compressed_valid.to_vec(),
+            aggregation_envelope_with_header(AGGREGATION_PROOF_VERSION.wrapping_add(1), 1, &[0]),
+            aggregation_envelope_with_header(AGGREGATION_PROOF_VERSION, 0, &[0]),
+            aggregation_envelope_with_header(
+                AGGREGATION_PROOF_VERSION,
+                (MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN as u32).saturating_add(1),
+                &[0],
+            ),
+            aggregation_envelope_with_header(AGGREGATION_PROOF_VERSION, 32, &[]),
+            aggregation_envelope_with_header(AGGREGATION_PROOF_VERSION, 32, b"not-zstd"),
+        ];
+
+        let mut compressed_len_mismatch = compressed_valid.to_vec();
+        compressed_len_mismatch[5..9]
+            .copy_from_slice(&(valid_payload_bytes.len().saturating_add(1) as u32).to_le_bytes());
+        corpus.push(compressed_len_mismatch);
+
+        let mut wrong_magic = compressed_valid.to_vec();
+        wrong_magic[..AGGREGATION_PROOF_MAGIC.len()].copy_from_slice(b"BAD0");
+        corpus.push(wrong_magic);
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = valid_payload_bytes.to_vec();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in aggregation_v5_cut_points(valid_payload_bytes.len()) {
+            corpus.push(valid_payload_bytes[..cut].to_vec());
+        }
+        for cut in aggregation_v5_cut_points(compressed_valid.len()) {
+            corpus.push(compressed_valid[..cut].to_vec());
+        }
+
+        for offset in aggregation_v5_mutation_offsets(valid_payload_bytes.len()) {
+            for mask in [0x01, 0x7f, 0x80, 0xff] {
+                let mut mutated = valid_payload_bytes.to_vec();
+                mutated[offset] ^= mask;
+                corpus.push(mutated);
+            }
+        }
+        for offset in aggregation_v5_mutation_offsets(compressed_valid.len()) {
+            for mask in [0x01, 0x80, 0xff] {
+                let mut mutated = compressed_valid.to_vec();
+                mutated[offset] ^= mask;
+                corpus.push(mutated);
+            }
+        }
+
+        for len in [
+            1usize, 2, 3, 4, 5, 8, 9, 16, 31, 32, 33, 64, 127, 128, 129, 255, 256, 257, 511, 512,
+        ] {
+            for seed_offset in 0..8u64 {
+                corpus.push(deterministic_aggregation_noise(
+                    0x4147_4752_5635 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
+                    len,
+                ));
+            }
+        }
+
+        corpus
+    }
+
+    fn aggregation_envelope_with_header(version: u8, expected_len: u32, payload: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(AGGREGATION_PROOF_HEADER_LEN + payload.len());
+        out.extend_from_slice(&AGGREGATION_PROOF_MAGIC);
+        out.push(version);
+        out.extend_from_slice(&expected_len.to_le_bytes());
+        out.extend_from_slice(payload);
+        out
+    }
+
+    fn deterministic_aggregation_noise(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            out.push((state >> 32) as u8);
+        }
+        out
+    }
+
+    fn aggregation_v5_cut_points(len: usize) -> std::collections::BTreeSet<usize> {
+        let mut cuts = std::collections::BTreeSet::new();
+        for cut in 0..=len.min(128) {
+            cuts.insert(cut);
+        }
+        for boundary in [1usize, 2, 3, 4, 5, 8, 9, 16, 32, 64, 128, 256, 512, len] {
+            for delta in [0usize, 1, 2, 3, 7, 8] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn aggregation_v5_mutation_offsets(len: usize) -> std::collections::BTreeSet<usize> {
+        let mut offsets = std::collections::BTreeSet::new();
+        if len == 0 {
+            return offsets;
+        }
+        for offset in 0..len.min(128) {
+            offsets.insert(offset);
+        }
+        for offset in [
+            0usize,
+            1,
+            2,
+            3,
+            4,
+            5,
+            8,
+            9,
+            16,
+            31,
+            32,
+            63,
+            64,
+            127,
+            128,
+            255,
+            256,
+            len / 2,
+            len - 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
 }

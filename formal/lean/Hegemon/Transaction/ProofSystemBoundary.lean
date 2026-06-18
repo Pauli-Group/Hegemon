@@ -2293,6 +2293,77 @@ structure CanonicalProofSystemProductionResidualCertificate
   merkleCommitmentHashSecurity :
     residuals.merkleCommitmentHashSecurity
 
+structure CanonicalProofSystemResidualBoundaryFacts
+    (residuals : CanonicalProofSystemProductionResidualAssumptions) :
+    Prop where
+  wrapperCanonicalDecodeEquivalence :
+    residuals.wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalence :
+    residuals.publicInputSerializationEquivalence
+  statementHashCollisionResistance :
+    residuals.statementHashCollisionResistance
+  bindingTranscriptHashSoundness :
+    residuals.bindingTranscriptHashSoundness
+  deployedVerifierImplementationEquivalence :
+    residuals.deployedVerifierImplementationEquivalence
+  starkAirPcsSoundness :
+    residuals.starkAirPcsSoundness
+  witnessExtractionCompleteness :
+    residuals.witnessExtractionCompleteness
+  merkleCommitmentHashSecurity :
+    residuals.merkleCommitmentHashSecurity
+
+theorem canonical_proof_system_production_residual_certificate_exposes_residual_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {residuals : CanonicalProofSystemProductionResidualAssumptions}
+    (certificate :
+      CanonicalProofSystemProductionResidualCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        residuals) :
+    CanonicalProofSystemResidualBoundaryFacts residuals := by
+  exact
+    {
+      wrapperCanonicalDecodeEquivalence :=
+        certificate.wrapperCanonicalDecodeEquivalence,
+      publicInputSerializationEquivalence :=
+        certificate.publicInputSerializationEquivalence,
+      statementHashCollisionResistance :=
+        certificate.statementHashCollisionResistance,
+      bindingTranscriptHashSoundness :=
+        certificate.bindingTranscriptHashSoundness,
+      deployedVerifierImplementationEquivalence :=
+        certificate.deployedVerifierImplementationEquivalence,
+      starkAirPcsSoundness := certificate.starkAirPcsSoundness,
+      witnessExtractionCompleteness :=
+        certificate.witnessExtractionCompleteness,
+      merkleCommitmentHashSecurity :=
+        certificate.merkleCommitmentHashSecurity
+    }
+
 theorem packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}

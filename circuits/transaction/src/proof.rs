@@ -1357,6 +1357,7 @@ mod tests {
     struct LeanProofWrapperWireVectorFile {
         schema_version: u32,
         transaction_proof_wrapper_wire_cases: Vec<LeanProofWrapperWireCase>,
+        transaction_proof_wrapper_wire_to_admission_cases: Vec<LeanProofWrapperWireToAdmissionCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1371,6 +1372,17 @@ mod tests {
         canonical_reencode_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProofWrapperWireToAdmissionCase {
+        name: String,
+        raw_hex: String,
+        canonical_hex: String,
+        expected_wire_valid: bool,
+        expected_admission_valid: bool,
+        expected_admission_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1941,7 +1953,7 @@ mod tests {
     #[test]
     fn lean_generated_transaction_proof_wrapper_wire_vectors_match_production() {
         let vectors = load_proof_wrapper_wire_vectors();
-        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.schema_version, 2);
         assert!(
             !vectors.transaction_proof_wrapper_wire_cases.is_empty(),
             "Lean proof-wrapper wire bundle must contain at least one case"
@@ -1952,6 +1964,284 @@ mod tests {
         for case in &vectors.transaction_proof_wrapper_wire_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_proof_wrapper_wire_case(case, &expected_dummy);
+        }
+
+        assert!(
+            !vectors
+                .transaction_proof_wrapper_wire_to_admission_cases
+                .is_empty(),
+            "Lean proof-wrapper wire-to-admission bundle must contain at least one case"
+        );
+        let mut admission_names = BTreeSet::new();
+        for case in &vectors.transaction_proof_wrapper_wire_to_admission_cases {
+            assert!(admission_names.insert(case.name.clone()));
+            verify_lean_proof_wrapper_wire_to_admission_case(case);
+        }
+    }
+
+    #[test]
+    fn transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus() {
+        let canonical = bincode::serialize(&dummy_proof()).expect("encode dummy proof");
+        let corpus = proof_wrapper_bincode_oracle_corpus(&canonical);
+        assert!(
+            corpus.len() >= 512,
+            "transaction proof-wrapper corpus must stay broad enough to catch parser drift"
+        );
+
+        for (idx, raw) in corpus.iter().enumerate() {
+            let expected = proof_wrapper_bincode_oracle_accepts(raw);
+            let actual = decode_transaction_proof_bytes_exact(raw).is_ok();
+            assert_eq!(
+                actual,
+                expected,
+                "TransactionProof wrapper oracle mismatch at corpus index {idx}, len={}, prefix={}",
+                raw.len(),
+                hex::encode(&raw[..raw.len().min(16)])
+            );
+        }
+    }
+
+    fn proof_wrapper_bincode_oracle_accepts(raw: &[u8]) -> bool {
+        let mut cursor = Cursor::new(raw);
+        let Ok(decoded) = bincode::deserialize_from::<_, TransactionProof>(&mut cursor) else {
+            return false;
+        };
+        if cursor.position() as usize != raw.len() {
+            return false;
+        }
+        let Ok(canonical) = bincode::serialize(&decoded) else {
+            return false;
+        };
+        canonical == raw
+    }
+
+    fn proof_wrapper_bincode_oracle_corpus(canonical: &[u8]) -> Vec<Vec<u8>> {
+        let mut corpus = vec![
+            Vec::new(),
+            vec![0],
+            vec![0xff],
+            vec![0; 8],
+            vec![0xff; 8],
+            b"not-a-proof-wrapper".to_vec(),
+            canonical.to_vec(),
+        ];
+
+        for len in [
+            1usize,
+            2,
+            3,
+            4,
+            5,
+            8,
+            16,
+            31,
+            32,
+            33,
+            48,
+            63,
+            64,
+            65,
+            96,
+            127,
+            128,
+            129,
+            255,
+            256,
+            257,
+            511,
+            512,
+            513,
+            1024,
+            canonical.len().saturating_sub(1),
+            canonical.len(),
+            canonical.len().saturating_add(1),
+        ] {
+            for seed_offset in 0..12u64 {
+                corpus.push(deterministic_proof_wrapper_noise(
+                    0x5458_5052_4f4f_46 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
+                    len,
+                ));
+            }
+        }
+
+        for byte in [0x00, 0x55, 0xaa, 0xff] {
+            let mut trailing = canonical.to_vec();
+            trailing.push(byte);
+            corpus.push(trailing);
+        }
+
+        for cut in proof_wrapper_cut_points(canonical.len()) {
+            corpus.push(canonical[..cut].to_vec());
+        }
+
+        for offset in proof_wrapper_mutation_offsets(canonical.len()) {
+            for mask in [0x01, 0x7f, 0x80, 0xff] {
+                let mut mutated = canonical.to_vec();
+                mutated[offset] ^= mask;
+                corpus.push(mutated);
+            }
+        }
+
+        for offset in proof_wrapper_mutation_offsets(canonical.len())
+            .into_iter()
+            .take(64)
+        {
+            let mut inserted = canonical.to_vec();
+            inserted.insert(offset, 0);
+            corpus.push(inserted);
+        }
+
+        corpus
+    }
+
+    fn deterministic_proof_wrapper_noise(seed: u64, len: usize) -> Vec<u8> {
+        let mut state = seed;
+        let mut out = Vec::with_capacity(len);
+        for _ in 0..len {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            out.push((state >> 32) as u8);
+        }
+        out
+    }
+
+    fn proof_wrapper_cut_points(len: usize) -> BTreeSet<usize> {
+        let mut cuts = BTreeSet::new();
+        for cut in 0..=len.min(128) {
+            cuts.insert(cut);
+        }
+        for boundary in [
+            1usize, 2, 3, 4, 5, 8, 16, 32, 48, 64, 96, 128, 256, 512, 1024, len,
+        ] {
+            for delta in [0usize, 1, 2, 3, 7, 8] {
+                if let Some(cut) = boundary.checked_sub(delta) {
+                    if cut <= len {
+                        cuts.insert(cut);
+                    }
+                }
+                let cut = boundary.saturating_add(delta);
+                if cut <= len {
+                    cuts.insert(cut);
+                }
+            }
+        }
+        cuts
+    }
+
+    fn proof_wrapper_mutation_offsets(len: usize) -> BTreeSet<usize> {
+        let mut offsets = BTreeSet::new();
+        if len == 0 {
+            return offsets;
+        }
+        for offset in 0..len.min(128) {
+            offsets.insert(offset);
+        }
+        for offset in [
+            0usize,
+            1,
+            2,
+            3,
+            4,
+            5,
+            8,
+            16,
+            31,
+            32,
+            47,
+            48,
+            63,
+            64,
+            95,
+            96,
+            127,
+            128,
+            255,
+            256,
+            511,
+            512,
+            1023,
+            1024,
+            len / 2,
+            len - 1,
+        ] {
+            if offset < len {
+                offsets.insert(offset);
+            }
+        }
+        offsets
+    }
+
+    fn verify_lean_proof_wrapper_wire_to_admission_case(
+        case: &LeanProofWrapperWireToAdmissionCase,
+    ) {
+        let raw = decode_hex_bytes(&case.raw_hex);
+        let canonical = decode_hex_bytes(&case.canonical_hex);
+        let decoded = decode_transaction_proof_bytes_exact(&raw);
+        assert_eq!(
+            decoded.is_ok(),
+            case.expected_wire_valid,
+            "{} exact proof-wrapper wire validity drifted: {decoded:?}",
+            case.name
+        );
+
+        let proof = decoded.expect("wire-to-admission cases are exact-decode valid");
+        let reencoded = bincode::serialize(&proof).expect("reencode proof wrapper");
+        assert_eq!(
+            reencoded, canonical,
+            "{} decoded proof wrapper reencoded to non-Lean canonical bytes",
+            case.name
+        );
+        assert_eq!(
+            raw, canonical,
+            "{} exact-decode-valid wire-to-admission fixture must be canonical",
+            case.name
+        );
+
+        let admission = transaction_proof_wrapper_public_inputs_for_admission(&proof, true);
+        assert_eq!(
+            admission.is_ok(),
+            case.expected_admission_valid,
+            "{} decoded proof-wrapper admission validity drifted: {admission:?}",
+            case.name
+        );
+        let actual_rejection = admission
+            .err()
+            .map(|err| proof_wrapper_decoded_admission_rejection_label(&err));
+        assert_eq!(
+            actual_rejection.as_deref(),
+            case.expected_admission_rejection.as_deref(),
+            "{} decoded proof-wrapper admission rejection drifted",
+            case.name
+        );
+
+        if case.expected_admission_rejection.as_deref() == Some("nullifier_vector_mismatch") {
+            assert_ne!(
+                proof.nullifiers, proof.public_inputs.nullifiers,
+                "{} must exercise top-level/public nullifier drift",
+                case.name
+            );
+        }
+    }
+
+    fn proof_wrapper_decoded_admission_rejection_label(err: &TransactionCircuitError) -> String {
+        let message = err.to_string();
+        if message.contains("nullifier vector mismatch") {
+            "nullifier_vector_mismatch".to_string()
+        } else if message.contains("commitment vector mismatch") {
+            "commitment_vector_mismatch".to_string()
+        } else if message.contains("balance slot mismatch") {
+            "balance_slot_mismatch".to_string()
+        } else if message.contains("missing proof bytes") {
+            "missing_proof_bytes".to_string()
+        } else if message.contains("missing STARK public inputs")
+            || message.contains("missing serialized public inputs")
+        {
+            "missing_serialized_public_inputs".to_string()
+        } else if message.contains("invalid STARK public inputs") {
+            "invalid_public_inputs".to_string()
+        } else {
+            "unknown".to_string()
         }
     }
 

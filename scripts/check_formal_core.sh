@@ -260,6 +260,7 @@ HEGEMON_LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VE
   cargo test -p consensus-light-client lean_generated_bridge_checkpoint_output_vectors_match_production -- --nocapture
 HEGEMON_LEAN_BRIDGE_LONG_RANGE_VECTORS="$LEAN_BRIDGE_LONG_RANGE_VECTORS" \
   cargo test -p consensus-light-client lean_generated_long_range_shape_vectors_match_production -- --nocapture
+cargo test -p consensus-light-client long_range_proof_wire_decoders_match_independent_raw_oracle --lib -- --nocapture
 HEGEMON_LEAN_BRIDGE_HEADER_MMR_VECTORS="$LEAN_BRIDGE_HEADER_MMR_VECTORS" \
   cargo test -p consensus-light-client lean_generated_header_mmr_shape_vectors_match_production -- --nocapture
 HEGEMON_LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS="$LEAN_BRIDGE_HEADER_MMR_TRANSCRIPT_VECTORS" \
@@ -268,12 +269,18 @@ HEGEMON_LEAN_BRIDGE_FLYCLIENT_VECTORS="$LEAN_BRIDGE_FLYCLIENT_VECTORS" \
   cargo test -p consensus-light-client lean_generated_flyclient_vectors_match_production -- --nocapture
 HEGEMON_LEAN_AGGREGATION_V5_VECTORS="$LEAN_AGGREGATION_V5_VECTORS" \
   cargo test -p consensus lean_generated_aggregation_v5_header_vectors_match_production -- --nocapture
+cargo test -p consensus aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus --lib -- --nocapture
 HEGEMON_LEAN_COMMITMENT_TREE_APPEND_VECTORS="$LEAN_COMMITMENT_TREE_APPEND_VECTORS" \
   cargo test -p consensus lean_generated_commitment_tree_append_vectors_match_production -- --nocapture
+cargo test -p state-merkle commitment_tree_independent_oracle_append_roots_paths_and_bounds -- --nocapture
 HEGEMON_LEAN_DA_ROOT_VECTORS="$LEAN_DA_ROOT_VECTORS" \
   cargo test -p consensus lean_generated_da_root_vectors_match_production -- --nocapture
+cargo test -p state-da da_merkle_oracle_matches_production_and_rejects_orientation_mutations -- --nocapture
+cargo test -p state-da da_proof_verifier_rejects_overlong_paths_before_hash_replay -- --nocapture
 HEGEMON_LEAN_SHIELDED_VECTORS="$LEAN_SHIELDED_VECTORS" \
   cargo test -p protocol-shielded-pool lean_generated_nullifier_vectors_match_production -- --nocapture
+cargo test -p protocol-shielded-pool nullifier_state_matches_independent_transition_oracle -- --nocapture
+cargo test -p consensus nullifier_set_matches_sorted_unique_commitment_oracle_and_rejects_duplicates --lib -- --nocapture
 HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
   cargo test -p consensus lean_generated_fork_choice_vectors_match_production -- --nocapture
 HEGEMON_LEAN_CONSENSUS_VECTORS="$LEAN_CONSENSUS_VECTORS" \
@@ -292,12 +299,15 @@ HEGEMON_LEAN_PROOF_POLICY_VECTORS="$LEAN_PROOF_POLICY_VECTORS" \
   cargo test -p consensus lean_generated_proof_policy_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PROVEN_BATCH_BINDING_VECTORS="$LEAN_PROVEN_BATCH_BINDING_VECTORS" \
   cargo test -p consensus lean_generated_proven_batch_binding_vectors_match_production -- --nocapture
+cargo test -p consensus proven_batch_binding_rejects_da_chunk_count_mismatch -- --nocapture
 HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS="$LEAN_RECEIPT_ROOT_ADMISSION_VECTORS" \
   cargo test -p consensus lean_generated_receipt_root_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS="$LEAN_RECURSIVE_BLOCK_ADMISSION_VECTORS" \
   cargo test -p consensus lean_generated_recursive_block_admission_vectors_match_production -- --nocapture
+cargo test -p consensus recursive_block_v1_fixed_wire_cap_and_parser_match_oracle --lib -- --nocapture
 HEGEMON_LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS="$LEAN_RECURSIVE_BLOCK_V2_VERIFIER_SURFACE_VECTORS" \
   cargo test -p block-recursion lean_generated_recursive_block_v2_verifier_surface_vectors_match_production -- --nocapture
+cargo test -p block-recursion recursive_block_v2_raw_fixed_width_oracle_matches_parser_boundaries -- --nocapture
 HEGEMON_LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS="$LEAN_RECURSIVE_PUBLIC_REPLAY_VECTORS" \
   cargo test -p block-recursion lean_generated_recursive_public_replay_vectors_match_production -- --nocapture
 HEGEMON_LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS="$LEAN_RECURSIVE_SEMANTIC_INPUT_VECTORS" \
@@ -322,6 +332,7 @@ cargo test -p hegemon-node non_transfer_action_order_key_preimage_ignores_receiv
 cargo test -p hegemon-node pending_non_transfer_relative_order_ignores_received_ms_resampling --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS="$LEAN_ACTION_REQUEST_PROJECTION_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_action_request_projection_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node action_request_projection_accepts_supported_route_fixtures --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS="$LEAN_ATOMIC_COMMIT_MANIFEST_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_atomic_commit_manifest_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_ACTION_HASH_ADMISSION_VECTORS="$LEAN_ACTION_HASH_ADMISSION_VECTORS" \
@@ -511,10 +522,14 @@ cargo test -p hegemon-node canonical_index_rebuild_rejects_malleable_action_byte
 cargo test -p hegemon-node block_range_projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node mined_commit_startup_replay_matches_canonical_publication_rows --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node mined_commit_rejects_meta_action_bytes_not_matching_planned_actions --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node mined_commit_rejects_ciphertext_hash_size_count_mismatch_before_sled_mutation --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node apply_planned_actions_rejects_commitment_batch_overflow_atomically --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node action_byte_drift --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node committed_sidecar_replay_materializes_ciphertext_from_archive --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node startup_rejects_committed_sidecar_archive_hash_drift --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node reorg_preserves_valid_pending_sidecar_when_staged_ciphertext_survives --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS="$LEAN_BLOCK_COMMITMENT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_commitment_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS="$LEAN_BLOCK_REPLAY_REFINEMENT_VECTORS" \
@@ -524,13 +539,18 @@ HEGEMON_LEAN_CANDIDATE_ARTIFACT_ADMISSION_VECTORS="$LEAN_CANDIDATE_ARTIFACT_ADMI
   cargo test -p hegemon-node lean_generated_candidate_artifact_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS="$LEAN_CANDIDATE_ARTIFACT_COUPLING_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_candidate_artifact_coupling_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node shielded_transfer_rejects_candidate_da_chunk_count_mismatch --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS="$LEAN_CANONICAL_REORG_CHAIN_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_canonical_reorg_chain_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_CODEC_ADMISSION_VECTORS="$LEAN_CODEC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_codec_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS="$LEAN_PENDING_ACTION_SCALE_WIRE_VECTORS" \
   cargo test -p hegemon-node lean_generated_pending_action_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node pending_action_exact_decode_matches_scale_decode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node consensus_route_scale_exact_decoders_match_raw_decode_oracle_on_mutation_corpus --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node native_block_meta_bincode_budget --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture
+cargo test -p block-circuit commitment_block_proof_decode_rejects --lib -- --nocapture
 HEGEMON_LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS="$LEAN_COINBASE_ACCOUNTING_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_coinbase_accounting_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS="$LEAN_COINBASE_ACTION_PAYLOAD_ADMISSION_VECTORS" \
@@ -567,12 +587,15 @@ HEGEMON_LEAN_RPC_ADMISSION_VECTORS="$LEAN_RPC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_rpc_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS="$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node mixed_batch_atomically --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node submit_sidecar_action_consumes_embedded_staged_proof_atomically --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS="$LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS" \
   cargo test -p hegemon-node lean_generated_staged_ciphertext_reload_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_STAGED_PROOF_RELOAD_VECTORS="$LEAN_STAGED_PROOF_RELOAD_VECTORS" \
   cargo test -p hegemon-node lean_generated_staged_proof_reload_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS="$LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_storage_durability_admission_vectors_match_production --lib --no-default-features -- --nocapture
+bash "$ROOT/scripts/test-node.sh" sigterm-shutdown
 HEGEMON_LEAN_SYNC_ADMISSION_VECTORS="$LEAN_SYNC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture
@@ -580,6 +603,9 @@ cargo test -p hegemon-node native_sync_response_range_caps_overwide_response_wit
 cargo test -p hegemon-node block_range_rejects --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node materialized_sidecar_observer_projection_ignores_received_time --lib --no-default-features -- --nocapture
 cargo test -p network --lib pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection -- --nocapture
+cargo test -p network oversized_handshake_frame_is_rejected --lib -- --nocapture
+cargo test -p network record_addresses_filters_and_caps_per_peer_entries --lib -- --nocapture
+cargo test -p network peer_sends_do_not_await_full_queues --lib -- --nocapture
 HEGEMON_LEAN_NETWORK_SECURE_CHANNEL_VECTORS="$LEAN_NETWORK_SECURE_CHANNEL_VECTORS" \
   cargo test -p network lean_generated_secure_channel_vectors_match_production -- --nocapture
 HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
@@ -592,14 +618,17 @@ HEGEMON_LEAN_PQ_NOISE_VECTORS="$LEAN_PQ_NOISE_VECTORS" \
   cargo test -p network lean_generated_pq_wrapper_completion_vectors_match_native_transport --lib -- --nocapture
 HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p network lean_generated_frame_resource_admission_vectors_match_production -- --nocapture
+cargo test -p network network_wire_decode_matches_marker_limit_postcard_oracle_on_mutation_corpus -- --nocapture
 HEGEMON_LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS="$LEAN_PEER_STORE_CAPACITY_ADMISSION_VECTORS" \
   cargo test -p network lean_generated_peer_store_capacity_vectors_match_production -- --nocapture
 HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS="$LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p network lean_generated_queue_resource_admission_vectors_match_production -- --nocapture
 HEGEMON_LEAN_FRAME_RESOURCE_ADMISSION_VECTORS="$LEAN_FRAME_RESOURCE_ADMISSION_VECTORS" \
   cargo test -p pq-noise lean_generated_frame_resource_admission_vectors_match_production -- --nocapture
+cargo test -p pq-noise pq_noise_decode_matches_marker_limit_postcard_oracle_on_mutation_corpus -- --nocapture
 HEGEMON_LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS="$LEAN_NOTE_CIPHERTEXT_WIRE_VECTORS" \
   cargo test -p wallet lean_generated_note_ciphertext_wire_vectors_match_production -- --nocapture
+cargo test -p wallet note_ciphertext_chain_and_da_parsers_match_independent_byte_oracle_on_mutation_corpus --test note_ciphertext_wire_vectors -- --nocapture
 HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS="$LEAN_WALLET_OUTPUT_BATCH_VECTORS" \
   cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture
 HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS="$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" \
@@ -621,6 +650,7 @@ HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECT
 cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \
   cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture
+cargo test -p superneo-hegemon native_receipt_root_parser_matches_independent_oracle_on_mutation_corpus --lib -- --nocapture
 cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture
 cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
@@ -661,6 +691,7 @@ HEGEMON_LEAN_PROOF_STATEMENT_BINDING_VECTORS="$LEAN_PROOF_STATEMENT_BINDING_VECT
 HEGEMON_LEAN_PROOF_WRAPPER_ADMISSION_VECTORS="$LEAN_PROOF_WRAPPER_ADMISSION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_proof_wrapper_admission_vectors_match_production -- --nocapture
 cargo test -p transaction-circuit lean_generated_transaction_proof_wrapper_wire_vectors_match_production -- --nocapture
+cargo test -p transaction-circuit transaction_proof_wrapper_exact_decode_matches_bincode_oracle_on_mutation_corpus -- --nocapture
 cargo test -p tx-proof-manifest manifest_rejects_nested_proof_wrapper_admission_failures -- --nocapture
 HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
   cargo test -p transaction-circuit lean_generated_statement_hash_vectors_match_production -- --nocapture

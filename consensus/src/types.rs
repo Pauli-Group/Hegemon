@@ -530,6 +530,7 @@ mod tests {
         da_leaf_preimage_cases: Vec<LeanDaLeafPreimageCase>,
         da_node_preimage_cases: Vec<LeanDaNodePreimageCase>,
         da_shard_count_cases: Vec<LeanDaShardCountCase>,
+        da_proof_path_len_cases: Vec<LeanDaProofPathLenCase>,
         da_merkle_step_cases: Vec<LeanDaMerkleStepCase>,
     }
 
@@ -573,6 +574,15 @@ mod tests {
         expected_data_shards: u64,
         expected_parity_shards: u64,
         expected_total_shards: usize,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanDaProofPathLenCase {
+        name: String,
+        kind: String,
+        path_len: usize,
+        expected_valid: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -708,6 +718,50 @@ mod tests {
                     chunk_count.expect("valid chunk count"),
                     case.expected_total_shards,
                     "{} public DA chunk count drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+
+        for case in &vectors.da_proof_path_len_cases {
+            assert!(names.insert(case.name.clone()));
+            let actual_valid = match case.kind.as_str() {
+                "chunk" => state_da::da_chunk_merkle_path_len_is_admissible(case.path_len),
+                "page" => state_da::da_page_merkle_path_len_is_admissible(case.path_len),
+                other => panic!("{} unknown DA proof path kind {other}", case.name),
+            };
+            assert_eq!(
+                actual_valid, case.expected_valid,
+                "{} DA proof path length admission drifted from Lean spec",
+                case.name
+            );
+
+            if !case.expected_valid {
+                let page_root = crypto::hashes::blake3_384(&state_da::da_leaf_preimage(0, &[0]));
+                let mut proof = state_da::DaChunkProof {
+                    chunk: state_da::DaChunk {
+                        index: 0,
+                        data: vec![0u8; 1],
+                    },
+                    merkle_path: vec![[0u8; 48]; case.path_len],
+                };
+                let result = if case.kind == "chunk" {
+                    state_da::verify_da_chunk([0u8; 48], &proof)
+                } else {
+                    proof.merkle_path.clear();
+                    state_da::verify_da_multi_chunk(
+                        [0u8; 48],
+                        &state_da::DaMultiChunkProof {
+                            page_index: 0,
+                            page_root,
+                            page_proof: proof,
+                            page_merkle_path: vec![[0u8; 48]; case.path_len],
+                        },
+                    )
+                };
+                assert!(
+                    matches!(result, Err(state_da::DaError::ProofPathTooLong { .. })),
+                    "{} over-cap DA proof path did not fail closed before hash replay: {result:?}",
                     case.name
                 );
             }

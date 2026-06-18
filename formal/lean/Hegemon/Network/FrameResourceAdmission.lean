@@ -294,6 +294,10 @@ theorem pq_transcript_magic_distinct_from_session :
     pqTranscriptMagic ≠ pqSessionMagic := by
   decide
 
+theorem pq_transcript_magic_distinct_from_handshake :
+    pqTranscriptMagic ≠ pqHandshakeMagic := by
+  decide
+
 theorem network_magic_distinct_from_pq_handshake :
     networkWireMagic ≠ pqHandshakeMagic := by
   decide

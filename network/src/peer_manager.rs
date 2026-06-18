@@ -6,6 +6,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 const DEFAULT_MAX_PEERS: usize = 64;
+const MAX_ADDRESS_BOOK_PEERS: usize = 1024;
+const MAX_ADDRESSES_PER_PEER: usize = 64;
+const MAX_STATIC_ADDRESSES: usize = 1024;
 
 struct PeerEntry {
     peer_id: PeerId,
@@ -117,19 +120,19 @@ impl PeerManager {
 
     pub async fn broadcast(&self, msg: WireMessage) {
         for entry in self.peers.values() {
-            let _ = entry.tx.send(msg.clone()).await;
+            let _ = entry.tx.try_send(msg.clone());
         }
     }
 
     pub async fn send_to(&self, peer_id: &PeerId, msg: WireMessage) {
         if let Some(entry) = self.peers.get(peer_id) {
-            let _ = entry.tx.send(msg).await;
+            let _ = entry.tx.try_send(msg);
         }
     }
 
     pub async fn ping_all(&self) {
         for entry in self.peers.values() {
-            let _ = entry.tx.send(WireMessage::Ping).await;
+            let _ = entry.tx.try_send(WireMessage::Ping);
         }
     }
 
@@ -157,14 +160,31 @@ impl PeerManager {
         peer_id: PeerId,
         addrs: impl IntoIterator<Item = SocketAddr>,
     ) {
+        if !self.address_book.contains_key(&peer_id)
+            && self.address_book.len() >= MAX_ADDRESS_BOOK_PEERS
+        {
+            return;
+        }
         let entry = self.address_book.entry(peer_id).or_default();
         for addr in addrs {
+            if entry.len() >= MAX_ADDRESSES_PER_PEER {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             entry.insert(addr);
         }
     }
 
     pub fn record_static_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
         for addr in addrs {
+            if self.static_addresses.len() >= MAX_STATIC_ADDRESSES {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             self.static_addresses.insert(addr);
         }
     }
@@ -180,6 +200,12 @@ impl PeerManager {
     ) {
         let entry = self.advertised.entry(peer_id).or_default();
         for addr in addrs {
+            if entry.len() >= MAX_ADDRESSES_PER_PEER {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             entry.insert(addr);
         }
     }
@@ -236,6 +262,10 @@ impl PeerManager {
     }
 }
 
+fn is_recordable_addr(addr: SocketAddr) -> bool {
+    addr.port() != 0 && !addr.ip().is_unspecified()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +308,38 @@ mod tests {
         let candidates = manager.address_candidates(local, &connected, 4);
 
         assert_eq!(candidates, vec![addr_known]);
+    }
+
+    #[test]
+    fn record_addresses_filters_and_caps_per_peer_entries() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [4u8; 32];
+        let mut addrs = (0..(MAX_ADDRESSES_PER_PEER + 8))
+            .map(|i| format!("127.0.0.1:{}", 10_000 + i).parse().unwrap())
+            .collect::<Vec<SocketAddr>>();
+        addrs.push("0.0.0.0:30333".parse().unwrap());
+        addrs.push("127.0.0.1:0".parse().unwrap());
+
+        manager.record_addresses(peer, addrs);
+        let mut exclude = HashSet::new();
+        let sample = manager.sample_addresses(MAX_ADDRESSES_PER_PEER + 16, &exclude);
+        assert_eq!(sample.len(), MAX_ADDRESSES_PER_PEER);
+
+        exclude.extend(sample);
+        assert!(manager.sample_addresses(1, &exclude).is_empty());
+    }
+
+    #[tokio::test]
+    async fn peer_sends_do_not_await_full_queues() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [5u8; 32];
+        let addr: SocketAddr = "127.0.0.1:9301".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(WireMessage::Ping).expect("fill queue");
+        manager.add_peer(peer, addr, tx, true);
+
+        manager.send_to(&peer, WireMessage::Pong).await;
+        manager.broadcast(WireMessage::Pong).await;
+        manager.ping_all().await;
     }
 }

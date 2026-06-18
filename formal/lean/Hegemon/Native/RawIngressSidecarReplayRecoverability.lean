@@ -158,6 +158,53 @@ structure RawIngressLedgerTreePublicationFacts
   finalBridgeReplaysUnique :
     final.ledger.consumedBridgeReplays.Nodup
 
+structure SidecarTransferStateMaterializedFacts
+    (input : TransferStateInput) : Prop where
+  anchorKnown : input.anchorKnown = true
+  nullifierStateValid :
+    input.nullifierState = TransferNullifierState.valid
+  commitmentsNonzero : input.commitmentsNonzero = true
+  sidecarCiphertextsAvailable :
+    input.sidecarCiphertextsAvailable = true
+  sidecarCiphertextSizesPresent :
+    input.sidecarCiphertextSizesPresent = true
+  sidecarCiphertextSizesMatch :
+    input.sidecarCiphertextSizesMatch = true
+
+structure RawIngressSidecarReplayPreconditionFacts
+    (surface : RawIngressSidecarReplaySurface)
+    (semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields) : Prop where
+  actionRequestOk :
+    actionRequestProjectionPreconditions surface.actionRequest = true
+  pendingReloadOk :
+    pendingActionReloadPreconditions surface.pendingReload = true
+  stagedCiphertextReloadOk :
+    stagedCiphertextReloadPreconditions
+      surface.stagedCiphertextReload = true
+  stagedProofReloadOk :
+    stagedProofReloadPreconditions surface.stagedProofReload = true
+  transferStateOk :
+    transferStatePreconditions surface.transferState = true
+  candidateDaRootMatches :
+    surface.daSidecarReplay.candidateBinding.daRootMatches = true
+  provenBatchDaRootMatches :
+    surface.daSidecarReplay.provenBatchBinding.daRootMatches = true
+  provenBatchHasChunks :
+    surface.daSidecarReplay.provenBatchBinding.daChunkCount ≠ 0
+  semanticDaRootBound :
+    semanticFields.daRoot =
+      surface.daSidecarReplay.recursiveSemanticSource.daRoot
+  wireReplayProjectionOk :
+    actionWireReplayProjectionPreconditions
+      surface.daSidecarReplay.wireReplayProjection = true
+  wireReplayPlannedCount :
+    surface.daSidecarReplay.wireReplayProjection.actionCount =
+      surface.daSidecarReplay.wireReplayProjection.plannedCount
+  wireReplayActionCount :
+    surface.daSidecarReplay.wireReplayProjection.actionCount =
+      surface.daSidecarReplay.wireReplayProjection.actions.length
+
 theorem accepted_action_request_projection_implies_preconditions
     {input : ActionRequestProjectionInput}
     (accepted : evaluateActionRequestProjectionRejection input = none) :
@@ -209,16 +256,11 @@ theorem accepted_transfer_state_implies_preconditions
   rw [acceptsEq] at acceptsTrue
   exact acceptsTrue
 
-theorem accepted_sidecar_transfer_state_implies_sidecar_materialized
+theorem accepted_sidecar_transfer_state_materialized_facts
     {input : TransferStateInput}
     (accepted : evaluateTransferState input = Except.ok ())
     (sidecar : input.sidecarRoute = true) :
-    input.anchorKnown = true
-      ∧ input.nullifierState = TransferNullifierState.valid
-      ∧ input.commitmentsNonzero = true
-      ∧ input.sidecarCiphertextsAvailable = true
-      ∧ input.sidecarCiphertextSizesPresent = true
-      ∧ input.sidecarCiphertextSizesMatch = true := by
+    SidecarTransferStateMaterializedFacts input := by
   cases input with
   | mk anchorKnown nullifierState commitmentsNonzero stablecoinPolicyAuthorized sidecarRoute
       sidecarCiphertextsAvailable sidecarCiphertextSizesPresent
@@ -229,6 +271,103 @@ theorem accepted_sidecar_transfer_state_implies_sidecar_materialized
         cases sidecarCiphertextSizesPresent <;>
         cases sidecarCiphertextSizesMatch <;>
         simp [evaluateTransferState] at accepted sidecar ⊢
+      exact
+        { anchorKnown := rfl
+          nullifierStateValid := rfl
+          commitmentsNonzero := rfl
+          sidecarCiphertextsAvailable := rfl
+          sidecarCiphertextSizesPresent := rfl
+          sidecarCiphertextSizesMatch := rfl }
+
+theorem accepted_sidecar_transfer_state_implies_sidecar_materialized
+    {input : TransferStateInput}
+    (accepted : evaluateTransferState input = Except.ok ())
+    (sidecar : input.sidecarRoute = true) :
+    input.anchorKnown = true
+      ∧ input.nullifierState = TransferNullifierState.valid
+      ∧ input.commitmentsNonzero = true
+      ∧ input.sidecarCiphertextsAvailable = true
+      ∧ input.sidecarCiphertextSizesPresent = true
+      ∧ input.sidecarCiphertextSizesMatch = true := by
+  have facts :
+      SidecarTransferStateMaterializedFacts input :=
+    accepted_sidecar_transfer_state_materialized_facts accepted sidecar
+  exact
+    ⟨facts.anchorKnown,
+      facts.nullifierStateValid,
+      facts.commitmentsNonzero,
+      facts.sidecarCiphertextsAvailable,
+      facts.sidecarCiphertextSizesPresent,
+      facts.sidecarCiphertextSizesMatch⟩
+
+theorem accepted_raw_ingress_sidecar_replay_exposes_named_preconditions
+    {surface : RawIngressSidecarReplaySurface}
+    {streamOutput : ActionStreamEffect.ActionStreamOutput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    (facts :
+      AcceptedRawIngressSidecarReplay
+        surface
+        streamOutput
+        wireOutput
+        semanticFields) :
+    RawIngressSidecarReplayPreconditionFacts
+      surface
+      semanticFields := by
+  have requestPre :=
+    accepted_action_request_projection_implies_preconditions
+      facts.actionRequestAccepted
+  have pendingPre :=
+    accepted_pending_action_reload_implies_preconditions
+      facts.pendingReloadAccepted
+  have ciphertextPre :=
+    accepted_staged_ciphertext_reload_implies_preconditions
+      facts.stagedCiphertextReloadAccepted
+  have proofPre :=
+    accepted_staged_proof_reload_implies_preconditions
+      facts.stagedProofReloadAccepted
+  have transferPre :=
+    accepted_transfer_state_implies_preconditions
+      facts.transferStateAccepted
+  have daFacts :=
+    accepted_da_sidecar_replay_facts_expose_binding_preconditions
+      facts.daSidecarReplayFacts
+  rcases daFacts with
+    ⟨candidateDaRoot,
+      _candidateDaChunkCount,
+      _candidateTxStatements,
+      _candidateRecursiveState,
+      provenDaRoot,
+      provenChunks,
+      _provenChunkCountMatches,
+      semanticDaRoot,
+      _candidateTxCount,
+      _candidateDaChunkCount,
+      _actionStreamPre,
+      wirePre,
+      wirePlanned,
+      wireActions,
+      _ciphertextRequestBound,
+      _ciphertextCapacityPre,
+      _proofRequestBound,
+      _proofCapacityPre,
+      _proofMetadataPre,
+      _proofDecodedPre⟩
+  exact
+    { actionRequestOk := requestPre
+      pendingReloadOk := pendingPre
+      stagedCiphertextReloadOk := ciphertextPre
+      stagedProofReloadOk := proofPre
+      transferStateOk := transferPre
+      candidateDaRootMatches := candidateDaRoot
+      provenBatchDaRootMatches := provenDaRoot
+      provenBatchHasChunks := provenChunks
+      semanticDaRootBound := semanticDaRoot
+      wireReplayProjectionOk := wirePre
+      wireReplayPlannedCount := wirePlanned
+      wireReplayActionCount := wireActions }
 
 theorem accepted_raw_ingress_sidecar_replay_exposes_preconditions
     {surface : RawIngressSidecarReplaySurface}
@@ -258,36 +397,21 @@ theorem accepted_raw_ingress_sidecar_replay_exposes_preconditions
           surface.daSidecarReplay.wireReplayProjection.plannedCount
       ∧ surface.daSidecarReplay.wireReplayProjection.actionCount =
           surface.daSidecarReplay.wireReplayProjection.actions.length := by
-  have requestPre :=
-    accepted_action_request_projection_implies_preconditions
-      facts.actionRequestAccepted
-  have pendingPre :=
-    accepted_pending_action_reload_implies_preconditions
-      facts.pendingReloadAccepted
-  have ciphertextPre :=
-    accepted_staged_ciphertext_reload_implies_preconditions
-      facts.stagedCiphertextReloadAccepted
-  have proofPre :=
-    accepted_staged_proof_reload_implies_preconditions
-      facts.stagedProofReloadAccepted
-  have transferPre :=
-    accepted_transfer_state_implies_preconditions
-      facts.transferStateAccepted
-  have daFacts :=
-    accepted_da_sidecar_replay_facts_expose_binding_preconditions
-      facts.daSidecarReplayFacts
+  have named :=
+    accepted_raw_ingress_sidecar_replay_exposes_named_preconditions
+      facts
   exact
-    ⟨requestPre,
-      pendingPre,
-      ciphertextPre,
-      proofPre,
-      transferPre,
-      daFacts.1,
-      daFacts.2.2.2.1,
-      daFacts.2.2.2.2.1,
-      daFacts.2.2.2.2.2.2.2.2.2.1,
-      daFacts.2.2.2.2.2.2.2.2.2.2.1,
-      daFacts.2.2.2.2.2.2.2.2.2.2.2.1⟩
+    ⟨named.actionRequestOk,
+      named.pendingReloadOk,
+      named.stagedCiphertextReloadOk,
+      named.stagedProofReloadOk,
+      named.transferStateOk,
+      named.candidateDaRootMatches,
+      named.provenBatchDaRootMatches,
+      named.provenBatchHasChunks,
+      named.wireReplayProjectionOk,
+      named.wireReplayPlannedCount,
+      named.wireReplayActionCount⟩
 
 theorem accepted_raw_ingress_projected_replay_binds_sidecar_rows
     {surface : RawIngressSidecarReplaySurface}
@@ -326,9 +450,9 @@ theorem accepted_raw_ingress_projected_replay_binds_sidecar_rows
       ∧ final.spentNullifiers.Nodup
       ∧ final.consumedBridgeReplays.Nodup := by
   have preconditions :=
-    accepted_raw_ingress_sidecar_replay_exposes_preconditions facts
+    accepted_raw_ingress_sidecar_replay_exposes_named_preconditions facts
   have sidecarMaterialized :=
-    accepted_sidecar_transfer_state_implies_sidecar_materialized
+    accepted_sidecar_transfer_state_materialized_facts
       facts.transferStateAccepted
       sidecarRoute
   have replayFacts :=
@@ -337,20 +461,27 @@ theorem accepted_raw_ingress_projected_replay_binds_sidecar_rows
       initialNullifiersNodup
       initialBridgeReplaysNodup
       acceptedReplay
+  rcases replayFacts with
+    ⟨candidateDaRoot,
+      provenDaRoot,
+      semanticDaRoot,
+      carriedState,
+      spentNodup,
+      bridgeNodup⟩
   exact
-    ⟨preconditions.1,
-      preconditions.2.1,
-      preconditions.2.2.1,
-      preconditions.2.2.2.1,
-      sidecarMaterialized.2.2.2.1,
-      sidecarMaterialized.2.2.2.2.1,
-      sidecarMaterialized.2.2.2.2.2,
-      replayFacts.1,
-      replayFacts.2.1,
-      replayFacts.2.2.1,
-      replayFacts.2.2.2.1,
-      replayFacts.2.2.2.2.1,
-      replayFacts.2.2.2.2.2⟩
+    ⟨preconditions.actionRequestOk,
+      preconditions.pendingReloadOk,
+      preconditions.stagedCiphertextReloadOk,
+      preconditions.stagedProofReloadOk,
+      sidecarMaterialized.sidecarCiphertextsAvailable,
+      sidecarMaterialized.sidecarCiphertextSizesPresent,
+      sidecarMaterialized.sidecarCiphertextSizesMatch,
+      candidateDaRoot,
+      provenDaRoot,
+      semanticDaRoot,
+      carriedState,
+      spentNodup,
+      bridgeNodup⟩
 
 theorem accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows
     {surface : RawIngressSidecarReplaySurface}
@@ -404,37 +535,42 @@ theorem accepted_raw_ingress_raw_projected_replay_binds_sidecar_rows
       ∧ final.spentNullifiers.Nodup
       ∧ final.consumedBridgeReplays.Nodup := by
   have preconditions :=
-    accepted_raw_ingress_sidecar_replay_exposes_preconditions facts
+    accepted_raw_ingress_sidecar_replay_exposes_named_preconditions facts
   have sidecarMaterialized :=
-    accepted_sidecar_transfer_state_implies_sidecar_materialized
+    accepted_sidecar_transfer_state_materialized_facts
       facts.transferStateAccepted
       sidecarRoute
-  have daFacts :=
-    accepted_da_sidecar_replay_facts_expose_binding_preconditions
-      facts.daSidecarReplayFacts
   have replayFacts :=
     accepted_raw_projected_ledger_state_after_startup_equivalence
       initialNullifiersNodup
       initialBridgeReplaysNodup
       acceptedReplay
+  rcases replayFacts with
+    ⟨accepted,
+      supply,
+      leaf,
+      commitmentPlan,
+      carriedState,
+      spentNodup,
+      bridgeNodup⟩
   exact
-    ⟨preconditions.1,
-      preconditions.2.1,
-      preconditions.2.2.1,
-      preconditions.2.2.2.1,
-      sidecarMaterialized.2.2.2.1,
-      sidecarMaterialized.2.2.2.2.1,
-      sidecarMaterialized.2.2.2.2.2,
-      daFacts.1,
-      daFacts.2.2.2.1,
-      daFacts.2.2.2.2.2.1,
-      replayFacts.left,
-      replayFacts.right.left,
-      replayFacts.right.right.left,
-      replayFacts.right.right.right.left,
-      replayFacts.right.right.right.right.left,
-      replayFacts.right.right.right.right.right.left,
-      replayFacts.right.right.right.right.right.right⟩
+    ⟨preconditions.actionRequestOk,
+      preconditions.pendingReloadOk,
+      preconditions.stagedCiphertextReloadOk,
+      preconditions.stagedProofReloadOk,
+      sidecarMaterialized.sidecarCiphertextsAvailable,
+      sidecarMaterialized.sidecarCiphertextSizesPresent,
+      sidecarMaterialized.sidecarCiphertextSizesMatch,
+      preconditions.candidateDaRootMatches,
+      preconditions.provenBatchDaRootMatches,
+      preconditions.semanticDaRootBound,
+      accepted,
+      supply,
+      leaf,
+      commitmentPlan,
+      carriedState,
+      spentNodup,
+      bridgeNodup⟩
 
 theorem accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
     {surface : RawIngressSidecarReplaySurface}
@@ -524,9 +660,9 @@ theorem accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
       ∧ final.ledger.spentNullifiers.Nodup
       ∧ final.ledger.consumedBridgeReplays.Nodup := by
   have preconditions :=
-    accepted_raw_ingress_sidecar_replay_exposes_preconditions facts
+    accepted_raw_ingress_sidecar_replay_exposes_named_preconditions facts
   have sidecarMaterialized :=
-    accepted_sidecar_transfer_state_implies_sidecar_materialized
+    accepted_sidecar_transfer_state_materialized_facts
       facts.transferStateAccepted
       sidecarRoute
   have daFacts :=
@@ -537,31 +673,14 @@ theorem accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
       initialNullifiersNodup
       initialBridgeReplaysNodup
       acceptedReplay
-  rcases preconditions with
-    ⟨requestPre,
-      pendingPre,
-      ciphertextReloadPre,
-      proofReloadPre,
-      _transferPre,
-      _rawCandidateDaRoot,
-      _rawProvenDaRoot,
-      _rawProvenChunks,
-      _rawWirePre,
-      _rawWirePlanned,
-      _rawWireActions⟩
-  rcases sidecarMaterialized with
-    ⟨_anchorKnown,
-      _nullifierState,
-      _commitmentsNonzero,
-      sidecarAvailable,
-      sidecarSizesPresent,
-      sidecarSizesMatch⟩
   rcases daFacts with
     ⟨candidateDaRoot,
+      _candidateDaChunkCountMatches,
       candidateTxStatements,
       candidateRecursiveState,
       provenDaRoot,
       provenChunks,
+      _provenChunkCountMatches,
       semanticDaRoot,
       candidateTxCount,
       candidateDaChunkCount,
@@ -586,13 +705,13 @@ theorem accepted_raw_ingress_raw_projected_tree_replay_binds_sidecar_publication
       spentNodup,
       bridgeNodup⟩
   exact
-    ⟨requestPre,
-      pendingPre,
-      ciphertextReloadPre,
-      proofReloadPre,
-      sidecarAvailable,
-      sidecarSizesPresent,
-      sidecarSizesMatch,
+    ⟨preconditions.actionRequestOk,
+      preconditions.pendingReloadOk,
+      preconditions.stagedCiphertextReloadOk,
+      preconditions.stagedProofReloadOk,
+      sidecarMaterialized.sidecarCiphertextsAvailable,
+      sidecarMaterialized.sidecarCiphertextSizesPresent,
+      sidecarMaterialized.sidecarCiphertextSizesMatch,
       candidateDaRoot,
       candidateTxStatements,
       candidateRecursiveState,

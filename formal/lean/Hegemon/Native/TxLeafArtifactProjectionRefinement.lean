@@ -340,6 +340,63 @@ structure NativeTxLeafArtifactCanonicalVectorCountEvidence
     summary.publicTx.ciphertextHashCount =
       statementFields.ciphertextHashSeeds.length
 
+def canonicalProjectionCountCase
+    (summary : TxLeafSummary)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields) :
+    TxLeafProjectionCountCase := {
+  name := "canonical-vector-projection-counts",
+  inputFlags := serializedFields.inputFlags.map byte,
+  outputFlags := serializedFields.outputFlags.map byte,
+  nullifierCount := summary.publicTx.nullifierCount,
+  commitmentCount := summary.publicTx.commitmentCount,
+  ciphertextHashCount := summary.publicTx.ciphertextHashCount
+}
+
+structure AcceptedNativeTxLeafArtifactProjectionCountFacts
+    (summary : TxLeafSummary)
+    (serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields) : Prop where
+  inputActiveCount :
+    activeBinaryFlagCount (serializedFields.inputFlags.map byte) =
+      some summary.publicTx.nullifierCount
+  outputCommitmentActiveCount :
+    activeBinaryFlagCount (serializedFields.outputFlags.map byte) =
+      some summary.publicTx.commitmentCount
+  outputCiphertextActiveCount :
+    activeBinaryFlagCount (serializedFields.outputFlags.map byte) =
+      some summary.publicTx.ciphertextHashCount
+
+theorem accepted_native_tx_leaf_artifact_projection_count_case_exposes_active_counts
+    {summary : TxLeafSummary}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    (accepted :
+      txLeafProjectionCountAccepts
+        (canonicalProjectionCountCase summary serializedFields) = true) :
+    AcceptedNativeTxLeafArtifactProjectionCountFacts
+      summary
+      serializedFields := by
+  unfold txLeafProjectionCountAccepts canonicalProjectionCountCase at accepted
+  cases hInputs :
+      activeBinaryFlagCount (serializedFields.inputFlags.map byte) with
+  | none =>
+      simp [hInputs] at accepted
+  | some inputActive =>
+      cases hOutputs :
+          activeBinaryFlagCount (serializedFields.outputFlags.map byte) with
+      | none =>
+          simp [hInputs, hOutputs] at accepted
+      | some outputActive =>
+          simp [hInputs, hOutputs] at accepted
+          exact
+            { inputActiveCount := by
+                rw [hInputs, accepted.1.1]
+              outputCommitmentActiveCount := by
+                rw [hOutputs, accepted.1.2]
+              outputCiphertextActiveCount := by
+                rw [hOutputs, accepted.2] }
+
 structure ParsedTxLeafArtifactSerializedPublicVectorFacts
     (artifactBytes : List Byte)
     (summary : TxLeafSummary)

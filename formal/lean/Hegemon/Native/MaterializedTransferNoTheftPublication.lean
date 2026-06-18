@@ -2601,6 +2601,180 @@ structure MaterializedTransferNoTheftImplementationEquivalenceCertificate
   verifierImplementationEquivalence :
     smallwoodResiduals.verifierImplementationEquivalence
 
+structure MaterializedTransferNoTheftResidualBoundaryFacts
+    (materializedResiduals :
+      MaterializedTransferNoTheftImplementationResidualAssumptions)
+    (smallwoodResiduals : SmallWoodProofSystemResidualAssumptions) :
+    Prop where
+  parserAndCodecProjectionEquivalence :
+    materializedResiduals.parserAndCodecProjectionEquivalence
+  materializedRowsFeedTransactionNew :
+    materializedResiduals.materializedRowsFeedTransactionNew
+  transactionNewFeedsConsensusDaBlob :
+    materializedResiduals.transactionNewFeedsConsensusDaBlob
+  daRootHashSecurityEquivalence :
+    materializedResiduals.daRootHashSecurityEquivalence
+  daAvailabilityRetention :
+    materializedResiduals.daAvailabilityRetention
+  proofSystemSoundnessBoundary :
+    materializedResiduals.proofSystemSoundnessBoundary
+  storageDurabilityBelowSled :
+    materializedResiduals.storageDurabilityBelowSled
+  completeNativeNodeEquivalence :
+    materializedResiduals.completeNativeNodeEquivalence
+  starkAirConstraintSoundness :
+    smallwoodResiduals.starkAirConstraintSoundness
+  pcsOpeningBinding :
+    smallwoodResiduals.pcsOpeningBinding
+  transcriptHashRandomOracle :
+    smallwoodResiduals.transcriptHashRandomOracle
+  merkleAndCommitmentHashSecurity :
+    smallwoodResiduals.merkleAndCommitmentHashSecurity
+  witnessExtractionCompleteness :
+    smallwoodResiduals.witnessExtractionCompleteness
+  verifierImplementationEquivalence :
+    smallwoodResiduals.verifierImplementationEquivalence
+
+theorem materialized_transfer_no_theft_implementation_equivalence_certificate_exposes_residual_boundary_facts
+    {surface : RawIngressSidecarReplaySurface}
+    {pendingDecode : ExactDecodeInput}
+    {blockActionDecode : BlockActionDecodeInput}
+    {actionHash : AdmissionInput}
+    {wireOutput :
+      ActionWireReplayProjectionAdmission.ActionWireReplayProjectionOutput}
+    {semanticFields :
+      Consensus.RecursiveSemanticInputs.RecursiveSemanticFields}
+    {blockIndex : BlockIndexReloadInput}
+    {canonicalState : CanonicalStateReloadInput}
+    {reorgChain : CanonicalReorgChainInput}
+    {commitManifest : AtomicCommitManifestInput}
+    {durability : StorageDurabilityInput}
+    {initial final : NativeLedgerTreeReplayState}
+    {blocks : List RawDecodedNativeTreeReplayBlock}
+    {artifactBytes : List Byte}
+    {summary : TxLeafSummary}
+    {payload : TransferPayloadInput}
+    {transferKey : Nat}
+    {txLeaf : BlockArtifactBindingAdmission.TxLeafActionBindingInput}
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields :
+      Hegemon.Transaction.PublicInputBinding.PublicFields}
+    {serializedFields :
+      Hegemon.Transaction.PublicInputBinding.SerializedFields}
+    {bound : Hegemon.Transaction.PublicInputBinding.BoundPublicInputs}
+    {statementFields :
+      Hegemon.Transaction.StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields :
+      Hegemon.Transaction.ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses :
+      List Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {balanceWitness : Hegemon.Transaction.BalanceWitness}
+    {slots : List Hegemon.Transaction.BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness :
+      Hegemon.Transaction.SpendAuthorization.InputSpendWitness}
+    {candidateWrapper :
+      Hegemon.Transaction.SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      Hegemon.Transaction.SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      Hegemon.Transaction.SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      Hegemon.Transaction.SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      Hegemon.Transaction.AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {materializedResiduals :
+      MaterializedTransferNoTheftImplementationResidualAssumptions}
+    {smallwoodResiduals : SmallWoodProofSystemResidualAssumptions}
+    (certificate :
+      MaterializedTransferNoTheftImplementationEquivalenceCertificate
+        surface
+        pendingDecode
+        blockActionDecode
+        actionHash
+        wireOutput
+        semanticFields
+        blockIndex
+        canonicalState
+        reorgChain
+        commitManifest
+        durability
+        initial
+        final
+        blocks
+        artifactBytes
+        summary
+        payload
+        transferKey
+        txLeaf
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        index
+        activeFlag
+        publicNullifier
+        witness
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        materializedResiduals
+        smallwoodResiduals) :
+    MaterializedTransferNoTheftResidualBoundaryFacts
+      materializedResiduals
+      smallwoodResiduals := by
+  exact
+    {
+      parserAndCodecProjectionEquivalence :=
+        certificate.parserAndCodecProjectionEquivalence,
+      materializedRowsFeedTransactionNew :=
+        certificate.materializedRowsFeedTransactionNew,
+      transactionNewFeedsConsensusDaBlob :=
+        certificate.transactionNewFeedsConsensusDaBlob,
+      daRootHashSecurityEquivalence :=
+        certificate.daRootHashSecurityEquivalence,
+      daAvailabilityRetention := certificate.daAvailabilityRetention,
+      proofSystemSoundnessBoundary :=
+        certificate.proofSystemSoundnessBoundary,
+      storageDurabilityBelowSled :=
+        certificate.storageDurabilityBelowSled,
+      completeNativeNodeEquivalence :=
+        certificate.completeNativeNodeEquivalence,
+      starkAirConstraintSoundness :=
+        certificate.starkAirConstraintSoundness,
+      pcsOpeningBinding := certificate.pcsOpeningBinding,
+      transcriptHashRandomOracle :=
+        certificate.transcriptHashRandomOracle,
+      merkleAndCommitmentHashSecurity :=
+        certificate.merkleAndCommitmentHashSecurity,
+      witnessExtractionCompleteness :=
+        certificate.witnessExtractionCompleteness,
+      verifierImplementationEquivalence :=
+        certificate.verifierImplementationEquivalence
+    }
+
 theorem accepted_materialized_transfer_no_theft_from_smallwood_residuals_yields_implementation_equivalence_certificate
     {surface : RawIngressSidecarReplaySurface}
     {pendingDecode : ExactDecodeInput}

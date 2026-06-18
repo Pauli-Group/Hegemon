@@ -75,6 +75,7 @@ struct ExpectedDecryptMaterial {
 
 const ML_KEM_COMPACT_LEN_BYTES: usize = 2;
 const DECRYPT_FIXTURE_ADDRESS_INDEX: u32 = 7;
+const ORACLE_NOTE_CIPHERTEXT_VERSION: u8 = 3;
 
 fn decode_hex(input: &str) -> Vec<u8> {
     let hex = input.strip_prefix("0x").unwrap_or(input);
@@ -391,6 +392,320 @@ fn summary_from_wallet_ciphertext(ciphertext: &WalletNoteCiphertext) -> Expected
         kem_len: ciphertext.kem_ciphertext.len(),
         note_payload_len: ciphertext.note_payload.len(),
         memo_payload_len: ciphertext.memo_payload.len(),
+    }
+}
+
+fn oracle_expected_kem_len(crypto_suite: u16) -> Option<usize> {
+    (crypto_suite == protocol_versioning::CRYPTO_SUITE_GAMMA)
+        .then_some(synthetic_crypto::ml_kem::ML_KEM_CIPHERTEXT_LEN)
+}
+
+fn oracle_decode_compact_len(bytes: &[u8]) -> Option<(usize, usize)> {
+    let first = *bytes.first()?;
+    match first & 0x03 {
+        0 => Some(((first >> 2) as usize, 1)),
+        1 => {
+            let raw = u16::from_le_bytes(bytes.get(..2)?.try_into().ok()?);
+            let value = (raw >> 2) as usize;
+            (value >= 0x40).then_some((value, 2))
+        }
+        2 => {
+            let raw = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?);
+            let value = (raw >> 2) as usize;
+            (value >= 0x4000).then_some((value, 4))
+        }
+        _ => {
+            let used = (first >> 2) as usize + 4;
+            if used > 8 {
+                return None;
+            }
+            let raw = bytes.get(1..1 + used)?;
+            if raw.last().copied() == Some(0) {
+                return None;
+            }
+            let mut buf = [0u8; 8];
+            buf[..used].copy_from_slice(raw);
+            let value = u64::from_le_bytes(buf) as usize;
+            (value >= 0x4000_0000).then_some((value, 1 + used))
+        }
+    }
+}
+
+fn oracle_parse_container(bytes: &[u8]) -> Option<(ExpectedSummary, usize)> {
+    if bytes.len() != wallet::notes::CHAIN_CIPHERTEXT_SIZE {
+        return None;
+    }
+    let version = bytes[0];
+    if version != ORACLE_NOTE_CIPHERTEXT_VERSION {
+        return None;
+    }
+    let crypto_suite = u16::from_le_bytes(bytes.get(1..3)?.try_into().ok()?);
+    let kem_len = oracle_expected_kem_len(crypto_suite)?;
+    let diversifier_index = u32::from_le_bytes(bytes.get(3..7)?.try_into().ok()?);
+
+    let mut offset = 7;
+    let note_payload_len =
+        u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?) as usize;
+    offset += 4;
+    let note_end = offset.checked_add(note_payload_len)?;
+    let memo_len_end = note_end.checked_add(4)?;
+    if memo_len_end > wallet::notes::CHAIN_CIPHERTEXT_SIZE {
+        return None;
+    }
+    offset = note_end;
+
+    let memo_payload_len =
+        u32::from_le_bytes(bytes.get(offset..offset + 4)?.try_into().ok()?) as usize;
+    offset += 4;
+    let memo_end = offset.checked_add(memo_payload_len)?;
+    if memo_end > wallet::notes::CHAIN_CIPHERTEXT_SIZE {
+        return None;
+    }
+    if bytes[memo_end..].iter().any(|&byte| byte != 0) {
+        return None;
+    }
+
+    Some((
+        ExpectedSummary {
+            version,
+            crypto_suite,
+            diversifier_index,
+            kem_len,
+            note_payload_len,
+            memo_payload_len,
+        },
+        kem_len,
+    ))
+}
+
+fn oracle_parse_chain(bytes: &[u8]) -> Option<ExpectedSummary> {
+    if bytes.len() < wallet::notes::CHAIN_CIPHERTEXT_SIZE + 1 {
+        return None;
+    }
+    let (mut summary, expected_kem_len) =
+        oracle_parse_container(bytes.get(..wallet::notes::CHAIN_CIPHERTEXT_SIZE)?)?;
+    let (kem_len, kem_len_bytes) =
+        oracle_decode_compact_len(bytes.get(wallet::notes::CHAIN_CIPHERTEXT_SIZE..)?)?;
+    if kem_len != expected_kem_len {
+        return None;
+    }
+    let kem_start = wallet::notes::CHAIN_CIPHERTEXT_SIZE.checked_add(kem_len_bytes)?;
+    let kem_end = kem_start.checked_add(kem_len)?;
+    if bytes.len() != kem_end {
+        return None;
+    }
+    summary.kem_len = bytes.get(kem_start..kem_end)?.len();
+    Some(summary)
+}
+
+fn oracle_parse_da(bytes: &[u8]) -> Option<ExpectedSummary> {
+    if bytes.len() < wallet::notes::CHAIN_CIPHERTEXT_SIZE {
+        return None;
+    }
+    let (mut summary, expected_kem_len) =
+        oracle_parse_container(bytes.get(..wallet::notes::CHAIN_CIPHERTEXT_SIZE)?)?;
+    let expected_len = wallet::notes::CHAIN_CIPHERTEXT_SIZE.checked_add(expected_kem_len)?;
+    if bytes.len() != expected_len {
+        return None;
+    }
+    summary.kem_len = bytes
+        .get(wallet::notes::CHAIN_CIPHERTEXT_SIZE..expected_len)?
+        .len();
+    Some(summary)
+}
+
+fn assert_chain_oracle_case(name: &str, bytes: &[u8]) {
+    let oracle = oracle_parse_chain(bytes);
+    let production = WalletNoteCiphertext::from_chain_bytes(bytes)
+        .map(|ciphertext| summary_from_wallet_ciphertext(&ciphertext))
+        .ok();
+    assert_eq!(
+        production, oracle,
+        "chain parser oracle mismatch for {name}"
+    );
+}
+
+fn assert_da_oracle_case(name: &str, bytes: &[u8]) {
+    let oracle = oracle_parse_da(bytes);
+    let production = WalletNoteCiphertext::from_da_bytes(bytes)
+        .map(|ciphertext| summary_from_wallet_ciphertext(&ciphertext))
+        .ok();
+    assert_eq!(production, oracle, "DA parser oracle mismatch for {name}");
+}
+
+fn deterministic_noise(len: usize, seed: u8) -> Vec<u8> {
+    (0..len)
+        .map(|index| {
+            seed.wrapping_add((index as u8).wrapping_mul(31))
+                .rotate_left((index % 7) as u32)
+        })
+        .collect()
+}
+
+#[test]
+fn note_ciphertext_chain_and_da_parsers_match_independent_byte_oracle_on_mutation_corpus() {
+    let (_, _, ciphertext) = sample_material_note_ciphertext(980, b"oracle");
+    let chain = ciphertext
+        .to_chain_bytes()
+        .expect("fixture chain bytes serialize");
+    let da = ciphertext
+        .to_da_bytes()
+        .expect("fixture DA bytes serialize");
+    assert_chain_oracle_case("valid-chain", &chain);
+    assert_da_oracle_case("valid-da", &da);
+
+    let mut chain_cases: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        (
+            "short-container",
+            chain[..wallet::notes::CHAIN_CIPHERTEXT_SIZE - 1].to_vec(),
+        ),
+        ("truncated-kem", chain[..chain.len() - 1].to_vec()),
+        ("trailing-byte", {
+            let mut bytes = chain.clone();
+            bytes.push(0);
+            bytes
+        }),
+        ("deterministic-noise", deterministic_noise(chain.len(), 17)),
+    ];
+    chain_cases.push(("bad-version", {
+        let mut bytes = chain.clone();
+        bytes[0] ^= 0x7f;
+        bytes
+    }));
+    chain_cases.push(("bad-suite", {
+        let mut bytes = chain.clone();
+        bytes[1..3].copy_from_slice(&0xffffu16.to_le_bytes());
+        bytes
+    }));
+    chain_cases.push(("note-length-overrun", {
+        let mut bytes = chain.clone();
+        bytes[7..11].copy_from_slice(&(wallet::notes::CHAIN_CIPHERTEXT_SIZE as u32).to_le_bytes());
+        bytes
+    }));
+    chain_cases.push(("memo-length-overrun", {
+        let mut bytes = chain.clone();
+        let note_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+        let memo_len_offset = 11 + note_len;
+        bytes[memo_len_offset..memo_len_offset + 4]
+            .copy_from_slice(&(wallet::notes::CHAIN_CIPHERTEXT_SIZE as u32).to_le_bytes());
+        bytes
+    }));
+    chain_cases.push(("nonzero-padding", {
+        let mut bytes = chain.clone();
+        let (_, _, _, payload_end) = {
+            let note_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+            let note_start = 11;
+            let memo_len_offset = note_start + note_len;
+            let memo_len = u32::from_le_bytes(
+                bytes[memo_len_offset..memo_len_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let memo_start = memo_len_offset + 4;
+            (
+                note_start,
+                memo_len_offset,
+                memo_start,
+                memo_start + memo_len,
+            )
+        };
+        bytes[payload_end] ^= 0x80;
+        bytes
+    }));
+    chain_cases.push(("compact-length-missing", {
+        let mut bytes = chain.clone();
+        bytes.truncate(wallet::notes::CHAIN_CIPHERTEXT_SIZE);
+        bytes
+    }));
+    chain_cases.push(("compact-length-noncanonical", {
+        let mut bytes = chain.clone();
+        let compact_offset = wallet::notes::CHAIN_CIPHERTEXT_SIZE;
+        bytes[compact_offset..compact_offset + 2].copy_from_slice(&0x0005u16.to_le_bytes());
+        bytes
+    }));
+    chain_cases.push(("kem-length-mismatch", {
+        let mut bytes = chain.clone();
+        let compact_offset = wallet::notes::CHAIN_CIPHERTEXT_SIZE;
+        bytes[compact_offset..compact_offset + 2].copy_from_slice(&0x0004u16.to_le_bytes());
+        bytes
+    }));
+    for index in [
+        0,
+        3,
+        7,
+        11,
+        wallet::notes::CHAIN_CIPHERTEXT_SIZE - 1,
+        wallet::notes::CHAIN_CIPHERTEXT_SIZE,
+        chain.len() - 1,
+    ] {
+        let mut bytes = chain.clone();
+        bytes[index] ^= (index as u8).wrapping_mul(13).wrapping_add(1);
+        chain_cases.push(("mutated-valid-chain-byte", bytes));
+    }
+
+    for (name, bytes) in &chain_cases {
+        assert_chain_oracle_case(name, bytes);
+    }
+
+    let mut da_cases: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        (
+            "short-container",
+            da[..wallet::notes::CHAIN_CIPHERTEXT_SIZE - 1].to_vec(),
+        ),
+        ("truncated-kem", da[..da.len() - 1].to_vec()),
+        ("trailing-byte", {
+            let mut bytes = da.clone();
+            bytes.push(0);
+            bytes
+        }),
+        ("deterministic-noise", deterministic_noise(da.len(), 29)),
+    ];
+    da_cases.push(("bad-version", {
+        let mut bytes = da.clone();
+        bytes[0] ^= 0x7f;
+        bytes
+    }));
+    da_cases.push(("bad-suite", {
+        let mut bytes = da.clone();
+        bytes[1..3].copy_from_slice(&0xffffu16.to_le_bytes());
+        bytes
+    }));
+    da_cases.push(("note-length-overrun", {
+        let mut bytes = da.clone();
+        bytes[7..11].copy_from_slice(&(wallet::notes::CHAIN_CIPHERTEXT_SIZE as u32).to_le_bytes());
+        bytes
+    }));
+    da_cases.push(("nonzero-padding", {
+        let mut bytes = da.clone();
+        let note_len = u32::from_le_bytes(bytes[7..11].try_into().unwrap()) as usize;
+        let memo_len_offset = 11 + note_len;
+        let memo_len = u32::from_le_bytes(
+            bytes[memo_len_offset..memo_len_offset + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
+        let padding_offset = memo_len_offset + 4 + memo_len;
+        bytes[padding_offset] ^= 0x40;
+        bytes
+    }));
+    for index in [
+        0,
+        3,
+        7,
+        11,
+        wallet::notes::CHAIN_CIPHERTEXT_SIZE - 1,
+        wallet::notes::CHAIN_CIPHERTEXT_SIZE,
+        da.len() - 1,
+    ] {
+        let mut bytes = da.clone();
+        bytes[index] ^= (index as u8).wrapping_mul(7).wrapping_add(3);
+        da_cases.push(("mutated-valid-da-byte", bytes));
+    }
+
+    for (name, bytes) in &da_cases {
+        assert_da_oracle_case(name, bytes);
     }
 }
 

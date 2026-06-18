@@ -24,6 +24,7 @@ def bindingRejectJson : Option BindingReject -> String
   | some BindingReject.statementCommitmentMismatch => "\"statement_commitment_mismatch\""
   | some BindingReject.daRootMismatch => "\"da_root_mismatch\""
   | some BindingReject.daChunkCountZero => "\"da_chunk_count_zero\""
+  | some BindingReject.daChunkCountMismatch => "\"da_chunk_count_mismatch\""
   | some BindingReject.missingRecursiveBlockArtifact =>
       "\"missing_recursive_block_artifact\""
   | some BindingReject.artifactKindMismatch => "\"artifact_kind_mismatch\""
@@ -44,6 +45,8 @@ def provenBatchBindingCaseJson (name : String) (input : BindingInput) : String :
     ++ boolJson input.statementCommitmentMatches ++ ",\n"
     ++ "      \"da_root_matches\": " ++ boolJson input.daRootMatches ++ ",\n"
     ++ "      \"da_chunk_count\": " ++ toString input.daChunkCount ++ ",\n"
+    ++ "      \"expected_da_chunk_count\": "
+    ++ toString input.expectedDaChunkCount ++ ",\n"
     ++ "      \"has_artifact\": " ++ boolJson input.hasArtifact ++ ",\n"
     ++ "      \"artifact_kind\": \"" ++ artifactKindJson input.artifactKind ++ "\",\n"
     ++ "      \"artifact_verifier_profile_matches\": "
@@ -81,6 +84,9 @@ def vectorJson : String :=
     ++ provenBatchBindingCaseJson
       "da-chunk-count-zero-rejected"
       { validRecursiveBlockV2 with daChunkCount := 0 } ++ ",\n"
+    ++ provenBatchBindingCaseJson
+      "da-chunk-count-mismatch-rejected"
+      { validRecursiveBlockV2 with daChunkCount := 2 } ++ ",\n"
     ++ provenBatchBindingCaseJson
       "missing-recursive-block-artifact-rejected"
       { validRecursiveBlockV2 with hasArtifact := false } ++ ",\n"

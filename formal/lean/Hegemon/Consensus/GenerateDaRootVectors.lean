@@ -65,6 +65,14 @@ def shardCountCaseJson (name : String) (blobLen : Nat) (params : DaParams) : Str
     ++ "      \"expected_total_shards\": " ++ toString totalShards ++ "\n"
     ++ "    }"
 
+def proofPathLenCaseJson (name kind : String) (pathLen : Nat) (expectedValid : Bool) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"kind\": \"" ++ kind ++ "\",\n"
+    ++ "      \"path_len\": " ++ toString pathLen ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson expectedValid ++ "\n"
+    ++ "    }"
+
 def merkleStepCaseJson (name : String) (nodeIndex : Nat) (current sibling : List Byte) : String :=
   let preimage := merkleStepPreimage nodeIndex current sibling
   "    {\n"
@@ -99,6 +107,14 @@ def vectorJson : String :=
     ++ shardCountCaseJson "reject-zero-chunk-size" 1 { chunkSize := 0, sampleCount := 1 } ++ ",\n"
     ++ shardCountCaseJson "reject-zero-sample-count" 1 { chunkSize := 8, sampleCount := 0 } ++ ",\n"
     ++ shardCountCaseJson "reject-too-many-shards" 1361 { chunkSize := 8, sampleCount := 1 } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"da_proof_path_len_cases\": [\n"
+    ++ proofPathLenCaseJson "chunk-empty-path-length-valid" "chunk" 0 (validChunkProofPathLen 0) ++ ",\n"
+    ++ proofPathLenCaseJson "chunk-max-path-length-valid" "chunk" maxChunkMerklePathLen (validChunkProofPathLen maxChunkMerklePathLen) ++ ",\n"
+    ++ proofPathLenCaseJson "chunk-over-cap-path-length-rejected" "chunk" (maxChunkMerklePathLen + 1) (validChunkProofPathLen (maxChunkMerklePathLen + 1)) ++ ",\n"
+    ++ proofPathLenCaseJson "page-empty-path-length-valid" "page" 0 (validPageProofPathLen 0) ++ ",\n"
+    ++ proofPathLenCaseJson "page-max-path-length-valid" "page" maxPageMerklePathLen (validPageProofPathLen maxPageMerklePathLen) ++ ",\n"
+    ++ proofPathLenCaseJson "page-over-cap-path-length-rejected" "page" (maxPageMerklePathLen + 1) (validPageProofPathLen (maxPageMerklePathLen + 1)) ++ "\n"
     ++ "  ],\n"
     ++ "  \"da_merkle_step_cases\": [\n"
     ++ merkleStepCaseJson "even-index-current-left" 2 sampleCurrent sampleSibling ++ ",\n"

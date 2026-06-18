@@ -136,6 +136,7 @@ import Hegemon.Privacy.WalletOutputBatch
 import Hegemon.Resource.BoundedRequestAdmission
 import Hegemon.Release.CiReleaseGate
 import Hegemon.Release.DependencyAuditPolicy
+import Hegemon.Release.HighestStandardCompletionCertificate
 import Hegemon.Release.PqBinaryPolicy
 import Hegemon.Release.ReleasePostureCertificate
 import Hegemon.Shielded.Nullifier

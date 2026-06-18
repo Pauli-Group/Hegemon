@@ -69,14 +69,14 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 
 - shipped on-chain block artifact: `recursive_block_v2 = 522,159 B`
 - current shipped `RecursiveBlockV2` domain is one chunk (`max_supported_txs = chunk_size = 1000`, `max_tree_level = 0`)
-- legacy `RecursiveBlockV1 = 699,404 B` is not used for the shipped planning model
+- legacy `RecursiveBlockV1 = 699,452 B` is not used for the shipped planning model
 - proofless sidecar transfer public on-chain body: about `468 B/tx`
 - raw DA ciphertext ingress: about `4,294 B/tx`
 - values below are protocol payload only; they do not include RocksDB amplification, erasure-coding overhead, replication, or generic block/header/network framing
 
 The current constants behind those assumptions are:
 
-- `RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE = 699_404`
+- `RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE = 699_452`
 - `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 522_159`
 - `ENCRYPTED_NOTE_SIZE = 579`
 - `MAX_KEM_CIPHERTEXT_LEN = 1568`

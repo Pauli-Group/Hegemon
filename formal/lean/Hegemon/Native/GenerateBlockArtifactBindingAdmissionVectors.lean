@@ -42,6 +42,8 @@ def candidateArtifactRejectionJson :
   | none => "null"
   | some CandidateArtifactBindingReject.daRootMismatch =>
       "\"da_root_mismatch\""
+  | some CandidateArtifactBindingReject.daChunkCountMismatch =>
+      "\"da_chunk_count_mismatch\""
   | some CandidateArtifactBindingReject.txStatementCommitmentMismatch =>
       "\"tx_statement_commitment_mismatch\""
   | some CandidateArtifactBindingReject.recursiveStateRootMismatch =>
@@ -89,6 +91,8 @@ def candidateArtifactBindingCaseJson
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"da_root_matches\": " ++ boolJson input.daRootMatches ++ ",\n"
+    ++ "      \"da_chunk_count_matches\": "
+      ++ boolJson input.daChunkCountMatches ++ ",\n"
     ++ "      \"tx_statements_commitment_matches\": "
       ++ boolJson input.txStatementsCommitmentMatches ++ ",\n"
     ++ "      \"recursive_state_root_matches\": "
@@ -237,6 +241,10 @@ def vectorJson : String :=
       "da-root-mismatch-rejected"
       { validCandidateArtifactBinding with daRootMatches := false } ++ ",\n"
     ++ candidateArtifactBindingCaseJson
+      "da-chunk-count-mismatch-rejected"
+      { validCandidateArtifactBinding with
+        daChunkCountMatches := false } ++ ",\n"
+    ++ candidateArtifactBindingCaseJson
       "tx-statement-commitment-mismatch-rejected"
       { validCandidateArtifactBinding with
         txStatementsCommitmentMatches := false } ++ ",\n"
@@ -248,7 +256,14 @@ def vectorJson : String :=
       "da-root-precedes-statement-commitment"
       { validCandidateArtifactBinding with
         daRootMatches := false,
+        daChunkCountMatches := false,
         txStatementsCommitmentMatches := false } ++ ",\n"
+    ++ candidateArtifactBindingCaseJson
+      "da-chunk-count-precedes-statement-commitment"
+      { validCandidateArtifactBinding with
+        daChunkCountMatches := false,
+        txStatementsCommitmentMatches := false,
+        recursiveStateRootMatches := false } ++ ",\n"
     ++ candidateArtifactBindingCaseJson
       "statement-commitment-precedes-state-root"
       { validCandidateArtifactBinding with

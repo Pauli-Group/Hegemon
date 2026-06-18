@@ -48,6 +48,7 @@ def vectorJson : String :=
     ++ caseJson "startup-pending-action-repair-durable"
       "startup_pending_action_repair"
       valid ++ ",\n"
+    ++ caseJson "shutdown-flush-durable" "shutdown_flush" valid ++ ",\n"
     ++ caseJson "transaction-rejection-precedes-flush"
       "mined_block_commit"
       {

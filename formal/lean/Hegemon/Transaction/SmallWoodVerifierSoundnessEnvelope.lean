@@ -910,6 +910,128 @@ structure SmallWoodCompactProductionResidualCertificate
   verifierImplementationEquivalenceResidual :
     residuals.verifierImplementationEquivalence
 
+structure SmallWoodResidualBoundaryFacts
+    (residuals : SmallWoodProofSystemResidualAssumptions)
+    (wrapperCanonicalDecodeEquivalence : Prop)
+    (publicInputSerializationEquivalence : Prop)
+    (statementHashCollisionResistance : Prop) : Prop where
+  canonicalResidualBoundaryFacts :
+    CanonicalProofSystemResidualBoundaryFacts
+      (canonicalProductionResidualsFromSmallWood
+        wrapperCanonicalDecodeEquivalence
+        publicInputSerializationEquivalence
+        statementHashCollisionResistance
+        residuals)
+  wrapperCanonicalDecodeEquivalenceResidual :
+    wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalenceResidual :
+    publicInputSerializationEquivalence
+  statementHashCollisionResistanceResidual :
+    statementHashCollisionResistance
+  starkAirConstraintSoundness :
+    residuals.starkAirConstraintSoundness
+  pcsOpeningBinding :
+    residuals.pcsOpeningBinding
+  starkAirPcsResidual :
+    residuals.starkAirConstraintSoundness
+      ∧ residuals.pcsOpeningBinding
+  transcriptHashRandomOracle :
+    residuals.transcriptHashRandomOracle
+  merkleAndCommitmentHashSecurity :
+    residuals.merkleAndCommitmentHashSecurity
+  witnessExtractionCompleteness :
+    residuals.witnessExtractionCompleteness
+  verifierImplementationEquivalence :
+    residuals.verifierImplementationEquivalence
+
+theorem smallwood_compact_residual_certificate_exposes_residual_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {candidateWrapper :
+      SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
+    {publicStatement :
+      SmallWoodPublicStatementBinding.PublicStatementSurface}
+    {authSurface :
+      SmallWoodSpendAuthorization.ActiveAuthLinkSurface}
+    {inputSpendSurface :
+      SmallWoodSpendAuthorization.ActiveInputSpendBoundarySurface}
+    {outputSurface :
+      SmallWoodSpendAuthorization.ActiveOutputBindingSurface}
+    {smallwoodBalanceSurface :
+      SmallWoodBalanceBoundary.BalanceSurface}
+    {airBalanceSurface :
+      AirBalanceBoundary.AirBalanceFinalRowSurface}
+    {residuals : SmallWoodProofSystemResidualAssumptions}
+    {wrapperCanonicalDecodeEquivalence : Prop}
+    {publicInputSerializationEquivalence : Prop}
+    {statementHashCollisionResistance : Prop}
+    (certificate :
+      SmallWoodCompactProductionResidualCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        candidateWrapper
+        publicStatement
+        authSurface
+        inputSpendSurface
+        outputSurface
+        smallwoodBalanceSurface
+        airBalanceSurface
+        residuals
+        wrapperCanonicalDecodeEquivalence
+        publicInputSerializationEquivalence
+        statementHashCollisionResistance) :
+    SmallWoodResidualBoundaryFacts
+      residuals
+      wrapperCanonicalDecodeEquivalence
+      publicInputSerializationEquivalence
+      statementHashCollisionResistance := by
+  exact
+    {
+      canonicalResidualBoundaryFacts :=
+        canonical_proof_system_production_residual_certificate_exposes_residual_boundary_facts
+          certificate.canonicalProductionResidualCertificate,
+      wrapperCanonicalDecodeEquivalenceResidual :=
+        certificate.wrapperCanonicalDecodeEquivalenceResidual,
+      publicInputSerializationEquivalenceResidual :=
+        certificate.publicInputSerializationEquivalenceResidual,
+      statementHashCollisionResistanceResidual :=
+        certificate.statementHashCollisionResistanceResidual,
+      starkAirConstraintSoundness :=
+        certificate.starkAirPcsResidual.left,
+      pcsOpeningBinding := certificate.starkAirPcsResidual.right,
+      starkAirPcsResidual := certificate.starkAirPcsResidual,
+      transcriptHashRandomOracle :=
+        certificate.transcriptHashRandomOracleResidual,
+      merkleAndCommitmentHashSecurity :=
+        certificate.merkleAndCommitmentHashSecurityResidual,
+      witnessExtractionCompleteness :=
+        certificate.witnessExtractionCompletenessResidual,
+      verifierImplementationEquivalence :=
+        certificate.verifierImplementationEquivalenceResidual
+    }
+
 theorem accepted_candidate_wrapper_exposes_admission_facts
     {input : SmallWoodCandidateWrapperAdmission.WrapperAdmissionInput}
     (accepted :

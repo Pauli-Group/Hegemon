@@ -10,6 +10,10 @@ A_RPC="${HEGEMON_TEST_NODE_A_RPC:-19945}"
 B_RPC="${HEGEMON_TEST_NODE_B_RPC:-19946}"
 A_P2P="${HEGEMON_TEST_NODE_A_P2P:-31333}"
 B_P2P="${HEGEMON_TEST_NODE_B_P2P:-31334}"
+SIGTERM_BASE="${HEGEMON_TEST_NODE_SIGTERM_BASE:-/tmp/hegemon-native-sigterm}"
+SIGTERM_RPC="${HEGEMON_TEST_NODE_SIGTERM_RPC:-19947}"
+SIGTERM_P2P="${HEGEMON_TEST_NODE_SIGTERM_P2P:-31335}"
+SIGTERM_LOG="${HEGEMON_TEST_NODE_SIGTERM_LOG:-/tmp/hegemon-native-sigterm.log}"
 TIMEOUT_SECS="${HEGEMON_TEST_TIMEOUT_SECS:-45}"
 
 PID_DIR="/tmp/hegemon-native-test-pids"
@@ -97,6 +101,43 @@ clean() {
   rm -f "$A_LOG" "$B_LOG"
 }
 
+sigterm_shutdown() {
+  ensure_binary
+  rm -rf "$SIGTERM_BASE"
+  rm -f "$SIGTERM_LOG"
+  log "starting native node for SIGTERM shutdown smoke on RPC $SIGTERM_RPC"
+  (
+    cd "$ROOT_DIR"
+    exec env RUST_LOG=hegemon_node=debug,network=info \
+      "$BIN" --dev --base-path "$SIGTERM_BASE" --rpc-port "$SIGTERM_RPC" \
+        --port "$SIGTERM_P2P" --rpc-methods unsafe --name native-sigterm
+  ) >"$SIGTERM_LOG" 2>&1 &
+  local pid="$!"
+  local exit_code=0
+  trap 'kill "$pid" >/dev/null 2>&1 || true; rm -rf "$SIGTERM_BASE"' RETURN
+
+  wait_rpc "$SIGTERM_RPC"
+  kill -TERM "$pid"
+  wait "$pid" || exit_code="$?"
+  if ((exit_code != 0)); then
+    tail -80 "$SIGTERM_LOG" >&2 || true
+    fail "SIGTERM shutdown exited with status $exit_code"
+  fi
+  grep -q 'signal="sigterm"' "$SIGTERM_LOG" || {
+    tail -80 "$SIGTERM_LOG" >&2 || true
+    fail "SIGTERM shutdown log did not record sigterm"
+  }
+  grep -q 'operation="shutdown_flush"' "$SIGTERM_LOG" || {
+    tail -80 "$SIGTERM_LOG" >&2 || true
+    fail "SIGTERM shutdown did not use shutdown_flush durability operation"
+  }
+  grep -q 'native Hegemon node shutdown complete' "$SIGTERM_LOG" || {
+    tail -80 "$SIGTERM_LOG" >&2 || true
+    fail "SIGTERM shutdown did not complete"
+  }
+  log "SIGTERM shutdown flushed through shutdown_flush durability barrier"
+}
+
 start_miner() {
   mkdir -p "$PID_DIR"
   log "starting native miner on RPC $A_RPC and P2P $A_P2P"
@@ -174,12 +215,13 @@ wallet_send() {
 
 usage() {
   cat <<'EOF'
-Usage: ./scripts/test-node.sh [single-node|two-node|two-node-restart|wallet-send|clean]
+Usage: ./scripts/test-node.sh [single-node|two-node|two-node-restart|wallet-send|sigterm-shutdown|clean]
 
 single-node       Start one native dev miner and require height > 0.
 two-node          Start a native miner and follower using HEGEMON_SEEDS.
 two-node-restart  Restart the follower and require persisted sled catch-up.
 wallet-send       Run the native wallet submission compatibility test.
+sigterm-shutdown  Require SIGTERM shutdown to flush through the durability gate.
 clean             Stop test nodes and remove disposable native state.
 EOF
 }
@@ -196,6 +238,9 @@ case "${1:-}" in
     ;;
   wallet-send)
     wallet_send
+    ;;
+  sigterm-shutdown)
+    sigterm_shutdown
     ;;
   clean)
     clean

@@ -124,6 +124,21 @@ def decodeCases : List (String × FrameDecodeInput) := [
       postcardDecodes := true, postcardConsumesAll := true }),
   ("pq-session-plaintext-trailing-bytes",
     { kind := FrameKind.pqSessionPlaintext, encodedBytes := 13, markerMatches := true,
+      postcardDecodes := true, postcardConsumesAll := false }),
+  ("pq-transcript-valid",
+    { kind := FrameKind.pqTranscript, encodedBytes := 12, markerMatches := true,
+      postcardDecodes := true, postcardConsumesAll := true }),
+  ("pq-transcript-oversize-precedes-marker",
+    { kind := FrameKind.pqTranscript, encodedBytes := pqHandshakeMaxFrameLen + 1,
+      markerMatches := false, postcardDecodes := false, postcardConsumesAll := false }),
+  ("pq-transcript-missing-marker",
+    { kind := FrameKind.pqTranscript, encodedBytes := 12, markerMatches := false,
+      postcardDecodes := true, postcardConsumesAll := true }),
+  ("pq-transcript-postcard-failure",
+    { kind := FrameKind.pqTranscript, encodedBytes := 4, markerMatches := true,
+      postcardDecodes := false, postcardConsumesAll := true }),
+  ("pq-transcript-trailing-bytes",
+    { kind := FrameKind.pqTranscript, encodedBytes := 13, markerMatches := true,
       postcardDecodes := true, postcardConsumesAll := false })
 ]
 

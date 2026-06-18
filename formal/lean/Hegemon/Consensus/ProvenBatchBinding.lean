@@ -22,6 +22,7 @@ inductive BindingReject where
   | statementCommitmentMismatch
   | daRootMismatch
   | daChunkCountZero
+  | daChunkCountMismatch
   | missingRecursiveBlockArtifact
   | artifactKindMismatch
   | artifactVerifierProfileMismatch
@@ -36,6 +37,7 @@ structure BindingInput where
   statementCommitmentMatches : Bool
   daRootMatches : Bool
   daChunkCount : Nat
+  expectedDaChunkCount : Nat
   hasArtifact : Bool
   artifactKind : ArtifactKind
   artifactVerifierProfileMatches : Bool
@@ -60,6 +62,8 @@ def evaluateBinding (input : BindingInput) : Option BindingReject :=
     some BindingReject.daRootMismatch
   else if input.daChunkCount = 0 then
     some BindingReject.daChunkCountZero
+  else if input.daChunkCount != input.expectedDaChunkCount then
+    some BindingReject.daChunkCountMismatch
   else if input.batchMode = BatchMode.recursiveBlock && input.hasArtifact = false then
     some BindingReject.missingRecursiveBlockArtifact
   else if input.hasArtifact && input.artifactKind != input.proofKind then
@@ -84,6 +88,8 @@ def bindingPreconditions (input : BindingInput) : Bool :=
   else if input.daRootMatches = false then
     false
   else if input.daChunkCount = 0 then
+    false
+  else if input.daChunkCount != input.expectedDaChunkCount then
     false
   else if input.batchMode = BatchMode.recursiveBlock && input.hasArtifact = false then
     false
@@ -125,6 +131,7 @@ def validRecursiveBlockV2 : BindingInput :=
     statementCommitmentMatches := true,
     daRootMatches := true,
     daChunkCount := 1,
+    expectedDaChunkCount := 1,
     hasArtifact := true,
     artifactKind := ArtifactKind.recursiveBlockV2,
     artifactVerifierProfileMatches := true,
@@ -140,6 +147,7 @@ def validReceiptRoot : BindingInput :=
     statementCommitmentMatches := true,
     daRootMatches := true,
     daChunkCount := 1,
+    expectedDaChunkCount := 1,
     hasArtifact := false,
     artifactKind := ArtifactKind.receiptRoot,
     artifactVerifierProfileMatches := true,
@@ -182,6 +190,11 @@ theorem rejects_da_root_mismatch :
 theorem rejects_da_chunk_count_zero :
     evaluateBinding { validRecursiveBlockV2 with daChunkCount := 0 } =
       some BindingReject.daChunkCountZero := by
+  decide
+
+theorem rejects_da_chunk_count_mismatch :
+    evaluateBinding { validRecursiveBlockV2 with daChunkCount := 2 } =
+      some BindingReject.daChunkCountMismatch := by
   decide
 
 theorem rejects_missing_recursive_block_artifact :

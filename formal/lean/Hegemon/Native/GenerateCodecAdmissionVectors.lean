@@ -31,6 +31,16 @@ def nativeMetadataRejectionJson : Except NativeMetadataDecodeReject NativeMetada
   | Except.error .currentAndLegacyRejected =>
       "\"current_and_legacy_rejected\""
 
+def nativeMetadataBincodeBudgetRejectionJson :
+    Option NativeMetadataBincodeBudgetReject -> String
+  | none => "null"
+  | some .metadataBytesOverLimit => "\"metadata_bytes_over_limit\""
+  | some .actionCountOverLimit => "\"action_count_over_limit\""
+  | some .actionPayloadOverLimit => "\"action_payload_over_limit\""
+  | some .actionPayloadBytesOverLimit => "\"action_payload_bytes_over_limit\""
+  | some .minerPublicKeyOverLimit => "\"miner_public_key_over_limit\""
+  | some .minerSignatureOverLimit => "\"miner_signature_over_limit\""
+
 def syncCaseJson (name fixture : String) (input : SyncDecodeInput) : String :=
   let result := evaluateSyncDecodeRejection input
   "    {\n"
@@ -94,9 +104,41 @@ def nativeMetadataCaseJson
       ++ nativeMetadataRejectionJson result ++ "\n"
     ++ "    }"
 
+def nativeMetadataBincodeBudgetCaseJson
+    (name fixture : String)
+    (input : NativeMetadataBincodeBudgetInput) : String :=
+  let result := evaluateNativeMetadataBincodeBudgetRejection input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"fixture\": \"" ++ fixture ++ "\",\n"
+    ++ "      \"metadata_bytes\": " ++ toString input.metadataBytes ++ ",\n"
+    ++ "      \"max_metadata_bytes\": " ++ toString input.maxMetadataBytes ++ ",\n"
+    ++ "      \"action_count\": " ++ toString input.actionCount ++ ",\n"
+    ++ "      \"max_action_count\": " ++ toString input.maxActionCount ++ ",\n"
+    ++ "      \"largest_action_payload_bytes\": "
+      ++ toString input.largestActionPayloadBytes ++ ",\n"
+    ++ "      \"max_action_payload_bytes\": "
+      ++ toString input.maxActionPayloadBytes ++ ",\n"
+    ++ "      \"action_payload_bytes_total\": "
+      ++ toString input.actionPayloadBytesTotal ++ ",\n"
+    ++ "      \"max_action_payload_bytes_total\": "
+      ++ toString input.maxActionPayloadBytesTotal ++ ",\n"
+    ++ "      \"miner_public_key_bytes\": "
+      ++ toString input.minerPublicKeyBytes ++ ",\n"
+    ++ "      \"max_miner_public_key_bytes\": "
+      ++ toString input.maxMinerPublicKeyBytes ++ ",\n"
+    ++ "      \"miner_signature_bytes\": "
+      ++ toString input.minerSignatureBytes ++ ",\n"
+    ++ "      \"max_miner_signature_bytes\": "
+      ++ toString input.maxMinerSignatureBytes ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
+    ++ "      \"expected_rejection\": "
+      ++ nativeMetadataBincodeBudgetRejectionJson result ++ "\n"
+    ++ "    }"
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"sync_codec_cases\": [\n"
     ++ syncCaseJson "sync-valid-bounded-wire" "valid_request" validSync ++ ",\n"
     ++ syncCaseJson "sync-legacy-bincode-rejected" "legacy_bincode_request"
@@ -142,6 +184,46 @@ def vectorJson : String :=
       "native-metadata-legacy-trailing-rejects"
       "legacy_unsigned_meta_trailing"
       trailingNativeMetadataLegacy ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"native_metadata_bincode_budget_cases\": [\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-valid"
+      "valid_current_metadata"
+      validNativeMetadataBincodeBudget ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-metadata-overrun"
+      "metadata_bytes_overrun"
+      { validNativeMetadataBincodeBudget with
+        metadataBytes := productionMaxNativeMetadataBytes + 1 } ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-action-count-overrun"
+      "action_count_overrun"
+      { validNativeMetadataBincodeBudget with
+        actionCount := productionMaxNativeBlockActions + 1 } ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-action-payload-overrun"
+      "action_payload_overrun"
+      { validNativeMetadataBincodeBudget with
+        actionCount := 1,
+        largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes + 1,
+        actionPayloadBytesTotal := productionMaxNativeBlockActionPayloadBytes + 1 } ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-action-total-overrun"
+      "action_payload_bytes_overrun"
+      { validNativeMetadataBincodeBudget with
+        actionCount := productionMaxNativeBlockActions,
+        largestActionPayloadBytes := productionMaxNativeBlockActionPayloadBytes,
+        actionPayloadBytesTotal := productionMaxNativeBlockActionBytes + 1 } ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-miner-key-overrun"
+      "miner_public_key_overrun"
+      { validNativeMetadataBincodeBudget with
+        minerPublicKeyBytes := productionMaxMlDsaPublicKeyBytes + 1 } ++ ",\n"
+    ++ nativeMetadataBincodeBudgetCaseJson
+      "native-metadata-bincode-budget-miner-signature-overrun"
+      "miner_signature_overrun"
+      { validNativeMetadataBincodeBudget with
+        minerSignatureBytes := productionMaxMlDsaSignatureBytes + 1 } ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

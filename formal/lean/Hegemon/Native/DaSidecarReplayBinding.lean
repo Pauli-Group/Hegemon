@@ -109,11 +109,14 @@ theorem accepted_candidate_artifact_binding_implies_root_matches
     {input : CandidateArtifactBindingInput}
     (accepted : evaluateCandidateArtifactBinding input = Except.ok ()) :
     input.daRootMatches = true
+      ∧ input.daChunkCountMatches = true
       ∧ input.txStatementsCommitmentMatches = true
       ∧ input.recursiveStateRootMatches = true := by
   cases input with
-  | mk daRootMatches txStatementsCommitmentMatches recursiveStateRootMatches =>
-      cases daRootMatches <;> cases txStatementsCommitmentMatches <;>
+  | mk daRootMatches daChunkCountMatches txStatementsCommitmentMatches
+      recursiveStateRootMatches =>
+      cases daRootMatches <;> cases daChunkCountMatches <;>
+        cases txStatementsCommitmentMatches <;>
         cases recursiveStateRootMatches <;>
           simp [evaluateCandidateArtifactBinding] at accepted ⊢
 
@@ -152,7 +155,9 @@ theorem accepted_wire_replay_projection_implies_action_counts
 theorem accepted_proven_batch_binding_implies_da_binding
     {input : BindingInput}
     (accepted : evaluateBinding input = none) :
-    input.daRootMatches = true ∧ input.daChunkCount ≠ 0 := by
+    input.daRootMatches = true
+      ∧ input.daChunkCount ≠ 0
+      ∧ input.daChunkCount = input.expectedDaChunkCount := by
   unfold evaluateBinding at accepted
   by_cases hRoute :
       routeCompatible input.batchMode input.proofKind = false
@@ -168,11 +173,15 @@ theorem accepted_proven_batch_binding_implies_da_binding
         · simp [hDa] at accepted
           by_cases hChunk : input.daChunkCount = 0
           · simp [hChunk] at accepted
-          · have daTrue : input.daRootMatches = true := by
-              cases hValue : input.daRootMatches with
-              | false => exact False.elim (hDa hValue)
-              | true => rfl
-            exact ⟨daTrue, hChunk⟩
+          · simp [hChunk] at accepted
+            by_cases hChunkExpected :
+                input.daChunkCount = input.expectedDaChunkCount
+            · have daTrue : input.daRootMatches = true := by
+                cases hValue : input.daRootMatches with
+                | false => exact False.elim (hDa hValue)
+                | true => rfl
+              exact ⟨daTrue, hChunk, hChunkExpected⟩
+            · simp [hChunkExpected] at accepted
     · simp [hTx] at accepted
 
 theorem derived_semantic_fields_da_root_matches_source
@@ -281,10 +290,13 @@ theorem accepted_da_sidecar_replay_facts_expose_binding_preconditions
         wireOutput
         semanticFields) :
     surface.candidateBinding.daRootMatches = true
+      ∧ surface.candidateBinding.daChunkCountMatches = true
       ∧ surface.candidateBinding.txStatementsCommitmentMatches = true
       ∧ surface.candidateBinding.recursiveStateRootMatches = true
       ∧ surface.provenBatchBinding.daRootMatches = true
       ∧ surface.provenBatchBinding.daChunkCount ≠ 0
+      ∧ surface.provenBatchBinding.daChunkCount =
+          surface.provenBatchBinding.expectedDaChunkCount
       ∧ semanticFields.daRoot = surface.recursiveSemanticSource.daRoot
       ∧ surface.candidateArtifact.txCount ≠ 0
       ∧ surface.candidateArtifact.daChunkCount ≠ 0
@@ -338,9 +350,11 @@ theorem accepted_da_sidecar_replay_facts_expose_binding_preconditions
   exact
     ⟨bindingFacts.1,
       bindingFacts.2.1,
-      bindingFacts.2.2,
+      bindingFacts.2.2.1,
+      bindingFacts.2.2.2,
       provenBatchFacts.1,
-      provenBatchFacts.2,
+      provenBatchFacts.2.1,
+      provenBatchFacts.2.2,
       semanticDaRoot,
       candidateFacts.1,
       candidateFacts.2,
@@ -381,6 +395,27 @@ theorem accepted_projected_replay_with_da_sidecar_facts
       ∧ final.consumedBridgeReplays.Nodup := by
   have sidecarFacts :=
     accepted_da_sidecar_replay_facts_expose_binding_preconditions facts
+  rcases sidecarFacts with
+    ⟨candidateRoot,
+      _candidateChunkCount,
+      _candidateStatement,
+      _candidateState,
+      provenRoot,
+      _provenChunkNonzero,
+      _provenChunkMatches,
+      semanticRoot,
+      _candidateTxNonzero,
+      _candidateChunkNonzero,
+      _streamPreconditions,
+      _wirePreconditions,
+      _wireActionPlanCount,
+      _wireActionVectorCount,
+      _ciphertextRequestBound,
+      _ciphertextCapacity,
+      _proofRequestBound,
+      _proofCapacity,
+      _proofMetadata,
+      _proofDecoded⟩
   have replayFacts :=
     accepted_projected_ledger_state_after_startup_equivalence
       initialNullifiersNodup
@@ -395,9 +430,9 @@ theorem accepted_projected_replay_with_da_sidecar_facts
       spentNodup,
       bridgeNodup⟩
   exact
-    ⟨sidecarFacts.1,
-      sidecarFacts.2.2.2.1,
-      sidecarFacts.2.2.2.2.2.1,
+    ⟨candidateRoot,
+      provenRoot,
+      semanticRoot,
       carried,
       spentNodup,
       bridgeNodup⟩
@@ -421,6 +456,7 @@ theorem accepted_raw_projected_replay_with_da_sidecar_facts
     (acceptedReplay :
       rawProjectedLedgerStateAfter initial blocks = some final) :
     surface.candidateBinding.daRootMatches = true
+      ∧ surface.candidateBinding.daChunkCountMatches = true
       ∧ surface.candidateBinding.txStatementsCommitmentMatches = true
       ∧ surface.candidateBinding.recursiveStateRootMatches = true
       ∧ candidateArtifactCouplingPreconditions
@@ -477,7 +513,8 @@ theorem accepted_raw_projected_replay_with_da_sidecar_facts
   exact
     ⟨bindingFacts.1,
       bindingFacts.2.1,
-      bindingFacts.2.2,
+      bindingFacts.2.2.1,
+      bindingFacts.2.2.2,
       couplingPreconditions,
       candidateFacts.1,
       candidateFacts.2,

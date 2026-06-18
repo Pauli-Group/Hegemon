@@ -1,14 +1,16 @@
-import Hegemon.Native.TxLeafArtifactProjectionRefinement
+import Hegemon.Native.TxLeafArtifact
 
 open Hegemon
 open Hegemon.Native.TxLeafArtifact
-open Hegemon.Native.TxLeafArtifactProjectionRefinement
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
 
 def natArrayJson (values : List Nat) : String :=
   "[" ++ String.intercalate ", " (values.map fun value => toString value) ++ "]"
+
+def byteArrayJson (values : List Byte) : String :=
+  "[" ++ String.intercalate ", " (values.map fun value => toString (byte value)) ++ "]"
 
 def serializedSummaryJson (summary : SerializedSummary) : String :=
   "{ \"input_flag_count\": " ++ toString summary.inputFlagCount
@@ -41,14 +43,39 @@ def txLeafSummaryJson (summary : TxLeafSummary) : String :=
     ++ "        \"proof_backend\": " ++ toString summary.proofBackend ++ "\n"
     ++ "      }"
 
-def resourceRequestJson (request : Hegemon.Resource.BoundedRequestAdmission.ResourceRequest) :
+def txLeafArtifactDynamicItemCount (summary : TxLeafSummary) : Nat :=
+  summary.serialized.inputFlagCount
+    + summary.serialized.outputFlagCount
+    + summary.serialized.balanceSlotCount
+    + summary.publicTx.nullifierCount
+    + summary.publicTx.commitmentCount
+    + summary.publicTx.ciphertextHashCount
+    + summary.commitment.rowCount
+
+def txLeafArtifactRowCoeffCountTotal (summary : TxLeafSummary) : Nat :=
+  summary.commitment.rowCoeffCounts.foldl (fun total count => total + count) 0
+
+def txLeafArtifactAggregateBytes (summary : TxLeafSummary) : Nat :=
+  summary.starkProofLen
+    + digestWidth *
+      (summary.publicTx.nullifierCount
+        + summary.publicTx.commitmentCount
+        + summary.publicTx.ciphertextHashCount)
+    + 8 * txLeafArtifactRowCoeffCountTotal summary
+
+def txLeafArtifactWorkUnits (summary : TxLeafSummary) : Nat :=
+  txLeafArtifactDynamicItemCount summary
+    + txLeafArtifactRowCoeffCountTotal summary
+    + summary.starkProofLen
+
+def resourceRequestJson (artifact : List Byte) (summary : TxLeafSummary) :
     String :=
-  "{ \"raw_bytes\": " ++ toString request.rawBytes
-    ++ ", \"decoded_bytes\": " ++ toString request.decodedBytes
-    ++ ", \"item_count\": " ++ toString request.itemCount
-    ++ ", \"max_item_bytes\": " ++ toString request.maxItemBytes
-    ++ ", \"aggregate_bytes\": " ++ toString request.aggregateBytes
-    ++ ", \"work_units\": " ++ toString request.workUnits
+  "{ \"raw_bytes\": " ++ toString artifact.length
+    ++ ", \"decoded_bytes\": " ++ toString artifact.length
+    ++ ", \"item_count\": " ++ toString (txLeafArtifactDynamicItemCount summary)
+    ++ ", \"max_item_bytes\": " ++ toString summary.starkProofLen
+    ++ ", \"aggregate_bytes\": " ++ toString (txLeafArtifactAggregateBytes summary)
+    ++ ", \"work_units\": " ++ toString (txLeafArtifactWorkUnits summary)
     ++ " }"
 
 def summaryFieldJson (summary : Option TxLeafSummary) : String :=
@@ -60,7 +87,7 @@ def resourceFieldJson (artifact : List Byte) (summary : Option TxLeafSummary) : 
   match summary with
   | none => "null"
   | some value =>
-      resourceRequestJson (txLeafArtifactResourceRequest artifact value)
+      resourceRequestJson artifact value
 
 def txLeafCaseJson (name : String) (artifact : List Byte) : String :=
   let summary := parseNativeTxLeafArtifact artifact
@@ -75,9 +102,26 @@ def txLeafCaseJson (name : String) (artifact : List Byte) : String :=
     ++ resourceFieldJson artifact summary ++ "\n"
     ++ "    }"
 
+def projectionCountCaseJson (entry : TxLeafProjectionCountCase) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ entry.name ++ "\",\n"
+    ++ "      \"input_flags\": " ++ byteArrayJson entry.inputFlags ++ ",\n"
+    ++ "      \"output_flags\": " ++ byteArrayJson entry.outputFlags ++ ",\n"
+    ++ "      \"nullifier_count\": " ++ toString entry.nullifierCount ++ ",\n"
+    ++ "      \"commitment_count\": " ++ toString entry.commitmentCount ++ ",\n"
+    ++ "      \"ciphertext_hash_count\": " ++ toString entry.ciphertextHashCount ++ ",\n"
+    ++ "      \"expected_valid\": "
+    ++ boolJson (txLeafProjectionCountAccepts entry) ++ "\n"
+    ++ "    }"
+
+def projectionCountCasesJson : List TxLeafProjectionCountCase -> String
+  | [] => ""
+  | [entry] => projectionCountCaseJson entry
+  | entry :: rest => projectionCountCaseJson entry ++ ",\n" ++ projectionCountCasesJson rest
+
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"native_tx_leaf_artifact_cases\": [\n"
     ++ txLeafCaseJson "valid-smallwood-backend" validArtifact ++ ",\n"
     ++ txLeafCaseJson "valid-missing-backend-defaults-current-backend" missingBackendArtifact ++ ",\n"
@@ -94,6 +138,9 @@ def vectorJson : String :=
     ++ txLeafCaseJson "too-many-row-coefficients-rejected" tooManyRowCoeffsArtifact ++ ",\n"
     ++ txLeafCaseJson "oversized-stark-proof-len-rejected" oversizedProofLenArtifact ++ ",\n"
     ++ txLeafCaseJson "truncated-artifact-rejected" truncatedArtifact ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"native_tx_leaf_projection_count_cases\": [\n"
+    ++ projectionCountCasesJson allProjectionCountCases ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

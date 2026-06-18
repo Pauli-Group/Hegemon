@@ -2495,6 +2495,511 @@ mod diagnostic_tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum RawArtifactOracleOutcome {
+        Truncated,
+        Trailing,
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum SurfaceOracleOutcome {
+        PublicMismatch,
+        ProofWidthMismatch,
+        VersionedCapMismatch,
+        UnsupportedTxCount,
+        HeaderMismatch,
+        ProofDecodeFailed,
+    }
+
+    fn oracle_recursive_block_v2_proof_cap() -> usize {
+        RECURSIVE_BLOCK_ARTIFACT_BYTES_V2
+            - RECURSIVE_BLOCK_HEADER_BYTES_V2
+            - RECURSIVE_BLOCK_PUBLIC_BYTES_V2
+    }
+
+    fn oracle_recursive_block_v2_total_len() -> usize {
+        RECURSIVE_BLOCK_HEADER_BYTES_V2
+            + oracle_recursive_block_v2_proof_cap()
+            + RECURSIVE_BLOCK_PUBLIC_BYTES_V2
+    }
+
+    fn oracle_push_u32(out: &mut Vec<u8>, value: u32) {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn oracle_push_fixed<const N: usize>(out: &mut Vec<u8>, value: &[u8; N]) {
+        out.extend_from_slice(value);
+    }
+
+    fn oracle_read_u32(bytes: &[u8], cursor: &mut usize) -> u32 {
+        let mut word = [0u8; 4];
+        word.copy_from_slice(&bytes[*cursor..*cursor + 4]);
+        *cursor += 4;
+        u32::from_le_bytes(word)
+    }
+
+    fn oracle_read_fixed<const N: usize>(bytes: &[u8], cursor: &mut usize) -> [u8; N] {
+        let mut out = [0u8; N];
+        out.copy_from_slice(&bytes[*cursor..*cursor + N]);
+        *cursor += N;
+        out
+    }
+
+    fn oracle_write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn oracle_encode_header(header: &HeaderRecTreeV2) -> Vec<u8> {
+        let mut out = Vec::with_capacity(RECURSIVE_BLOCK_HEADER_BYTES_V2);
+        oracle_push_u32(&mut out, header.artifact_version_rec);
+        oracle_push_fixed(&mut out, &header.tx_line_digest_v2);
+        oracle_push_u32(&mut out, header.terminal_profile_tag_tau);
+        oracle_push_u32(&mut out, header.terminal_relation_kind_k);
+        oracle_push_fixed(&mut out, &header.proof_encoding_digest_rec);
+        oracle_push_u32(&mut out, header.proof_bytes_rec);
+        oracle_push_fixed(&mut out, &header.statement_digest_rec);
+        assert_eq!(out.len(), RECURSIVE_BLOCK_HEADER_BYTES_V2);
+        out
+    }
+
+    fn oracle_encode_public(public: &RecursiveBlockPublicV2) -> Vec<u8> {
+        let mut out = Vec::with_capacity(RECURSIVE_BLOCK_PUBLIC_BYTES_V2);
+        oracle_push_u32(&mut out, public.tx_count);
+        oracle_push_fixed(&mut out, &public.tx_statements_commitment);
+        oracle_push_fixed(&mut out, &public.statement_tree_digest_v2);
+        oracle_push_fixed(&mut out, &public.verified_leaf_tree_digest_v2);
+        oracle_push_fixed(&mut out, &public.verified_receipt_tree_digest_v2);
+        oracle_push_fixed(&mut out, &public.start_state_digest_rec_v2);
+        oracle_push_fixed(&mut out, &public.end_state_digest_rec_v2);
+        oracle_push_fixed(&mut out, &public.start_shielded_root);
+        oracle_push_fixed(&mut out, &public.end_shielded_root);
+        oracle_push_fixed(&mut out, &public.start_kernel_root);
+        oracle_push_fixed(&mut out, &public.end_kernel_root);
+        oracle_push_fixed(&mut out, &public.nullifier_root);
+        oracle_push_fixed(&mut out, &public.da_root);
+        oracle_push_fixed(&mut out, &public.start_tree_commitment);
+        oracle_push_fixed(&mut out, &public.end_tree_commitment);
+        assert_eq!(out.len(), RECURSIVE_BLOCK_PUBLIC_BYTES_V2);
+        out
+    }
+
+    fn oracle_decode_header(bytes: &[u8], cursor: &mut usize) -> HeaderRecTreeV2 {
+        HeaderRecTreeV2 {
+            artifact_version_rec: oracle_read_u32(bytes, cursor),
+            tx_line_digest_v2: oracle_read_fixed::<32>(bytes, cursor),
+            terminal_profile_tag_tau: oracle_read_u32(bytes, cursor),
+            terminal_relation_kind_k: oracle_read_u32(bytes, cursor),
+            proof_encoding_digest_rec: oracle_read_fixed::<32>(bytes, cursor),
+            proof_bytes_rec: oracle_read_u32(bytes, cursor),
+            statement_digest_rec: oracle_read_fixed::<32>(bytes, cursor),
+        }
+    }
+
+    fn oracle_decode_public(bytes: &[u8], cursor: &mut usize) -> RecursiveBlockPublicV2 {
+        RecursiveBlockPublicV2 {
+            tx_count: oracle_read_u32(bytes, cursor),
+            tx_statements_commitment: oracle_read_fixed::<48>(bytes, cursor),
+            statement_tree_digest_v2: oracle_read_fixed::<48>(bytes, cursor),
+            verified_leaf_tree_digest_v2: oracle_read_fixed::<48>(bytes, cursor),
+            verified_receipt_tree_digest_v2: oracle_read_fixed::<48>(bytes, cursor),
+            start_state_digest_rec_v2: oracle_read_fixed::<48>(bytes, cursor),
+            end_state_digest_rec_v2: oracle_read_fixed::<48>(bytes, cursor),
+            start_shielded_root: oracle_read_fixed::<48>(bytes, cursor),
+            end_shielded_root: oracle_read_fixed::<48>(bytes, cursor),
+            start_kernel_root: oracle_read_fixed::<48>(bytes, cursor),
+            end_kernel_root: oracle_read_fixed::<48>(bytes, cursor),
+            nullifier_root: oracle_read_fixed::<48>(bytes, cursor),
+            da_root: oracle_read_fixed::<48>(bytes, cursor),
+            start_tree_commitment: oracle_read_fixed::<48>(bytes, cursor),
+            end_tree_commitment: oracle_read_fixed::<48>(bytes, cursor),
+        }
+    }
+
+    fn oracle_decode_recursive_block_v2(
+        bytes: &[u8],
+    ) -> Result<RecursiveBlockArtifactV2, RawArtifactOracleOutcome> {
+        let expected_len = oracle_recursive_block_v2_total_len();
+        if bytes.len() < expected_len {
+            return Err(RawArtifactOracleOutcome::Truncated);
+        }
+        if bytes.len() > expected_len {
+            return Err(RawArtifactOracleOutcome::Trailing);
+        }
+
+        let mut cursor = 0usize;
+        let header = oracle_decode_header(bytes, &mut cursor);
+        let proof_cap = oracle_recursive_block_v2_proof_cap();
+        let proof_bytes = bytes[cursor..cursor + proof_cap].to_vec();
+        cursor += proof_cap;
+        let public = oracle_decode_public(bytes, &mut cursor);
+        assert_eq!(cursor, expected_len);
+
+        Ok(RecursiveBlockArtifactV2 {
+            artifact: RecursiveBlockInnerArtifactV2 {
+                header,
+                proof_bytes,
+            },
+            public,
+        })
+    }
+
+    fn oracle_surface_header_for_public(
+        public: &RecursiveBlockPublicV2,
+    ) -> Result<HeaderRecTreeV2, SurfaceOracleOutcome> {
+        if public.tx_count == 0 || public.tx_count as usize > TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 {
+            return Err(SurfaceOracleOutcome::UnsupportedTxCount);
+        }
+        let expected_kind = expected_root_terminal_kind_v2(public.tx_count)
+            .map_err(|_| SurfaceOracleOutcome::UnsupportedTxCount)?;
+        let expected_profile = expected_root_terminal_profile_v2(public.tx_count)
+            .map_err(|_| SurfaceOracleOutcome::UnsupportedTxCount)?;
+        let expected_statement = recursive_segment_statement_from_public_v2(public);
+        Ok(HeaderRecTreeV2 {
+            artifact_version_rec: RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
+            tx_line_digest_v2: recursive_block_tx_line_digest_v2(),
+            terminal_profile_tag_tau: expected_profile.tag(),
+            terminal_relation_kind_k: expected_kind.tag(),
+            proof_encoding_digest_rec: recursive_block_proof_encoding_digest_v2(),
+            proof_bytes_rec: oracle_recursive_block_v2_proof_cap() as u32,
+            statement_digest_rec: recursive_segment_statement_digest32_v2(&expected_statement),
+        })
+    }
+
+    fn oracle_surface_outcome_for_invalid_proof(
+        artifact: &RecursiveBlockArtifactV2,
+        expected_public: &RecursiveBlockPublicV2,
+        versioned_artifact_bytes: usize,
+    ) -> Result<(), SurfaceOracleOutcome> {
+        if artifact.public != *expected_public {
+            return Err(SurfaceOracleOutcome::PublicMismatch);
+        }
+        let proof_cap = oracle_recursive_block_v2_proof_cap();
+        if artifact.artifact.proof_bytes.len() != proof_cap {
+            return Err(SurfaceOracleOutcome::ProofWidthMismatch);
+        }
+        if oracle_recursive_block_v2_total_len() != versioned_artifact_bytes {
+            return Err(SurfaceOracleOutcome::VersionedCapMismatch);
+        }
+        let expected_header = oracle_surface_header_for_public(expected_public)?;
+        if artifact.artifact.header != expected_header {
+            return Err(SurfaceOracleOutcome::HeaderMismatch);
+        }
+        Err(SurfaceOracleOutcome::ProofDecodeFailed)
+    }
+
+    fn oracle_surface_outcome_from_error(error: &BlockRecursionError) -> SurfaceOracleOutcome {
+        match error {
+            BlockRecursionError::InvalidField("recursive_block_v2 public mismatch") => {
+                SurfaceOracleOutcome::PublicMismatch
+            }
+            BlockRecursionError::WidthMismatch {
+                what: "recursive_block_v2 proof bytes",
+                ..
+            } => SurfaceOracleOutcome::ProofWidthMismatch,
+            BlockRecursionError::WidthMismatch {
+                what: "recursive_block_v2 versioned artifact bytes",
+                ..
+            } => SurfaceOracleOutcome::VersionedCapMismatch,
+            BlockRecursionError::InvalidLength {
+                what: "recursive_block_v2 tx_count",
+                ..
+            } => SurfaceOracleOutcome::UnsupportedTxCount,
+            BlockRecursionError::InvalidField("recursive_block_v2 header mismatch") => {
+                SurfaceOracleOutcome::HeaderMismatch
+            }
+            BlockRecursionError::InvalidField("tree_v2 proof trace decode") => {
+                SurfaceOracleOutcome::ProofDecodeFailed
+            }
+            other => panic!("unexpected recursive_block_v2 surface error: {other:?}"),
+        }
+    }
+
+    fn oracle_public_v2(tx_count: u32) -> RecursiveBlockPublicV2 {
+        RecursiveBlockPublicV2 {
+            tx_count,
+            tx_statements_commitment: digest48(0x11, tx_count),
+            statement_tree_digest_v2: digest48(0x21, tx_count),
+            verified_leaf_tree_digest_v2: digest48(0x31, tx_count),
+            verified_receipt_tree_digest_v2: digest48(0x41, tx_count),
+            start_state_digest_rec_v2: digest48(0x51, tx_count),
+            end_state_digest_rec_v2: digest48(0x61, tx_count),
+            start_shielded_root: digest48(0x71, tx_count),
+            end_shielded_root: digest48(0x81, tx_count),
+            start_kernel_root: digest48(0x91, tx_count),
+            end_kernel_root: digest48(0xa1, tx_count),
+            nullifier_root: digest48(0xb1, tx_count),
+            da_root: digest48(0xc1, tx_count),
+            start_tree_commitment: digest48(0xd1, tx_count),
+            end_tree_commitment: digest48(0xe1, tx_count),
+        }
+    }
+
+    fn oracle_encode_artifact_v2(
+        header: &HeaderRecTreeV2,
+        proof_bytes: &[u8],
+        public: &RecursiveBlockPublicV2,
+    ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(
+            RECURSIVE_BLOCK_HEADER_BYTES_V2 + proof_bytes.len() + RECURSIVE_BLOCK_PUBLIC_BYTES_V2,
+        );
+        out.extend_from_slice(&oracle_encode_header(header));
+        out.extend_from_slice(proof_bytes);
+        out.extend_from_slice(&oracle_encode_public(public));
+        out
+    }
+
+    fn assert_raw_oracle_matches_production(name: &str, bytes: &[u8]) {
+        let oracle = oracle_decode_recursive_block_v2(bytes);
+        let production = deserialize_recursive_block_artifact_v2(bytes);
+        assert_eq!(
+            production.is_ok(),
+            oracle.is_ok(),
+            "{name} raw fixed-width parser admission drifted: oracle={oracle:?} production={production:?}"
+        );
+
+        match (oracle, production) {
+            (Ok(oracle_artifact), Ok(production_artifact)) => {
+                assert_eq!(
+                    production_artifact, oracle_artifact,
+                    "{name} production decode no longer matches fixed-width oracle"
+                );
+                let serialized = serialize_recursive_block_artifact_v2(&production_artifact)
+                    .expect("accepted fixed-width artifact should serialize");
+                assert_eq!(
+                    serialized, bytes,
+                    "{name} production serializer stopped preserving accepted fixed-width bytes"
+                );
+            }
+            (Err(RawArtifactOracleOutcome::Trailing), Err(BlockRecursionError::TrailingBytes { .. })) => {}
+            (Err(RawArtifactOracleOutcome::Truncated), Err(BlockRecursionError::InvalidLength { .. })) => {}
+            (other_oracle, other_production) => panic!(
+                "{name} raw fixed-width parser rejection drifted: oracle={other_oracle:?} production={other_production:?}"
+            ),
+        }
+    }
+
+    fn assert_surface_oracle_matches_production(
+        name: &str,
+        artifact: &RecursiveBlockArtifactV2,
+        expected_public: &RecursiveBlockPublicV2,
+        versioned_artifact_bytes: usize,
+    ) {
+        let oracle = oracle_surface_outcome_for_invalid_proof(
+            artifact,
+            expected_public,
+            versioned_artifact_bytes,
+        );
+        let production = verify_block_recursive_v2_surface_with_versioned_artifact_cap(
+            artifact,
+            expected_public,
+            versioned_artifact_bytes,
+        );
+        assert!(
+            oracle.is_err(),
+            "{name} synthetic invalid-proof fixture should not be accepted by the oracle"
+        );
+        assert!(
+            production.is_err(),
+            "{name} synthetic invalid-proof fixture should not be accepted by production"
+        );
+        let oracle_outcome = oracle.unwrap_err();
+        let production_outcome =
+            oracle_surface_outcome_from_error(&production.expect_err("surface should reject"));
+        assert_eq!(
+            production_outcome, oracle_outcome,
+            "{name} surface pre-proof rejection order drifted"
+        );
+    }
+
+    #[test]
+    fn recursive_block_v2_raw_fixed_width_oracle_matches_parser_boundaries() {
+        assert_eq!(
+            oracle_recursive_block_v2_proof_cap(),
+            project_tree_proof_bytes_v2(),
+            "versioned artifact byte constant must agree with projected proof cap"
+        );
+        assert_eq!(
+            oracle_recursive_block_v2_total_len(),
+            recursive_block_artifact_bytes_v2(),
+            "oracle artifact width must match production artifact width"
+        );
+
+        let public = oracle_public_v2(1);
+        let header =
+            oracle_surface_header_for_public(&public).expect("tx_count=1 header should derive");
+        let mut proof_bytes = vec![0xffu8; oracle_recursive_block_v2_proof_cap()];
+        let valid_fixed_width = oracle_encode_artifact_v2(&header, &proof_bytes, &public);
+
+        let mut trailing = valid_fixed_width.clone();
+        trailing.push(0x7f);
+        let mut oversize = valid_fixed_width.clone();
+        oversize.extend_from_slice(&[0x7f, 0x80, 0x81]);
+        let truncated_header = valid_fixed_width[..RECURSIVE_BLOCK_HEADER_BYTES_V2 - 1].to_vec();
+        let truncated_proof =
+            valid_fixed_width[..RECURSIVE_BLOCK_HEADER_BYTES_V2 + proof_bytes.len() - 1].to_vec();
+        let truncated_public = valid_fixed_width[..valid_fixed_width.len() - 1].to_vec();
+
+        for (name, bytes) in [
+            ("valid_fixed_width", valid_fixed_width.as_slice()),
+            ("trailing_byte", trailing.as_slice()),
+            ("oversize_bytes", oversize.as_slice()),
+            ("truncated_header", truncated_header.as_slice()),
+            ("truncated_proof", truncated_proof.as_slice()),
+            ("truncated_public", truncated_public.as_slice()),
+        ] {
+            assert_raw_oracle_matches_production(name, bytes);
+        }
+
+        let mut header_version_mismatch = valid_fixed_width.clone();
+        oracle_write_u32(
+            &mut header_version_mismatch,
+            0,
+            RECURSIVE_BLOCK_ARTIFACT_VERSION_V2 + 1,
+        );
+        let proof_start = RECURSIVE_BLOCK_HEADER_BYTES_V2;
+        let proof_end = proof_start + proof_bytes.len() - 1;
+        let mut proof_first_boundary = valid_fixed_width.clone();
+        proof_first_boundary[proof_start] ^= 0x01;
+        let mut proof_last_boundary = valid_fixed_width.clone();
+        proof_last_boundary[proof_end] ^= 0x01;
+        let public_start = RECURSIVE_BLOCK_HEADER_BYTES_V2 + proof_bytes.len();
+        let mut public_boundary_mismatch = valid_fixed_width.clone();
+        public_boundary_mismatch[public_start + 4] ^= 0x01;
+        let mut public_tx_count_zero = valid_fixed_width.clone();
+        oracle_write_u32(&mut public_tx_count_zero, public_start, 0);
+        let mut public_tx_count_oversize = valid_fixed_width.clone();
+        oracle_write_u32(
+            &mut public_tx_count_oversize,
+            public_start,
+            TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2 as u32 + 1,
+        );
+        let mut public_tx_count_header_mismatch = valid_fixed_width.clone();
+        oracle_write_u32(&mut public_tx_count_header_mismatch, public_start, 2);
+
+        for (name, bytes) in [
+            (
+                "header_version_mismatch",
+                header_version_mismatch.as_slice(),
+            ),
+            ("proof_first_boundary", proof_first_boundary.as_slice()),
+            ("proof_last_boundary", proof_last_boundary.as_slice()),
+            (
+                "public_boundary_mismatch",
+                public_boundary_mismatch.as_slice(),
+            ),
+            ("public_tx_count_zero", public_tx_count_zero.as_slice()),
+            (
+                "public_tx_count_oversize",
+                public_tx_count_oversize.as_slice(),
+            ),
+            (
+                "public_tx_count_header_mismatch",
+                public_tx_count_header_mismatch.as_slice(),
+            ),
+        ] {
+            assert_raw_oracle_matches_production(name, bytes);
+        }
+
+        let parsed_valid = deserialize_recursive_block_artifact_v2(&valid_fixed_width)
+            .expect("valid fixed-width bytes should parse");
+        assert_surface_oracle_matches_production(
+            "valid_fixed_width_invalid_proof",
+            &parsed_valid,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+        assert_surface_oracle_matches_production(
+            "versioned_cap_mismatch",
+            &parsed_valid,
+            &public,
+            oracle_recursive_block_v2_total_len() + 1,
+        );
+
+        let mut proof_width_mismatch = parsed_valid.clone();
+        proof_width_mismatch.artifact.proof_bytes.pop();
+        assert!(matches!(
+            serialize_recursive_block_artifact_v2(&proof_width_mismatch),
+            Err(BlockRecursionError::WidthMismatch {
+                what: "recursive_block_v2 proof bytes",
+                ..
+            })
+        ));
+        assert_surface_oracle_matches_production(
+            "proof_width_mismatch",
+            &proof_width_mismatch,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+
+        let parsed_header_version =
+            deserialize_recursive_block_artifact_v2(&header_version_mismatch)
+                .expect("header mutation should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "header_version_mismatch",
+            &parsed_header_version,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+
+        let parsed_proof_first = deserialize_recursive_block_artifact_v2(&proof_first_boundary)
+            .expect("proof-first mutation should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "proof_first_boundary",
+            &parsed_proof_first,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+        let parsed_proof_last = deserialize_recursive_block_artifact_v2(&proof_last_boundary)
+            .expect("proof-last mutation should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "proof_last_boundary",
+            &parsed_proof_last,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+
+        let parsed_public_mismatch =
+            deserialize_recursive_block_artifact_v2(&public_boundary_mismatch)
+                .expect("public mutation should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "public_boundary_mismatch",
+            &parsed_public_mismatch,
+            &public,
+            oracle_recursive_block_v2_total_len(),
+        );
+
+        let parsed_tx_count_zero = deserialize_recursive_block_artifact_v2(&public_tx_count_zero)
+            .expect("zero tx_count should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "public_tx_count_zero",
+            &parsed_tx_count_zero,
+            &parsed_tx_count_zero.public,
+            oracle_recursive_block_v2_total_len(),
+        );
+        let parsed_tx_count_oversize =
+            deserialize_recursive_block_artifact_v2(&public_tx_count_oversize)
+                .expect("oversize tx_count should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "public_tx_count_oversize",
+            &parsed_tx_count_oversize,
+            &parsed_tx_count_oversize.public,
+            oracle_recursive_block_v2_total_len(),
+        );
+        let parsed_tx_count_header_mismatch =
+            deserialize_recursive_block_artifact_v2(&public_tx_count_header_mismatch)
+                .expect("tx_count/header mismatch should remain fixed-width parseable");
+        assert_surface_oracle_matches_production(
+            "public_tx_count_header_mismatch",
+            &parsed_tx_count_header_mismatch,
+            &parsed_tx_count_header_mismatch.public,
+            oracle_recursive_block_v2_total_len(),
+        );
+
+        proof_bytes[0] = 0xfe;
+        let proof_mutated_again = oracle_encode_artifact_v2(&header, &proof_bytes, &public);
+        assert_raw_oracle_matches_production("proof_bytes_regenerated", &proof_mutated_again);
+    }
+
     #[test]
     #[ignore = "diagnostic size-report for compact child object experiments"]
     fn tree_v2_child_object_candidate_size_report() {

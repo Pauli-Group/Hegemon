@@ -88,6 +88,10 @@ def artifactAccepts (input : ArtifactAdmissionInput) : Bool :=
 def evaluateDirectVerifierRejection (_kind : ArtifactKind) : Option DirectVerifierReject :=
   some DirectVerifierReject.requiresSemanticReplay
 
+def recursiveBlockV1ArtifactBytes : Nat := 699452
+
+def recursiveBlockV2ArtifactBytes : Nat := 522159
+
 theorem artifact_accepts_iff_preconditions (input : ArtifactAdmissionInput) :
     artifactAccepts input = artifactPreconditions input := by
   unfold artifactAccepts artifactPreconditions evaluateArtifactRejection
@@ -119,8 +123,8 @@ def validV2Artifact : ArtifactAdmissionInput :=
     expectedKind := ArtifactKind.recursiveBlockV2,
     envelopeKind := ArtifactKind.recursiveBlockV2,
     verifierProfileMatches := true,
-    artifactBytesLen := 522159,
-    maxArtifactBytes := 522159,
+    artifactBytesLen := recursiveBlockV2ArtifactBytes,
+    maxArtifactBytes := recursiveBlockV2ArtifactBytes,
     artifactDecoded := true,
     headerVersionMatches := true,
     txCountMatches := true,
@@ -131,7 +135,9 @@ def validV2Artifact : ArtifactAdmissionInput :=
 def validV1Artifact : ArtifactAdmissionInput :=
   { validV2Artifact with
     expectedKind := ArtifactKind.recursiveBlockV1,
-    envelopeKind := ArtifactKind.recursiveBlockV1
+    envelopeKind := ArtifactKind.recursiveBlockV1,
+    artifactBytesLen := recursiveBlockV1ArtifactBytes,
+    maxArtifactBytes := recursiveBlockV1ArtifactBytes
   }
 
 theorem valid_v2_artifact_accepts :
