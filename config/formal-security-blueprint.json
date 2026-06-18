@@ -14961,6 +14961,61 @@
         }
       ],
       "scope_boundary": "This node proves and vector-checks bounded frame admission, marker-domain separation, postcard-decode success, no-trailing-byte rejection, outbound marker-plus-body bounds, PQ plaintext/tag cap accounting, and peer/event queue byte-budget reserve/send/rollback accounting for the network and PQ Noise surfaces. It also checks arbitrary-byte mutation corpora against an independent marker/bound/postcard/full-consumption oracle for parser-drift detection. It does not prove postcard implementation correctness, SHA/HKDF/AEAD/ML-KEM/ML-DSA security, tokio length-delimited transport correctness, scheduler fairness, network liveness, peer honesty, or complete native-node equivalence."
+    },
+    {
+      "id": "formal.residual-assumption-closure-roadmap",
+      "claim_id": "formal.residual-assumption-closure-roadmap",
+      "kind": "target_claim",
+      "formal_statement": "Every residual that remains after the highest-standard completion certificate is classified as exactly one of three auditable buckets: parser/native/proof/bridge residuals are mechanized-refinement tracks, primitive PQ/hash/STARK/ciphertext/RNG/native-lattice-review residuals are named cryptographic assumptions, and DA/storage/global-privacy/release/scanner/performance residuals are fail-closed system-model assumptions.",
+      "informal_argument": "`Hegemon.Release.AssumptionClosureRoadmap` defines `MechanizedRefinementTracks`, `NamedPrimitiveCryptoAssumptions`, `FailClosedSystemModelAssumptions`, and `ResidualAssumptionClosureRoadmap`. The projection theorems expose each bucket, and `residual_closure_roadmap_splits_all_open_assumptions` exposes the full split in one theorem. The checked-in ExecPlan makes the burn-down strategy self-contained: implementation-equivalence gaps must be closed by Lean/Rust refinement work, not waved away as crypto assumptions, while primitive hardness and environmental behavior remain named, reviewable assumptions with fail-closed evidence requirements.",
+      "depends_on": [
+        "formal.highest-standard-completion-certificate"
+      ],
+      "implementation_paths": [
+        "formal/lean/Hegemon/Release/AssumptionClosureRoadmap.lean",
+        ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+        "config/highest-standard-formal-verification-matrix.json",
+        "DESIGN.md",
+        "METHODS.md",
+        "formal/lean/README.md"
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Release/AssumptionClosureRoadmap.lean",
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean",
+        ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+        "config/formal-security-claims.json",
+        "config/formal-security-blueprint.json",
+        "config/highest-standard-formal-verification-matrix.json"
+      ],
+      "target_review": {
+        "status": "accepted",
+        "reviewer": "formal-core-operator",
+        "reviewed_at": "2026-06-18",
+        "notes": "Accepted as a classification ratchet and roadmap. It does not discharge parser/native/proof/bridge residuals; it names them as mechanized work and prevents them from being hidden under broad cryptographic or infrastructure assumptions."
+      },
+      "falsification_cases": [
+        {
+          "id": "lean-residual-closure-roadmap-theorem",
+          "description": "Removing or weakening the residual-assumption split theorem must fail the Lean formal gate or claims check.",
+          "gate": "cd formal/lean && lake build Hegemon.Release.AssumptionClosureRoadmap Hegemon"
+        },
+        {
+          "id": "formal-core-residual-closure-claim",
+          "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, dependency, or ExecPlan is removed.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
+        },
+        {
+          "id": "residual-implementation-equivalence-not-crypto-assumption",
+          "description": "Parser/native/proof/bridge residuals must remain listed as mechanized-refinement tracks, not downgraded into generic primitive cryptographic assumptions.",
+          "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json"
+        },
+        {
+          "id": "system-model-assumptions-fail-closed-evidence",
+          "description": "DA/storage/global-privacy/release/scanner/performance residuals must remain explicit system-model assumptions with fail-closed evidence or monitoring obligations.",
+          "gate": "jq empty config/highest-standard-formal-verification-matrix.json config/formal-security-claims.json config/formal-security-blueprint.json"
+        }
+      ],
+      "scope_boundary": "This node classifies and ratchets residual work. It is not a proof of arbitrary-byte parser internals, complete native-node equivalence, deployed proof-system/AIR soundness, positive bridge mint verifier soundness, primitive cryptographic hardness, DA retention, storage hardware behavior, global unlinkability, live GitHub enforcement, scanner completeness, or performance preservation."
     }
   ]
 }

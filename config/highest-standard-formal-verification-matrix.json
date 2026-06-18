@@ -1331,6 +1331,51 @@
       "This proves fallback source selection around exact decode predicates and generated fixtures. It does not prove bincode implementation correctness for all arbitrary bytes, sled durability, disk integrity, hash security, or complete native-node equivalence."
     ]
   },
+  "last_residual_assumption_closure_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a theorem-backed residual-assumption closure roadmap. Parser raw-byte equivalence, complete native-node refinement, deployed proof/AIR refinement, and positive bridge mint verifier refinement are classified as mechanized-refinement tracks. ML-KEM/ML-DSA, hash/transcript security, STARK/FRI/PCS soundness, ciphertext indistinguishability, native lattice backend cryptographic review, and OS RNG quality are classified as named cryptographic assumptions. DA availability/retention, storage/fsync durability, global timing/topology/miner-order privacy, release-infrastructure enforcement, dependency scanner completeness, and performance monitoring are classified as fail-closed system-model assumptions.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Release/AssumptionClosureRoadmap.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_mechanized_refinement_tracks",
+      "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_named_primitive_crypto_assumptions",
+      "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_fail_closed_system_model_assumptions",
+      "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_splits_all_open_assumptions"
+    ],
+    "classification": {
+      "mechanized_refinement_tracks": [
+        "parser raw-byte and parser-internal equivalence",
+        "complete native-node refinement from ingress through replay, reorg, startup, sync, storage, and accepted publication",
+        "deployed proof/AIR relation and verifier implementation refinement",
+        "PQ-clean positive bridge mint verifier and native replay/mint publication refinement"
+      ],
+      "named_cryptographic_assumptions": [
+        "ML-KEM/ML-DSA security",
+        "BLAKE-family/hash/transcript security and implementation equivalence",
+        "STARK/FRI/PCS soundness and zero knowledge where not mechanized",
+        "ciphertext indistinguishability",
+        "native lattice backend external cryptographic review",
+        "OS RNG quality"
+      ],
+      "fail_closed_system_model_assumptions": [
+        "DA availability and hot/cold retention",
+        "storage transaction/fsync/disk durability below accepted barriers",
+        "global privacy against timing, topology, and miner-order observers",
+        "release infrastructure and live branch-protection enforcement",
+        "dependency/advisory/binary scanner completeness",
+        "performance-budget monitoring for new gates"
+      ]
+    },
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Release.AssumptionClosureRoadmap Hegemon over 173 jobs; bash scripts/check_lean_formal.sh reported 2413 theorem declarations, 1056 axiom-free theorems, 1357 theorem declarations depending only on waived Lean kernel axioms, zero temporary axiom theorem leaks, and passed=true; jq JSON validation for claims, blueprint, and matrix; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json reported 120 claims, 2413 named Lean theorem declarations, 110 production-eligible claims, and 49 residual risks; cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json reported 120 nodes, 519 edges, 617 falsification cases, 223 implementation bindings, 169 result obligations, 149 theorem-indexed order constraints, and 134 theorem-indexed dominance constraints."
+    },
+    "known_limitations": [
+      "This slice is a classification and ratchet, not the final parser/native/proof/bridge mechanization itself.",
+      "The full formal-core gate should be rerun after any later slice changes generated vectors, Rust gates, or release-critical runtime code.",
+      "Overall completion remains 100% under the current matrix method because the residuals are explicit; this slice makes their category and burn-down path theorem-indexed."
+    ]
+  },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
     "summary": "Local 100% closure slice: added the top-level Lean highest-standard completion certificate, registered it in the claims and blueprint ledgers, bound residual-boundary projection theorems for canonical proof-system, compact SmallWood, and materialized no-theft certificates, added PQ transcript marker separation, and added a block-circuit commitment proof byte-cap/exact-decode regression to formal-core. Claims and blueprint validation pass with 119 claims, 2409 named Lean theorem declarations, 109 production-eligible claims, 47 residual risks, 119 blueprint nodes, 518 dependency edges, 613 falsification cases, 223 implementation bindings, 149 order constraints, 169 result obligations, and 134 dominance constraints. Overall completion is now 100% under the checked matrix method because remaining primitive, proof-system, parser, storage, DA-retention, external-bridge, release-infrastructure, and complete-native-node obligations are explicit certificate fields rather than hidden missing work.",

@@ -7291,6 +7291,57 @@
         "cargo test -p network peer_sends_do_not_await_full_queues --lib -- --nocapture"
       ],
       "residual_risks": []
+    },
+    {
+      "id": "formal.residual-assumption-closure-roadmap",
+      "component": "highest-standard residual assumption closure",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean residual-assumption closure roadmap proves that the remaining highest-standard residuals are split into three explicit classes: parser/native/proof/bridge gaps are mechanized-refinement tracks, primitive PQ/hash/STARK/ciphertext/RNG/native-lattice review items are named cryptographic assumptions, and DA/storage/global-privacy/release/scanner/performance items are fail-closed system-model assumptions. This claim does not discharge the deep residuals; it prevents implementation-equivalence gaps from being counted as ordinary cryptographic assumptions and gives future work a theorem-indexed ratchet.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_residual_classification_execplan_and_matrix_binding",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_mechanized_refinement_tracks",
+        "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_named_primitive_crypto_assumptions",
+        "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_exposes_fail_closed_system_model_assumptions",
+        "Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_splits_all_open_assumptions"
+      ],
+      "assumptions": [
+        "The roadmap is a classification and enforcement surface, not a proof that parser/native/proof/bridge residuals are already discharged.",
+        "Parser raw-byte equivalence, complete native-node refinement, deployed proof/AIR refinement, and positive bridge mint verifier refinement remain mechanized work tracks.",
+        "ML-KEM/ML-DSA, hash/transcript security, STARK/FRI/PCS soundness, ciphertext indistinguishability, native lattice backend cryptographic review, and OS RNG quality remain named cryptographic assumptions until separately proven or externally reviewed.",
+        "DA availability/retention, storage/fsync durability, global timing/topology/miner-order privacy, release-infrastructure enforcement, dependency scanner completeness, and performance monitoring remain system-model assumptions handled by fail-closed gates and evidence."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Release/AssumptionClosureRoadmap.lean",
+        ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean",
+        "config/highest-standard-formal-verification-matrix.json",
+        "DESIGN.md",
+        "METHODS.md",
+        "formal/lean/README.md"
+      ],
+      "gates": [
+        "bash scripts/check_lean_formal.sh",
+        "cd formal/lean && lake build Hegemon.Release.AssumptionClosureRoadmap Hegemon",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "mechanized-refinement-tracks-not-yet-discharged",
+          "description": "Parser/native/proof/bridge tracks are now theorem-classified, but the deep implementation-equivalence and proof-system work still has to be closed by later Lean/Rust gates.",
+          "status": "open",
+          "tracking": ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md"
+        },
+        {
+          "id": "system-model-assumptions-require-operational-evidence",
+          "description": "DA retention, storage durability, global privacy, release infrastructure, scanner completeness, and performance preservation cannot be proven as environmental facts; they require fail-closed evidence gates and monitoring.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     }
   ]
 }
