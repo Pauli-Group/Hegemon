@@ -17,6 +17,7 @@ Commissioning requirements:
    - Side-channel considerations for deterministic RNG wrappers used in `crypto::ml_dsa`/`ml_kem`, with explicit coverage of rack-level miners that share chassis power/temperature envelopes.
    - State-of-the-art lattice reduction cost estimates for ML-DSA-65 and ML-KEM-1024 under BKZ 2.0 and dual attacks with quantum sieving assumptions, highlighting replay risk if pool identities are rotated slowly.
    - Hash/collision resistance assessments for Poseidon2 parameters/constants and the 48-byte commitment/nullifier/Merkle encodings used across circuits and pallets (see `circuits/transaction-core/src/poseidon2_constants.rs` and `circuits/transaction-core/src/hashing_pq.rs`).
+   - Degree-annihilation and skipping-class analysis for the exact Hegemon Poseidon2 tuple (`Goldilocks`, width `12`, rate/capacity `6/6`, `x^7`, `8` full rounds, `22` partial rounds), explicitly covering CICO-k, preimage, collision, sponge-mode, and SmallWood transcript/XOF adaptations. Use [docs/crypto/poseidon2_degree_annihilation_cryptanalysis.md](crypto/poseidon2_degree_annihilation_cryptanalysis.md) and its generated JSON report as the local baseline, not as external acceptance.
 2. **Deliverables** – Require a written report with:
    - Attack models and concrete security estimates (bits) for each primitive plus explicit call-outs on miner impersonation or pool takeover implications.
    - Annotated diff suggestions mapped to function names (e.g., `crypto::hashes::poseidon::permutation`).
@@ -25,6 +26,7 @@ Commissioning requirements:
 4. **Cadence** – Trigger a review whenever:
    - Upgrading parameter sets (e.g., bumping to ML-DSA-87 for miner identities).
    - Touching STARK hash parameters or note commitment definitions that govern share proofs.
+   - New Poseidon/Poseidon2 algebraic cryptanalysis appears, including degree-annihilation, skipping-class, CICO-k, or sponge-mode adaptations.
    - NIST publishes errata or usage guidance affecting FIPS 203/204/205 or SP 800-227 KEM handling.
    - Annually, even without code changes, to capture new cryptanalytic results relevant to mining pools.
 
@@ -327,6 +329,25 @@ Keep the log chronological; when closing a finding, link the merge commit and up
     "remediation": "CI and release workflows run the gate. ML-KEM/ML-DSA were upgraded off pre/RC paths; network and PQ Noise trust-boundary frames moved from bincode to bounded postcard codecs.",
     "design_notes": "docs/DEPENDENCY_AUDITS.md records the gate and waiver policy.",
     "tests": ["./scripts/dependency-audit-gate.sh"]
+  }
+]
+```
+
+### 2026-06-18 Poseidon2 degree-annihilation intake
+
+```json
+[
+  {
+    "id": "SEC-2026-0008",
+    "source": "Cryptanalysis / Poseidon2",
+    "component": "circuits/transaction-core::poseidon2 and SmallWood Poseidon2 transcript paths",
+    "description": "ePrint 2026/1254 introduces degree-annihilation attacks against reduced-round Poseidon-family instances. Local Hegemon analysis found no practical break of the active Poseidon2-384 tuple, but it creates a mandatory external review item for the exact Hegemon parameters and sponge modes.",
+    "severity": "medium",
+    "status": "local-analysis-complete-external-review-required",
+    "evidence": "docs/crypto/poseidon2_degree_annihilation_cryptanalysis.md and docs/crypto/poseidon2_degree_annihilation_report.json",
+    "remediation": "No emergency primitive rotation. Future hash/circuit acceptance must include external degree-annihilation and skipping-class analysis; rotate through a new VersionBinding if a concrete cost below the 128-bit PQ target is found.",
+    "design_notes": "DESIGN.md, METHODS.md, and this review scope document the new required review family.",
+    "tests": ["python3 scripts/analyze_poseidon2_degree_annihilation.py --check"]
   }
 ]
 ```

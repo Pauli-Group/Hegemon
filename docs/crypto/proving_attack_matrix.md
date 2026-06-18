@@ -20,14 +20,16 @@ This matrix records the exploit families the repository actively exercises again
 | `receipt-root-tamper` | Alternate-lane artifact that replays the wrong receipts or wrong statement set | explicit `receipt_root` lane | native receipt replay and exact receipt/statement matching before acceptance | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `prover-configuration-downgrade` | Wallet prover silently slipping below the production floor | local prover configuration and post-prove checks | production floor clamp unless `HEGEMON_WALLET_PROVER_FAST=1` is set explicitly, plus local self-check defaulting to `Always` | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `review-package-parity` | Review package diverges from the code and vectors the verifier actually ships | native backend review package, vectors, and parity scripts | packaged review artifact, vector verification, and review-package verification script | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
+| `poseidon2-degree-annihilation` | Algebraic degree-collapse attacks against Poseidon2 note/Merkle/nullifier hashing or SmallWood transcript paths | Poseidon2-384 sponge and Poseidon2 transcript/XOF usage | checked-in Hegemon parameter extraction, degree-annihilation budget report, and mandatory external review scope for degree-annihilation/skipping-class/CICO-k adaptations | `python3 scripts/analyze_poseidon2_degree_annihilation.py --check` |
 
 ## What this matrix does not claim
 
 - It does not claim the native backend has completed external cryptanalysis.
 - It does not claim the timing harness proves constant time.
 - It does not claim one CI pass exhausts parser or cryptanalytic search space.
+- It does not claim the local Poseidon2 degree-annihilation report is an external cryptographic proof; it is an intake and reproducibility artifact for review.
 
-Those remaining research and review questions are tracked in [native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md).
+Those remaining research and review questions are tracked in [native_backend_security_analysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/native_backend_security_analysis.md) and [poseidon2_degree_annihilation_cryptanalysis.md](/Users/pldd/Projects/Reflexivity/Hegemon/docs/crypto/poseidon2_degree_annihilation_cryptanalysis.md).
 
 ## Modes
 

@@ -1,0 +1,179 @@
+{
+  "degree_budget_model": {
+    "conservative_two_full_skip_annihilation_table": [
+      {
+        "affine_cancellation_equations": 0,
+        "affine_equation_gap_vs_paper_style_controls": 0,
+        "annihilated_partial_rounds": 0,
+        "degree_exponent_after_annihilation": 28,
+        "one_factor_cancellation_equations": 0,
+        "one_factor_equation_gap_vs_paper_style_controls": 0,
+        "paper_style_control_variables": 0,
+        "restricted_univariate_degree_log2": 78.60593781761291
+      },
+      {
+        "affine_cancellation_equations": 48,
+        "affine_equation_gap_vs_paper_style_controls": 45,
+        "annihilated_partial_rounds": 1,
+        "degree_exponent_after_annihilation": 27,
+        "one_factor_cancellation_equations": 43,
+        "one_factor_equation_gap_vs_paper_style_controls": 40,
+        "paper_style_control_variables": 3,
+        "restricted_univariate_degree_log2": 75.79858289555531
+      },
+      {
+        "affine_cancellation_equations": 54,
+        "affine_equation_gap_vs_paper_style_controls": 49,
+        "annihilated_partial_rounds": 2,
+        "degree_exponent_after_annihilation": 26,
+        "one_factor_cancellation_equations": 49,
+        "one_factor_equation_gap_vs_paper_style_controls": 44,
+        "paper_style_control_variables": 5,
+        "restricted_univariate_degree_log2": 72.99122797349771
+      },
+      {
+        "affine_cancellation_equations": 60,
+        "affine_equation_gap_vs_paper_style_controls": 53,
+        "annihilated_partial_rounds": 3,
+        "degree_exponent_after_annihilation": 25,
+        "one_factor_cancellation_equations": 55,
+        "one_factor_equation_gap_vs_paper_style_controls": 48,
+        "paper_style_control_variables": 7,
+        "restricted_univariate_degree_log2": 70.1838730514401
+      },
+      {
+        "affine_cancellation_equations": 66,
+        "affine_equation_gap_vs_paper_style_controls": 57,
+        "annihilated_partial_rounds": 4,
+        "degree_exponent_after_annihilation": 24,
+        "one_factor_cancellation_equations": 61,
+        "one_factor_equation_gap_vs_paper_style_controls": 52,
+        "paper_style_control_variables": 9,
+        "restricted_univariate_degree_log2": 67.3765181293825
+      },
+      {
+        "affine_cancellation_equations": 72,
+        "affine_equation_gap_vs_paper_style_controls": 61,
+        "annihilated_partial_rounds": 5,
+        "degree_exponent_after_annihilation": 23,
+        "one_factor_cancellation_equations": 67,
+        "one_factor_equation_gap_vs_paper_style_controls": 56,
+        "paper_style_control_variables": 11,
+        "restricted_univariate_degree_log2": 64.56916320732489
+      },
+      {
+        "affine_cancellation_equations": 78,
+        "affine_equation_gap_vs_paper_style_controls": 65,
+        "annihilated_partial_rounds": 6,
+        "degree_exponent_after_annihilation": 22,
+        "one_factor_cancellation_equations": 73,
+        "one_factor_equation_gap_vs_paper_style_controls": 60,
+        "paper_style_control_variables": 13,
+        "restricted_univariate_degree_log2": 61.76180828526729
+      }
+    ],
+    "description": "Attacker-favorable univariate degree model. It grants skipped initial full rounds and counts how many high-degree coefficients must be cancelled before the first remaining partial S-box. The conservative row used by the report grants two skipped initial full rounds even though Poseidon2's initial linear layer is designed to obstruct that exact skip.",
+    "residual_cico2_check_bits": 255.9999999986564,
+    "residual_output_constraints_after_reusing_cico2": 4,
+    "skipped_round_table": [
+      {
+        "cancel_to_affine_terms": 2400,
+        "cancel_to_alpha_minus_one_terms": 2395,
+        "degree_exponent_without_partial_annihilation": 30,
+        "initial_full_rounds_left": 4,
+        "input_degree_before_first_partial": 2401,
+        "restricted_univariate_degree_log2": 84.22064766172812,
+        "skipped_initial_full_rounds_granted_to_attacker": 0
+      },
+      {
+        "cancel_to_affine_terms": 342,
+        "cancel_to_alpha_minus_one_terms": 337,
+        "degree_exponent_without_partial_annihilation": 29,
+        "initial_full_rounds_left": 3,
+        "input_degree_before_first_partial": 343,
+        "restricted_univariate_degree_log2": 81.41329273967052,
+        "skipped_initial_full_rounds_granted_to_attacker": 1
+      },
+      {
+        "cancel_to_affine_terms": 48,
+        "cancel_to_alpha_minus_one_terms": 43,
+        "degree_exponent_without_partial_annihilation": 28,
+        "initial_full_rounds_left": 2,
+        "input_degree_before_first_partial": 49,
+        "restricted_univariate_degree_log2": 78.60593781761291,
+        "skipped_initial_full_rounds_granted_to_attacker": 2
+      },
+      {
+        "cancel_to_affine_terms": 6,
+        "cancel_to_alpha_minus_one_terms": 1,
+        "degree_exponent_without_partial_annihilation": 27,
+        "initial_full_rounds_left": 1,
+        "input_degree_before_first_partial": 7,
+        "restricted_univariate_degree_log2": 75.79858289555531,
+        "skipped_initial_full_rounds_granted_to_attacker": 3
+      },
+      {
+        "cancel_to_affine_terms": 0,
+        "cancel_to_alpha_minus_one_terms": 0,
+        "degree_exponent_without_partial_annihilation": 26,
+        "initial_full_rounds_left": 0,
+        "input_degree_before_first_partial": 1,
+        "restricted_univariate_degree_log2": 72.99122797349771,
+        "skipped_initial_full_rounds_granted_to_attacker": 4
+      }
+    ]
+  },
+  "hegemon_poseidon2": {
+    "capacity": 6,
+    "digest_bytes": 48,
+    "digest_field_elements": 6,
+    "field": "Goldilocks",
+    "field_bits": 63.9999999996641,
+    "field_modulus": 18446744069414584321,
+    "final_external_full_rounds": 4,
+    "initial_external_full_rounds": 4,
+    "initial_linear_layer": true,
+    "internal_partial_rounds": 22,
+    "rate": 6,
+    "sbox_degree": 7,
+    "total_full_rounds": 8,
+    "total_steps_including_initial_linear": 31,
+    "width": 12
+  },
+  "local_judgment": {
+    "not_a_proof": "This report is an engineering cryptanalysis note, not a formal lower bound. It should be handed to an external Poseidon/Poseidon2 reviewer for a full Groebner/resultant or dedicated algebraic-search assessment.",
+    "status": "no_practical_break_found",
+    "summary": "The paper is a real review trigger, but its concrete reduced-round CICO-2 attacks do not transfer to Hegemon's full 6-limb Poseidon2-384 digest. Under a two-full-round skip grant, the first remaining partial input has degree 49; reducing one effective alpha factor requires 43 coefficient cancellations before output constraints, far beyond the paper-style control budget. A CICO-2-style solver also leaves four Hegemon output limbs unchecked, adding about 256 bits of residual field constraints if handled by root filtering."
+  },
+  "paper": {
+    "concrete_target": {
+      "family": "reduced-round Poseidon / Poseidon-like zero-test challenges",
+      "field": "KoalaBear",
+      "full_rounds": 6,
+      "output_constraints": 2,
+      "partial_rounds_solved": [
+        7,
+        8
+      ],
+      "sbox_degree": 3
+    },
+    "title": "Top Gun: Degree Annihilation Attacks on Poseidon",
+    "url": "https://eprint.iacr.org/2026/1254.pdf"
+  },
+  "schema": "hegemon.poseidon2_degree_annihilation.v1",
+  "security_budget": {
+    "classical_collision_bits": 191.99999999899228,
+    "classical_preimage_bits": 383.99999999798456,
+    "digest_bits_from_field_limbs": 383.99999999798456,
+    "quantum_collision_bits_bht": 127.99999999932818,
+    "quantum_preimage_bits_grover": 191.99999999899228
+  },
+  "source_files": {
+    "constants_rs": "circuits/transaction-core/src/constants.rs",
+    "constants_rs_sha256": "c8ade6ddeb749c139aee049c9eb40d79d6ba11174a62ac3f8bca15bd411a84e3",
+    "poseidon2_constants_rs": "circuits/transaction-core/src/poseidon2_constants.rs",
+    "poseidon2_constants_rs_sha256": "c35ab02577669f1b86e6c5321e7c43924d45d46cdd3b5f57fb8ddef0de9bd52c",
+    "poseidon2_rs": "circuits/transaction-core/src/poseidon2.rs",
+    "poseidon2_rs_sha256": "7011e87d7dae82ec9b53640031c517a6492979c467b4580b40c2255929f2782d"
+  }
+}
