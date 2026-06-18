@@ -54,8 +54,7 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, ReceiptRootMetadata, ReceiptRootProofPayload,
-    StablecoinPolicyBinding, TxValidityReceipt, BLOCK_PROOF_BUNDLE_SCHEMA,
+    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
     DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
     NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
@@ -455,6 +454,56 @@ impl NativeSyncAdmissionRejection {
         match self {
             Self::ResponseBlockCountTooLarge => "response_block_count_too_large",
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSyncResponseImportOutcome {
+    Imported,
+    AlreadyKnown,
+    Error,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncResponseImportProgress {
+    had_blocks: bool,
+    response_block_count: usize,
+    attempted_blocks: usize,
+    imported_blocks: u64,
+    stopped_on_error: bool,
+}
+
+impl NativeSyncResponseImportProgress {
+    fn new(response_block_count: usize) -> Self {
+        Self {
+            had_blocks: response_block_count > 0,
+            response_block_count,
+            attempted_blocks: 0,
+            imported_blocks: 0,
+            stopped_on_error: false,
+        }
+    }
+
+    fn record(&mut self, outcome: NativeSyncResponseImportOutcome) -> bool {
+        if self.stopped_on_error || self.attempted_blocks >= self.response_block_count {
+            return false;
+        }
+        self.attempted_blocks += 1;
+        match outcome {
+            NativeSyncResponseImportOutcome::Imported => {
+                self.imported_blocks = self.imported_blocks.saturating_add(1);
+                true
+            }
+            NativeSyncResponseImportOutcome::AlreadyKnown => true,
+            NativeSyncResponseImportOutcome::Error => {
+                self.stopped_on_error = true;
+                false
+            }
+        }
+    }
+
+    fn should_request_more(self, local_best_height: u64, peer_best_height: u64) -> bool {
+        self.had_blocks && local_best_height < peer_best_height
     }
 }
 
@@ -4912,32 +4961,35 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             }
             NativeSyncMessage::Response {
                 best_height,
-                mut blocks,
+                blocks,
             } => {
-                if let Err(rejection) = evaluate_native_sync_response_count_admission(
-                    NativeSyncResponseCountAdmissionInput {
-                        block_count: blocks.len(),
-                        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
-                    },
+                let response_block_count = blocks.len();
+                let blocks = match admit_and_sort_native_sync_response_blocks(
+                    blocks,
+                    MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
                 ) {
-                    warn!(
-                        block_count = blocks.len(),
-                        max_blocks = MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
-                        rejection = rejection.label(),
-                        "rejecting oversized native sync response"
-                    );
-                    continue;
-                }
-                blocks.sort_by_key(|meta| meta.height);
-                let had_blocks = !blocks.is_empty();
-                let mut imported = 0u64;
+                    Ok(blocks) => blocks,
+                    Err(rejection) => {
+                        warn!(
+                            block_count = response_block_count,
+                            max_blocks = MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+                            rejection = rejection.label(),
+                            "rejecting oversized native sync response"
+                        );
+                        continue;
+                    }
+                };
+                let mut progress = NativeSyncResponseImportProgress::new(blocks.len());
                 for meta in blocks {
                     match node.import_announced_block(meta.clone()) {
                         Ok(true) => {
-                            imported = imported.saturating_add(1);
+                            progress.record(NativeSyncResponseImportOutcome::Imported);
                         }
-                        Ok(false) => {}
+                        Ok(false) => {
+                            progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
+                        }
                         Err(err) => {
+                            progress.record(NativeSyncResponseImportOutcome::Error);
                             warn!(
                                 height = meta.height,
                                 hash = %hex32(&meta.hash),
@@ -4948,15 +5000,15 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         }
                     }
                 }
-                if imported > 0 {
+                if progress.imported_blocks > 0 {
                     info!(
-                        imported,
+                        imported = progress.imported_blocks,
                         best_height = node.best_meta().height,
                         peer_best_height = best_height,
                         "imported native sync response"
                     );
                 }
-                if had_blocks && node.best_meta().height < best_height {
+                if progress.should_request_more(node.best_meta().height, best_height) {
                     request_missing_blocks(&node, &handle, peer_id, best_height).await;
                 }
             }
@@ -8990,6 +9042,35 @@ fn native_sync_response_count_bounded_request(
         aggregate_bytes: 0,
         work_units: 0,
     }
+}
+
+fn admit_and_sort_native_sync_response_blocks(
+    mut blocks: Vec<NativeBlockMeta>,
+    max_blocks: usize,
+) -> Result<Vec<NativeBlockMeta>, NativeSyncAdmissionRejection> {
+    evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
+        block_count: blocks.len(),
+        max_blocks,
+    })?;
+    blocks.sort_by_key(|meta| meta.height);
+    Ok(blocks)
+}
+
+#[cfg(test)]
+fn native_sync_response_import_progress<I>(
+    response_block_count: usize,
+    outcomes: I,
+) -> NativeSyncResponseImportProgress
+where
+    I: IntoIterator<Item = NativeSyncResponseImportOutcome>,
+{
+    let mut progress = NativeSyncResponseImportProgress::new(response_block_count);
+    for outcome in outcomes {
+        if !progress.record(outcome) {
+            break;
+        }
+    }
+    progress
 }
 
 fn evaluate_native_ciphertext_sidecar_request_admission(
@@ -14271,6 +14352,9 @@ async fn wait_for_native_shutdown_signal() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use protocol_shielded_pool::types::{
+        ReceiptRootMetadata, ReceiptRootProofPayload, TxValidityReceipt,
+    };
 
     #[derive(Debug, Clone, Copy)]
     struct NormalizedScaleByte;
@@ -16212,6 +16296,13 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanSyncResponseImportVectorFile {
+        schema_version: u32,
+        sync_response_import_cases: Vec<LeanSyncResponseImportCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanSyncResponseRangeCase {
         name: String,
         from_height: u64,
@@ -16242,6 +16333,24 @@ mod tests {
         block_count: usize,
         max_blocks: usize,
         expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncResponseImportCase {
+        name: String,
+        response_heights: Vec<u64>,
+        max_blocks: usize,
+        outcomes: Vec<String>,
+        local_best_height: u64,
+        peer_best_height: u64,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_sorted_heights: Vec<u64>,
+        expected_attempted_blocks: usize,
+        expected_imported_blocks: u64,
+        expected_stopped_on_error: bool,
+        expected_request_more: bool,
     }
 
     #[test]
@@ -27873,6 +27982,124 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn lean_generated_sync_response_import_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS not set; skipping generated Lean sync-response import vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean sync-response import vectors");
+        let vectors: LeanSyncResponseImportVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean sync-response import vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sync_response_import_cases.is_empty(),
+            "Lean sync-response import cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sync_response_import_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_response_import_case(case);
+        }
+    }
+
+    fn verify_lean_sync_response_import_case(case: &LeanSyncResponseImportCase) {
+        let count_admission =
+            evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
+                block_count: case.response_heights.len(),
+                max_blocks: case.max_blocks,
+            });
+        let actual_rejection = match count_admission {
+            Err(rejection) => Some(rejection.label().to_owned()),
+            Ok(()) if case.outcomes.len() > case.response_heights.len() => {
+                Some("outcome_count_over_response".to_owned())
+            }
+            Ok(()) => None,
+        };
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sync-response import validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native sync-response import rejection drifted from Lean spec",
+            case.name
+        );
+        if !case.expected_valid {
+            return;
+        }
+
+        let blocks: Vec<_> = case
+            .response_heights
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(idx, height)| lean_sync_response_import_meta(height, idx as u8))
+            .collect();
+        let sorted = admit_and_sort_native_sync_response_blocks(blocks, case.max_blocks)
+            .expect("valid Lean sync-response import case should sort");
+        let sorted_heights: Vec<_> = sorted.iter().map(|meta| meta.height).collect();
+        assert_eq!(
+            sorted_heights, case.expected_sorted_heights,
+            "{} native sync-response import sorted-height order drifted from Lean spec",
+            case.name
+        );
+
+        let outcomes = case
+            .outcomes
+            .iter()
+            .map(|outcome| lean_sync_response_import_outcome(case, outcome));
+        let progress = native_sync_response_import_progress(case.response_heights.len(), outcomes);
+        assert_eq!(
+            progress.attempted_blocks, case.expected_attempted_blocks,
+            "{} native sync-response import attempted-block count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            progress.imported_blocks, case.expected_imported_blocks,
+            "{} native sync-response import imported-block count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            progress.stopped_on_error, case.expected_stopped_on_error,
+            "{} native sync-response import stopped-on-error flag drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            progress.should_request_more(case.local_best_height, case.peer_best_height),
+            case.expected_request_more,
+            "{} native sync-response import continuation decision drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn lean_sync_response_import_outcome(
+        case: &LeanSyncResponseImportCase,
+        label: &str,
+    ) -> NativeSyncResponseImportOutcome {
+        match label {
+            "imported" => NativeSyncResponseImportOutcome::Imported,
+            "already_known" => NativeSyncResponseImportOutcome::AlreadyKnown,
+            "error" => NativeSyncResponseImportOutcome::Error,
+            other => panic!("{} unknown sync-response import outcome {other}", case.name),
+        }
+    }
+
+    fn lean_sync_response_import_meta(height: u64, discriminator: u8) -> NativeBlockMeta {
+        let mut meta = genesis_meta(0x207f_ffff).expect("genesis metadata");
+        meta.height = height;
+        meta.hash = [discriminator; 32];
+        meta.hash[..8].copy_from_slice(&height.to_le_bytes());
+        meta.parent_hash = [discriminator.wrapping_add(1); 32];
+        meta
     }
 
     #[test]

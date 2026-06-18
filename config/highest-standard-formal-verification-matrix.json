@@ -974,7 +974,9 @@
         "node/src/native/mod.rs block_range_rejects_exact_decodable_action_byte_drift_inside_admitted_range checks sync block_range refuses a canonical block body whose valid action bytes no longer match the committed action root",
         "node/src/native/mod.rs mixed_restart_reorg_rejects_sidecar_nullifier_bridge_replay_before_publication checks a restarted noncanonical side-branch reorg candidate with sidecar transfer nullifier rows plus a disabled inbound bridge replay key fails closed before canonical publication rows change",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean ciphertext path-family content theorem now includes startup repair, reorg replay, block_range, canonical-index rebuild, announced import, sync import, mined commit, and raw-ingress ciphertext rows",
-        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean now proves inbound sync response import control flow facts: count-before-sort/import, sorted-height projection, bounded attempted/imported counts, stop-on-first-error, impossible outcome-trace rejection, and nonempty/still-ahead continuation requests.",
+        "node/src/native/mod.rs native_sync_loop response handling now routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; Lean-generated vectors check sorted heights, import progress, over-limit rejection, and continuation decisions against production helpers."
       ],
       "missing_work": [],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import.",
@@ -1268,7 +1270,8 @@
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean models staged-proof upload pre-heavy ordering and generated vectors check da_submitProofs rejects staged proof byte-budget overflow before tx-leaf artifact binding decode or proof hashing.",
         "PreHeavyWorkResourceBoundSurface now proves generic staged-proof upload ordering: metadata rejection precedes budget work, staged proof byte-budget rejection precedes decoded proof binding/hash work, and decoded rejection happens only after metadata and budget acceptance",
         "formal/lean/Hegemon/Network/QueueResourceAdmission.lean `accepted_network_pre_heavy_resource_admission_exposes_facts` and companion rejection theorems prove bad frames fail before queue reservation, queue rejection rolls back byte accounting after frame acceptance, accepted queue charges stay within frame bounds, and pre-heavy admission ties frame, queue, and peer-store bounds together.",
-        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate."
+        "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean and generated vectors bind inbound sync response-count admission to the production admission/sort helper before any import-progress or block-import work is attempted."
       ],
       "missing_work": [],
       "performance_constraint": "The property itself enforces little-to-no performance cost by putting cheap caps before expensive work.",
@@ -1452,28 +1455,29 @@
   },
   "last_local_formal_progress_slice": {
     "date": "2026-06-18",
-    "summary": "Added a CandidateArtifact / SubmitCandidateArtifactArgs raw SCALE wire refinement gate. Lean now models the candidate-artifact route-payload byte grammar for recursive-block-v2, receipt-root, custom proof-kind, trailing, truncated, invalid enum, noncanonical compact-prefix, recursive proof overrun, and receipt-count overrun cases; formal-core generates those vectors and checks production CandidateArtifact::encode, SubmitCandidateArtifactArgs::encode, and decode_scale_exact for both types.",
+    "summary": "Added a native SyncResponseImport refinement gate. Lean now models inbound sync response import control flow after wire decode: count admission before sort/import, deterministic sorted heights, bounded attempted/imported counters, stop-on-first-error behavior, impossible outcome-trace rejection, and continuation requests only for nonempty responses when the peer remains ahead. Production now routes native_sync_loop response handling through admit_and_sort_native_sync_response_blocks plus NativeSyncResponseImportProgress, and formal-core generates vectors checked by hegemon-node.",
     "lean_modules": [
-      "formal/lean/Hegemon/Native/CandidateArtifactScaleWire.lean",
-      "formal/lean/Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean"
+      "formal/lean/Hegemon/Native/SyncResponseImport.lean",
+      "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
     ],
     "top_level_theorems": [
-      "Hegemon.Native.CandidateArtifactScaleWire.accepted_candidate_artifact_scale_wire_exact_decode",
-      "Hegemon.Native.CandidateArtifactScaleWire.candidate_artifact_scale_wire_acceptance_exposes_facts",
-      "Hegemon.Native.CandidateArtifactScaleWire.valid_recursive_block_v2_wire_accepts",
-      "Hegemon.Native.CandidateArtifactScaleWire.valid_receipt_root_wire_accepts",
-      "Hegemon.Native.CandidateArtifactScaleWire.valid_custom_proof_kind_wire_accepts"
+      "Hegemon.Native.SyncResponseImport.sync_response_import_acceptance_exposes_facts",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_sorts_unsorted_heights",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_first_error",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_empty_never_requests_more",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_over_limit_rejects",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects"
     ],
     "formal_core_gate": {
-      "command": "HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture",
-      "wrapper": "bash scripts/check_formal_core.sh now generates gen_candidate_artifact_scale_wire_vectors and runs the production conformance test before continuing candidate-artifact coupling and codec gates."
+      "command": "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_response_import_vectors and runs the production conformance test after the sync admission vectors."
     },
     "validation": {
-      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.CandidateArtifactScaleWire Hegemon.Native.GenerateCandidateArtifactScaleWireVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_CANDIDATE_ARTIFACT_SCALE_WIRE_VECTORS=/tmp/hegemon-candidate-artifact-scale-wire.json cargo test -p hegemon-node lean_generated_candidate_artifact_scale_wire_vectors_match_production --lib --no-default-features -- --nocapture."
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncResponseImport Hegemon.Native.GenerateSyncResponseImportVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=/tmp/hegemon-sync-response-import.json cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture."
     },
     "known_limitations": [
-      "This is representative mechanized raw-byte refinement for the candidate-artifact route payload, not a full proof of parity-scale-codec internals for every possible byte string.",
-      "Recursive proof cryptographic soundness, DA availability, hash security, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+      "This proves and production-binds non-cryptographic inbound sync response import control flow, not peer honesty, network liveness, storage durability, or complete native-node equivalence.",
+      "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
     ]
   },
   "last_candidate_artifact_scale_wire_slice": {
@@ -1500,6 +1504,33 @@
     "known_limitations": [
       "This is representative mechanized raw-byte refinement for the candidate-artifact route payload, not a full proof of parity-scale-codec internals for every possible byte string.",
       "Recursive proof cryptographic soundness, DA availability, hash security, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+    ]
+  },
+  "last_sync_response_import_slice": {
+    "date": "2026-06-18",
+    "summary": "Added a native SyncResponseImport refinement gate. Lean now models inbound sync response import control flow after wire decode: count admission before sort/import, deterministic sorted heights, bounded attempted/imported counters, stop-on-first-error behavior, impossible outcome-trace rejection, and continuation requests only for nonempty responses when the peer remains ahead. Production now routes native_sync_loop response handling through admit_and_sort_native_sync_response_blocks plus NativeSyncResponseImportProgress, and formal-core generates vectors checked by hegemon-node.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/SyncResponseImport.lean",
+      "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.SyncResponseImport.sync_response_import_acceptance_exposes_facts",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_sorts_unsorted_heights",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_first_error",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_empty_never_requests_more",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_over_limit_rejects",
+      "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects"
+    ],
+    "formal_core_gate": {
+      "command": "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_response_import_vectors and runs the production conformance test after the sync admission vectors."
+    },
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncResponseImport Hegemon.Native.GenerateSyncResponseImportVectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=/tmp/hegemon-sync-response-import.json cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture."
+    },
+    "known_limitations": [
+      "This proves and production-binds non-cryptographic inbound sync response import control flow, not peer honesty, network liveness, storage durability, or complete native-node equivalence.",
+      "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
     ]
   }
 }

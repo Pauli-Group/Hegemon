@@ -3493,7 +3493,7 @@
       "id": "native.sync-admission",
       "component": "native sync semantic admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sync admission kernel proves deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, and accepted outbound response ranges exposing bounded-request item-count facts; generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, and inbound response handling. Production inbound response-count admission now routes through the generic bounded-request helper with the sync block cap as the item-count cap, and a focused block_range regression binds overwide outbound requests to the capped item-count surface before response publication. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
+      "summary": "The Lean native sync admission and response-import kernels prove deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, accepted outbound response ranges exposing bounded-request item-count facts, and inbound response import control flow: count admission before sort/import, deterministic sorted-height order, import/attempt counters bounded by the response, stop-on-first-error behavior, and continuation-request decisions only for nonempty responses when the peer remains ahead. Generated Lean vectors are checked against the production native sync helpers used by block-range serving, missing-block requests, inbound response handling, and the shared sync-response import helper. Production inbound response-count admission routes through the generic bounded-request helper with the sync block cap as the item-count cap, and focused block_range regressions bind overwide outbound requests to the capped item-count surface before response publication. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3519,25 +3519,40 @@
         "Hegemon.Native.SyncAdmission.response_range_saturating_cap",
         "Hegemon.Native.SyncAdmission.response_range_some_when_from_within_cap",
         "Hegemon.Native.SyncAdmission.response_range_valid_keeps_requested_end",
-        "Hegemon.Native.SyncAdmission.accepted_response_range_exposes_bounded_request_facts"
+        "Hegemon.Native.SyncAdmission.accepted_response_range_exposes_bounded_request_facts",
+        "Hegemon.Native.SyncResponseImport.attempted_until_stop_le_length",
+        "Hegemon.Native.SyncResponseImport.imported_until_stop_le_attempted",
+        "Hegemon.Native.SyncResponseImport.should_request_more_iff",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_acceptance_exposes_facts",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_unsorted_accepts",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_sorts_unsorted_heights",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_unsorted_attempts_all",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_unsorted_requests_more",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_stops_on_first_error",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_empty_never_requests_more",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_over_limit_rejects",
+        "Hegemon.Native.SyncResponseImport.sync_response_import_outcome_over_response_rejects"
       ],
       "assumptions": [
         "The Lean model represents decoded native sync semantic admission after bounded wire decoding, with peer identity, message framing, and block validity represented outside this predicate.",
         "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, and exact/over-limit inbound response counts.",
         "The production inbound response-count helper constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and maps the sync response block count to the bounded-request item count.",
         "Accepted outbound response ranges construct a generic bounded-request fact package in Lean with zero raw/decoded/per-item/aggregate/work dimensions and the served range length as item count; the production binding is the existing block_range call order plus a focused overwide-request regression, not a second runtime admission call.",
-        "The theorem covers executable native sync range and response-count admission only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, or complete native-node equivalence."
+        "The theorem covers executable native sync range, response-count admission, and response-import control flow only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/SyncResponseImport.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "HEGEMON_LEAN_SYNC_RESPONSE_IMPORT_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_response_import_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_admission_rejects_oversized_responses --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_response_count_uses_bounded_request_item_gate --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_caps_overwide_response_with_bounded_request_item_facts --lib --no-default-features -- --nocapture",

@@ -277,6 +277,9 @@ lean_exe gen_storage_durability_admission_vectors where
 lean_exe gen_sync_admission_vectors where
   root := `Hegemon.Native.GenerateSyncAdmissionVectors
 
+lean_exe gen_sync_response_import_vectors where
+  root := `Hegemon.Native.GenerateSyncResponseImportVectors
+
 lean_exe gen_network_secure_channel_vectors where
   root := `Hegemon.Network.GenerateSecureChannelVectors
 

@@ -115,6 +115,7 @@ import Hegemon.Native.StablecoinPolicyLiveAuthorization
 import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.SyncBlockReplayPublication
+import Hegemon.Native.SyncResponseImport
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferNoTheftBoundary
 import Hegemon.Native.TransferStateAdmission
