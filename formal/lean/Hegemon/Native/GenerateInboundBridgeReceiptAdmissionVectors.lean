@@ -21,6 +21,8 @@ def rejectionJson : Option InboundBridgeReceiptReject -> String
       "\"message_hash_mismatch\""
   | some InboundBridgeReceiptReject.tipBeforeMessage =>
       "\"tip_before_message\""
+  | some InboundBridgeReceiptReject.confirmationsOverflow =>
+      "\"confirmations_overflow\""
   | some InboundBridgeReceiptReject.confirmationsOverstated =>
       "\"confirmations_overstated\""
   | some InboundBridgeReceiptReject.underconfirmed =>
@@ -65,6 +67,9 @@ def vectorJson : String :=
     ++ inboundBridgeReceiptCaseJson
       "same-height-has-one-confirmation" sameHeightValid ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
+      "max-native-confirmation-count-accepted"
+      maxNativeConfirmationsValid ++ ",\n"
+    ++ inboundBridgeReceiptCaseJson
       "source-chain-mismatch-rejected" sourceChainMismatch ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "rules-hash-mismatch-rejected" rulesHashMismatch ++ ",\n"
@@ -74,6 +79,8 @@ def vectorJson : String :=
       "message-hash-mismatch-rejected" messageHashMismatch ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "tip-before-message-rejected" tipBeforeMessage ++ ",\n"
+    ++ inboundBridgeReceiptCaseJson
+      "confirmation-count-overflow-rejected" confirmationsOverflow ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "confirmations-overstated-rejected" confirmationsOverstated ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
@@ -88,6 +95,8 @@ def vectorJson : String :=
       "message-hash-precedes-tip" message_hash_precedes_tip_input ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "tip-precedes-overstated" tip_precedes_overstated_input ++ ",\n"
+    ++ inboundBridgeReceiptCaseJson
+      "overflow-precedes-underconfirmed" overflow_precedes_underconfirmed_input ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "overstated-precedes-underconfirmed"
       overstated_precedes_underconfirmed_input ++ "\n"

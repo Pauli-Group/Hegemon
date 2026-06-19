@@ -5769,7 +5769,7 @@
       "id": "native.inbound-bridge-receipt-admission",
       "component": "native inbound bridge receipt output admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean inbound bridge receipt-admission kernel proves the executable post-verifier output table for Hegemon-to-Hegemon inbound receipts: source chain, light-client rules hash, message nonce, message hash, tip/checkpoint height arithmetic, confirmation overstatement, minimum confirmations, and rejection precedence. Generated Lean vectors are checked against the production helper called by `verify_inbound_bridge_receipt` after the receipt verifier output is decoded.",
+      "summary": "The Lean inbound bridge receipt-admission kernel proves the executable post-verifier output table for Hegemon-to-Hegemon inbound receipts: source chain, light-client rules hash, message nonce, message hash, tip/checkpoint height arithmetic, native-width confirmation overflow, confirmation overstatement, minimum confirmations, and rejection precedence. Generated Lean vectors are checked against the production helper called by `verify_inbound_bridge_receipt` after the receipt verifier output is decoded.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5777,11 +5777,13 @@
         "Hegemon.Native.InboundBridgeReceiptAdmission.accepts_iff_inbound_bridge_receipt_preconditions",
         "Hegemon.Native.InboundBridgeReceiptAdmission.valid_accepts",
         "Hegemon.Native.InboundBridgeReceiptAdmission.same_height_valid_has_one_confirmation",
+        "Hegemon.Native.InboundBridgeReceiptAdmission.max_native_confirmation_count_accepts",
         "Hegemon.Native.InboundBridgeReceiptAdmission.source_chain_mismatch_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.rules_hash_mismatch_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.message_nonce_mismatch_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.message_hash_mismatch_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.tip_before_message_rejects",
+        "Hegemon.Native.InboundBridgeReceiptAdmission.confirmations_overflow_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.confirmations_overstated_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.underconfirmed_rejects",
         "Hegemon.Native.InboundBridgeReceiptAdmission.source_chain_precedes_rules",
@@ -5789,12 +5791,13 @@
         "Hegemon.Native.InboundBridgeReceiptAdmission.nonce_precedes_message_hash",
         "Hegemon.Native.InboundBridgeReceiptAdmission.message_hash_precedes_tip",
         "Hegemon.Native.InboundBridgeReceiptAdmission.tip_precedes_overstated",
+        "Hegemon.Native.InboundBridgeReceiptAdmission.overflow_precedes_underconfirmed",
         "Hegemon.Native.InboundBridgeReceiptAdmission.overstated_precedes_underconfirmed"
       ],
       "assumptions": [
         "The Lean model treats source-chain, rules-hash, message-nonce, and message-hash equality as production-derived booleans over decoded receipt output and inbound action arguments.",
         "The proof covers the deterministic post-verifier admission table only. Receipt cryptographic soundness, the disabled RISC Zero verifier, future PQ-clean receipt verification, SCALE/postcard decoder correctness, and bridge message hash security remain separate assumptions or targets.",
-        "Generated Lean conformance vectors cover valid receipt outputs, same-height one-confirmation outputs, every rejection class, and precedence between source-chain, rules-hash, nonce, message-hash, tip-before-message, confirmation-overstatement, and underconfirmation failures."
+        "Generated Lean conformance vectors cover valid receipt outputs, same-height one-confirmation outputs, the maximum native confirmation count, every rejection class, and precedence between source-chain, rules-hash, nonce, message-hash, tip-before-message, confirmation-overflow, confirmation-overstatement, and underconfirmation failures."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/InboundBridgeReceiptAdmission.lean",
@@ -5808,6 +5811,7 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_inbound_bridge_receipt_admission_vectors_match_production --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node inbound_bridge_receipt_confirmation_count_overflow_fails_closed --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node inbound_bridge_rejects_message_binding_tampering --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],

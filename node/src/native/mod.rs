@@ -1246,6 +1246,7 @@ enum NativeInboundBridgeReceiptAdmissionRejection {
     MessageNonceMismatch,
     MessageHashMismatch,
     TipBeforeMessage,
+    ConfirmationsOverflow,
     ConfirmationsOverstated,
     Underconfirmed,
 }
@@ -1280,6 +1281,7 @@ impl NativeInboundBridgeReceiptAdmissionRejection {
             Self::MessageNonceMismatch => "message_nonce_mismatch",
             Self::MessageHashMismatch => "message_hash_mismatch",
             Self::TipBeforeMessage => "tip_before_message",
+            Self::ConfirmationsOverflow => "confirmations_overflow",
             Self::ConfirmationsOverstated => "confirmations_overstated",
             Self::Underconfirmed => "underconfirmed",
         }
@@ -9925,9 +9927,15 @@ fn evaluate_native_bridge_witness_export_admission(
 fn native_inbound_bridge_receipt_height_confirmations(
     canonical_tip_height: u64,
     checkpoint_height: u64,
-) -> Option<u32> {
-    let delta = canonical_tip_height.checked_sub(checkpoint_height)?;
-    Some(delta.saturating_add(1).min(u32::MAX as u64) as u32)
+) -> Result<u32, NativeInboundBridgeReceiptAdmissionRejection> {
+    let delta = canonical_tip_height
+        .checked_sub(checkpoint_height)
+        .ok_or(NativeInboundBridgeReceiptAdmissionRejection::TipBeforeMessage)?;
+    let confirmations = delta
+        .checked_add(1)
+        .ok_or(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverflow)?;
+    u32::try_from(confirmations)
+        .map_err(|_| NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverflow)
 }
 
 fn evaluate_native_inbound_bridge_receipt_admission(
@@ -9945,8 +9953,7 @@ fn evaluate_native_inbound_bridge_receipt_admission(
         let height_confirmations = native_inbound_bridge_receipt_height_confirmations(
             input.canonical_tip_height,
             input.checkpoint_height,
-        )
-        .ok_or(NativeInboundBridgeReceiptAdmissionRejection::TipBeforeMessage)?;
+        )?;
         if height_confirmations < input.confirmations_checked {
             Err(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverstated)
         } else if input.confirmations_checked < input.min_confirmations {
@@ -10027,6 +10034,9 @@ fn native_inbound_bridge_receipt_admission_error(
         }
         NativeInboundBridgeReceiptAdmissionRejection::TipBeforeMessage => {
             anyhow!("Hegemon light-client bridge receipt tip precedes message")
+        }
+        NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverflow => {
+            anyhow!("Hegemon light-client bridge receipt confirmation count exceeds native width")
         }
         NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverstated => {
             anyhow!("Hegemon light-client bridge receipt overstates confirmations")
@@ -21094,6 +21104,25 @@ mod tests {
             actual_rejection, case.expected_rejection,
             "{} native inbound bridge receipt admission rejection drifted from Lean spec",
             case.name
+        );
+    }
+
+    #[test]
+    fn inbound_bridge_receipt_confirmation_count_overflow_fails_closed() {
+        let input = NativeInboundBridgeReceiptAdmissionInput {
+            source_chain_matches: true,
+            rules_hash_matches: true,
+            message_nonce_matches: true,
+            message_hash_matches: true,
+            checkpoint_height: 0,
+            canonical_tip_height: u32::MAX as u64,
+            confirmations_checked: u32::MAX,
+            min_confirmations: 1,
+        };
+
+        assert_eq!(
+            evaluate_native_inbound_bridge_receipt_admission(input),
+            Err(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverflow)
         );
     }
 

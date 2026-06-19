@@ -405,6 +405,7 @@ HEGEMON_LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS="$LEAN_BRIDGE_WITNESS_EXPOR
   cargo test -p hegemon-node lean_generated_bridge_witness_export_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS="$LEAN_INBOUND_BRIDGE_RECEIPT_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_inbound_bridge_receipt_admission_vectors_match_production --lib --no-default-features -- --nocapture
+cargo test -p hegemon-node inbound_bridge_receipt_confirmation_count_overflow_fails_closed --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS="$LEAN_RISC0_RELEASE_VERIFIER_VECTORS" \
   cargo test -p hegemon-node lean_generated_risc0_release_verifier_vectors_match_production --lib --no-default-features -- --nocapture
 python3 "$ROOT/scripts/check_native_backend_review_policy_vectors.py" \

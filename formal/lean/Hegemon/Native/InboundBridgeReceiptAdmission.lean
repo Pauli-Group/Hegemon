@@ -8,9 +8,12 @@ inductive InboundBridgeReceiptReject where
   | messageNonceMismatch
   | messageHashMismatch
   | tipBeforeMessage
+  | confirmationsOverflow
   | confirmationsOverstated
   | underconfirmed
 deriving DecidableEq, Repr
+
+def maxNativeConfirmations : Nat := 4294967295
 
 structure InboundBridgeReceiptInput where
   sourceChainMatches : Bool
@@ -45,7 +48,9 @@ def evaluateInboundBridgeReceipt
     match heightConfirmations input with
     | none => Except.error InboundBridgeReceiptReject.tipBeforeMessage
     | some heightConfirmations =>
-        if heightConfirmations < input.confirmationsChecked then
+        if maxNativeConfirmations < heightConfirmations then
+          Except.error InboundBridgeReceiptReject.confirmationsOverflow
+        else if heightConfirmations < input.confirmationsChecked then
           Except.error InboundBridgeReceiptReject.confirmationsOverstated
         else if input.confirmationsChecked < input.minConfirmations then
           Except.error InboundBridgeReceiptReject.underconfirmed
@@ -80,7 +85,8 @@ def inboundBridgeReceiptPreconditions
     && match heightConfirmations input with
        | none => false
        | some heightConfirmations =>
-           !(heightConfirmations < input.confirmationsChecked)
+           !(maxNativeConfirmations < heightConfirmations)
+             && !(heightConfirmations < input.confirmationsChecked)
              && !(input.confirmationsChecked < input.minConfirmations)
 
 theorem accepts_iff_inbound_bridge_receipt_preconditions
@@ -104,12 +110,15 @@ theorem accepts_iff_inbound_bridge_receipt_preconditions
         simp
       · by_cases htip : canonicalTipHeight < checkpointHeight
         · simp [htip]
-        · by_cases hover :
+        · by_cases hoverflow :
+            maxNativeConfirmations < canonicalTipHeight - checkpointHeight + 1
+          · simp [htip, hoverflow]
+          · by_cases hover :
             canonicalTipHeight - checkpointHeight + 1 < confirmationsChecked
-          · simp [htip, hover]
-          · by_cases hunder : confirmationsChecked < minConfirmations
-            · simp [htip, hover, hunder]
-            · simp [htip, hover, hunder]
+            · simp [htip, hoverflow, hover]
+            · by_cases hunder : confirmationsChecked < minConfirmations
+              · simp [htip, hoverflow, hover, hunder]
+              · simp [htip, hoverflow, hover, hunder]
 
 def valid : InboundBridgeReceiptInput :=
   {
@@ -136,6 +145,18 @@ def sameHeightValid : InboundBridgeReceiptInput :=
 
 theorem same_height_valid_has_one_confirmation :
     evaluateInboundBridgeReceipt sameHeightValid = Except.ok 1 := by
+  rfl
+
+def maxNativeConfirmationsValid : InboundBridgeReceiptInput :=
+  { valid with
+    checkpointHeight := 0,
+    canonicalTipHeight := 4294967294,
+    confirmationsChecked := maxNativeConfirmations,
+    minConfirmations := 1 }
+
+theorem max_native_confirmation_count_accepts :
+    evaluateInboundBridgeReceipt maxNativeConfirmationsValid =
+      Except.ok maxNativeConfirmations := by
   rfl
 
 def sourceChainMismatch : InboundBridgeReceiptInput :=
@@ -176,6 +197,18 @@ def tipBeforeMessage : InboundBridgeReceiptInput :=
 theorem tip_before_message_rejects :
     evaluateInboundBridgeReceipt tipBeforeMessage =
       Except.error InboundBridgeReceiptReject.tipBeforeMessage := by
+  rfl
+
+def confirmationsOverflow : InboundBridgeReceiptInput :=
+  { valid with
+    checkpointHeight := 0,
+    canonicalTipHeight := maxNativeConfirmations,
+    confirmationsChecked := maxNativeConfirmations,
+    minConfirmations := 1 }
+
+theorem confirmations_overflow_rejects :
+    evaluateInboundBridgeReceipt confirmationsOverflow =
+      Except.error InboundBridgeReceiptReject.confirmationsOverflow := by
   rfl
 
 def confirmationsOverstated : InboundBridgeReceiptInput :=
@@ -250,6 +283,19 @@ def tip_precedes_overstated_input :
 theorem tip_precedes_overstated :
     evaluateInboundBridgeReceipt tip_precedes_overstated_input =
       Except.error InboundBridgeReceiptReject.tipBeforeMessage := by
+  rfl
+
+def overflow_precedes_underconfirmed_input :
+    InboundBridgeReceiptInput :=
+  { valid with
+    checkpointHeight := 0,
+    canonicalTipHeight := maxNativeConfirmations,
+    confirmationsChecked := 0,
+    minConfirmations := 1 }
+
+theorem overflow_precedes_underconfirmed :
+    evaluateInboundBridgeReceipt overflow_precedes_underconfirmed_input =
+      Except.error InboundBridgeReceiptReject.confirmationsOverflow := by
   rfl
 
 def overstated_precedes_underconfirmed_input :
