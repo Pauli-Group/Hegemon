@@ -4760,9 +4760,11 @@ mod tests {
         let mut statement_mutation_binding = None;
         let mut version_mutation_profile = None;
         let mut legacy_arith_profile = None;
+        let mut covered_arithmetization_tags = std::collections::BTreeSet::new();
 
         for case in &vectors.smallwood_transcript_binding_cases {
             let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+            covered_arithmetization_tags.insert(case.arithmetization);
             let version = VersionBinding {
                 circuit: case.circuit_version,
                 crypto: case.crypto_suite,
@@ -4834,6 +4836,24 @@ mod tests {
             }
         }
 
+        let expected_arithmetization_tags = std::collections::BTreeSet::from([
+            SmallwoodArithmetization::Bridge64V1 as u64,
+            SmallwoodArithmetization::DirectPacked64V1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+        ]);
+        assert_eq!(
+            covered_arithmetization_tags, expected_arithmetization_tags,
+            "Lean SmallWood transcript vectors must cover every production-recognized arithmetization tag"
+        );
+
         let active_binding = active_binding.expect("active transcript vector missing");
         assert_ne!(
             active_binding,
@@ -4844,6 +4864,23 @@ mod tests {
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
         );
+        for tag in expected_arithmetization_tags {
+            if tag
+                == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                    as u64
+            {
+                continue;
+            }
+            let arithmetization = smallwood_arithmetization_from_vector(tag);
+            assert_ne!(
+                active_profile,
+                smallwood_candidate_verifier_profile_material(
+                    SMALLWOOD_CANDIDATE_VERSION_BINDING,
+                    arithmetization,
+                ),
+                "active SmallWood profile material must not alias arithmetization tag {tag}"
+            );
+        }
         assert_ne!(
             active_profile,
             version_mutation_profile.expect("version mutation profile vector missing"),

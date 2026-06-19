@@ -31,6 +31,9 @@ lean_exe gen_bridge_mint_replay_policy_vectors where
 lean_exe gen_bridge_mint_payload_admission_vectors where
   root := `Hegemon.Bridge.GenerateMintPayloadAdmissionVectors
 
+lean_exe gen_bridge_verifier_registration_policy_vectors where
+  root := `Hegemon.Native.GenerateBridgeVerifierRegistrationPolicyVectors
+
 lean_exe gen_aggregation_v5_vectors where
   root := `Hegemon.Consensus.GenerateAggregationV5Vectors
 
@@ -99,6 +102,9 @@ lean_exe gen_action_order_vectors where
 
 lean_exe gen_action_request_projection_admission_vectors where
   root := `Hegemon.Native.GenerateActionRequestProjectionAdmissionVectors
+
+lean_exe gen_action_request_raw_json_projection_vectors where
+  root := `Hegemon.Native.GenerateActionRequestRawJsonProjectionVectors
 
 lean_exe gen_atomic_commit_manifest_admission_vectors where
   root := `Hegemon.Native.GenerateAtomicCommitManifestAdmissionVectors
@@ -288,6 +294,9 @@ lean_exe gen_sync_admission_vectors where
 
 lean_exe gen_sync_block_range_publication_admission_vectors where
   root := `Hegemon.Native.GenerateSyncBlockRangePublicationAdmissionVectors
+
+lean_exe gen_sync_raw_ingress_vectors where
+  root := `Hegemon.Native.GenerateSyncRawIngressVectors
 
 lean_exe gen_sync_response_import_vectors where
   root := `Hegemon.Native.GenerateSyncResponseImportVectors

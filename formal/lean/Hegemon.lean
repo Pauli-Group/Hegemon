@@ -35,6 +35,7 @@ import Hegemon.Native.AcceptedBlockAdmissionSafety
 import Hegemon.Native.AtomicCommitManifestAdmission
 import Hegemon.Native.ActionOrder
 import Hegemon.Native.ActionRequestProjectionAdmission
+import Hegemon.Native.ActionRequestRawJsonProjection
 import Hegemon.Native.ActionRootTranscript
 import Hegemon.Native.ActionStateEffect
 import Hegemon.Native.ActionStreamEffect
@@ -55,6 +56,7 @@ import Hegemon.Native.BlockReplayRefinement
 import Hegemon.Native.BridgeActionPayloadAdmission
 import Hegemon.Native.BridgeActionResourceAdmission
 import Hegemon.Native.BridgeMintSafety
+import Hegemon.Native.BridgeVerifierRegistrationPolicy
 import Hegemon.Native.BridgeWitnessBackscan
 import Hegemon.Native.BridgeWitnessExportAdmission
 import Hegemon.Native.CandidateArtifactAdmission
@@ -117,6 +119,7 @@ import Hegemon.Native.StorageDurabilityAdmission
 import Hegemon.Native.SyncAdmission
 import Hegemon.Native.SyncBlockReplayPublication
 import Hegemon.Native.SyncBlockRangePublicationAdmission
+import Hegemon.Native.SyncRawIngress
 import Hegemon.Native.SyncResponseImport
 import Hegemon.Native.TransferActionPayloadAdmission
 import Hegemon.Native.TransferNoTheftBoundary

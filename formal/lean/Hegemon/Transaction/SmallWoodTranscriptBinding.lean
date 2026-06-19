@@ -20,7 +20,13 @@ def activeCryptoSuite : Nat := 2
 
 def arithBridge64V1 : Nat := 0
 def arithDirectPacked64V1 : Nat := 1
+def arithDirectPacked64CompactBindingsV1 : Nat := 2
+def arithDirectPacked128CompactBindingsV1 : Nat := 3
+def arithDirectPacked16CompactBindingsV1 : Nat := 4
+def arithDirectPacked32CompactBindingsV1 : Nat := 5
+def arithDirectPacked64CompactBindingsSkipInitialMdsV1 : Nat := 6
 def arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 7
+def arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 8
 
 def effectiveConstraintDegree : Nat := 8
 def poseidonWidth : Nat := 12
@@ -64,16 +70,53 @@ def arithmetizationLabel (arithmetization : Nat) : List Byte :=
     asciiBytes "candidate-smallwood-bridge-pcs-ark"
   else if arithmetization = arithDirectPacked64V1 then
     asciiBytes "candidate-smallwood-direct-packed-payload"
+  else if arithmetization = arithDirectPacked64CompactBindingsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-compact-bindings"
+  else if arithmetization = arithDirectPacked128CompactBindingsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-128-compact-bindings"
+  else if arithmetization = arithDirectPacked16CompactBindingsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-16-compact-bindings"
+  else if arithmetization = arithDirectPacked32CompactBindingsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-32-compact-bindings"
+  else if arithmetization = arithDirectPacked64CompactBindingsSkipInitialMdsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-64-compact-bindings-skip-initial-mds"
   else if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
     asciiBytes "candidate-smallwood-direct-packed-64-inline-merkle-compact-bindings-skip-initial-mds"
+  else if arithmetization = arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 then
+    asciiBytes "candidate-smallwood-direct-packed-128-inline-merkle-compact-bindings-skip-initial-mds"
   else
     asciiBytes "candidate-smallwood-unknown"
 
 def poseidonRowsPerPermutation (arithmetization : Nat) : Nat :=
-  if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
+  if arithmetization = arithDirectPacked64CompactBindingsSkipInitialMdsV1 then
+    skipInitialMdsRowsPerPermutation
+  else if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
+    skipInitialMdsRowsPerPermutation
+  else if arithmetization = arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 then
     skipInitialMdsRowsPerPermutation
   else
     groupedRowsPerPermutation
+
+def deployedSmallwoodArithmetizationTags : List Nat :=
+  [ arithBridge64V1,
+    arithDirectPacked64V1,
+    arithDirectPacked64CompactBindingsV1,
+    arithDirectPacked128CompactBindingsV1,
+    arithDirectPacked16CompactBindingsV1,
+    arithDirectPacked32CompactBindingsV1,
+    arithDirectPacked64CompactBindingsSkipInitialMdsV1,
+    arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+    arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 ]
+
+def legacyProfileArithmetizationTags : List Nat :=
+  [ arithBridge64V1,
+    arithDirectPacked64V1,
+    arithDirectPacked64CompactBindingsV1,
+    arithDirectPacked128CompactBindingsV1,
+    arithDirectPacked16CompactBindingsV1,
+    arithDirectPacked32CompactBindingsV1,
+    arithDirectPacked64CompactBindingsSkipInitialMdsV1,
+    arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 ]
 
 def profileBytes (profile : NoGrindingProfile) : List Byte :=
   u64le profile.rho
@@ -212,6 +255,21 @@ theorem smallwood_profile_material_binds_version :
 
 theorem smallwood_profile_material_binds_arithmetization :
     activeProfileMaterial != legacyDirectProfileMaterial := by
+  decide
+
+theorem active_inline_merkle_profile_uses_active_decs_opening_count :
+    (profileForArithmetization
+      arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1).decsNbOpenedEvals = 23 := by
+  rfl
+
+theorem legacy_profile_arithmetizations_use_legacy_decs_opening_count :
+    ∀ tag ∈ legacyProfileArithmetizationTags,
+      (profileForArithmetization tag).decsNbOpenedEvals = 24 := by
+  decide
+
+theorem deployed_smallwood_profile_materials_distinguish_arithmetization_tags :
+    (deployedSmallwoodArithmetizationTags.map fun tag =>
+      smallwoodProfileMaterial activeCircuitVersion activeCryptoSuite tag).Nodup := by
   decide
 
 theorem smallwood_transcript_binding_starts_with_domain :

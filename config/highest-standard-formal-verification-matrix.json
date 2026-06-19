@@ -621,8 +621,8 @@
         "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean narrows the balance/public-field deployed-verifier target to concrete P3 final-row AIR equations for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
         "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
-        "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, includes serialized statement bytes, pads to eight-byte alignment, and changes when version or arithmetization profile material changes",
-        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, arithmetization, serialized statement bytes, and padding exactly as modeled",
+        "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, uses the active 23-DECS-opening profile only for the shipped inline-Merkle arithmetization, uses the legacy 24-opening profile for the legacy family, distinguishes every production-recognized arithmetization tag, includes serialized statement bytes, and pads to eight-byte alignment",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, every deployed/legacy arithmetization label/profile split, serialized statement bytes, and padding exactly as modeled",
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean proves accepted wrapper metadata projection cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the statement boundary; generated vectors are checked by transaction-circuit production wrapper admission tests.",
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean proves exact/canonical current-vs-legacy SmallWood candidate wrapper selection, current-first precedence, legacy fallback only after current rejection, and empty inner ARK proof rejection; generated vectors are checked against circuits/transaction/src/smallwood_frontend.rs before profile routing.",
         "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean proves accepted provided TxValidityClaims exactly match verified backend artifact receipts and statement bindings; generated vectors are checked against consensus/src/proof.rs before aggregation or recursive block paths trust provided claims.",
@@ -1141,6 +1141,7 @@
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now consumes loaded bridge-replay reload projection facts and proves a loaded canonical replay key remains duplicate-rejected after accepted raw-ingress bridge canonical publication under structured loaded/projected/imported replay premises",
         "formal/lean/Hegemon/Native/InboundBridgeActionPayloadScaleWire.lean and node/src/native/mod.rs now exact-decode-check concrete InboundBridgeArgsV1 route payload bytes, including proof-receipt and nested message payload compact-prefix canonicality, before those bytes can feed decoded bridge payload admission or replay-key policy",
         "formal/lean/Hegemon/Native/BridgeVerifierRegistrationScaleWire.lean and node/src/native/mod.rs now exact-decode-check concrete BridgeVerifierRegistrationV1 route payload bytes before verifier registration actions can feed decoded bridge action admission",
+        "formal/lean/Hegemon/Native/BridgeVerifierRegistrationPolicy.lean and node/src/native/mod.rs now policy-check exact-decoded verifier registrations so current-release registrations remain mint-inert unless descriptor, activation, PQ-clean verifier binding, external verifier soundness acceptance, and explicit positive mint enablement gates all hold",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean RawIngressBridgeMintReplayPolicyPublicationFacts now carries that final-replay publication record alongside accepted mint-replay policy facts and release-disabled impossibility theorem",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean `accepted_inbound_bridge_mint_replay_production_review_certificate` now composes accepted inbound receipt admission, native backend review posture, explicit external PQ receipt verifier soundness, accepted abstract mint/replay policy, authorized bridge asset delta, zero direct native mint, final canonical replay membership, final-state duplicate rejection, and canonical supply replay on one production-bound review certificate",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean `raw_ingress_bridge_mint_replay_production_certificate_hardened_by_release_disabled` wraps the mint/replay production certificate with explicit PQ receipt, mint-decoder authorization, parser/hash, DA retention, sled durability, native-node residuals, and release-disabled fail-closed obligations",
@@ -1537,6 +1538,35 @@
       "Block body/action-root validity remains covered by existing sync row materialization and block-action gates; arbitrary parser internals remain a separate refinement track."
     ]
   },
+  "last_sync_raw_ingress_slice": {
+    "date": "2026-06-19",
+    "summary": "Added a native SyncRawIngress byte-vector gate. Lean now owns representative raw `HNW1`/postcard sync bytes for a canonical request, canonical empty response, trailing request, missing-marker request, and unknown variant. The production gate feeds those exact bytes through `decode_sync_message`, checks canonical valid request/response bytes against `encode_sync_message`, then routes decoded requests to `native_sync_response_range` and decoded responses to `admit_and_sort_native_sync_response_blocks` plus `NativeSyncResponseImportProgress`.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/SyncRawIngress.lean",
+      "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean"
+    ],
+    "top_level_theorems": [
+      "Hegemon.Native.SyncRawIngress.sync_raw_ingress_case_matches_expected",
+      "Hegemon.Native.SyncRawIngress.valid_raw_sync_request_accepts",
+      "Hegemon.Native.SyncRawIngress.raw_sync_request_range_caps_to_limit",
+      "Hegemon.Native.SyncRawIngress.raw_sync_request_trailing_rejects",
+      "Hegemon.Native.SyncRawIngress.raw_sync_missing_marker_rejects",
+      "Hegemon.Native.SyncRawIngress.raw_sync_unknown_variant_rejects",
+      "Hegemon.Native.SyncRawIngress.valid_raw_empty_sync_response_accepts",
+      "Hegemon.Native.SyncRawIngress.raw_empty_sync_response_never_requests_more"
+    ],
+    "formal_core_gate": {
+      "command": "HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_raw_ingress_vectors_match_production --lib --no-default-features -- --nocapture",
+      "wrapper": "bash scripts/check_formal_core.sh now generates gen_sync_raw_ingress_vectors and runs the production conformance test between sync admission and sync-response import gates."
+    },
+    "validation": {
+      "status": "Targeted local gates passed: cd formal/lean && lake build Hegemon.Native.SyncRawIngress Hegemon.Native.GenerateSyncRawIngressVectors gen_sync_raw_ingress_vectors Hegemon; generated-vector JSON validation; HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_raw_ingress_vectors_match_production --lib --no-default-features -- --nocapture."
+    },
+    "known_limitations": [
+      "This is representative mechanized raw-byte refinement for the native sync message boundary, not a full Lean proof of postcard parser correctness over arbitrary bytes.",
+      "Peer honesty, network liveness, block validity beyond the existing sync publication gates, storage durability, and complete native-node equivalence remain explicit separate assumptions or refinement tracks."
+    ]
+  },
   "last_smallwood_verifier_statement_projection_slice": {
     "date": "2026-06-18",
     "summary": "Added a SmallWood verifier statement projection gate. Lean now models the deployed verifier-call projection order from candidate wrapper/public-statement/transcript admission through arithmetization, public values, row count, packing factor, effective constraint degree, linear-constraint vector families, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and explicit verifier-result handoff. Production reconstructs the actual PackedStatement verifier surface for normal and stablecoin inline-Merkle witnesses and checks drift cases against Lean-generated vectors.",
@@ -1615,6 +1645,40 @@
     },
     "known_limitations": [
       "This narrows the production row-order/content part of the pending-action projection residual. It does not prove arbitrary raw SCALE/bincode parser internals, hash/crypto implementation equivalence, sled/fsync correctness, or complete native-node refinement."
+    ]
+  },
+  "last_action_request_raw_json_projection_slice": {
+    "status": "focused_gates_passed",
+    "summary": "Added a raw hegemon_submitAction JSON ingress vector gate. Lean now owns representative request byte strings for valid outbound bridge ingress plus malformed JSON, unknown fields, non-empty kernel-envelope fields, unsupported routes, non-transfer nullifiers, invalid transfer nullifier hex, invalid base64, and trailing route-payload bytes; the Rust gate reconstructs those bytes and drives serde_json, deny-unknown-field SubmitActionRpcRequest decoding, base64 public_args decoding, and exact route-payload admission through production helpers.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/ActionRequestRawJsonProjection.lean",
+      "formal/lean/Hegemon/Native/GenerateActionRequestRawJsonProjectionVectors.lean"
+    ],
+    "rust_gate": "HEGEMON_LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_action_request_raw_json_projection_vectors_match_production --lib --no-default-features -- --nocapture",
+    "validation": {
+      "focused_lean_build": "passed: lake build Hegemon.Native.ActionRequestRawJsonProjection Hegemon.Native.GenerateActionRequestRawJsonProjectionVectors gen_action_request_raw_json_projection_vectors",
+      "focused_rust_gate": "passed: lean_generated_action_request_raw_json_projection_vectors_match_production",
+      "json": "passed: jq empty over generated vector JSON"
+    },
+    "known_limitations": [
+      "This narrows representative raw JSON/base64 ingress equivalence for hegemon_submitAction. It does not prove serde_json, base64, or SCALE implementation correctness for all arbitrary bytes, semantic payload validity, tx-leaf proof soundness, sled durability, or complete native-node refinement."
+    ]
+  },
+  "last_bridge_verifier_registration_policy_slice": {
+    "status": "focused_gates_passed",
+    "summary": "Added a fail-closed bridge verifier-registration policy gate without enabling positive inbound minting. Lean now proves the registration policy accepts only decoded verifier-registration actions and exposes a mint-verifier effect only when descriptor matching, activation, PQ-clean verifier binding, external verifier soundness acceptance, and explicit positive mint enablement all hold. The production registration route calls the matching Rust helper after exact `BridgeVerifierRegistrationV1` decode; current release constants keep PQ-clean verifier binding, external soundness acceptance, and positive minting disabled, so registrations remain inert.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/BridgeVerifierRegistrationPolicy.lean",
+      "formal/lean/Hegemon/Native/GenerateBridgeVerifierRegistrationPolicyVectors.lean"
+    ],
+    "rust_gate": "HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS=<generated> cargo test -p hegemon-node lean_generated_bridge_verifier_registration_policy_vectors_match_production --lib --no-default-features -- --nocapture",
+    "validation": {
+      "focused_lean_build": "passed: lake build Hegemon.Native.BridgeVerifierRegistrationPolicy Hegemon.Native.GenerateBridgeVerifierRegistrationPolicyVectors gen_bridge_verifier_registration_policy_vectors",
+      "focused_rust_gate": "passed: lean_generated_bridge_verifier_registration_policy_vectors_match_production",
+      "json": "passed: python3 -m json.tool over generated vector JSON"
+    },
+    "known_limitations": [
+      "This is a verifier-registration effect policy and vector gate. It does not prove external-chain receipt soundness, PQ verifier soundness, bridge payload hash security/equivalence, SCALE parser implementation correctness for all arbitrary bytes, positive inbound bridge mint publication, or complete native-node refinement."
     ]
   }
 }

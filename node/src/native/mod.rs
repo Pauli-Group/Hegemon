@@ -89,6 +89,9 @@ const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
 const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
 const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
 const NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED: bool = false;
+const NATIVE_PQ_CLEAN_BRIDGE_VERIFIER_BOUND: bool = false;
+const NATIVE_EXTERNAL_BRIDGE_VERIFIER_SOUNDNESS_ACCEPTED: bool = false;
+const NATIVE_POSITIVE_INBOUND_BRIDGE_MINT_ENABLED: bool = false;
 const MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS: u64 = 4_096;
 const MAX_NATIVE_BRIDGE_PROOF_RECEIPT_BYTES: usize = 512 * 1024;
 const MAX_NATIVE_BRIDGE_MESSAGE_PAYLOAD_BYTES: usize =
@@ -1113,6 +1116,24 @@ struct NativeBridgeMintPayloadAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeVerifierRegistrationPolicyInput {
+    bridge_verifier_registration: bool,
+    state_deltas_absent: bool,
+    registration_decoded: bool,
+    descriptor_matches_release: bool,
+    activation_height_reached: bool,
+    pq_clean_verifier_bound: bool,
+    external_verifier_soundness_accepted: bool,
+    positive_minting_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeBridgeVerifierRegistrationPolicyEffect {
+    registration_observed: bool,
+    production_mint_verifier_enabled: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeWitnessExportAdmissionInput {
     block_hash_parameter_valid: bool,
     block_known: bool,
@@ -1208,6 +1229,13 @@ enum NativeBridgeMintPayloadAdmissionRejection {
     NativeAssetNotAllowed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeBridgeVerifierRegistrationPolicyRejection {
+    NotBridgeVerifierRegistration,
+    StateDeltasPresent,
+    RegistrationDecodeFailed,
+}
+
 impl NativeBridgeMintPayloadAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
@@ -1220,6 +1248,16 @@ impl NativeBridgeMintPayloadAdmissionRejection {
             Self::AmountZero => "amount_zero",
             Self::AmountOutOfBounds => "amount_out_of_bounds",
             Self::NativeAssetNotAllowed => "native_asset_not_allowed",
+        }
+    }
+}
+
+impl NativeBridgeVerifierRegistrationPolicyRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::NotBridgeVerifierRegistration => "not_bridge_verifier_registration",
+            Self::StateDeltasPresent => "state_deltas_present",
+            Self::RegistrationDecodeFailed => "registration_decode_failed",
         }
     }
 }
@@ -9602,7 +9640,7 @@ fn validate_bridge_action_payload_with_replay_state(
             Ok(())
         }
         NativeBridgeActionPayloadKind::Register => {
-            let _: BridgeVerifierRegistrationV1 =
+            let registration: BridgeVerifierRegistrationV1 =
                 decode_scale_exact(&action.public_args, "bridge verifier registration args")?;
             let input = native_bridge_action_payload_admission_input(
                 bridge_route,
@@ -9617,6 +9655,11 @@ fn validate_bridge_action_payload_with_replay_state(
             evaluate_native_bridge_action_payload_admission(input).map_err(|rejection| {
                 native_bridge_action_payload_admission_error(action.action_id, rejection)
             })?;
+            let registration_effect = evaluate_native_bridge_verifier_registration_policy(
+                native_bridge_verifier_registration_policy_input(action, Some(&registration)),
+            )
+            .map_err(native_bridge_verifier_registration_policy_error)?;
+            debug_assert!(!registration_effect.production_mint_verifier_enabled);
             validate_bridge_action_resource_projection(
                 native_bridge_action_resource_projection_input(
                     action_kind,
@@ -9888,6 +9931,52 @@ fn evaluate_native_bridge_mint_payload_admission(
     }
 }
 
+fn evaluate_native_bridge_verifier_registration_policy(
+    input: NativeBridgeVerifierRegistrationPolicyInput,
+) -> Result<
+    NativeBridgeVerifierRegistrationPolicyEffect,
+    NativeBridgeVerifierRegistrationPolicyRejection,
+> {
+    if !input.bridge_verifier_registration {
+        Err(NativeBridgeVerifierRegistrationPolicyRejection::NotBridgeVerifierRegistration)
+    } else if !input.state_deltas_absent {
+        Err(NativeBridgeVerifierRegistrationPolicyRejection::StateDeltasPresent)
+    } else if !input.registration_decoded {
+        Err(NativeBridgeVerifierRegistrationPolicyRejection::RegistrationDecodeFailed)
+    } else {
+        Ok(NativeBridgeVerifierRegistrationPolicyEffect {
+            registration_observed: true,
+            production_mint_verifier_enabled: input.descriptor_matches_release
+                && input.activation_height_reached
+                && input.pq_clean_verifier_bound
+                && input.external_verifier_soundness_accepted
+                && input.positive_minting_enabled,
+        })
+    }
+}
+
+fn native_bridge_verifier_registration_policy_input(
+    action: &PendingAction,
+    registration: Option<&BridgeVerifierRegistrationV1>,
+) -> NativeBridgeVerifierRegistrationPolicyInput {
+    NativeBridgeVerifierRegistrationPolicyInput {
+        bridge_verifier_registration: action.family_id == FAMILY_BRIDGE
+            && action.action_id == ACTION_REGISTER_BRIDGE_VERIFIER,
+        state_deltas_absent: bridge_action_has_no_state_deltas(action),
+        registration_decoded: registration.is_some(),
+        descriptor_matches_release: registration.is_some_and(|registration| {
+            registration.source_chain_id == HEGEMON_CHAIN_ID_V1
+                && registration.verifier_program_hash == HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1
+                && registration.rules_hash == HEGEMON_LIGHT_CLIENT_RULES_HASH_V1
+        }),
+        activation_height_reached: registration
+            .is_some_and(|registration| registration.enabled_at_height == 0),
+        pq_clean_verifier_bound: NATIVE_PQ_CLEAN_BRIDGE_VERIFIER_BOUND,
+        external_verifier_soundness_accepted: NATIVE_EXTERNAL_BRIDGE_VERIFIER_SOUNDNESS_ACCEPTED,
+        positive_minting_enabled: NATIVE_POSITIVE_INBOUND_BRIDGE_MINT_ENABLED,
+    }
+}
+
 fn bridge_mint_payload_admission_input(
     args: &InboundBridgeArgsV1,
     output: &BridgeCheckpointOutputV1,
@@ -9960,6 +10049,24 @@ fn native_bridge_mint_payload_admission_error(
         ),
         NativeBridgeMintPayloadAdmissionRejection::NativeAssetNotAllowed => anyhow!(
             "inbound bridge mint payload must target a non-native bridge asset ({})",
+            rejection.label()
+        ),
+    }
+}
+
+fn native_bridge_verifier_registration_policy_error(
+    rejection: NativeBridgeVerifierRegistrationPolicyRejection,
+) -> anyhow::Error {
+    match rejection {
+        NativeBridgeVerifierRegistrationPolicyRejection::NotBridgeVerifierRegistration => {
+            anyhow!("not a bridge verifier registration ({})", rejection.label())
+        }
+        NativeBridgeVerifierRegistrationPolicyRejection::StateDeltasPresent => anyhow!(
+            "bridge verifier registration carries shielded state deltas ({})",
+            rejection.label()
+        ),
+        NativeBridgeVerifierRegistrationPolicyRejection::RegistrationDecodeFailed => anyhow!(
+            "bridge verifier registration exact decode failed ({})",
             rejection.label()
         ),
     }
@@ -15096,9 +15203,35 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanActionRequestRawJsonProjectionVectorFile {
+        schema_version: u32,
+        action_request_raw_json_projection_cases: Vec<LeanActionRequestRawJsonProjectionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanActionRequestProjectionAdmissionCase {
         name: String,
         fixture: String,
+        json_decode_accepts: bool,
+        kernel_envelope_fields_absent: bool,
+        route_supported: bool,
+        nullifier_scope_valid: bool,
+        nullifier_count_within_limit: bool,
+        nullifier_hex_valid: bool,
+        public_args_encoded_within_limit: bool,
+        public_args_base64_decodes: bool,
+        public_args_decoded_within_limit: bool,
+        route_payload_decodes_exactly: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanActionRequestRawJsonProjectionCase {
+        name: String,
+        raw_json_bytes: Vec<u8>,
         json_decode_accepts: bool,
         kernel_envelope_fields_absent: bool,
         route_supported: bool,
@@ -15491,6 +15624,37 @@ mod tests {
         asset_non_native: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeVerifierRegistrationPolicyVectorFile {
+        schema_version: u32,
+        bridge_verifier_registration_policy_cases: Vec<LeanBridgeVerifierRegistrationPolicyCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeVerifierRegistrationPolicyCase {
+        name: String,
+        bridge_verifier_registration: bool,
+        state_deltas_absent: bool,
+        registration_decoded: bool,
+        descriptor_matches_release: bool,
+        activation_height_reached: bool,
+        pq_clean_verifier_bound: bool,
+        external_verifier_soundness_accepted: bool,
+        positive_minting_enabled: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_effect: Option<LeanBridgeVerifierRegistrationPolicyEffect>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeVerifierRegistrationPolicyEffect {
+        registration_observed: bool,
+        production_mint_verifier_enabled: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -16586,6 +16750,13 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanSyncRawIngressVectorFile {
+        schema_version: u32,
+        sync_raw_ingress_cases: Vec<LeanSyncRawIngressCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanSyncResponseImportVectorFile {
         schema_version: u32,
         sync_response_import_cases: Vec<LeanSyncResponseImportCase>,
@@ -16630,6 +16801,33 @@ mod tests {
         block_count: usize,
         max_blocks: usize,
         expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncRawIngressCase {
+        name: String,
+        raw_bytes: Vec<u8>,
+        expected_kind: String,
+        from_height: u64,
+        to_height: u64,
+        request_best_height: u64,
+        max_blocks: usize,
+        response_best_height: u64,
+        response_heights: Vec<u64>,
+        outcomes: Vec<String>,
+        local_best_height: u64,
+        peer_best_height: u64,
+        expected_has_range: bool,
+        expected_from_height: Option<u64>,
+        expected_to_height: Option<u64>,
+        expected_sorted_heights: Vec<u64>,
+        expected_attempted_blocks: usize,
+        expected_imported_blocks: u64,
+        expected_stopped_on_error: bool,
+        expected_request_more: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -21896,6 +22094,91 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lean_generated_action_request_raw_json_projection_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ACTION_REQUEST_RAW_JSON_PROJECTION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean action request raw JSON projection vectors");
+        let vectors: LeanActionRequestRawJsonProjectionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean action request raw JSON projection vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.action_request_raw_json_projection_cases.is_empty(),
+            "Lean action request raw JSON projection cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.action_request_raw_json_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_action_request_raw_json_projection_case(case);
+        }
+    }
+
+    fn verify_lean_action_request_raw_json_projection_case(
+        case: &LeanActionRequestRawJsonProjectionCase,
+    ) {
+        let input = NativeActionRequestProjectionAdmissionInput {
+            json_decode_accepts: case.json_decode_accepts,
+            kernel_envelope_fields_absent: case.kernel_envelope_fields_absent,
+            route_supported: case.route_supported,
+            nullifier_scope_valid: case.nullifier_scope_valid,
+            nullifier_count_within_limit: case.nullifier_count_within_limit,
+            nullifier_hex_valid: case.nullifier_hex_valid,
+            public_args_encoded_within_limit: case.public_args_encoded_within_limit,
+            public_args_base64_decodes: case.public_args_base64_decodes,
+            public_args_decoded_within_limit: case.public_args_decoded_within_limit,
+            route_payload_decodes_exactly: case.route_payload_decodes_exactly,
+        };
+        let model = evaluate_native_action_request_projection_admission(input);
+        let model_rejection = model
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            model.is_ok(),
+            case.expected_valid,
+            "{} Lean raw action request predicate fields disagree with expected validity",
+            case.name
+        );
+        assert_eq!(
+            model_rejection, case.expected_rejection,
+            "{} Lean raw action request rejection drifted from Rust model",
+            case.name
+        );
+
+        let raw_json = String::from_utf8(case.raw_json_bytes.clone())
+            .unwrap_or_else(|err| panic!("{} raw JSON is not UTF-8: {err}", case.name));
+        let actual = serde_json::from_str::<Value>(&raw_json)
+            .map_err(|_| NativeActionRequestProjectionAdmissionRejection::JsonDecodeRejected)
+            .and_then(|request| {
+                decode_submit_action_rpc_request(request).map_err(|_| {
+                    NativeActionRequestProjectionAdmissionRejection::JsonDecodeRejected
+                })
+            })
+            .and_then(|request| evaluate_native_action_request_projection(&request).map(|_| ()));
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native raw action request projection validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native raw action request projection rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
     fn action_request_projection_request_from_action(action: &PendingAction) -> Value {
         use base64::Engine;
 
@@ -24520,6 +24803,87 @@ mod tests {
             "{} native bridge mint payload admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_bridge_verifier_registration_policy_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge verifier registration policy vectors");
+        let vectors: LeanBridgeVerifierRegistrationPolicyVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge verifier registration policy vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_verifier_registration_policy_cases.is_empty(),
+            "Lean bridge verifier registration policy cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_verifier_registration_policy_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_verifier_registration_policy_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_verifier_registration_policy_case(
+        case: &LeanBridgeVerifierRegistrationPolicyCase,
+    ) {
+        let input = NativeBridgeVerifierRegistrationPolicyInput {
+            bridge_verifier_registration: case.bridge_verifier_registration,
+            state_deltas_absent: case.state_deltas_absent,
+            registration_decoded: case.registration_decoded,
+            descriptor_matches_release: case.descriptor_matches_release,
+            activation_height_reached: case.activation_height_reached,
+            pq_clean_verifier_bound: case.pq_clean_verifier_bound,
+            external_verifier_soundness_accepted: case.external_verifier_soundness_accepted,
+            positive_minting_enabled: case.positive_minting_enabled,
+        };
+        let actual = evaluate_native_bridge_verifier_registration_policy(input);
+        let actual_rejection = actual
+            .as_ref()
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native bridge verifier registration policy validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge verifier registration policy rejection drifted from Lean spec",
+            case.name
+        );
+        match (actual, &case.expected_effect) {
+            (Ok(effect), Some(expected_effect)) => {
+                assert_eq!(
+                    effect.registration_observed, expected_effect.registration_observed,
+                    "{} registration-observed effect drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    effect.production_mint_verifier_enabled,
+                    expected_effect.production_mint_verifier_enabled,
+                    "{} production mint-verifier effect drifted from Lean spec",
+                    case.name
+                );
+            }
+            (Err(_), None) => {}
+            (Ok(_), None) => panic!(
+                "{} accepted bridge verifier registration policy without expected effect",
+                case.name
+            ),
+            (Err(_), Some(_)) => panic!(
+                "{} rejected bridge verifier registration policy with expected effect",
+                case.name
+            ),
+        }
     }
 
     fn parse_lean_bridge_replay_key_set(
@@ -28941,6 +29305,204 @@ mod tests {
                 "{} native sync response-count rejection drifted from expected cap rejection",
                 case.name
             );
+        }
+    }
+
+    #[test]
+    fn lean_generated_sync_raw_ingress_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS not set; skipping generated Lean sync raw-ingress vector check"
+            );
+            return;
+        };
+        let raw =
+            std::fs::read_to_string(&path).expect("read generated Lean sync raw-ingress vectors");
+        let vectors: LeanSyncRawIngressVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean sync raw-ingress vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sync_raw_ingress_cases.is_empty(),
+            "Lean sync raw-ingress cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sync_raw_ingress_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_raw_ingress_case(case);
+        }
+    }
+
+    fn verify_lean_sync_raw_ingress_case(case: &LeanSyncRawIngressCase) {
+        let actual = match decode_sync_message(&case.raw_bytes) {
+            Err(_) => Some("wire_decode_rejected".to_owned()),
+            Ok(NativeSyncMessage::Request {
+                from_height,
+                to_height,
+            }) => {
+                assert_eq!(
+                    case.expected_kind, "request",
+                    "{} decoded to request but Lean expected {}",
+                    case.name, case.expected_kind
+                );
+                assert_eq!(
+                    from_height, case.from_height,
+                    "{} raw sync request from_height drifted from Lean bytes",
+                    case.name
+                );
+                assert_eq!(
+                    to_height, case.to_height,
+                    "{} raw sync request to_height drifted from Lean bytes",
+                    case.name
+                );
+                let canonical = encode_sync_message(&NativeSyncMessage::Request {
+                    from_height,
+                    to_height,
+                })
+                .expect("re-encode decoded sync request");
+                assert_eq!(
+                    canonical, case.raw_bytes,
+                    "{} raw sync request bytes are not canonical production bytes",
+                    case.name
+                );
+
+                let max_blocks = u64::try_from(case.max_blocks)
+                    .expect("Lean sync max_blocks must fit u64 for range admission");
+                let range = native_sync_response_range(NativeSyncResponseRangeInput {
+                    from_height,
+                    to_height,
+                    best_height: case.request_best_height,
+                    max_blocks,
+                });
+                assert_eq!(
+                    range.is_some(),
+                    case.expected_has_range,
+                    "{} sync request range admission drifted from Lean",
+                    case.name
+                );
+                assert_eq!(
+                    range.map(|range| range.from_height),
+                    case.expected_from_height,
+                    "{} sync request range from_height drifted from Lean",
+                    case.name
+                );
+                assert_eq!(
+                    range.map(|range| range.to_height),
+                    case.expected_to_height,
+                    "{} sync request range to_height drifted from Lean",
+                    case.name
+                );
+                None
+            }
+            Ok(NativeSyncMessage::Response {
+                best_height,
+                blocks,
+            }) => {
+                assert_eq!(
+                    case.expected_kind, "response",
+                    "{} decoded to response but Lean expected {}",
+                    case.name, case.expected_kind
+                );
+                assert_eq!(
+                    best_height, case.response_best_height,
+                    "{} raw sync response best_height drifted from Lean",
+                    case.name
+                );
+                let decoded_heights: Vec<_> = blocks.iter().map(|block| block.height).collect();
+                assert_eq!(
+                    decoded_heights, case.response_heights,
+                    "{} raw sync response block heights drifted from Lean",
+                    case.name
+                );
+                let canonical = encode_sync_message(&NativeSyncMessage::Response {
+                    best_height,
+                    blocks: blocks.clone(),
+                })
+                .expect("re-encode decoded sync response");
+                assert_eq!(
+                    canonical, case.raw_bytes,
+                    "{} raw sync response bytes are not canonical production bytes",
+                    case.name
+                );
+
+                match admit_and_sort_native_sync_response_blocks(blocks, case.max_blocks) {
+                    Err(rejection) => Some(rejection.label().to_owned()),
+                    Ok(sorted) => {
+                        let sorted_heights: Vec<_> =
+                            sorted.iter().map(|block| block.height).collect();
+                        assert_eq!(
+                            sorted_heights, case.expected_sorted_heights,
+                            "{} raw sync response sorted heights drifted from Lean",
+                            case.name
+                        );
+
+                        let outcomes = case.outcomes.iter().map(|outcome| {
+                            lean_sync_response_import_outcome_from_label(case, outcome)
+                        });
+                        let progress = native_sync_response_import_progress(
+                            case.response_heights.len(),
+                            outcomes,
+                        );
+                        assert_eq!(
+                            progress.attempted_blocks, case.expected_attempted_blocks,
+                            "{} raw sync response attempted-block count drifted from Lean",
+                            case.name
+                        );
+                        assert_eq!(
+                            progress.imported_blocks, case.expected_imported_blocks,
+                            "{} raw sync response imported-block count drifted from Lean",
+                            case.name
+                        );
+                        assert_eq!(
+                            progress.stopped_on_error, case.expected_stopped_on_error,
+                            "{} raw sync response stopped-on-error flag drifted from Lean",
+                            case.name
+                        );
+                        assert_eq!(
+                            progress
+                                .should_request_more(case.local_best_height, case.peer_best_height),
+                            case.expected_request_more,
+                            "{} raw sync response continuation decision drifted from Lean",
+                            case.name
+                        );
+                        None
+                    }
+                }
+            }
+            Ok(NativeSyncMessage::Announce(meta)) => {
+                assert_eq!(
+                    case.expected_kind, "announce",
+                    "{} decoded to announce at height {} but Lean expected {}",
+                    case.name, meta.height, case.expected_kind
+                );
+                None
+            }
+        };
+        assert_eq!(
+            actual.is_none(),
+            case.expected_valid,
+            "{} raw sync ingress validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual, case.expected_rejection,
+            "{} raw sync ingress rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn lean_sync_response_import_outcome_from_label(
+        case: &LeanSyncRawIngressCase,
+        label: &str,
+    ) -> NativeSyncResponseImportOutcome {
+        match label {
+            "imported" => NativeSyncResponseImportOutcome::Imported,
+            "already_known" => NativeSyncResponseImportOutcome::AlreadyKnown,
+            "error" => NativeSyncResponseImportOutcome::Error,
+            other => panic!(
+                "{} unknown raw-ingress sync-response import outcome {other}",
+                case.name
+            ),
         }
     }
 

@@ -51,6 +51,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Bridge/GenerateFlyClientVectors.lean
   lake env lean Hegemon/Bridge/MintReplayPolicy.lean
   lake env lean Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean
+  lake env lean Hegemon/Native/BridgeVerifierRegistrationPolicy.lean
+  lake env lean Hegemon/Native/GenerateBridgeVerifierRegistrationPolicyVectors.lean
   lake env lean Hegemon/Bridge/GenerateCheckpointOutputVectors.lean
   lake env lean Hegemon/Bridge/GenerateLongRangeVectors.lean
   lake env lean Hegemon/Bridge/GenerateVectors.lean
@@ -96,6 +98,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Consensus/GenerateVersionPolicyVectors.lean
   lake env lean Hegemon/Native/ActionOrder.lean
   lake env lean Hegemon/Native/GenerateActionOrderVectors.lean
+  lake env lean Hegemon/Native/ActionRequestRawJsonProjection.lean
+  lake env lean Hegemon/Native/GenerateActionRequestRawJsonProjectionVectors.lean
   lake env lean Hegemon/Native/ActionHashAdmission.lean
   lake env lean Hegemon/Native/GenerateActionHashAdmissionVectors.lean
   lake env lean Hegemon/Native/ActionRootTranscript.lean
@@ -210,9 +214,11 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/SyncAdmission.lean
   lake env lean Hegemon/Native/SyncBlockReplayPublication.lean
   lake env lean Hegemon/Native/SyncBlockRangePublicationAdmission.lean
+  lake env lean Hegemon/Native/SyncRawIngress.lean
   lake env lean Hegemon/Native/SyncResponseImport.lean
   lake env lean Hegemon/Native/GenerateSyncAdmissionVectors.lean
   lake env lean Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean
+  lake env lean Hegemon/Native/GenerateSyncRawIngressVectors.lean
   lake env lean Hegemon/Native/GenerateSyncResponseImportVectors.lean
   lake env lean Hegemon/Network/SecureChannel.lean
   lake env lean Hegemon/Network/GenerateSecureChannelVectors.lean
