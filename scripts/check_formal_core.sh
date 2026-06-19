@@ -116,6 +116,7 @@ LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS="$(mktemp)"
 LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS="$(mktemp)"
 LEAN_RPC_ADMISSION_VECTORS="$(mktemp)"
 LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS="$(mktemp)"
+LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS="$(mktemp)"
 LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS="$(mktemp)"
 LEAN_STAGED_PROOF_RELOAD_VECTORS="$(mktemp)"
 LEAN_STABLECOIN_POLICY_AUTHORIZATION_VECTORS="$(mktemp)"
@@ -245,6 +246,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_preheavy_resource_bound_surface_vectors > "$LEAN_PREHEAVY_RESOURCE_BOUND_SURFACE_VECTORS"
   lake exe gen_rpc_admission_vectors > "$LEAN_RPC_ADMISSION_VECTORS"
   lake exe gen_sidecar_upload_admission_vectors > "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS"
+  lake exe gen_sidecar_upload_raw_json_projection_vectors > "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS"
   lake exe gen_staged_ciphertext_reload_vectors > "$LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS"
   lake exe gen_staged_proof_reload_vectors > "$LEAN_STAGED_PROOF_RELOAD_VECTORS"
   lake exe gen_storage_durability_admission_vectors > "$LEAN_STORAGE_DURABILITY_ADMISSION_VECTORS"
@@ -437,6 +439,7 @@ python3 "$ROOT/scripts/check_ci_release_gate_policy.py" \
   python3 -m json.tool "$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS" >/dev/null
+  python3 -m json.tool "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" >/dev/null
 )
 HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture
@@ -631,6 +634,8 @@ HEGEMON_LEAN_RPC_ADMISSION_VECTORS="$LEAN_RPC_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_rpc_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS="$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS="$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" \
+  cargo test -p hegemon-node lean_generated_sidecar_upload_raw_json_projection_vectors_match_production --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node mixed_batch_atomically --lib --no-default-features -- --nocapture
 cargo test -p hegemon-node submit_sidecar_action_consumes_embedded_staged_proof_atomically --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS="$LEAN_STAGED_CIPHERTEXT_RELOAD_VECTORS" \
@@ -821,5 +826,7 @@ if [ "${HEGEMON_FORMAL_RUN_MODEL_CHECKERS:-0}" = "1" ]; then
 else
   printf 'set HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 to run installed TLC/Apalache binaries\n'
 fi
+
+rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS"
 
 printf '\n=== Hegemon formal-core gate passed ===\n'

@@ -7208,8 +7208,8 @@
       "id": "native.sidecar-upload-admission",
       "claim_id": "native.sidecar-upload-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sidecar upload admission predicates, ciphertext/proof upload requests accept only within request-count caps, staged sidecar insertions accept only when capacity remains or the item replaces an existing staged entry, proof metadata accepts only when binding_hash is present and valid and proof is present, and decoded proof bytes accept only when nonempty, within the native tx-leaf artifact cap, and whose decoded proof binding hash equals the upload key.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.SidecarUploadAdmission.ciphertext_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.proof_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.ciphertext_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_metadata_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_decoded_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_binding_hash_mismatch_rejects`, and companion request/capacity/proof precedence examples prove the executable sidecar upload admission behavior. `gen_sidecar_upload_admission_vectors` emits Lean-derived examples, including `proof_binding_hash_mismatch`, and the formal-core gate checks them against the production `evaluate_native_*_sidecar_*_admission` helpers used by `da_submitCiphertexts` and `da_submitProofs`. The production handlers now preflight all batch items into prepared rows, write accepted ciphertext/proof sidecar rows with one sled transaction, and publish the staged in-memory map only after the storage-durability barrier, so a later invalid item cannot leave hidden sidecar storage. Persisted staged ciphertext reload and staged proof reload are represented by the separate `native.staged-ciphertext-reload` and `native.staged-proof-reload` nodes.",
+      "formal_statement": "For the executable Lean native sidecar upload admission predicates and raw JSON projection table, ciphertext/proof upload requests accept only when representative da_submitCiphertexts/da_submitProofs request bytes pass strict JSON shape decoding, the required upload array is present, request-count caps hold, byte fields decode within bounds, staged sidecar insertions accept only when capacity remains or the item replaces an existing staged entry, proof metadata accepts only when binding_hash is present and valid and proof is present, and decoded proof bytes accept only when nonempty, within the native tx-leaf artifact cap, and whose decoded proof binding hash equals the upload key.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.SidecarUploadAdmission.ciphertext_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.proof_request_accepts_iff_not_over_limit`, `Hegemon.Native.SidecarUploadAdmission.ciphertext_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_capacity_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_metadata_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_decoded_accepts_iff_preconditions`, `Hegemon.Native.SidecarUploadAdmission.proof_binding_hash_mismatch_rejects`, and companion request/capacity/proof precedence examples prove the executable sidecar upload admission behavior. `gen_sidecar_upload_admission_vectors` emits Lean-derived examples, including `proof_binding_hash_mismatch`, and the formal-core gate checks them against the production `evaluate_native_*_sidecar_*_admission` helpers used by `da_submitCiphertexts` and `da_submitProofs`. `Hegemon.Native.SidecarUploadRawJsonProjection.raw_sidecar_upload_case_matches_iff_expected_rejection` and companion raw-case theorems add representative request-byte coverage for valid ciphertext upload, malformed JSON, unknown fields, missing/non-array upload fields, too-many arrays before byte parsing, invalid ciphertext/proof bytes, missing/invalid proof metadata, and empty proof bytes. `gen_sidecar_upload_raw_json_projection_vectors` drives those bytes through production serde_json, strict deny-unknown-field request decoding, byte parsing, and the same admission helpers. The production handlers now preflight all batch items into prepared rows, write accepted ciphertext/proof sidecar rows with one sled transaction, and publish the staged in-memory map only after the storage-durability barrier, so a later invalid item cannot leave hidden sidecar storage. Persisted staged ciphertext reload and staged proof reload are represented by the separate `native.staged-ciphertext-reload` and `native.staged-proof-reload` nodes.",
       "depends_on": [
         "native.rpc-admission",
         "native.resource-budget-admission",
@@ -7220,11 +7220,29 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/SidecarUploadRawJsonProjection.lean",
+        "formal/lean/Hegemon/Native/GenerateSidecarUploadRawJsonProjectionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "implementation_bindings": [
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_submit_ciphertexts_rpc_request",
+          "required_callers": [
+            "NativeNode::submit_ciphertexts"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "decode_submit_proofs_rpc_request",
+          "required_callers": [
+            "NativeNode::submit_proofs"
+          ],
+          "result_obligation": "must_propagate_result"
+        },
         {
           "path": "node/src/native/mod.rs",
           "callee": "evaluate_native_ciphertext_sidecar_request_admission",
@@ -7515,6 +7533,8 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SidecarUploadAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSidecarUploadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/SidecarUploadRawJsonProjection.lean",
+        "formal/lean/Hegemon/Native/GenerateSidecarUploadRawJsonProjectionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -7537,6 +7557,11 @@
           "gate": "HEGEMON_LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sidecar_upload_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
+          "id": "lean-generated-sidecar-upload-raw-json-conformance",
+          "description": "Changing production DA sidecar upload raw JSON request decoding, unknown-field rejection, required-array handling, byte parsing, or first-failure admission order away from the Lean raw projection fixtures must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sidecar_upload_raw_json_projection_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
           "id": "native-sidecar-upload-regressions",
           "description": "Focused native tests must reject oversized sidecar upload batches, invalid proof metadata, empty sidecar proofs, proof binding-hash/key mismatches, and mixed valid/invalid upload batches without publishing memory or sled side effects, while accepting replacements at capacity.",
           "gate": "cargo test -p hegemon-node sidecar_upload --lib --no-default-features -- --nocapture && cargo test -p hegemon-node submit_ciphertexts_rejects_ --lib --no-default-features -- --nocapture && cargo test -p hegemon-node submit_proofs_rejects_ --lib --no-default-features -- --nocapture && cargo test -p hegemon-node mixed_batch_atomically --lib --no-default-features -- --nocapture"
@@ -7547,7 +7572,7 @@
           "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node proves and vector-checks native DA sidecar upload admission only, including decoded proof binding-hash equality with the upload key, and gates all-or-nothing production staging for upload batches. Persisted staged ciphertext reload is covered by native.staged-ciphertext-reload, and persisted staged proof reload is covered by native.staged-proof-reload. It does not prove RPC authentication, public exposure safety for unsafe methods, base64/hex parser correctness, ciphertext hash derivation/security, sled durability below the accepted transaction, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
+      "scope_boundary": "This node proves and vector-checks native DA sidecar upload admission plus representative raw JSON request projection, including strict request-shape decoding, decoded proof binding-hash equality with the upload key, and all-or-nothing production staging for upload batches. Persisted staged ciphertext reload is covered by native.staged-ciphertext-reload, and persisted staged proof reload is covered by native.staged-proof-reload. It does not prove RPC authentication, public exposure safety for unsafe methods, complete serde_json/base64/hex parser correctness, ciphertext hash derivation/security, sled durability below the accepted transaction, DA sidecar availability, native tx-leaf proof soundness, or complete native-node equivalence."
     },
     {
       "id": "native.pre-heavy-resource-bound-surface",

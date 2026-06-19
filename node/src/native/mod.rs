@@ -2499,6 +2499,29 @@ struct SubmitActionSignature {
     signature_bytes: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitCiphertextsRpcRequest {
+    #[serde(default)]
+    ciphertexts: Option<Vec<Value>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitProofsRpcRequest {
+    #[serde(default)]
+    proofs: Option<Vec<SubmitProofsRpcItem>>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitProofsRpcItem {
+    #[serde(default)]
+    binding_hash: Option<String>,
+    #[serde(default)]
+    proof: Option<Value>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativeActionRequestProjectionAdmissionRejection {
     JsonDecodeRejected,
@@ -2613,6 +2636,14 @@ fn native_action_request_projection_error(
 
 fn decode_submit_action_rpc_request(request: Value) -> Result<SubmitActionRpcRequest> {
     serde_json::from_value(request).context("decode submit action request")
+}
+
+fn decode_submit_ciphertexts_rpc_request(request: Value) -> Result<SubmitCiphertextsRpcRequest> {
+    serde_json::from_value(request).context("decode da ciphertext upload request")
+}
+
+fn decode_submit_proofs_rpc_request(request: Value) -> Result<SubmitProofsRpcRequest> {
+    serde_json::from_value(request).context("decode da proof upload request")
 }
 
 fn native_submit_action_is_transfer_route(family_id: u16, action_id: u16) -> bool {
@@ -4756,9 +4787,10 @@ impl NativeNode {
     }
 
     fn submit_ciphertexts(&self, request: Value) -> Result<Value> {
+        let request = decode_submit_ciphertexts_rpc_request(request)?;
         let ciphertexts = request
-            .get("ciphertexts")
-            .and_then(Value::as_array)
+            .ciphertexts
+            .as_ref()
             .ok_or_else(|| anyhow!("da_submitCiphertexts requires ciphertexts array"))?;
         evaluate_native_ciphertext_sidecar_request_admission(
             NativeSidecarRequestCountAdmissionInput {
@@ -4818,9 +4850,10 @@ impl NativeNode {
     }
 
     fn submit_proofs(&self, request: Value) -> Result<Value> {
+        let request = decode_submit_proofs_rpc_request(request)?;
         let proofs = request
-            .get("proofs")
-            .and_then(Value::as_array)
+            .proofs
+            .as_ref()
             .ok_or_else(|| anyhow!("da_submitProofs requires proofs array"))?;
         evaluate_native_proof_sidecar_request_admission(NativeSidecarRequestCountAdmissionInput {
             item_count: proofs.len(),
@@ -4832,9 +4865,9 @@ impl NativeNode {
         let mut staged_proofs = state.staged_proofs.clone();
         let mut prepared_proofs: Vec<([u8; 64], Vec<u8>)> = Vec::with_capacity(proofs.len());
         for item in proofs {
-            let binding_hash_value = item.get("binding_hash").and_then(Value::as_str);
+            let binding_hash_value = item.binding_hash.as_deref();
             let binding_hash_bytes = binding_hash_value.and_then(parse_hex64);
-            let proof_value = item.get("proof");
+            let proof_value = item.proof.as_ref();
             evaluate_native_proof_sidecar_metadata_admission(
                 NativeProofSidecarMetadataAdmissionInput {
                     binding_hash_present: binding_hash_value.is_some(),
@@ -16687,6 +16720,37 @@ mod tests {
         capacity_cases: Vec<LeanSidecarCapacityCase>,
         proof_metadata_cases: Vec<LeanProofSidecarMetadataCase>,
         proof_decoded_cases: Vec<LeanProofSidecarDecodedCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSidecarUploadRawJsonProjectionVectorFile {
+        schema_version: u32,
+        sidecar_upload_raw_json_projection_cases: Vec<LeanSidecarUploadRawJsonProjectionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSidecarUploadRawJsonProjectionCase {
+        name: String,
+        kind: String,
+        raw_json_bytes: Vec<u8>,
+        json_decode_accepts: bool,
+        upload_field_present: bool,
+        item_count: usize,
+        max_items: usize,
+        ciphertext_item_present: bool,
+        ciphertext_bytes_decode: bool,
+        proof_item_present: bool,
+        binding_hash_present: bool,
+        binding_hash_valid: bool,
+        proof_present: bool,
+        proof_bytes_decode: bool,
+        proof_bytes: usize,
+        max_proof_bytes: usize,
+        proof_binding_hash_matches_key: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -29190,6 +29254,272 @@ mod tests {
             "{} native proof sidecar decoded rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_sidecar_upload_raw_json_projection_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean sidecar upload raw JSON projection vectors");
+        let vectors: LeanSidecarUploadRawJsonProjectionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean sidecar upload raw JSON projection vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sidecar_upload_raw_json_projection_cases.is_empty(),
+            "Lean sidecar raw JSON projection cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sidecar_upload_raw_json_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sidecar_upload_raw_json_projection_case(case);
+        }
+    }
+
+    fn verify_lean_sidecar_upload_raw_json_projection_case(
+        case: &LeanSidecarUploadRawJsonProjectionCase,
+    ) {
+        let actual_rejection = match serde_json::from_slice::<Value>(&case.raw_json_bytes) {
+            Ok(value) => match case.kind.as_str() {
+                "ciphertexts" => verify_lean_ciphertext_upload_raw_json_projection(case, value),
+                "proofs" => verify_lean_proof_upload_raw_json_projection(case, value),
+                other => panic!("{} unknown raw sidecar upload kind {other}", case.name),
+            },
+            Err(_) => {
+                assert!(
+                    !case.json_decode_accepts,
+                    "{} Lean expected JSON decode acceptance, but serde_json rejected bytes",
+                    case.name
+                );
+                Some("json_decode_rejected".to_owned())
+            }
+        };
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} raw sidecar upload validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} raw sidecar upload rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_ciphertext_upload_raw_json_projection(
+        case: &LeanSidecarUploadRawJsonProjectionCase,
+        value: Value,
+    ) -> Option<String> {
+        let request = match decode_submit_ciphertexts_rpc_request(value) {
+            Ok(request) => {
+                assert!(
+                    case.json_decode_accepts,
+                    "{} Lean expected JSON decode rejection, but production accepted ciphertext upload request shape",
+                    case.name
+                );
+                request
+            }
+            Err(_) => {
+                assert!(
+                    !case.json_decode_accepts,
+                    "{} Lean expected JSON decode acceptance, but production rejected ciphertext upload request shape",
+                    case.name
+                );
+                return Some("json_decode_rejected".to_owned());
+            }
+        };
+        let Some(ciphertexts) = request.ciphertexts.as_ref() else {
+            assert!(
+                !case.upload_field_present,
+                "{} Lean expected ciphertext upload field, but production decoded it as missing",
+                case.name
+            );
+            return Some("upload_field_missing".to_owned());
+        };
+        assert!(case.upload_field_present);
+        assert_eq!(case.item_count, ciphertexts.len(), "{}", case.name);
+        assert_eq!(
+            case.max_items, MAX_NATIVE_DA_CIPHERTEXT_UPLOADS,
+            "{} Lean ciphertext upload cap drifted from production",
+            case.name
+        );
+        let request_admission = evaluate_native_ciphertext_sidecar_request_admission(
+            NativeSidecarRequestCountAdmissionInput {
+                item_count: ciphertexts.len(),
+                max_items: MAX_NATIVE_DA_CIPHERTEXT_UPLOADS,
+            },
+        );
+        if let Err(rejection) = request_admission {
+            return Some(rejection.label().to_owned());
+        }
+        let Some(first) = ciphertexts.first() else {
+            assert!(
+                !case.ciphertext_item_present,
+                "{} Lean expected a ciphertext item, but production decoded none",
+                case.name
+            );
+            return None;
+        };
+        assert!(case.ciphertext_item_present);
+        let decoded = parse_bytes_value(first, MAX_CIPHERTEXT_BYTES, "Lean ciphertext upload item");
+        assert_eq!(
+            decoded.is_ok(),
+            case.ciphertext_bytes_decode,
+            "{} ciphertext byte decoding drifted from Lean projection",
+            case.name
+        );
+        if decoded.is_err() {
+            return Some("ciphertext_bytes_rejected".to_owned());
+        }
+        None
+    }
+
+    fn verify_lean_proof_upload_raw_json_projection(
+        case: &LeanSidecarUploadRawJsonProjectionCase,
+        value: Value,
+    ) -> Option<String> {
+        let request = match decode_submit_proofs_rpc_request(value) {
+            Ok(request) => {
+                assert!(
+                    case.json_decode_accepts,
+                    "{} Lean expected JSON decode rejection, but production accepted proof upload request shape",
+                    case.name
+                );
+                request
+            }
+            Err(_) => {
+                assert!(
+                    !case.json_decode_accepts,
+                    "{} Lean expected JSON decode acceptance, but production rejected proof upload request shape",
+                    case.name
+                );
+                return Some("json_decode_rejected".to_owned());
+            }
+        };
+        let Some(proofs) = request.proofs.as_ref() else {
+            assert!(
+                !case.upload_field_present,
+                "{} Lean expected proof upload field, but production decoded it as missing",
+                case.name
+            );
+            return Some("upload_field_missing".to_owned());
+        };
+        assert!(case.upload_field_present);
+        assert_eq!(case.item_count, proofs.len(), "{}", case.name);
+        assert_eq!(
+            case.max_items, MAX_NATIVE_DA_PROOF_UPLOADS,
+            "{} Lean proof upload cap drifted from production",
+            case.name
+        );
+        let request_admission = evaluate_native_proof_sidecar_request_admission(
+            NativeSidecarRequestCountAdmissionInput {
+                item_count: proofs.len(),
+                max_items: MAX_NATIVE_DA_PROOF_UPLOADS,
+            },
+        );
+        if let Err(rejection) = request_admission {
+            return Some(rejection.label().to_owned());
+        }
+        let Some(first) = proofs.first() else {
+            assert!(
+                !case.proof_item_present,
+                "{} Lean expected a proof item, but production decoded none",
+                case.name
+            );
+            return None;
+        };
+        assert!(case.proof_item_present);
+        let binding_hash_value = first.binding_hash.as_deref();
+        let binding_hash_bytes = binding_hash_value.and_then(parse_hex64);
+        assert_eq!(
+            binding_hash_value.is_some(),
+            case.binding_hash_present,
+            "{} proof binding-hash presence drifted from Lean projection",
+            case.name
+        );
+        assert_eq!(
+            binding_hash_bytes.is_some(),
+            case.binding_hash_valid,
+            "{} proof binding-hash hex validity drifted from Lean projection",
+            case.name
+        );
+        assert_eq!(
+            first.proof.is_some(),
+            case.proof_present,
+            "{} proof byte field presence drifted from Lean projection",
+            case.name
+        );
+        let metadata_admission = evaluate_native_proof_sidecar_metadata_admission(
+            NativeProofSidecarMetadataAdmissionInput {
+                binding_hash_present: binding_hash_value.is_some(),
+                binding_hash_valid: binding_hash_bytes.is_some(),
+                proof_present: first.proof.is_some(),
+            },
+        );
+        if let Err(rejection) = metadata_admission {
+            return Some(rejection.label().to_owned());
+        }
+        let binding_hash_bytes = binding_hash_bytes.expect("validated binding_hash hex shape");
+        let proof_value = first.proof.as_ref().expect("validated proof presence");
+        let proof = match parse_bytes_value(
+            proof_value,
+            NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            "Lean proof upload item",
+        ) {
+            Ok(proof) => {
+                assert!(
+                    case.proof_bytes_decode,
+                    "{} Lean expected proof byte rejection, but production decoded bytes",
+                    case.name
+                );
+                proof
+            }
+            Err(_) => {
+                assert!(
+                    !case.proof_bytes_decode,
+                    "{} Lean expected proof byte decode, but production rejected bytes",
+                    case.name
+                );
+                return Some("proof_bytes_rejected".to_owned());
+            }
+        };
+        assert_eq!(
+            case.max_proof_bytes, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+            "{} Lean proof upload byte cap drifted from production",
+            case.name
+        );
+        assert_eq!(
+            case.proof_bytes,
+            proof.len(),
+            "{} proof byte length drifted from Lean projection",
+            case.name
+        );
+        let matches_key =
+            native_tx_leaf_artifact_binding_hash_matches_key(binding_hash_bytes, &proof);
+        if !proof.is_empty() && proof.len() <= NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE {
+            assert_eq!(
+                matches_key, case.proof_binding_hash_matches_key,
+                "{} proof binding hash/key match drifted from Lean projection",
+                case.name
+            );
+        }
+        let decoded_admission = evaluate_native_proof_sidecar_decoded_admission(
+            NativeProofSidecarDecodedAdmissionInput {
+                proof_bytes: proof.len(),
+                max_proof_bytes: NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+                proof_binding_hash_matches_key: matches_key,
+            },
+        );
+        decoded_admission
+            .err()
+            .map(|rejection| rejection.label().to_owned())
     }
 
     #[test]

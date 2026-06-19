@@ -111,6 +111,7 @@ import Hegemon.Native.PendingActionFieldProjectionVectors
 import Hegemon.Native.RawIngressBridgePendingActionPublication
 import Hegemon.Native.RawIngressTransferNoTheftPublication
 import Hegemon.Native.SidecarUploadAdmission
+import Hegemon.Native.SidecarUploadRawJsonProjection
 import Hegemon.Native.StagedCiphertextReload
 import Hegemon.Native.StagedProofReload
 import Hegemon.Native.StablecoinPolicyAuthorization
