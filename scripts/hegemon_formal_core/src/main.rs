@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use hegemon_formal_core::{
-    check_blueprint_file, check_claims_file, check_formal_inventory, check_system_model_gates_file,
-    verify_bridge_vectors_file,
+    check_active_goal_progress_file, check_blueprint_file, check_claims_file,
+    check_formal_inventory, check_system_model_gates_file, verify_bridge_vectors_file,
 };
 use std::path::PathBuf;
 
@@ -37,6 +37,9 @@ enum Command {
     CheckSystemModelGates {
         path: PathBuf,
     },
+    CheckActiveGoalProgress {
+        path: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -54,6 +57,9 @@ fn main() -> Result<()> {
         }
         Command::CheckSystemModelGates { path } => {
             serde_json::to_value(check_system_model_gates_file(&path)?)?
+        }
+        Command::CheckActiveGoalProgress { path } => {
+            serde_json::to_value(check_active_goal_progress_file(&path)?)?
         }
     };
     println!("{}", serde_json::to_string_pretty(&value)?);

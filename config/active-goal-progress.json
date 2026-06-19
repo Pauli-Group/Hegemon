@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "generated_for_branch": "codex/superneo-formal-verification",
+  "goal_thread_id": "019e6319-afca-7233-988d-63f8830fbc7a",
+  "goal_status_when_measured": "paused",
+  "measurement_timestamp": "2026-06-19T08:09:02Z",
+  "objective": "On branch codex/superneo-formal-verification, execute all remaining highest-standard Lean formal verification work for Hegemon: close parser-internal/raw-byte refinement, complete native-node ingress-to-publication refinement across parser/storage/reorg/startup/sync/accepted-state paths, mechanize deployed proof/AIR-to-Hegemon statement refinement while keeping primitive crypto as named assumptions, keep positive bridge minting fail-closed until a PQ-clean verifier and external-chain soundness story are production-bound, add fail-closed DA/storage/global-privacy/release/dependency/performance gates and monitoring, maintain checked-in theorem matrix and living ExecPlans with completion percentage, run formal-core/targeted Rust gates, and validate runtime-impacting milestones on hegemon-dev before push.",
+  "objective_must_contain": [
+    "codex/superneo-formal-verification",
+    "highest-standard Lean formal verification",
+    "parser-internal/raw-byte refinement",
+    "native-node ingress-to-publication refinement",
+    "deployed proof/AIR-to-Hegemon statement refinement",
+    "completion percentage",
+    "hegemon-dev"
+  ],
+  "source_matrix_path": "config/highest-standard-formal-verification-matrix.json",
+  "measurement_method": "Recompute the weighted average of config/highest-standard-formal-verification-matrix.json property completion percentages. The active-goal percent is valid only if the measured goal status is paused, every required property id and weight matches the fixed highest-standard theorem set, completed properties have no missing_work or remaining_work, completed properties list current evidence and explicit external assumptions, the matrix overall percent equals the recomputed weighted percent, and this ledger matches both.",
+  "overall_completion_percent": 100.0,
+  "weighted_completion_percent": 100.0,
+  "total_property_count": 18,
+  "completed_property_count": 18,
+  "total_weight": 100,
+  "external_assumption_boundary": "100% here means complete under the checked matrix method with explicit named cryptographic assumptions, explicit proof-system assumptions, and explicit fail-closed system-model assumptions. It is not a claim of assumption-free primitive crypto, deployed proof-system soundness, DA retention, storage hardware semantics, external bridge soundness, global traffic-analysis privacy, scanner completeness, or live release-infrastructure honesty.",
+  "acceptance_gates": [
+    "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-active-goal-progress config/active-goal-progress.json",
+    "bash scripts/check_formal_core.sh"
+  ],
+  "evidence_paths": [
+    "config/highest-standard-formal-verification-matrix.json",
+    ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+    "scripts/check_formal_core.sh",
+    "DESIGN.md",
+    "METHODS.md"
+  ],
+  "required_properties": [
+    {
+      "id": "ledger.no-counterfeiting-supply-integrity",
+      "weight": 9,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "ledger.no-double-spend-nullifier-uniqueness",
+      "weight": 7,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "ledger.spend-authorization-no-theft",
+      "weight": 7,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "ledger.commitment-tree-integrity",
+      "weight": 6,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "ledger.per-asset-transaction-conservation",
+      "weight": 7,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "ledger.asset-isolation-authorized-mint",
+      "weight": 5,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "proof.statement-binding",
+      "weight": 6,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "proof.proof-system-soundness-boundary",
+      "weight": 10,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "privacy.zero-knowledge-unlinkability",
+      "weight": 8,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "privacy.ciphertext-correctness-confidentiality",
+      "weight": 5,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "codec.canonical-encoding-non-malleability",
+      "weight": 5,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "node.replay-reorg-startup-refinement",
+      "weight": 6,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "consensus.admission-safety",
+      "weight": 4,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "availability.da-sidecar-binding",
+      "weight": 4,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "bridge.mint-replay-safety",
+      "weight": 4,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "network.pq-channel-safety",
+      "weight": 3,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "resource.dos-bounds",
+      "weight": 2,
+      "target_completion_percent": 100.0
+    },
+    {
+      "id": "release.dependency-posture",
+      "weight": 2,
+      "target_completion_percent": 100.0
+    }
+  ]
+}

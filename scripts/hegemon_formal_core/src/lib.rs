@@ -34,6 +34,27 @@ const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
     "performance-budget",
 ];
 const MAX_SYSTEM_MODEL_GATE_FRESHNESS_SLA_HOURS: u64 = 168;
+const REQUIRED_HIGHEST_STANDARD_PROPERTIES: &[(&str, u64)] = &[
+    ("ledger.no-counterfeiting-supply-integrity", 9),
+    ("ledger.no-double-spend-nullifier-uniqueness", 7),
+    ("ledger.spend-authorization-no-theft", 7),
+    ("ledger.commitment-tree-integrity", 6),
+    ("ledger.per-asset-transaction-conservation", 7),
+    ("ledger.asset-isolation-authorized-mint", 5),
+    ("proof.statement-binding", 6),
+    ("proof.proof-system-soundness-boundary", 10),
+    ("privacy.zero-knowledge-unlinkability", 8),
+    ("privacy.ciphertext-correctness-confidentiality", 5),
+    ("codec.canonical-encoding-non-malleability", 5),
+    ("node.replay-reorg-startup-refinement", 6),
+    ("consensus.admission-safety", 4),
+    ("availability.da-sidecar-binding", 4),
+    ("bridge.mint-replay-safety", 4),
+    ("network.pq-channel-safety", 3),
+    ("resource.dos-bounds", 2),
+    ("release.dependency-posture", 2),
+];
+const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]
 pub struct ClaimsReport {
@@ -63,6 +84,19 @@ pub struct SystemModelGateReport {
     pub required_categories: Vec<String>,
     pub evidence_paths: usize,
     pub max_freshness_sla_hours: u64,
+    pub passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ActiveGoalProgressReport {
+    pub goal_thread_id: String,
+    pub branch: String,
+    pub goal_status_when_measured: String,
+    pub matrix_properties: usize,
+    pub completed_properties: usize,
+    pub total_weight: u64,
+    pub weighted_completion_percent: f64,
+    pub overall_completion_percent: f64,
     pub passed: bool,
 }
 
@@ -272,6 +306,62 @@ struct SystemModelGate {
     evidence_paths: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActiveGoalProgressLedger {
+    schema_version: u32,
+    generated_for_branch: String,
+    goal_thread_id: String,
+    goal_status_when_measured: String,
+    measurement_timestamp: String,
+    objective: String,
+    objective_must_contain: Vec<String>,
+    source_matrix_path: String,
+    measurement_method: String,
+    overall_completion_percent: f64,
+    weighted_completion_percent: f64,
+    total_property_count: usize,
+    completed_property_count: usize,
+    total_weight: u64,
+    external_assumption_boundary: String,
+    acceptance_gates: Vec<String>,
+    evidence_paths: Vec<String>,
+    required_properties: Vec<ActiveGoalRequiredProperty>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActiveGoalRequiredProperty {
+    id: String,
+    weight: u64,
+    target_completion_percent: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct HighestStandardMatrix {
+    schema_version: u32,
+    branch: String,
+    goal: String,
+    completion_method: String,
+    overall_completion_percent: f64,
+    properties: Vec<HighestStandardMatrixProperty>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HighestStandardMatrixProperty {
+    id: String,
+    weight: u64,
+    completion_percent: f64,
+    #[serde(default)]
+    current_evidence: Vec<String>,
+    #[serde(default)]
+    missing_work: Vec<String>,
+    #[serde(default)]
+    remaining_work: Vec<String>,
+    #[serde(default)]
+    explicit_external_assumptions: Vec<String>,
+}
+
 pub fn check_claims_file(path: &Path) -> Result<ClaimsReport> {
     let root = repository_root_from(path);
     let ledger = read_claims_ledger(path)?;
@@ -390,6 +480,14 @@ pub fn check_system_model_gates_file(path: &Path) -> Result<SystemModelGateRepor
     validate_system_model_gates(&root, &ledger)
 }
 
+pub fn check_active_goal_progress_file(path: &Path) -> Result<ActiveGoalProgressReport> {
+    let root = repository_root_from(path);
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let ledger: ActiveGoalProgressLedger =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    validate_active_goal_progress(&root, &ledger)
+}
+
 fn validate_system_model_gates(
     root: &Path,
     ledger: &SystemModelGateLedger,
@@ -497,6 +595,316 @@ fn validate_system_model_gates(
     })
 }
 
+fn validate_active_goal_progress(
+    root: &Path,
+    ledger: &ActiveGoalProgressLedger,
+) -> Result<ActiveGoalProgressReport> {
+    ensure!(
+        ledger.schema_version == 1,
+        "unsupported active-goal progress schema version"
+    );
+    ensure!(
+        !ledger.generated_for_branch.trim().is_empty(),
+        "generated_for_branch must be set"
+    );
+    ensure!(
+        !ledger.goal_thread_id.trim().is_empty(),
+        "goal_thread_id must be set"
+    );
+    ensure!(
+        ledger.goal_status_when_measured == "paused",
+        "active goal progress must be measured while the goal is paused"
+    );
+    ensure!(
+        ledger.measurement_timestamp.ends_with('Z') && ledger.measurement_timestamp.contains('T'),
+        "measurement_timestamp must be an ISO-8601 UTC timestamp"
+    );
+    ensure!(!ledger.objective.trim().is_empty(), "objective must be set");
+    ensure!(
+        !ledger.objective_must_contain.is_empty(),
+        "objective_must_contain must not be empty"
+    );
+    for required in &ledger.objective_must_contain {
+        ensure!(
+            !required.trim().is_empty(),
+            "objective_must_contain entries must be nonempty"
+        );
+        ensure!(
+            ledger.objective.contains(required),
+            "active goal objective does not contain required phrase {:?}",
+            required
+        );
+    }
+    ensure!(
+        !ledger.measurement_method.trim().is_empty(),
+        "measurement_method must be set"
+    );
+    ensure!(
+        ledger.external_assumption_boundary.contains("explicit")
+            || ledger.external_assumption_boundary.contains("named"),
+        "external_assumption_boundary must state the explicit/named assumption boundary"
+    );
+    ensure!(
+        !ledger.acceptance_gates.is_empty(),
+        "acceptance_gates must not be empty"
+    );
+    for gate in &ledger.acceptance_gates {
+        ensure!(!gate.trim().is_empty(), "acceptance gate must be nonempty");
+    }
+    ensure!(
+        !ledger.evidence_paths.is_empty(),
+        "evidence_paths must not be empty"
+    );
+    for evidence in &ledger.evidence_paths {
+        ensure_repo_relative_existing(root, evidence, "active-goal progress evidence path")?;
+    }
+    ensure_repo_relative_existing(
+        root,
+        &ledger.source_matrix_path,
+        "active-goal progress source matrix",
+    )?;
+    let matrix_path = root.join(&ledger.source_matrix_path);
+    let matrix = read_highest_standard_matrix(&matrix_path)?;
+    validate_progress_against_matrix(ledger, &matrix)
+}
+
+fn read_highest_standard_matrix(path: &Path) -> Result<HighestStandardMatrix> {
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))
+}
+
+fn validate_progress_against_matrix(
+    ledger: &ActiveGoalProgressLedger,
+    matrix: &HighestStandardMatrix,
+) -> Result<ActiveGoalProgressReport> {
+    ensure!(
+        matrix.schema_version == 1,
+        "unsupported highest-standard matrix schema version"
+    );
+    ensure!(
+        matrix.branch == ledger.generated_for_branch,
+        "active-goal progress branch {} does not match matrix branch {}",
+        ledger.generated_for_branch,
+        matrix.branch
+    );
+    ensure!(!matrix.goal.trim().is_empty(), "matrix goal must be set");
+    ensure!(
+        !matrix.completion_method.trim().is_empty(),
+        "matrix completion_method must be set"
+    );
+    ensure!(
+        ledger.total_property_count == matrix.properties.len(),
+        "active-goal progress total_property_count {} does not match matrix property count {}",
+        ledger.total_property_count,
+        matrix.properties.len()
+    );
+    ensure!(
+        ledger.required_properties.len() == matrix.properties.len(),
+        "active-goal progress required property count {} does not match matrix property count {}",
+        ledger.required_properties.len(),
+        matrix.properties.len()
+    );
+    ensure!(
+        ledger.required_properties.len() == REQUIRED_HIGHEST_STANDARD_PROPERTIES.len(),
+        "active-goal progress must list the full highest-standard property set"
+    );
+
+    let required_index: BTreeMap<&str, u64> = REQUIRED_HIGHEST_STANDARD_PROPERTIES
+        .iter()
+        .copied()
+        .collect();
+    let mut ledger_ids = BTreeSet::new();
+    for property in &ledger.required_properties {
+        validate_id("active-goal progress property id", &property.id)?;
+        ensure!(
+            ledger_ids.insert(property.id.as_str()),
+            "duplicate active-goal progress property {}",
+            property.id
+        );
+        let expected_weight = required_index
+            .get(property.id.as_str())
+            .ok_or_else(|| anyhow!("unknown active-goal progress property {}", property.id))?;
+        ensure!(
+            property.weight == *expected_weight,
+            "active-goal progress property {} has weight {}, expected {}",
+            property.id,
+            property.weight,
+            expected_weight
+        );
+        validate_percent(
+            &format!("active-goal progress property {} target", property.id),
+            property.target_completion_percent,
+        )?;
+    }
+    for (id, _) in REQUIRED_HIGHEST_STANDARD_PROPERTIES {
+        ensure!(
+            ledger_ids.contains(id),
+            "active-goal progress missing required property {}",
+            id
+        );
+    }
+
+    let ledger_property_index: BTreeMap<&str, &ActiveGoalRequiredProperty> = ledger
+        .required_properties
+        .iter()
+        .map(|property| (property.id.as_str(), property))
+        .collect();
+    let mut matrix_ids = BTreeSet::new();
+    let mut weighted_sum = 0.0f64;
+    let mut total_weight = 0u64;
+    let mut completed_properties = 0usize;
+    for property in &matrix.properties {
+        validate_id("highest-standard matrix property id", &property.id)?;
+        ensure!(
+            matrix_ids.insert(property.id.as_str()),
+            "duplicate highest-standard matrix property {}",
+            property.id
+        );
+        let expected_weight = required_index
+            .get(property.id.as_str())
+            .ok_or_else(|| anyhow!("matrix lists unknown property {}", property.id))?;
+        ensure!(
+            property.weight == *expected_weight,
+            "matrix property {} has weight {}, expected {}",
+            property.id,
+            property.weight,
+            expected_weight
+        );
+        let required = ledger_property_index
+            .get(property.id.as_str())
+            .ok_or_else(|| anyhow!("ledger missing matrix property {}", property.id))?;
+        validate_percent(
+            &format!("highest-standard matrix property {}", property.id),
+            property.completion_percent,
+        )?;
+        ensure!(
+            approx_percent_eq(
+                property.completion_percent,
+                required.target_completion_percent
+            ),
+            "property {} completion {} does not match active-goal target {}",
+            property.id,
+            property.completion_percent,
+            required.target_completion_percent
+        );
+        if approx_percent_eq(property.completion_percent, 100.0) {
+            ensure!(
+                property.missing_work.is_empty(),
+                "completed property {} still lists missing_work",
+                property.id
+            );
+            ensure!(
+                property.remaining_work.is_empty(),
+                "completed property {} still lists remaining_work",
+                property.id
+            );
+            ensure!(
+                !property.current_evidence.is_empty(),
+                "completed property {} must list current_evidence",
+                property.id
+            );
+            ensure!(
+                !property.explicit_external_assumptions.is_empty(),
+                "completed property {} must state explicit external assumptions",
+                property.id
+            );
+            completed_properties += 1;
+        }
+        weighted_sum += property.completion_percent * property.weight as f64;
+        total_weight += property.weight;
+    }
+    for (id, _) in REQUIRED_HIGHEST_STANDARD_PROPERTIES {
+        ensure!(
+            matrix_ids.contains(id),
+            "highest-standard matrix missing required property {}",
+            id
+        );
+    }
+    ensure!(
+        total_weight > 0,
+        "highest-standard matrix total weight is zero"
+    );
+    let weighted_completion_percent = weighted_sum / total_weight as f64;
+    ensure!(
+        ledger.total_weight == total_weight,
+        "active-goal progress total_weight {} does not match matrix total weight {}",
+        ledger.total_weight,
+        total_weight
+    );
+    ensure!(
+        ledger.completed_property_count == completed_properties,
+        "active-goal progress completed_property_count {} does not match matrix completed properties {}",
+        ledger.completed_property_count,
+        completed_properties
+    );
+    validate_percent(
+        "active-goal progress overall_completion_percent",
+        ledger.overall_completion_percent,
+    )?;
+    validate_percent(
+        "active-goal progress weighted_completion_percent",
+        ledger.weighted_completion_percent,
+    )?;
+    validate_percent(
+        "highest-standard matrix overall_completion_percent",
+        matrix.overall_completion_percent,
+    )?;
+    ensure!(
+        approx_percent_eq(
+            ledger.weighted_completion_percent,
+            weighted_completion_percent
+        ),
+        "active-goal progress weighted percent {} does not match recomputed {}",
+        ledger.weighted_completion_percent,
+        weighted_completion_percent
+    );
+    ensure!(
+        approx_percent_eq(
+            ledger.overall_completion_percent,
+            matrix.overall_completion_percent
+        ),
+        "active-goal progress overall percent {} does not match matrix {}",
+        ledger.overall_completion_percent,
+        matrix.overall_completion_percent
+    );
+    ensure!(
+        approx_percent_eq(
+            matrix.overall_completion_percent,
+            weighted_completion_percent
+        ),
+        "matrix overall percent {} does not match recomputed weighted percent {}",
+        matrix.overall_completion_percent,
+        weighted_completion_percent
+    );
+
+    Ok(ActiveGoalProgressReport {
+        goal_thread_id: ledger.goal_thread_id.clone(),
+        branch: ledger.generated_for_branch.clone(),
+        goal_status_when_measured: ledger.goal_status_when_measured.clone(),
+        matrix_properties: matrix.properties.len(),
+        completed_properties,
+        total_weight,
+        weighted_completion_percent,
+        overall_completion_percent: ledger.overall_completion_percent,
+        passed: true,
+    })
+}
+
+fn validate_percent(label: &str, value: f64) -> Result<()> {
+    ensure!(value.is_finite(), "{} must be finite", label);
+    ensure!(
+        (0.0..=100.0).contains(&value),
+        "{} must be between 0 and 100, got {}",
+        label,
+        value
+    );
+    Ok(())
+}
+
+fn approx_percent_eq(left: f64, right: f64) -> bool {
+    (left - right).abs() <= PROGRESS_PERCENT_EPSILON
+}
+
 pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
     let required = [
         "circuits/formal/README.md",
@@ -513,6 +921,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "scripts/check_lean_claim_axioms.py",
         "scripts/check_ci_release_gate_policy.py",
         "config/lean-axiom-waivers.json",
+        "config/active-goal-progress.json",
         "formal/lean/Hegemon/Privacy/Observer.lean",
         "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
         "formal/lean/Hegemon/Privacy/NativeObserverSurface.lean",
@@ -4844,6 +5253,61 @@ mod tests {
     }
 
     #[test]
+    fn active_goal_progress_accepts_matrix_measurement() {
+        let root = test_root("active-goal-progress-valid");
+        write_active_goal_progress_evidence(&root);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let report =
+            check_active_goal_progress_file(&progress_path).expect("valid active-goal progress");
+        assert_eq!(report.goal_status_when_measured, "paused");
+        assert_eq!(
+            report.matrix_properties,
+            REQUIRED_HIGHEST_STANDARD_PROPERTIES.len()
+        );
+        assert_eq!(
+            report.completed_properties,
+            REQUIRED_HIGHEST_STANDARD_PROPERTIES.len()
+        );
+        assert_eq!(report.total_weight, 100);
+        assert_eq!(report.weighted_completion_percent, 100.0);
+        assert!(report.passed);
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_stale_weighted_percent() {
+        let root = test_root("active-goal-progress-stale-percent");
+        write_active_goal_progress_evidence(&root);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let mut fixture = active_goal_progress_fixture();
+        fixture["weighted_completion_percent"] = json!(99.0);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, fixture);
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(err.to_string().contains("weighted percent"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_unpaused_measurement() {
+        let root = test_root("active-goal-progress-unpaused");
+        write_active_goal_progress_evidence(&root);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let mut fixture = active_goal_progress_fixture();
+        fixture["goal_status_when_measured"] = json!("in_progress");
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, fixture);
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(err.to_string().contains("while the goal is paused"));
+    }
+
+    #[test]
     fn blueprint_accepts_valid_claim_dag() {
         let root = test_root("valid-blueprint");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8768,6 +9232,93 @@ mod tests {
                 category,
             );
         }
+    }
+
+    fn write_active_goal_progress_evidence(root: &Path) {
+        write_repo_file(root, "config/.keep", "");
+        write_repo_file(root, "DESIGN.md", "design");
+        write_repo_file(root, "METHODS.md", "methods");
+        write_repo_file(
+            root,
+            ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+            "plan",
+        );
+        write_repo_file(
+            root,
+            "scripts/check_formal_core.sh",
+            "#!/usr/bin/env bash\n",
+        );
+    }
+
+    fn active_goal_progress_fixture() -> Value {
+        let required_properties: Vec<Value> = REQUIRED_HIGHEST_STANDARD_PROPERTIES
+            .iter()
+            .map(|(id, weight)| {
+                json!({
+                    "id": id,
+                    "weight": weight,
+                    "target_completion_percent": 100.0
+                })
+            })
+            .collect();
+        json!({
+            "schema_version": 1,
+            "generated_for_branch": "codex/superneo-formal-verification",
+            "goal_thread_id": "019e6319-afca-7233-988d-63f8830fbc7a",
+            "goal_status_when_measured": "paused",
+            "measurement_timestamp": "2026-06-19T08:09:02Z",
+            "objective": "On branch codex/superneo-formal-verification, execute all remaining highest-standard Lean formal verification work for Hegemon and maintain checked-in theorem matrix and living ExecPlans with completion percentage.",
+            "objective_must_contain": [
+                "codex/superneo-formal-verification",
+                "highest-standard Lean formal verification",
+                "completion percentage"
+            ],
+            "source_matrix_path": "config/highest-standard-formal-verification-matrix.json",
+            "measurement_method": "Recompute the weighted average of highest-standard matrix property completion percentages and require exact property, weight, evidence, and explicit-assumption agreement.",
+            "overall_completion_percent": 100.0,
+            "weighted_completion_percent": 100.0,
+            "total_property_count": REQUIRED_HIGHEST_STANDARD_PROPERTIES.len(),
+            "completed_property_count": REQUIRED_HIGHEST_STANDARD_PROPERTIES.len(),
+            "total_weight": 100,
+            "external_assumption_boundary": "100% means complete under the matrix method with explicit named cryptographic and system-model assumptions, not assumption-free primitive security.",
+            "acceptance_gates": [
+                "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-active-goal-progress config/active-goal-progress.json",
+                "bash scripts/check_formal_core.sh"
+            ],
+            "evidence_paths": [
+                "config/highest-standard-formal-verification-matrix.json",
+                ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
+                "scripts/check_formal_core.sh",
+                "DESIGN.md",
+                "METHODS.md"
+            ],
+            "required_properties": required_properties
+        })
+    }
+
+    fn highest_standard_matrix_fixture() -> Value {
+        let properties: Vec<Value> = REQUIRED_HIGHEST_STANDARD_PROPERTIES
+            .iter()
+            .map(|(id, weight)| {
+                json!({
+                    "id": id,
+                    "weight": weight,
+                    "completion_percent": 100.0,
+                    "current_evidence": ["formal evidence"],
+                    "missing_work": [],
+                    "remaining_work": [],
+                    "explicit_external_assumptions": ["named assumption"]
+                })
+            })
+            .collect();
+        json!({
+            "schema_version": 1,
+            "branch": "codex/superneo-formal-verification",
+            "goal": "Highest-standard Lean formal verification for Hegemon.",
+            "completion_method": "Weighted average of property completion percentages.",
+            "overall_completion_percent": 100.0,
+            "properties": properties
+        })
     }
 
     fn system_model_gate_fixture() -> Value {
