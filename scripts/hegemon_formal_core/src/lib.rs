@@ -687,6 +687,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/CodecCanonicalPublicationBoundary.lean",
         "formal/lean/Hegemon/Native/PreHeavyCodecCanonicalPublication.lean",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/PendingActionFieldProjectionVectors.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressActionHashTxLeafPublication.lean",
         "formal/lean/Hegemon/Native/RawIngressDaSidecarCanonicalPublication.lean",

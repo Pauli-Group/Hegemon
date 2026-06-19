@@ -105,6 +105,7 @@ import Hegemon.Native.MaterializedSidecarDaBlobPublication
 import Hegemon.Native.MaterializedConsensusDaBlobRefinement
 import Hegemon.Native.MaterializedTransferNoTheftPublication
 import Hegemon.Native.PendingActionByteReplayRowCountBinding
+import Hegemon.Native.PendingActionFieldProjectionVectors
 import Hegemon.Native.RawIngressBridgePendingActionPublication
 import Hegemon.Native.RawIngressTransferNoTheftPublication
 import Hegemon.Native.SidecarUploadAdmission

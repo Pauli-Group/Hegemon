@@ -1598,5 +1598,22 @@
     "known_limitations": [
       "This narrows decoded-action native publication helper-order equivalence. It does not prove arbitrary raw parser internals, proof-system soundness, hash/crypto implementation equivalence, sled/fsync correctness, or complete native-node refinement."
     ]
+  },
+  "last_pending_action_field_projection_vectors_slice": {
+    "status": "focused_gates_passed",
+    "summary": "Added an executable pending-action field projection vector gate. Lean now generates sidecar/bridge/candidate/cumulative-index row-order and row-content cases, and the Rust gate maps those fixtures to real PendingAction values, exact-decodes NativeBlockMeta.action_bytes, materializes sidecar payloads, runs canonical index rebuild, and checks exact commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive rows against the generated projection.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/PendingActionFieldProjectionVectors.lean",
+      "formal/lean/Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean"
+    ],
+    "rust_gate": "HEGEMON_LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_pending_action_field_projection_vectors_match_production --lib --no-default-features -- --nocapture",
+    "validation": {
+      "focused_lean_build": "passed: lake build Hegemon.Native.PendingActionFieldProjectionVectors Hegemon.Native.GeneratePendingActionFieldProjectionVectors gen_pending_action_field_projection_vectors",
+      "focused_rust_gate": "passed: lean_generated_pending_action_field_projection_vectors_match_production",
+      "json": "passed: jq empty over generated vector JSON"
+    },
+    "known_limitations": [
+      "This narrows the production row-order/content part of the pending-action projection residual. It does not prove arbitrary raw SCALE/bincode parser internals, hash/crypto implementation equivalence, sled/fsync correctness, or complete native-node refinement."
+    ]
   }
 }

@@ -4891,7 +4891,7 @@
       "id": "native.pending-action-byte-replay-row-count-binding",
       "component": "native pending-action byte replay row-count binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, decoded block-action validation, production projection rows, and ordered field-projection rows. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, decoded payload rows, validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows agree under named production projection facts now exercised by Rust conformance regressions. The accepted exact-decode/projection-evidence theorem packages those facts as one production field-projection review surface, and the canonical-decode theorem proves that such a surface necessarily carried accepted exact pending-action decode plus accepted exact block-action decode. Companion Rust gates cover the current raw-byte production path and reject malleable trailing action bytes before canonical row projection.",
+      "summary": "The Lean pending-action byte replay row-count binding theorem set composes accepted exact pending-action decode, accepted block-action decode, action-wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, decoded block-action validation, production projection rows, and ordered field-projection rows. It proves replay row counts match decoded payload counts, every accepted validation row is consumed, decoded payload rows, validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows agree under named production projection facts. `PendingActionFieldProjectionVectors` now adds Lean-generated field-row vectors for sidecar, bridge, candidate, and cumulative-index action mixes, and the production gate checks those vectors against decoded action bytes, sidecar materialization, canonical index rebuild rows, commitment/nullifier/bridge replay/ciphertext index content, and ciphertext archive content. The accepted exact-decode/projection-evidence theorem packages those facts as one production field-projection review surface, and the canonical-decode theorem proves that such a surface necessarily carried accepted exact pending-action decode plus accepted exact block-action decode. Companion Rust gates cover the current raw-byte production path and reject malleable trailing action bytes before canonical row projection.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_parser_publication_and_validation_predicates",
       "production_eligible": true,
@@ -4909,15 +4909,22 @@
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_field_projection_binds_decoded_production_fields",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_field_projection_binds_decoded_validation_materialized_wire_rows",
         "Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_raw_bytes_bind_production_field_projection_rows",
-        "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_raw_byte_projection_requires_canonical_decode"
+        "Hegemon.Native.PendingActionByteReplayRowCountBinding.pending_action_raw_byte_projection_requires_canonical_decode",
+        "Hegemon.Native.PendingActionFieldProjectionVectors.generated_projection_case_accepts",
+        "Hegemon.Native.PendingActionFieldProjectionVectors.sidecar_only_case_accepts",
+        "Hegemon.Native.PendingActionFieldProjectionVectors.mixed_canonical_case_accepts",
+        "Hegemon.Native.PendingActionFieldProjectionVectors.bridge_first_case_accepts",
+        "Hegemon.Native.PendingActionFieldProjectionVectors.two_sidecar_case_accepts"
       ],
       "assumptions": [
         "The theorem composes accepted parser, wire-replay, publication, block-action validation, and production projection predicates; it does not prove arbitrary-byte parser internals.",
-        "The production projection variants make decoded-action-to-validation-row, materialized-action, materialized-payload, planned-row, wire-replay, and canonical-row equality named review facts instead of anonymous equality premises; `accepted_pending_action_raw_bytes_bind_production_field_projection_rows` packages the accepted exact-decode/projection-evidence production path into one theorem object, and `pending_action_raw_byte_projection_requires_canonical_decode` exposes that any such production field-row package necessarily had no pending-action parser rejection, no trailing bytes, no noncanonical re-encoding, no block-action count mismatch, and no non-exact action payload. Companion Rust regressions check raw action bytes, full decoded fields, route payloads, validation-step fields, materialized/planned rows, exact canonical index rows, malleable trailing-action rejection before projection rows, and byte-budget rejection on the current production construction path.",
+        "The production projection variants make decoded-action-to-validation-row, materialized-action, materialized-payload, planned-row, wire-replay, and canonical-row equality named review facts instead of anonymous equality premises; `accepted_pending_action_raw_bytes_bind_production_field_projection_rows` packages the accepted exact-decode/projection-evidence production path into one theorem object, and `pending_action_raw_byte_projection_requires_canonical_decode` exposes that any such production field-row package necessarily had no pending-action parser rejection, no trailing bytes, no noncanonical re-encoding, no block-action count mismatch, and no non-exact action payload. The generated field-projection vectors bind representative action mixes to production decoded/materialized/planned/canonical row content. Companion Rust regressions check raw action bytes, full decoded fields, route payloads, validation-step fields, materialized/planned rows, exact canonical index rows, malleable trailing-action rejection before projection rows, and byte-budget rejection on the current production construction path.",
         "Raw-ingress wrappers consume existing `RawIngressPendingActionPublicationFacts`; they do not prove DA availability, hash security, proof soundness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/PendingActionFieldProjectionVectors.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
@@ -4930,8 +4937,11 @@
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.PendingActionByteReplayRowCountBinding Hegemon",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.PendingActionFieldProjectionVectors Hegemon.Native.GeneratePendingActionFieldProjectionVectors",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake exe gen_pending_action_field_projection_vectors",
         "bash scripts/check_formal_core.sh",
+        "HEGEMON_LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_pending_action_field_projection_vectors_match_production --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node pending_action_raw_bytes_project_to_validated_materialized_replay_rows --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_action_byte_budget --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node canonical_index_rebuild_rejects_malleable_action_bytes_before_projection_rows --lib --no-default-features -- --nocapture",
@@ -4948,7 +4958,7 @@
         },
         {
           "id": "native-pending-action-byte-row-count-validation-projection-open",
-          "description": "The production decoded-action, validation, materialized-payload, planned-row, wire-replay, and canonical-row projection is now a named Lean raw-byte production field package with Rust conformance regressions for the current production path, but arbitrary parser-internal proof and complete native-node equivalence remain open.",
+          "description": "The production decoded-action, validation, materialized-payload, planned-row, wire-replay, and canonical-row projection is now a named Lean raw-byte production field package with Lean-generated Rust conformance vectors for representative row-order and row-content action mixes, but arbitrary parser-internal proof and complete native-node equivalence remain open.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }

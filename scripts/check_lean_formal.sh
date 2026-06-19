@@ -119,6 +119,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/BlockActionValidation.lean
   lake env lean Hegemon/Native/BlockActionReplayPublication.lean
   lake env lean Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean
+  lake env lean Hegemon/Native/PendingActionFieldProjectionVectors.lean
+  lake env lean Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean
   lake env lean Hegemon/Native/BridgeActionPayloadAdmission.lean
   lake env lean Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean
   lake env lean Hegemon/Native/BridgeActionResourceAdmission.lean

@@ -15582,6 +15582,44 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanPendingActionFieldProjectionVectorFile {
+        schema_version: u32,
+        pending_action_field_projection_cases: Vec<LeanPendingActionFieldProjectionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingActionFieldProjectionCase {
+        name: String,
+        actions: Vec<LeanPendingActionProjectionActionSpec>,
+        expected_commitment_rows: Vec<LeanPendingActionProjectionRowRef>,
+        expected_nullifier_rows: Vec<LeanPendingActionProjectionRowRef>,
+        expected_bridge_replay_rows: Vec<usize>,
+        expected_ciphertext_index_rows: Vec<LeanPendingActionProjectionRowRef>,
+        expected_ciphertext_archive_rows: Vec<LeanPendingActionProjectionRowRef>,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingActionProjectionActionSpec {
+        fixture_name: String,
+        commitment_count: usize,
+        nullifier_count: usize,
+        ciphertext_count: usize,
+        has_bridge_replay: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingActionProjectionRowRef {
+        action_index: usize,
+        offset: usize,
+        commitment_index: u64,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockActionValidationVectorFile {
         schema_version: u32,
         block_action_validation_cases: Vec<LeanBlockActionValidationCase>,
@@ -25060,6 +25098,233 @@ mod tests {
                     case.name
                 );
             }
+        }
+    }
+
+    #[test]
+    fn lean_generated_pending_action_field_projection_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean pending-action field projection vectors");
+        let vectors: LeanPendingActionFieldProjectionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean pending-action field projection vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.pending_action_field_projection_cases.is_empty(),
+            "Lean pending-action field projection cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.pending_action_field_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_pending_action_field_projection_case(case);
+        }
+    }
+
+    fn verify_lean_pending_action_field_projection_case(
+        case: &LeanPendingActionFieldProjectionCase,
+    ) {
+        assert!(
+            case.expected_valid,
+            "{} generated field projection case is expected to accept",
+            case.name
+        );
+        let pow_bits = 0x207f_ffff;
+        let genesis = genesis_meta(pow_bits).expect("genesis");
+        let anchor = test_state(genesis.clone()).commitment_tree.root();
+        let actions = case
+            .actions
+            .iter()
+            .map(|spec| lean_pending_action_projection_fixture(&spec.fixture_name, anchor))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actions.len(),
+            case.actions.len(),
+            "{} action fixture count drifted",
+            case.name
+        );
+
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+        for action in &actions {
+            insert_test_sidecar_ciphertext(&da_ciphertext_tree, action);
+        }
+
+        let mut block = genesis.clone();
+        block.height = genesis.height + 1;
+        block.parent_hash = genesis.hash;
+        block.tx_count = u32::try_from(actions.len()).expect("fixture action count fits u32");
+        block.action_bytes = actions.iter().map(Encode::encode).collect();
+        let chain = vec![genesis, block];
+        let decoded_actions = chain
+            .iter()
+            .skip(1)
+            .flat_map(|meta| {
+                decode_block_actions(meta).unwrap_or_else(|err| {
+                    panic!("{}: decode canonical action bytes: {err}", case.name)
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(decoded_actions.len(), case.actions.len(), "{}", case.name);
+
+        for (spec, action) in case.actions.iter().zip(decoded_actions.iter()) {
+            assert_eq!(
+                action.commitments.len(),
+                spec.commitment_count,
+                "{} fixture {} commitment count drifted",
+                case.name,
+                spec.fixture_name
+            );
+            assert_eq!(
+                action.nullifiers.len(),
+                spec.nullifier_count,
+                "{} fixture {} nullifier count drifted",
+                case.name,
+                spec.fixture_name
+            );
+            assert_eq!(
+                canonical_ciphertext_count_for_action(action).expect("canonical ciphertext count"),
+                spec.ciphertext_count,
+                "{} fixture {} ciphertext count drifted",
+                case.name,
+                spec.fixture_name
+            );
+            assert_eq!(
+                bridge_inbound_replay_key_from_action(action)
+                    .expect("bridge replay projection")
+                    .is_some(),
+                spec.has_bridge_replay,
+                "{} fixture {} bridge replay projection drifted",
+                case.name,
+                spec.fixture_name
+            );
+        }
+
+        let materialized =
+            materialize_native_action_payloads(&da_ciphertext_tree, &decoded_actions)
+                .unwrap_or_else(|err| panic!("{}: materialize decoded actions: {err}", case.name));
+        let plan = plan_canonical_index_rebuild(&chain, &da_ciphertext_tree, None)
+            .unwrap_or_else(|err| panic!("{}: canonical index rebuild plan: {err}", case.name));
+
+        let expected_commitment_entries = case
+            .expected_commitment_rows
+            .iter()
+            .map(|row| {
+                let action = decoded_actions
+                    .get(row.action_index)
+                    .unwrap_or_else(|| panic!("{}: commitment row action index", case.name));
+                let commitment = action
+                    .commitments
+                    .get(row.offset)
+                    .unwrap_or_else(|| panic!("{}: commitment row offset", case.name));
+                (row.commitment_index, *commitment)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan.commitment_entries, expected_commitment_entries,
+            "{} commitment rows drifted from Lean projection",
+            case.name
+        );
+
+        let expected_nullifier_entries = case
+            .expected_nullifier_rows
+            .iter()
+            .map(|row| {
+                let action = decoded_actions
+                    .get(row.action_index)
+                    .unwrap_or_else(|| panic!("{}: nullifier row action index", case.name));
+                *action
+                    .nullifiers
+                    .get(row.offset)
+                    .unwrap_or_else(|| panic!("{}: nullifier row offset", case.name))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan.nullifier_entries, expected_nullifier_entries,
+            "{} nullifier rows drifted from Lean projection",
+            case.name
+        );
+
+        let expected_bridge_replay_entries = case
+            .expected_bridge_replay_rows
+            .iter()
+            .map(|action_index| {
+                let action = decoded_actions
+                    .get(*action_index)
+                    .unwrap_or_else(|| panic!("{}: bridge replay row action index", case.name));
+                bridge_inbound_replay_key_from_action(action)
+                    .expect("bridge replay projection")
+                    .unwrap_or_else(|| panic!("{}: missing expected bridge replay key", case.name))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan.bridge_replay_entries, expected_bridge_replay_entries,
+            "{} bridge replay rows drifted from Lean projection",
+            case.name
+        );
+
+        let expected_ciphertext_index_entries = case
+            .expected_ciphertext_index_rows
+            .iter()
+            .map(|row| {
+                let action = decoded_actions
+                    .get(row.action_index)
+                    .unwrap_or_else(|| panic!("{}: ciphertext index row action index", case.name));
+                let hash = action
+                    .ciphertext_hashes
+                    .get(row.offset)
+                    .unwrap_or_else(|| panic!("{}: ciphertext index row offset", case.name));
+                let size = action
+                    .ciphertext_sizes
+                    .get(row.offset)
+                    .copied()
+                    .unwrap_or_else(|| panic!("{}: ciphertext size row offset", case.name));
+                let mut value = Vec::with_capacity(32 + 4 + 8);
+                value.extend_from_slice(&action.tx_hash);
+                value.extend_from_slice(&size.to_le_bytes());
+                value.extend_from_slice(&(row.offset as u64).to_le_bytes());
+                (*hash, value)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan.ciphertext_index_entries, expected_ciphertext_index_entries,
+            "{} ciphertext index rows drifted from Lean projection",
+            case.name
+        );
+
+        let expected_ciphertext_archive_entries = case
+            .expected_ciphertext_archive_rows
+            .iter()
+            .map(|row| {
+                let payload = materialized
+                    .get(row.action_index)
+                    .unwrap_or_else(|| panic!("{}: ciphertext archive action index", case.name));
+                let bytes = payload
+                    .ciphertexts
+                    .get(row.offset)
+                    .unwrap_or_else(|| panic!("{}: ciphertext archive row offset", case.name));
+                (row.commitment_index, bytes.clone())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            plan.ciphertext_archive_entries, expected_ciphertext_archive_entries,
+            "{} ciphertext archive rows drifted from Lean projection",
+            case.name
+        );
+    }
+
+    fn lean_pending_action_projection_fixture(name: &str, anchor: [u8; 48]) -> PendingAction {
+        match name {
+            "sidecar-a" => test_sidecar_transfer_action(anchor, [77u8; 48], [78u8; 48], 0),
+            "sidecar-b" => test_sidecar_transfer_action(anchor, [87u8; 48], [88u8; 48], 0),
+            "outbound-a" => test_outbound_bridge_action(b"lean projection outbound"),
+            "inbound-a" => test_inbound_bridge_action(b"lean projection inbound"),
+            "candidate-a" => test_candidate_artifact_action(1, 89),
+            other => panic!("unknown Lean pending-action projection fixture {other}"),
         }
     }
 

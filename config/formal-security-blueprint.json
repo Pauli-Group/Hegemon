@@ -13182,8 +13182,8 @@
       "id": "native.pending-action-byte-replay-row-count-binding",
       "claim_id": "native.pending-action-byte-replay-row-count-binding",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean pending-action byte and raw-ingress publication surfaces, accepted exact pending-action decode, accepted block-action decode, accepted wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, accepted decoded block-action validation, named production projection facts, and ordered field-projection evidence imply replay row-count agreement plus field-row agreement with decoded payload rows, validated action rows, materialized action rows, materialized payload rows, planned rows, wire replay rows, and canonical rows. The accepted exact-decode/projection-evidence production field theorem packages those accepted decode, validation, materialization, planning, wire, and canonical projection facts as one production review surface; raw byte coverage is provided by the Rust conformance gates.",
-      "informal_argument": "`Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_replay_row_counts` composes exact decode, block-action decode declared-count binding, and accepted wire replay projection to derive replay row-count equality. `pending_action_byte_publication_facts_bind_replay_row_counts` extracts the same facts from `PendingActionBytePublicationFacts`. `accepted_actions_from_validated_count` and `accepted_block_action_validation_validated_count` prove the recursive block-action validation evaluator consumes every accepted validation row. `accepted_pending_action_byte_decode_binds_validated_replay_row_counts` and `raw_ingress_pending_action_publication_binds_validated_replay_row_counts` connect decoded payload rows, wire replay rows, and validated action rows. `pending_action_production_projection_binds_decoded_validation_materialized_rows` and `accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows` name the production projection facts tying decoded payload rows to validation actions, materialized action rows, materialized payload rows, and wire replay rows. `pending_action_field_projection_binds_decoded_validation_materialized_wire_rows` and `pending_action_field_projection_binds_decoded_production_fields` expose the ordered decoded/validation/materialized/planned/wire/canonical field-row equalities, including commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection. `accepted_pending_action_raw_bytes_bind_production_field_projection_rows` then packages the accepted exact-decode/projection-evidence production field projection surface.",
+      "formal_statement": "For the executable Lean pending-action byte and raw-ingress publication surfaces, accepted exact pending-action decode, accepted block-action decode, accepted wire replay projection, pending-action byte publication facts, raw-ingress pending-action publication facts, accepted decoded block-action validation, named production projection facts, and ordered field-projection evidence imply replay row-count agreement plus field-row agreement with decoded payload rows, validated action rows, materialized action rows, materialized payload rows, planned rows, wire replay rows, and canonical rows. The accepted exact-decode/projection-evidence production field theorem packages those accepted decode, validation, materialization, planning, wire, and canonical projection facts as one production review surface; `PendingActionFieldProjectionVectors` provides executable generated cases for the current production row-order/content gate.",
+      "informal_argument": "`Hegemon.Native.PendingActionByteReplayRowCountBinding.accepted_pending_action_byte_decode_binds_replay_row_counts` composes exact decode, block-action decode declared-count binding, and accepted wire replay projection to derive replay row-count equality. `pending_action_byte_publication_facts_bind_replay_row_counts` extracts the same facts from `PendingActionBytePublicationFacts`. `accepted_actions_from_validated_count` and `accepted_block_action_validation_validated_count` prove the recursive block-action validation evaluator consumes every accepted validation row. `accepted_pending_action_byte_decode_binds_validated_replay_row_counts` and `raw_ingress_pending_action_publication_binds_validated_replay_row_counts` connect decoded payload rows, wire replay rows, and validated action rows. `pending_action_production_projection_binds_decoded_validation_materialized_rows` and `accepted_pending_action_production_projection_binds_decoded_validation_materialized_rows` name the production projection facts tying decoded payload rows to validation actions, materialized action rows, materialized payload rows, and wire replay rows. `pending_action_field_projection_binds_decoded_validation_materialized_wire_rows` and `pending_action_field_projection_binds_decoded_production_fields` expose the ordered decoded/validation/materialized/planned/wire/canonical field-row equalities, including commitment, nullifier, bridge replay, ciphertext index, and ciphertext archive row projection. `accepted_pending_action_raw_bytes_bind_production_field_projection_rows` then packages the accepted exact-decode/projection-evidence production field projection surface. `PendingActionFieldProjectionVectors.generated_projection_case_accepts` and the sidecar/mixed/bridge-first/two-sidecar case theorems drive a Rust gate that decodes real `NativeBlockMeta.action_bytes`, materializes sidecar payloads, runs canonical index rebuild, and checks exact row content against the generated projection.",
       "depends_on": [
         "native.codec-admission",
         "native.pending-action-reload",
@@ -13194,6 +13194,8 @@
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/PendingActionFieldProjectionVectors.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean",
         "formal/lean/Hegemon/Native/PendingActionByteParserRefinement.lean",
         "formal/lean/Hegemon/Native/PendingActionBytePublicationRefinement.lean",
         "formal/lean/Hegemon/Native/RawIngressPendingActionPublicationRefinement.lean",
@@ -13205,6 +13207,8 @@
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean",
+        "formal/lean/Hegemon/Native/PendingActionFieldProjectionVectors.lean",
+        "formal/lean/Hegemon/Native/GeneratePendingActionFieldProjectionVectors.lean",
         "formal/lean/Hegemon.lean",
         "formal/lean/README.md",
         "METHODS.md",
@@ -13221,6 +13225,11 @@
         "notes": "Accepted as a zero-runtime-cost Lean composition that names the pending-action parser/publication replay-row binding, validated-row boundary, and ordered field-row projection surface. Scope keeps arbitrary raw parser internals explicit."
       },
       "falsification_cases": [
+        {
+          "id": "lean-generated-pending-action-field-projection-vectors",
+          "description": "Changing the executable pending-action field projection cases or their generated acceptance theorems must fail the Lean formal gate or generated-vector conformance gate.",
+          "gate": "HEGEMON_LEAN_PENDING_ACTION_FIELD_PROJECTION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_pending_action_field_projection_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
         {
           "id": "lean-pending-action-byte-replay-row-count-binding-theorem",
           "description": "Removing or weakening the pending-action byte replay row-count binding theorem set, including the accepted raw-byte production field projection theorem, must fail the Lean formal gate or claims check.",
@@ -13242,7 +13251,7 @@
           "gate": "cargo test -p hegemon-node projects_decoded_materialized_wire_rows --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node proves a parser/publication/validation/materialization/planning/wire/canonical row-field composition over accepted production-bound predicates and gates the current Rust production path. It does not prove arbitrary raw SCALE/bincode parser correctness, all parser-internal implementation equivalence, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, DA availability, or complete native-node equivalence."
+      "scope_boundary": "This node proves a parser/publication/validation/materialization/planning/wire/canonical row-field composition over accepted production-bound predicates and gates the current Rust production path, including generated sidecar/bridge/candidate/cumulative-index row content checks. It does not prove arbitrary raw SCALE/bincode parser correctness, all parser-internal implementation equivalence, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, DA availability, or complete native-node equivalence."
     },
     {
       "id": "native.tx-leaf-artifact-projection-refinement",
