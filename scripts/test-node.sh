@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN="${HEGEMON_NODE_BIN:-$ROOT_DIR/target/debug/hegemon-node}"
+DEFAULT_BIN="$ROOT_DIR/target/debug/hegemon-node"
+BIN="${HEGEMON_NODE_BIN:-$DEFAULT_BIN}"
 
 A_BASE="${HEGEMON_TEST_NODE_A_BASE:-/tmp/hegemon-native-a}"
 B_BASE="${HEGEMON_TEST_NODE_B_BASE:-/tmp/hegemon-native-b}"
@@ -32,9 +33,17 @@ fail() {
 }
 
 ensure_binary() {
+  if [[ -n "${HEGEMON_NODE_BIN:-}" ]]; then
+    if [[ ! -x "$BIN" ]]; then
+      fail "HEGEMON_NODE_BIN is not executable: $BIN"
+    fi
+    return
+  fi
+
+  log "building hegemon-node"
+  cargo build -p hegemon-node --bin hegemon-node --no-default-features
   if [[ ! -x "$BIN" ]]; then
-    log "building hegemon-node"
-    cargo build -p hegemon-node --bin hegemon-node --no-default-features
+    fail "built hegemon-node not found at $BIN"
   fi
 }
 
@@ -108,7 +117,7 @@ sigterm_shutdown() {
   log "starting native node for SIGTERM shutdown smoke on RPC $SIGTERM_RPC"
   (
     cd "$ROOT_DIR"
-    exec env RUST_LOG=hegemon_node=debug,network=info \
+    exec env NO_COLOR=1 CLICOLOR=0 CLICOLOR_FORCE=0 RUST_LOG=hegemon_node=debug,network=info \
       "$BIN" --dev --base-path "$SIGTERM_BASE" --rpc-port "$SIGTERM_RPC" \
         --port "$SIGTERM_P2P" --rpc-methods unsafe --name native-sigterm
   ) >"$SIGTERM_LOG" 2>&1 &
@@ -123,11 +132,11 @@ sigterm_shutdown() {
     tail -80 "$SIGTERM_LOG" >&2 || true
     fail "SIGTERM shutdown exited with status $exit_code"
   fi
-  grep -q 'signal="sigterm"' "$SIGTERM_LOG" || {
+  grep -q 'signal.*"sigterm"' "$SIGTERM_LOG" || {
     tail -80 "$SIGTERM_LOG" >&2 || true
     fail "SIGTERM shutdown log did not record sigterm"
   }
-  grep -q 'operation="shutdown_flush"' "$SIGTERM_LOG" || {
+  grep -q 'operation.*"shutdown_flush"' "$SIGTERM_LOG" || {
     tail -80 "$SIGTERM_LOG" >&2 || true
     fail "SIGTERM shutdown did not use shutdown_flush durability operation"
   }
