@@ -11307,6 +11307,11 @@
                 "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects",
                 "Hegemon.Bridge.MintPayloadAdmission.amount_zero_precedes_amount_bound",
                 "Hegemon.Bridge.MintPayloadAdmission.native_asset_rejected_after_amount_bound",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_exact_decode",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_excludes_malleability",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_policy_facts",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_decode_failure_precedes_payload_hash",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash",
                 "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_not_verified_rejects_before_replay_or_mint",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_payload_mismatch_rejects_before_replay",
@@ -11379,6 +11384,11 @@
                 "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects",
                 "Hegemon.Bridge.MintPayloadAdmission.amount_zero_precedes_amount_bound",
                 "Hegemon.Bridge.MintPayloadAdmission.native_asset_rejected_after_amount_bound",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_exact_decode",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_excludes_malleability",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_policy_facts",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_decode_failure_precedes_payload_hash",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash",
                 "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_not_verified_rejects_before_replay_or_mint",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_payload_mismatch_rejects_before_replay",
@@ -11455,6 +11465,11 @@
                 "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects",
                 "Hegemon.Bridge.MintPayloadAdmission.amount_zero_precedes_amount_bound",
                 "Hegemon.Bridge.MintPayloadAdmission.native_asset_rejected_after_amount_bound",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_exact_decode",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_excludes_malleability",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_policy_facts",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_decode_failure_precedes_payload_hash",
+                "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash",
                 "Hegemon.Bridge.MintReplayPolicy.accepts_iff_receipt_mint_replay_preconditions",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_not_verified_rejects_before_replay_or_mint",
                 "Hegemon.Bridge.MintReplayPolicy.receipt_payload_mismatch_rejects_before_replay",
@@ -11481,6 +11496,10 @@
         "formal/lean/Hegemon/Native/RawIngressSidecarReplayRecoverability.lean",
         "formal/lean/Hegemon/Bridge/MintReplayPolicy.lean",
         "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean",
+        "formal/lean/Hegemon/Bridge/MintPayloadAdmission.lean",
+        "formal/lean/Hegemon/Bridge/GenerateMintPayloadAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/BridgeMintPayloadRawAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateBridgeMintPayloadRawAdmissionVectors.lean",
         "formal/lean/Hegemon/Native/GenerateBridgeActionPayloadAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "formal/lean/README.md",
@@ -11491,7 +11510,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-07",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded bridge action payload admission. Scope is cheap pre-receipt payload admission; receipt verification remains separate and RISC Zero remains disabled/fail-closed in the release native node."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for decoded bridge action payload admission and raw BridgeMintPayloadV1 exact-decode-to-policy conformance. Scope is cheap pre-receipt payload admission and verified-receipt mint-payload handoff; external receipt verification remains separate and RISC Zero remains disabled/fail-closed in the release native node."
       },
       "falsification_cases": [
         {
@@ -11513,6 +11532,11 @@
           "id": "lean-generated-bridge-mint-payload-admission-conformance",
           "description": "Changing the decoded bridge mint payload admission table away from the Lean executable spec must fail generated-vector conformance, including exact-decode, payload-hash, receipt-message, amount, and asset rejection precedence.",
           "gate": "HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "lean-generated-bridge-mint-payload-raw-admission-conformance",
+          "description": "Changing raw BridgeMintPayloadV1 exact decode, full-consumption/canonical re-encoding, or production-derived payload-hash/receipt-message/field predicates away from the Lean executable raw spec must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_bridge_mint_payload_raw_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
           "id": "lean-generated-bridge-verifier-registration-policy-conformance",

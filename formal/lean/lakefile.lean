@@ -31,6 +31,9 @@ lean_exe gen_bridge_mint_replay_policy_vectors where
 lean_exe gen_bridge_mint_payload_admission_vectors where
   root := `Hegemon.Bridge.GenerateMintPayloadAdmissionVectors
 
+lean_exe gen_bridge_mint_payload_raw_admission_vectors where
+  root := `Hegemon.Native.GenerateBridgeMintPayloadRawAdmissionVectors
+
 lean_exe gen_bridge_verifier_registration_policy_vectors where
   root := `Hegemon.Native.GenerateBridgeVerifierRegistrationPolicyVectors
 

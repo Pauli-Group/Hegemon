@@ -15661,6 +15661,34 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintPayloadRawAdmissionVectorFile {
+        schema_version: u32,
+        bridge_mint_payload_raw_admission_cases: Vec<LeanBridgeMintPayloadRawAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBridgeMintPayloadRawAdmissionCase {
+        name: String,
+        fixture: String,
+        raw_hex: String,
+        parser_accepts: bool,
+        consumed_all_bytes: bool,
+        canonical_reencode_matches: bool,
+        payload_hash_matches: bool,
+        receipt_message_hash_matches: bool,
+        version_matches: bool,
+        destination_matches: bool,
+        recipient_commitment_nonzero: bool,
+        amount_nonzero: bool,
+        amount_within_bound: bool,
+        asset_non_native: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBridgeVerifierRegistrationPolicyVectorFile {
         schema_version: u32,
         bridge_verifier_registration_policy_cases: Vec<LeanBridgeVerifierRegistrationPolicyCase>,
@@ -24867,6 +24895,236 @@ mod tests {
             "{} native bridge mint payload admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_bridge_mint_payload_raw_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean bridge mint payload raw admission vectors");
+        let vectors: LeanBridgeMintPayloadRawAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean bridge mint payload raw admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.bridge_mint_payload_raw_admission_cases.is_empty(),
+            "Lean bridge mint payload raw admission cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.bridge_mint_payload_raw_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_bridge_mint_payload_raw_admission_case(case);
+        }
+    }
+
+    fn verify_lean_bridge_mint_payload_raw_admission_case(
+        case: &LeanBridgeMintPayloadRawAdmissionCase,
+    ) {
+        let raw = decode_lean_hex(&case.raw_hex);
+        let (parser_accepts, consumed_all_bytes, canonical_reencode_matches, parsed_payload) =
+            bridge_mint_payload_raw_decode_surface(&raw);
+        assert_eq!(
+            parser_accepts, case.parser_accepts,
+            "{} production BridgeMintPayloadV1 parser acceptance drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            consumed_all_bytes, case.consumed_all_bytes,
+            "{} production BridgeMintPayloadV1 consumed-all-bytes fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            canonical_reencode_matches, case.canonical_reencode_matches,
+            "{} production BridgeMintPayloadV1 canonical re-encode fact drifted from Lean raw spec",
+            case.name
+        );
+
+        let exact_payload = decode_scale_exact::<BridgeMintPayloadV1>(
+            &raw,
+            "Lean bridge mint payload raw admission bytes",
+        )
+        .ok();
+        assert_eq!(
+            exact_payload.is_some(),
+            case.parser_accepts && case.consumed_all_bytes && case.canonical_reencode_matches,
+            "{} production BridgeMintPayloadV1 exact-decode predicate drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            exact_payload.as_ref(),
+            parsed_payload
+                .as_ref()
+                .filter(|_| case.consumed_all_bytes && case.canonical_reencode_matches),
+            "{} exact decode and raw parser surface disagree for BridgeMintPayloadV1",
+            case.name
+        );
+
+        if let Some(payload) = &exact_payload {
+            assert_bridge_mint_payload_fixture_fields(case, payload);
+            assert_eq!(
+                payload.encode(),
+                raw,
+                "{} decoded BridgeMintPayloadV1 does not canonically re-encode to Lean raw bytes",
+                case.name
+            );
+        }
+
+        let (args, output) = inbound_bridge_args_and_output_for_raw_mint_payload(case, raw);
+        let input = bridge_mint_payload_admission_input(&args, &output, exact_payload.as_ref());
+        assert_eq!(
+            input.payload_decoded,
+            case.parser_accepts && case.consumed_all_bytes && case.canonical_reencode_matches,
+            "{} production payload_decoded fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.payload_hash_matches, case.payload_hash_matches,
+            "{} production payload_hash_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.receipt_message_hash_matches, case.receipt_message_hash_matches,
+            "{} production receipt_message_hash_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.version_matches, case.version_matches,
+            "{} production version_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.destination_matches, case.destination_matches,
+            "{} production destination_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.recipient_commitment_nonzero, case.recipient_commitment_nonzero,
+            "{} production recipient_commitment_nonzero fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.amount_nonzero, case.amount_nonzero,
+            "{} production amount_nonzero fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.amount_within_bound, case.amount_within_bound,
+            "{} production amount_within_bound fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
+            input.asset_non_native, case.asset_non_native,
+            "{} production asset_non_native fact drifted from Lean raw spec",
+            case.name
+        );
+
+        let actual_rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .err()
+            .map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native bridge mint raw payload admission validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native bridge mint raw payload admission rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn bridge_mint_payload_raw_decode_surface(
+        raw: &[u8],
+    ) -> (bool, bool, bool, Option<BridgeMintPayloadV1>) {
+        let mut input = raw;
+        match BridgeMintPayloadV1::decode(&mut input) {
+            Ok(payload) => {
+                let consumed_all_bytes = input.is_empty();
+                let canonical_reencode_matches = payload.encode() == raw;
+                (
+                    true,
+                    consumed_all_bytes,
+                    canonical_reencode_matches,
+                    Some(payload),
+                )
+            }
+            Err(_) => (false, false, false, None),
+        }
+    }
+
+    fn inbound_bridge_args_and_output_for_raw_mint_payload(
+        case: &LeanBridgeMintPayloadRawAdmissionCase,
+        payload: Vec<u8>,
+    ) -> (InboundBridgeArgsV1, BridgeCheckpointOutputV1) {
+        let mut message = BridgeMessageV1 {
+            source_chain_id: HEGEMON_CHAIN_ID_V1,
+            destination_chain_id: HEGEMON_CHAIN_ID_V1,
+            app_family_id: FAMILY_BRIDGE,
+            message_nonce: 42,
+            source_height: 9,
+            payload_hash: bridge_payload_hash(&payload),
+            payload,
+        };
+        let mut output = test_bridge_checkpoint_output_for_message(&message);
+        if !case.payload_hash_matches {
+            message.payload_hash = [0x5au8; 48];
+        }
+        if case.payload_hash_matches && !case.receipt_message_hash_matches {
+            output.message_hash = [0x5bu8; 48];
+        }
+        (
+            InboundBridgeArgsV1 {
+                source_chain_id: HEGEMON_CHAIN_ID_V1,
+                source_message_nonce: message.message_nonce,
+                verifier_program_hash: HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
+                proof_receipt: vec![0x01],
+                message,
+            },
+            output,
+        )
+    }
+
+    fn assert_bridge_mint_payload_fixture_fields(
+        case: &LeanBridgeMintPayloadRawAdmissionCase,
+        payload: &BridgeMintPayloadV1,
+    ) {
+        match case.fixture.as_str() {
+            "valid_payload" | "payload_hash_mismatch" | "receipt_message_hash_mismatch" => {
+                assert_eq!(payload.version, BRIDGE_MINT_PAYLOAD_VERSION_V1);
+                assert_eq!(payload.destination_chain_id, HEGEMON_CHAIN_ID_V1);
+                assert_eq!(payload.recipient_commitment, [0x42u8; 48]);
+                assert_eq!(payload.asset_id, 7);
+                assert_eq!(payload.amount, 42);
+                assert_eq!(payload.mint_nonce, 99);
+            }
+            "version_mismatch" => assert_eq!(payload.version, 2),
+            "destination_mismatch" => assert_eq!(payload.destination_chain_id, [0x9au8; 32]),
+            "zero_recipient" => assert_eq!(payload.recipient_commitment, [0u8; 48]),
+            "zero_amount" => assert_eq!(payload.amount, 0),
+            "over_bound_amount" => {
+                assert_eq!(payload.amount, MAX_NATIVE_BRIDGE_MINT_AMOUNT + 1)
+            }
+            "native_asset" => {
+                assert_eq!(
+                    payload.asset_id,
+                    transaction_core::constants::NATIVE_ASSET_ID
+                )
+            }
+            "short_payload" | "trailing_payload" | "short_payload_hash_mismatch" => {
+                panic!(
+                    "{} fixture should not exact-decode as BridgeMintPayloadV1",
+                    case.fixture
+                )
+            }
+            other => panic!("unknown BridgeMintPayloadV1 raw fixture {other}"),
+        }
     }
 
     #[test]

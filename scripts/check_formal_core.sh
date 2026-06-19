@@ -76,6 +76,7 @@ LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$(mktemp)"
 LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS="$(mktemp)"
+LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS="$(mktemp)"
 LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS="$(mktemp)"
 LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS="$(mktemp)"
@@ -206,6 +207,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_bridge_action_resource_admission_vectors > "$LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS"
   lake exe gen_bridge_mint_replay_policy_vectors > "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS"
   lake exe gen_bridge_mint_payload_admission_vectors > "$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS"
+  lake exe gen_bridge_mint_payload_raw_admission_vectors > "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS"
   lake exe gen_bridge_verifier_registration_policy_vectors > "$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS"
   lake exe gen_bridge_witness_backscan_vectors > "$LEAN_BRIDGE_WITNESS_BACKSCAN_VECTORS"
   lake exe gen_bridge_witness_export_admission_vectors > "$LEAN_BRIDGE_WITNESS_EXPORT_ADMISSION_VECTORS"
@@ -439,6 +441,7 @@ python3 "$ROOT/scripts/check_ci_release_gate_policy.py" \
   cd "$ROOT/formal/lean"
   python3 -m json.tool "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" >/dev/null
+  python3 -m json.tool "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_BOUNDED_REQUEST_ADMISSION_VECTORS" >/dev/null
   python3 -m json.tool "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" >/dev/null
@@ -447,6 +450,8 @@ HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$LEAN_BRIDGE_MINT_REPLAY_POLICY_
   cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS="$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_mint_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS="$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS" \
+  cargo test -p hegemon-node lean_generated_bridge_mint_payload_raw_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS="$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_verifier_registration_policy_vectors_match_production --lib --no-default-features -- --nocapture
 python3 "$ROOT/scripts/check_dependency_audit_policy_vectors.py" \
@@ -831,6 +836,6 @@ else
   printf 'set HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 to run installed TLC/Apalache binaries\n'
 fi
 
-rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS"
+rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS"
 
 printf '\n=== Hegemon formal-core gate passed ===\n'

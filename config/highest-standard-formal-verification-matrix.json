@@ -125,20 +125,27 @@
   },
   "last_bridge_mint_payload_admission_slice": {
     "date": "2026-06-18",
-    "summary": "Added a decoded bridge mint-payload admission gate for the future positive mint path while keeping positive minting disabled. `BridgeMintPayloadV1` is now a versioned fixed-field protocol-kernel payload, `Hegemon.Bridge.MintPayloadAdmission` proves the decoded admission table and rejection precedence, Lean-generated vectors bind the table to production Rust, and the verified inbound receipt handoff exact-decodes/admission-checks the payload before entering the disabled mint/replay policy.",
+    "summary": "Added and then deepened the bridge mint-payload admission gate for the future positive mint path while keeping positive minting disabled. `BridgeMintPayloadV1` is a versioned fixed-field protocol-kernel payload, `Hegemon.Bridge.MintPayloadAdmission` proves the decoded admission table and rejection precedence, and `Hegemon.Native.BridgeMintPayloadRawAdmission` now lifts that table through exact SCALE decode, full consumption, and canonical re-encoding of raw payload bytes. Lean-generated decoded and raw vectors bind the table to production Rust, including payload-hash and receipt-message predicates derived from real inbound bridge bytes, before the verified inbound receipt handoff enters the disabled mint/replay policy.",
     "lean_modules": [
       "formal/lean/Hegemon/Bridge/MintPayloadAdmission.lean",
-      "formal/lean/Hegemon/Bridge/GenerateMintPayloadAdmissionVectors.lean"
+      "formal/lean/Hegemon/Bridge/GenerateMintPayloadAdmissionVectors.lean",
+      "formal/lean/Hegemon/Native/BridgeMintPayloadRawAdmission.lean",
+      "formal/lean/Hegemon/Native/GenerateBridgeMintPayloadRawAdmissionVectors.lean"
     ],
     "top_level_theorems": [
       "Hegemon.Bridge.MintPayloadAdmission.accepts_iff_bridge_mint_payload_preconditions",
       "Hegemon.Bridge.MintPayloadAdmission.accepted_bridge_mint_payload_exposes_facts",
       "Hegemon.Bridge.MintPayloadAdmission.payload_decode_failure_precedes_hash",
       "Hegemon.Bridge.MintPayloadAdmission.payload_hash_mismatch_rejects",
-      "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects"
+      "Hegemon.Bridge.MintPayloadAdmission.receipt_message_hash_mismatch_rejects",
+      "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_exact_decode",
+      "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_excludes_malleability",
+      "Hegemon.Native.BridgeMintPayloadRawAdmission.accepted_bridge_mint_payload_raw_exposes_policy_facts",
+      "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_decode_failure_precedes_payload_hash",
+      "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash"
     ],
     "validation": {
-      "status": "Targeted Lean build, generated-vector JSON validation, Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally."
+      "status": "Targeted Lean build, generated-vector JSON validation, decoded and raw Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally."
     },
     "known_limitations": [
       "This narrows the bridge mechanized-refinement gap at the mint payload boundary. It does not enable positive bridge minting, prove external receipt soundness, prove SCALE implementation correctness for all arbitrary bytes, or replace the required future PQ-clean receipt verifier and authorization story."
@@ -1129,6 +1136,8 @@
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean `raw_ingress_bridge_mint_replay_release_hardened_certificate_exposes_complete_mint_replay_boundary` packages the release-disabled fail-closed posture with the complete mint/replay publication boundary",
         "formal/lean/Hegemon/Bridge/Replay.lean now models import with set-style pending-key removal, matching production replay-state semantics instead of list erase semantics",
         "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean emits schema-v2 acceptance/rejection and exact next replay-state vectors for the abstract bridge mint/replay decision table, including pending replay-key import clearing and unrelated pending-key preservation",
+        "formal/lean/Hegemon/Native/BridgeMintPayloadRawAdmission.lean proves accepted raw BridgeMintPayloadV1 admission exposes exact SCALE decode/full-consumption/canonical-reencoding facts before decoded mint-payload policy facts",
+        "formal/lean/Hegemon/Native/GenerateBridgeMintPayloadRawAdmissionVectors.lean emits raw BridgeMintPayloadV1 fixtures for valid, short, trailing, payload-hash, receipt-message, version, destination, zero-recipient, zero-amount, over-bound amount, native-asset, and decode-precedence cases checked by lean_generated_bridge_mint_payload_raw_admission_vectors_match_production",
         "node/src/native/mod.rs checks the schema-v2 abstract bridge mint/replay vectors against production `evaluate_native_bridge_mint_replay_policy`, including rejection precedence, duplicate-free replay-set inputs, exact next consumed/pending sets, and accepted replay-key consumption",
         "node/src/native/mod.rs now threads mempool or block-validation replay state into the verified inbound-receipt handoff and calls the same bridge mint/replay policy with mint authorization disabled, so a verified experimental receipt still fails closed until a PQ-clean mint decoder and authorizer are bound",
         "scripts/check_formal_core.sh now runs `lean_generated_bridge_mint_replay_policy_vectors_match_production` instead of only JSON-parsing the abstract policy generator output",
