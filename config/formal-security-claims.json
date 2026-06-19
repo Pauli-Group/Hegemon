@@ -6066,7 +6066,7 @@
       "id": "native.block-action-replay-publication",
       "component": "native block-action validation to replay publication boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean block-action replay publication theorems compose accepted decoded block-action validation with accepted block replay/accounting and accepted wire replay projection. They package action hash preconditions, proof that every decoded validation row was consumed, wire-projection-derived row-count equality to replay rows, wire-projection-derived imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe.",
+      "summary": "The Lean block-action replay publication theorems compose accepted decoded block-action validation with accepted block replay/accounting and accepted wire replay projection. They package action hash preconditions, proof that every decoded validation row was consumed, wire-projection-derived row-count equality to replay rows, wire-projection-derived imported bridge replay-count equality, canonical replay trace order, accepted action-stream facts, block commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement in one production-review surface before consensus admission treats a decoded action block as replay-safe. The executable rejection table and generated vectors now bind that composition to the production helper order: block-action validation, block replay, wire replay projection, validation/wire action-count agreement, wire/replay action-count agreement, validation/wire bridge replay-count agreement, then replay/wire bridge replay-count agreement.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_composition_over_existing_conformance_gates",
       "production_eligible": true,
@@ -6077,15 +6077,25 @@
         "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts",
         "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_replay_row_count",
         "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_derives_bridge_replay_count",
-        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions"
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions",
+        "Hegemon.Native.BlockActionReplayPublication.accepted_block_action_replay_publication_gate_facts",
+        "Hegemon.Native.BlockActionReplayPublication.valid_block_action_replay_publication_accepts",
+        "Hegemon.Native.BlockActionReplayPublication.validation_rejects_before_replay",
+        "Hegemon.Native.BlockActionReplayPublication.replay_rejects_before_wire_projection",
+        "Hegemon.Native.BlockActionReplayPublication.wire_projection_rejects_before_row_agreement",
+        "Hegemon.Native.BlockActionReplayPublication.validation_wire_action_count_mismatch_rejects",
+        "Hegemon.Native.BlockActionReplayPublication.wire_replay_action_count_mismatch_rejects",
+        "Hegemon.Native.BlockActionReplayPublication.validation_bridge_replay_count_mismatch_rejects",
+        "Hegemon.Native.BlockActionReplayPublication.replay_bridge_replay_count_mismatch_rejects"
       ],
       "assumptions": [
-        "The theorem composes accepted decoded block-action validation and accepted block replay predicates; it does not add a new runtime helper.",
+        "The theorem composes accepted decoded block-action validation and accepted block replay predicates; the conformance gate adds no production runtime work and checks the existing Rust helper composition from generated Lean vectors.",
         "The direct row-count and imported bridge replay-count equalities are now derived by the shared-actions theorem from accepted wire replay projection plus explicit production construction equalities tying that projection to validation rows, replay rows, and bridge replay rows.",
         "SCALE parser correctness, BLAKE3/BLAKE2/hash security and implementation equivalence, tx-leaf and recursive proof soundness, storage durability, PoW threshold validity, and complete native-node refinement remain outside this theorem."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean",
         "formal/lean/Hegemon/Native/BlockActionValidation.lean",
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
         "formal/lean/Hegemon.lean",
@@ -6095,14 +6105,15 @@
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
-        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.BlockActionReplayPublication Hegemon",
+        "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.BlockActionReplayPublication Hegemon.Native.GenerateBlockActionReplayPublicationVectors Hegemon",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake env lean Hegemon/Native/BlockActionReplayPublication.lean",
+        "HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_action_replay_publication_vectors_match_production --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": [
         {
           "id": "native-block-action-replay-row-projection-premise-open",
-          "description": "The accepted wire replay projection now derives validation/replay row agreement, but production construction of that projection from arbitrary raw decoded bytes remains premise-level.",
+          "description": "The generated-vector gate now binds the composed production helper order and summary agreement, but production construction of those inputs from arbitrary raw decoded bytes remains covered by narrower parser/projection gates rather than one end-to-end raw-byte parser proof.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },

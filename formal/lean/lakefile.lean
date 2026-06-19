@@ -244,6 +244,9 @@ lean_exe gen_mined_work_admission_vectors where
 lean_exe gen_mined_block_commit_publication_vectors where
   root := `Hegemon.Native.GenerateMinedBlockCommitPublicationVectors
 
+lean_exe gen_block_action_replay_publication_vectors where
+  root := `Hegemon.Native.GenerateBlockActionReplayPublicationVectors
+
 lean_exe gen_work_template_admission_vectors where
   root := `Hegemon.Native.GenerateWorkTemplateAdmissionVectors
 

@@ -69,6 +69,7 @@ LEAN_BRIDGE_REPLAY_RELOAD_VECTORS="$(mktemp)"
 LEAN_PENDING_ACTION_RELOAD_VECTORS="$(mktemp)"
 LEAN_ACTION_SCOPE_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BLOCK_ACTION_VALIDATION_VECTORS="$(mktemp)"
+LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS="$(mktemp)"
 LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$(mktemp)"
@@ -191,6 +192,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_pending_action_reload_vectors > "$LEAN_PENDING_ACTION_RELOAD_VECTORS"
   lake exe gen_action_scope_admission_vectors > "$LEAN_ACTION_SCOPE_ADMISSION_VECTORS"
   lake exe gen_block_action_validation_vectors > "$LEAN_BLOCK_ACTION_VALIDATION_VECTORS"
+  lake exe gen_block_action_replay_publication_vectors > "$LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS"
   lake exe gen_bridge_action_payload_admission_vectors > "$LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS"
   lake exe gen_bridge_action_resource_admission_vectors > "$LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS"
   lake exe gen_bridge_mint_replay_policy_vectors > "$LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS"
@@ -383,6 +385,8 @@ HEGEMON_LEAN_ACTION_SCOPE_ADMISSION_VECTORS="$LEAN_ACTION_SCOPE_ADMISSION_VECTOR
   cargo test -p hegemon-node lean_generated_action_scope_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BLOCK_ACTION_VALIDATION_VECTORS="$LEAN_BLOCK_ACTION_VALIDATION_VECTORS" \
   cargo test -p hegemon-node lean_generated_block_action_validation_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS="$LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS" \
+  cargo test -p hegemon-node lean_generated_block_action_replay_publication_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS="$LEAN_BRIDGE_ACTION_PAYLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_action_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS="$LEAN_BRIDGE_ACTION_RESOURCE_ADMISSION_VECTORS" \

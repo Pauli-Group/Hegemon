@@ -950,6 +950,7 @@
         "formal/lean/Hegemon/Native/StorageDurabilityAdmission.lean and node/src/native/mod.rs now make storage-durability operation support executable: schema-v2 vectors check each native replay/startup/storage operation label plus unsupported-operation rejection against the typed Rust durability-barrier operation parser before transaction/flush acceptance",
         "node/src/native/mod.rs now logs startup DB-open/reload timings before RPC and routes SIGTERM/Ctrl-C shutdown through the Lean-vector-checked shutdown_flush storage durability operation before process exit",
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean now derives validation/replay row-count agreement and bridge replay-count agreement from accepted wire replay projection plus shared decoded-row construction premises",
+        "formal/lean/Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean and node/src/native/mod.rs now bind the block-action replay publication composition to production helper order: validation, replay, wire projection, action-row agreement, and bridge replay-row agreement",
         "formal/lean/Hegemon/Native/SyncBlockReplayPublication.lean now derives decoded action-row/raw replay-row agreement from accepted block-action decode plus accepted wire replay projection before sync raw canonical publication",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now binds accepted decoded payload rows to validated action rows, materialized action/payload rows, planned rows, wire replay rows, and canonical field rows through named production projection facts",
         "formal/lean/Hegemon/Native/PendingActionByteReplayRowCountBinding.lean now exposes pending_action_field_projection_binds_decoded_production_fields and accepted_pending_action_raw_bytes_bind_production_field_projection_rows, packaging accepted exact-decode/projection evidence into the decoded/validation/materialized/planned/wire/canonical production field-row review surface while raw pending-action bytes remain covered by Rust conformance gates",
@@ -1004,6 +1005,7 @@
         "scripts/check_formal_core.sh runs the materialized sidecar transfer consensus DA-blob and mixed sidecar/inbound-bridge DA-blob exclusion conformance tests as release gates",
         "scripts/check_formal_core.sh runs materialized_sidecar_da_blob_bridge_first_excludes_replay_rows so inbound bridge replay rows that precede a sidecar transfer are still projected as replay rows but excluded from consensus DA blob bytes and roots",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean composes accepted local mined-work freshness, block-commitment admission, and atomic mined-block commit-manifest admission into one publication surface before production order gates publish mined state or broadcast",
+        "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean and GenerateBlockActionReplayPublicationVectors.lean expose and production-bind the decoded action validation/replay/wire-projection publication rejection order before consensus treats a decoded action block as replay-safe",
         "formal/lean/Hegemon/Consensus/RecursiveBlockV2VerifierSurface.lean and gen_recursive_block_v2_verifier_surface_vectors prove/check recursive_block_v2 pre-proof surface admission before cryptographic child proof verification",
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean now proves recursive_block_v1/v2 artifact bytes must be within the versioned cap before decode, and consensus/src/proof.rs rejects oversized recursive artifacts before deserialization",
         "consensus/src/proof.rs derives the recursive_block_v1 cap from block-recursion header/proof/public widths and gates it with the focused V1 raw-byte parser/admission oracle; protocol/shielded-pool/src/types.rs now exposes the corrected 699452-byte compatibility cap.",
@@ -1577,6 +1579,24 @@
     },
     "known_limitations": [
       "This narrows mined native publication helper-order equivalence. It does not prove PoW threshold soundness, body/replay parser internals, sled/fsync correctness, or complete native-node refinement."
+    ]
+  },
+  "last_block_action_replay_publication_slice": {
+    "status": "passed_full_formal_core",
+    "summary": "Added an executable block-action replay publication rejection table and Lean-generated production conformance gate. The gate binds the composed native decoded-action publication decision to production helper order: block-action validation, block replay, wire replay projection, validation/wire action-count agreement, wire/replay action-count agreement, validation/wire bridge replay-count agreement, then replay/wire bridge replay-count agreement.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+      "formal/lean/Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean"
+    ],
+    "rust_gate": "HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_block_action_replay_publication_vectors_match_production --lib --no-default-features -- --nocapture",
+    "validation": {
+      "focused_lean_build": "passed: lake build Hegemon.Native.BlockActionReplayPublication Hegemon.Native.GenerateBlockActionReplayPublicationVectors",
+      "focused_rust_gate": "passed: lean_generated_block_action_replay_publication_vectors_match_production",
+      "full_formal_core": "passed: bash scripts/check_formal_core.sh",
+      "format": "passed: cargo fmt --check"
+    },
+    "known_limitations": [
+      "This narrows decoded-action native publication helper-order equivalence. It does not prove arbitrary raw parser internals, proof-system soundness, hash/crypto implementation equivalence, sled/fsync correctness, or complete native-node refinement."
     ]
   }
 }

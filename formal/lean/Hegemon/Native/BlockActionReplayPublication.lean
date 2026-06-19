@@ -401,6 +401,451 @@ theorem accepted_block_action_validation_and_replay_publish_consensus_facts_from
       rowCountAgreement
       bridgeReplayCountAgreement
 
+structure BlockActionReplayPublicationInput where
+  validation : BlockActionValidationInput
+  replay : BlockReplayInput
+  wireProjection : ActionWireReplayProjectionInput
+deriving DecidableEq, Repr
+
+inductive BlockActionReplayPublicationReject where
+  | validationRejected
+  | replayRejected
+  | wireProjectionRejected
+  | validationWireActionCountMismatch
+  | wireReplayActionCountMismatch
+  | validationBridgeReplayCountMismatch
+  | replayBridgeReplayCountMismatch
+deriving DecidableEq, Repr
+
+def evaluateBlockActionReplayPublicationRejection
+    (input : BlockActionReplayPublicationInput) :
+    Option BlockActionReplayPublicationReject :=
+  match evaluateBlockActionValidation input.validation with
+  | Except.error _ =>
+      some BlockActionReplayPublicationReject.validationRejected
+  | Except.ok validationSummary =>
+      match evaluateBlockReplayRefinement input.replay with
+      | Except.error _ =>
+          some BlockActionReplayPublicationReject.replayRejected
+      | Except.ok replaySummary =>
+          match evaluateActionWireReplayProjection input.wireProjection with
+          | Except.error _ =>
+              some BlockActionReplayPublicationReject.wireProjectionRejected
+          | Except.ok wireOutput =>
+              if input.wireProjection.actionCount =
+                  input.validation.actions.length then
+                if wireOutput.projectedActionCount =
+                    input.replay.actions.length then
+                  if validationSummary.importedBridgeReplayCount =
+                      wireOutput.projectedBridgeReplayRowCount then
+                    if replaySummary.importedBridgeReplayCount =
+                        wireOutput.projectedBridgeReplayRowCount then
+                      none
+                    else
+                      some
+                        BlockActionReplayPublicationReject.replayBridgeReplayCountMismatch
+                  else
+                    some
+                      BlockActionReplayPublicationReject.validationBridgeReplayCountMismatch
+                else
+                  some
+                    BlockActionReplayPublicationReject.wireReplayActionCountMismatch
+              else
+                some
+                  BlockActionReplayPublicationReject.validationWireActionCountMismatch
+
+def blockActionReplayPublicationAccepts
+    (input : BlockActionReplayPublicationInput) : Bool :=
+  evaluateBlockActionReplayPublicationRejection input = none
+
+structure BlockActionReplayPublicationGateFacts
+    (input : BlockActionReplayPublicationInput) : Prop where
+  validationAccepted :
+    blockActionValidationAccepts input.validation = true
+  replayAccepted :
+    blockReplayAccepts input.replay = true
+  wireProjectionAccepted :
+    actionWireReplayProjectionAccepts input.wireProjection = true
+  wireActionCountMatchesValidation :
+    input.wireProjection.actionCount =
+      input.validation.actions.length
+  wireProjectedActionCountMatchesReplay :
+    ∀ {wireOutput : ActionWireReplayProjectionOutput},
+      evaluateActionWireReplayProjection input.wireProjection =
+        Except.ok wireOutput ->
+      wireOutput.projectedActionCount =
+        input.replay.actions.length
+  validationBridgeRowsMatchWire :
+    ∀ {validationSummary : BlockActionValidationSummary}
+      {wireOutput : ActionWireReplayProjectionOutput},
+      evaluateBlockActionValidation input.validation =
+        Except.ok validationSummary ->
+      evaluateActionWireReplayProjection input.wireProjection =
+        Except.ok wireOutput ->
+      validationSummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount
+  replayBridgeRowsMatchWire :
+    ∀ {replaySummary : BlockReplaySummary}
+      {wireOutput : ActionWireReplayProjectionOutput},
+      evaluateBlockReplayRefinement input.replay =
+        Except.ok replaySummary ->
+      evaluateActionWireReplayProjection input.wireProjection =
+        Except.ok wireOutput ->
+      replaySummary.importedBridgeReplayCount =
+        wireOutput.projectedBridgeReplayRowCount
+
+theorem accepted_block_action_replay_publication_gate_facts
+    {input : BlockActionReplayPublicationInput}
+    (accepted :
+      evaluateBlockActionReplayPublicationRejection input = none) :
+    BlockActionReplayPublicationGateFacts input := by
+  unfold evaluateBlockActionReplayPublicationRejection at accepted
+  cases hValidation :
+      evaluateBlockActionValidation input.validation with
+  | error rejection =>
+      simp [hValidation] at accepted
+  | ok validationSummary =>
+      cases hReplay :
+          evaluateBlockReplayRefinement input.replay with
+      | error rejection =>
+          simp [hValidation, hReplay] at accepted
+      | ok replaySummary =>
+          cases hWire :
+              evaluateActionWireReplayProjection input.wireProjection with
+          | error rejection =>
+              simp [hValidation, hReplay, hWire] at accepted
+          | ok wireOutput =>
+              by_cases hWireValidation :
+                  input.wireProjection.actionCount =
+                    input.validation.actions.length
+              · by_cases hWireReplay :
+                    wireOutput.projectedActionCount =
+                      input.replay.actions.length
+                · by_cases hValidationBridge :
+                      validationSummary.importedBridgeReplayCount =
+                        wireOutput.projectedBridgeReplayRowCount
+                  · by_cases hReplayBridge :
+                        replaySummary.importedBridgeReplayCount =
+                          wireOutput.projectedBridgeReplayRowCount
+                    · have validationAccepts :
+                          blockActionValidationAccepts input.validation =
+                            true := by
+                        simp [blockActionValidationAccepts, hValidation]
+                      have replayAccepts :
+                          blockReplayAccepts input.replay = true := by
+                        simp [blockReplayAccepts, hReplay]
+                      have wireAccepts :
+                          actionWireReplayProjectionAccepts
+                              input.wireProjection = true := by
+                        simp [actionWireReplayProjectionAccepts, hWire]
+                      exact
+                        {
+                          validationAccepted := validationAccepts,
+                          replayAccepted := replayAccepts,
+                          wireProjectionAccepted := wireAccepts,
+                          wireActionCountMatchesValidation :=
+                            hWireValidation,
+                          wireProjectedActionCountMatchesReplay :=
+                            by
+                              intro output outputAccepted
+                              rw [hWire] at outputAccepted
+                              cases outputAccepted
+                              exact hWireReplay,
+                          validationBridgeRowsMatchWire :=
+                            by
+                              intro summary output
+                                validationAccepted' wireAccepted'
+                              rw [hValidation] at validationAccepted'
+                              rw [hWire] at wireAccepted'
+                              cases validationAccepted'
+                              cases wireAccepted'
+                              exact hValidationBridge,
+                          replayBridgeRowsMatchWire :=
+                            by
+                              intro summary output
+                                replayAccepted' wireAccepted'
+                              rw [hReplay] at replayAccepted'
+                              rw [hWire] at wireAccepted'
+                              cases replayAccepted'
+                              cases wireAccepted'
+                              exact hReplayBridge
+                        }
+                    · simp [
+                        hValidation,
+                        hReplay,
+                        hWire,
+                        hWireValidation,
+                        hWireReplay,
+                        hValidationBridge,
+                        hReplayBridge
+                      ] at accepted
+                  · simp [
+                      hValidation,
+                      hReplay,
+                      hWire,
+                      hWireValidation,
+                      hWireReplay,
+                      hValidationBridge
+                    ] at accepted
+                · simp [
+                    hValidation,
+                    hReplay,
+                    hWire,
+                    hWireValidation,
+                    hWireReplay
+                  ] at accepted
+              · simp [
+                  hValidation,
+                  hReplay,
+                  hWire,
+                  hWireValidation
+                ] at accepted
+
+def replayTransferOne : StreamAction :=
+  {
+    commitmentCount := 1,
+    ciphertextCount := 1,
+    nullifiers := [1],
+    bridgeReplayKey := none
+  }
+
+def replayBridgeOne : StreamAction :=
+  {
+    commitmentCount := 0,
+    ciphertextCount := 0,
+    nullifiers := [],
+    bridgeReplayKey := some 7
+  }
+
+def replayBridgeMissing : StreamAction :=
+  {
+    replayBridgeOne with
+    bridgeReplayKey := none
+  }
+
+def replayCandidateLike : StreamAction :=
+  {
+    commitmentCount := 0,
+    ciphertextCount := 0,
+    nullifiers := [],
+    bridgeReplayKey := none
+  }
+
+def replayCoinbaseLike : StreamAction :=
+  {
+    commitmentCount := 1,
+    ciphertextCount := 1,
+    nullifiers := [],
+    bridgeReplayKey := none
+  }
+
+def replayTransferTwo : StreamAction :=
+  {
+    commitmentCount := 1,
+    ciphertextCount := 1,
+    nullifiers := [2],
+    bridgeReplayKey := none
+  }
+
+def validPublicationReplay : BlockReplayInput :=
+  {
+    validReplay with
+    leafStart := 30,
+    actions := [
+      replayTransferOne,
+      replayBridgeOne,
+      replayCandidateLike,
+      replayCoinbaseLike,
+      replayTransferTwo
+    ]
+  }
+
+def wireTransferOne : WireReplayAction :=
+  {
+    ciphertextHashCount := 1,
+    ciphertextSizeCount := 1,
+    plannedCiphertextCount := 1,
+    ciphertextHashesMatch := true,
+    ciphertextSizesMatch := true,
+    plannedReplayPresent := false,
+    replayKeyMatches := true
+  }
+
+def wireBridgeOne : WireReplayAction :=
+  {
+    ciphertextHashCount := 0,
+    ciphertextSizeCount := 0,
+    plannedCiphertextCount := 0,
+    ciphertextHashesMatch := true,
+    ciphertextSizesMatch := true,
+    plannedReplayPresent := true,
+    replayKeyMatches := true
+  }
+
+def wireNoCipherNoReplay : WireReplayAction :=
+  {
+    ciphertextHashCount := 0,
+    ciphertextSizeCount := 0,
+    plannedCiphertextCount := 0,
+    ciphertextHashesMatch := true,
+    ciphertextSizesMatch := true,
+    plannedReplayPresent := false,
+    replayKeyMatches := true
+  }
+
+def wireOneCipherNoReplay : WireReplayAction :=
+  {
+    ciphertextHashCount := 1,
+    ciphertextSizeCount := 1,
+    plannedCiphertextCount := 1,
+    ciphertextHashesMatch := true,
+    ciphertextSizesMatch := true,
+    plannedReplayPresent := false,
+    replayKeyMatches := true
+  }
+
+def validPublicationWireProjection :
+    ActionWireReplayProjectionInput :=
+  {
+    actionCount := 5,
+    plannedCount := 5,
+    actions := [
+      wireTransferOne,
+      wireBridgeOne,
+      wireNoCipherNoReplay,
+      wireOneCipherNoReplay,
+      wireOneCipherNoReplay
+    ]
+  }
+
+def validBlockActionReplayPublication :
+    BlockActionReplayPublicationInput :=
+  {
+    validation := validMixedValidation,
+    replay := validPublicationReplay,
+    wireProjection := validPublicationWireProjection
+  }
+
+def wireValidationCountMismatchPublication :
+    BlockActionReplayPublicationInput :=
+  {
+    validBlockActionReplayPublication with
+    wireProjection :=
+      {
+        emptyProjection with
+        actionCount := 4,
+        plannedCount := 4,
+        actions :=
+          [
+            wireTransferOne,
+            wireBridgeOne,
+            wireNoCipherNoReplay,
+            wireOneCipherNoReplay
+          ]
+      }
+  }
+
+def wireReplayCountMismatchPublication :
+    BlockActionReplayPublicationInput :=
+  {
+    validBlockActionReplayPublication with
+    replay := validTwoActionReplay
+  }
+
+def validationBridgeCountMismatchPublication :
+    BlockActionReplayPublicationInput :=
+  {
+    validBlockActionReplayPublication with
+    wireProjection :=
+      {
+        validPublicationWireProjection with
+        actions :=
+          [
+            wireTransferOne,
+            wireNoCipherNoReplay,
+            wireNoCipherNoReplay,
+            wireOneCipherNoReplay,
+            wireOneCipherNoReplay
+          ]
+      }
+  }
+
+def replayBridgeCountMismatchPublication :
+    BlockActionReplayPublicationInput :=
+  {
+    validBlockActionReplayPublication with
+    replay :=
+      {
+        validPublicationReplay with
+        actions := [
+          replayTransferOne,
+          replayBridgeMissing,
+          replayCandidateLike,
+          replayCoinbaseLike,
+          replayTransferTwo
+        ]
+      }
+  }
+
+theorem valid_block_action_replay_publication_accepts :
+    evaluateBlockActionReplayPublicationRejection
+      validBlockActionReplayPublication = none := by
+  decide
+
+theorem validation_rejects_before_replay :
+    evaluateBlockActionReplayPublicationRejection
+      { validBlockActionReplayPublication with
+        validation := actionHashMismatchValidation,
+        replay := counterfeitSupplyReplay } =
+      some
+        BlockActionReplayPublicationReject.validationRejected := by
+  decide
+
+theorem replay_rejects_before_wire_projection :
+    evaluateBlockActionReplayPublicationRejection
+      { validBlockActionReplayPublication with
+        replay := counterfeitSupplyReplay,
+        wireProjection := planLengthMismatch } =
+      some
+        BlockActionReplayPublicationReject.replayRejected := by
+  decide
+
+theorem wire_projection_rejects_before_row_agreement :
+    evaluateBlockActionReplayPublicationRejection
+      { validBlockActionReplayPublication with
+        wireProjection := planLengthMismatch } =
+      some
+        BlockActionReplayPublicationReject.wireProjectionRejected := by
+  decide
+
+theorem validation_wire_action_count_mismatch_rejects :
+    evaluateBlockActionReplayPublicationRejection
+      wireValidationCountMismatchPublication =
+      some
+        BlockActionReplayPublicationReject.validationWireActionCountMismatch := by
+  decide
+
+theorem wire_replay_action_count_mismatch_rejects :
+    evaluateBlockActionReplayPublicationRejection
+      wireReplayCountMismatchPublication =
+      some
+        BlockActionReplayPublicationReject.wireReplayActionCountMismatch := by
+  decide
+
+theorem validation_bridge_replay_count_mismatch_rejects :
+    evaluateBlockActionReplayPublicationRejection
+      validationBridgeCountMismatchPublication =
+      some
+        BlockActionReplayPublicationReject.validationBridgeReplayCountMismatch := by
+  decide
+
+theorem replay_bridge_replay_count_mismatch_rejects :
+    evaluateBlockActionReplayPublicationRejection
+      replayBridgeCountMismatchPublication =
+      some
+        BlockActionReplayPublicationReject.replayBridgeReplayCountMismatch := by
+  decide
+
 end BlockActionReplayPublication
 end Native
 end Hegemon

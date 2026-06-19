@@ -12231,8 +12231,8 @@
       "id": "native.block-action-replay-publication",
       "claim_id": "native.block-action-replay-publication",
       "kind": "target_claim",
-      "formal_statement": "If decoded block-action validation accepts, block replay accepts for the corresponding replay input, accepted wire replay projection is built from the same decoded action rows, and the validation/replay bridge replay rows match the projected bridge replay rows, then the accepted publication surface exposes action-hash preconditions, all decoded validation rows consumed, replay-row agreement, bridge replay-count agreement, canonical replay trace order, accepted action-stream facts, commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions` composes the already checked decoded-action validation kernel with accepted action wire-replay projection and the block replay/accounting kernel. `accepted_actions_from_counts_rows` proves the recursive validation evaluator consumes every decoded validation row, `accepted_block_action_validation_hash_preconditions` extracts action hash/count uniqueness preconditions from acceptance, and `accepted_block_action_validation_counts_all_rows` specializes the row-count theorem to top-level block validation. `accepted_block_action_validation_derives_replay_row_count` derives validation-to-replay row agreement through `accepted_wire_replay_projection_projected_action_count`, and `accepted_block_action_validation_derives_bridge_replay_count` derives bridge replay-count agreement through the projected bridge replay rows. The final publication theorem then reuses `accepted_trace_is_canonical`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, `accepted_claims_expected_supply`, and `accepted_forbids_counterfeit_state_root` from block replay.",
+      "formal_statement": "If decoded block-action validation accepts, block replay accepts for the corresponding replay input, accepted wire replay projection is built from the same decoded action rows, and the validation/replay bridge replay rows match the projected bridge replay rows, then the accepted publication surface exposes action-hash preconditions, all decoded validation rows consumed, replay-row agreement, bridge replay-count agreement, canonical replay trace order, accepted action-stream facts, commitment preconditions, expected supply equality, claimed supply equality, and state-root agreement. The executable publication gate rejects in the modeled order of validation, replay, wire projection, validation/wire action-count agreement, wire/replay action-count agreement, validation/wire bridge replay-count agreement, and replay/wire bridge replay-count agreement.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.BlockActionReplayPublication.accepted_block_action_validation_and_replay_publish_consensus_facts_from_shared_actions` composes the already checked decoded-action validation kernel with accepted action wire-replay projection and the block replay/accounting kernel. `accepted_actions_from_counts_rows` proves the recursive validation evaluator consumes every decoded validation row, `accepted_block_action_validation_hash_preconditions` extracts action hash/count uniqueness preconditions from acceptance, and `accepted_block_action_validation_counts_all_rows` specializes the row-count theorem to top-level block validation. `accepted_block_action_validation_derives_replay_row_count` derives validation-to-replay row agreement through `accepted_wire_replay_projection_projected_action_count`, and `accepted_block_action_validation_derives_bridge_replay_count` derives bridge replay-count agreement through the projected bridge replay rows. The final publication theorem then reuses `accepted_trace_is_canonical`, `accepted_has_action_stream_effect`, `accepted_implies_commitment_preconditions`, `accepted_claims_expected_supply`, and `accepted_forbids_counterfeit_state_root` from block replay. The executable rejection table and `GenerateBlockActionReplayPublicationVectors` bind this composition to production helper calls without adding runtime work.",
       "depends_on": [
         "native.block-action-validation",
         "native.block-replay-refinement",
@@ -12245,6 +12245,7 @@
       ],
       "implementation_paths": [
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean",
         "formal/lean/Hegemon/Native/BlockActionValidation.lean",
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
         "formal/lean/Hegemon.lean",
@@ -12255,6 +12256,7 @@
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/BlockActionReplayPublication.lean",
+        "formal/lean/Hegemon/Native/GenerateBlockActionReplayPublicationVectors.lean",
         "formal/lean/Hegemon/Native/BlockActionValidation.lean",
         "formal/lean/Hegemon/Native/BlockReplayRefinement.lean",
         "formal/lean/Hegemon.lean",
@@ -12265,7 +12267,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a Lean composition theorem that names the decoded-action-validation to replay-publication boundary. The stronger shared-actions entry point derives row/count agreement from accepted wire replay projection, while production construction of that projection from arbitrary raw bytes remains explicit until native-node refinement is mechanized."
+        "notes": "Accepted as a Lean composition theorem that names the decoded-action-validation to replay-publication boundary. The stronger shared-actions entry point derives row/count agreement from accepted wire replay projection, and the generated conformance gate binds the production helper composition and rejection order. Production construction from arbitrary raw bytes remains explicit until deeper native-node parser refinement is mechanized."
       },
       "falsification_cases": [
         {
@@ -12277,9 +12279,14 @@
           "id": "formal-core-block-action-replay-publication-claim",
           "description": "The formal-core claims, blueprint, inventory, and axiom gates must include the block-action replay publication theorem.",
           "gate": "bash scripts/check_formal_core.sh"
+        },
+        {
+          "id": "formal-core-block-action-replay-publication-vectors",
+          "description": "The release formal-core wrapper must generate block-action replay publication vectors and run the Rust conformance test over production helper composition.",
+          "gate": "HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_block_action_replay_publication_vectors_match_production --lib --no-default-features -- --nocapture"
         }
       ],
-      "scope_boundary": "This node is a theorem-level publication composition over accepted decoded block-action validation, accepted wire replay projection, and accepted block replay. It does not prove arbitrary raw SCALE/bincode decoding, production construction of the wire projection from decoded validation/replay rows, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, PoW threshold validity, or complete native-node equivalence."
+      "scope_boundary": "This node is a theorem-level publication composition plus generated production conformance over accepted decoded block-action validation, accepted wire replay projection, and accepted block replay. It does not prove arbitrary raw SCALE/bincode decoding, complete production construction of every wire projection from every decoded validation/replay row, BLAKE3/BLAKE2/hash security or implementation equivalence, tx-leaf or recursive proof soundness, storage durability, PoW threshold validity, or complete native-node equivalence."
     },
     {
       "id": "native.sync-block-replay-publication",

@@ -15824,6 +15824,54 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanBlockActionReplayPublicationVectorFile {
+        schema_version: u32,
+        block_action_replay_publication_cases: Vec<LeanBlockActionReplayPublicationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanBlockActionReplayPublicationCase {
+        name: String,
+        validation_action_count_matches: bool,
+        validation_action_hashes_match: bool,
+        validation_action_hashes_unique: bool,
+        validation_consumed_bridge_replays: Vec<u64>,
+        validation_actions: Vec<LeanBlockActionValidationActionCase>,
+        replay_leaf_start: u64,
+        replay_spent_nullifiers: Vec<u64>,
+        replay_consumed_bridge_replays: Vec<u64>,
+        replay_actions: Vec<LeanActionStreamActionCase>,
+        replay_parent_supply: String,
+        replay_height: u64,
+        replay_fee_total: u64,
+        replay_has_coinbase: bool,
+        replay_claimed_supply: String,
+        replay_tx_count_matches: bool,
+        replay_state_root_matches: bool,
+        replay_kernel_root_matches: bool,
+        replay_nullifier_root_matches: bool,
+        replay_extrinsics_root_matches: bool,
+        replay_message_root_matches: bool,
+        replay_message_count_matches: bool,
+        replay_header_mmr_root_matches: bool,
+        replay_header_mmr_len_matches: bool,
+        wire_action_count: usize,
+        wire_planned_count: usize,
+        wire_actions: Vec<LeanActionWireReplayProjectionActionCase>,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+        expected_validated_action_count: Option<usize>,
+        expected_replay_action_count: Option<usize>,
+        expected_wire_projected_action_count: Option<usize>,
+        expected_imported_bridge_replay_count: Option<usize>,
+        expected_wire_projected_bridge_replay_count: Option<usize>,
+        expected_replay_next_leaf_count: Option<String>,
+        expected_replay_supply: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanBlockReplayRefinementCase {
         name: String,
         leaf_start: u64,
@@ -25131,6 +25179,297 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum NativeBlockActionReplayPublicationRejection {
+        ValidationRejected,
+        ReplayRejected,
+        WireProjectionRejected,
+        ValidationWireActionCountMismatch,
+        WireReplayActionCountMismatch,
+        ValidationBridgeReplayCountMismatch,
+        ReplayBridgeReplayCountMismatch,
+    }
+
+    impl NativeBlockActionReplayPublicationRejection {
+        fn label(self) -> &'static str {
+            match self {
+                Self::ValidationRejected => "validation_rejected",
+                Self::ReplayRejected => "replay_rejected",
+                Self::WireProjectionRejected => "wire_projection_rejected",
+                Self::ValidationWireActionCountMismatch => "validation_wire_action_count_mismatch",
+                Self::WireReplayActionCountMismatch => "wire_replay_action_count_mismatch",
+                Self::ValidationBridgeReplayCountMismatch => {
+                    "validation_bridge_replay_count_mismatch"
+                }
+                Self::ReplayBridgeReplayCountMismatch => "replay_bridge_replay_count_mismatch",
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct NativeBlockActionReplayPublicationSummary {
+        validated_action_count: usize,
+        replay_action_count: usize,
+        wire_projected_action_count: usize,
+        imported_bridge_replay_count: usize,
+        wire_projected_bridge_replay_count: usize,
+        replay_next_leaf_count: u64,
+        replay_supply: u128,
+    }
+
+    #[test]
+    fn lean_generated_block_action_replay_publication_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_BLOCK_ACTION_REPLAY_PUBLICATION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean block-action replay publication vectors");
+        let vectors: LeanBlockActionReplayPublicationVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean block-action replay publication vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.block_action_replay_publication_cases.is_empty(),
+            "Lean block-action replay publication cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.block_action_replay_publication_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_block_action_replay_publication_case(case);
+        }
+    }
+
+    fn verify_lean_block_action_replay_publication_case(
+        case: &LeanBlockActionReplayPublicationCase,
+    ) {
+        match evaluate_native_block_action_replay_publication_case(case) {
+            Ok(summary) => {
+                assert!(
+                    case.expected_valid,
+                    "{} block-action replay publication unexpectedly accepted",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.validated_action_count),
+                    case.expected_validated_action_count,
+                    "{} validated action count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.replay_action_count),
+                    case.expected_replay_action_count,
+                    "{} replay action count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.wire_projected_action_count),
+                    case.expected_wire_projected_action_count,
+                    "{} wire projected action count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.imported_bridge_replay_count),
+                    case.expected_imported_bridge_replay_count,
+                    "{} imported bridge replay count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.wire_projected_bridge_replay_count),
+                    case.expected_wire_projected_bridge_replay_count,
+                    "{} wire projected bridge replay count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.replay_next_leaf_count.to_string()),
+                    case.expected_replay_next_leaf_count,
+                    "{} replay next leaf count drifted from Lean spec",
+                    case.name
+                );
+                assert_eq!(
+                    Some(summary.replay_supply.to_string()),
+                    case.expected_replay_supply,
+                    "{} replay supply drifted from Lean spec",
+                    case.name
+                );
+            }
+            Err(rejection) => {
+                assert!(
+                    !case.expected_valid,
+                    "{} block-action replay publication unexpectedly rejected: {}",
+                    case.name,
+                    rejection.label()
+                );
+                assert_eq!(
+                    Some(rejection.label().to_owned()),
+                    case.expected_rejection,
+                    "{} block-action replay publication rejection drifted from Lean spec",
+                    case.name
+                );
+            }
+        }
+    }
+
+    fn evaluate_native_block_action_replay_publication_case(
+        case: &LeanBlockActionReplayPublicationCase,
+    ) -> Result<
+        NativeBlockActionReplayPublicationSummary,
+        NativeBlockActionReplayPublicationRejection,
+    > {
+        let consumed_bridge_replays = case
+            .validation_consumed_bridge_replays
+            .iter()
+            .map(|key| synthetic_stream_replay_key(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let mut validation_state = evaluate_native_block_action_validation_start(
+            case.validation_action_count_matches,
+            case.validation_action_hashes_match,
+            case.validation_action_hashes_unique,
+            consumed_bridge_replays,
+        )
+        .map_err(|_| NativeBlockActionReplayPublicationRejection::ValidationRejected)?;
+        for action in &case.validation_actions {
+            let step = NativeBlockActionValidationStep {
+                scope_input: lean_block_action_validation_scope(&action.scope),
+                payload_valid: action.payload_valid,
+                transfer_key: synthetic_transfer_order_key(action.transfer_key),
+                transfer_state_input: lean_block_action_validation_transfer_state(
+                    &action.transfer_state,
+                ),
+                bridge_replay_key: action
+                    .bridge_replay_key
+                    .map(|key| synthetic_stream_replay_key(key, &case.name)),
+            };
+            evaluate_native_block_action_validation_step(&mut validation_state, step)
+                .map_err(|_| NativeBlockActionReplayPublicationRejection::ValidationRejected)?;
+        }
+        let validation_summary = native_block_action_validation_summary(validation_state);
+
+        let spent_nullifiers = case
+            .replay_spent_nullifiers
+            .iter()
+            .map(|key| synthetic_stream_nullifier(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let consumed_replays = case
+            .replay_consumed_bridge_replays
+            .iter()
+            .map(|key| synthetic_stream_replay_key(*key, &case.name))
+            .collect::<BTreeSet<_>>();
+        let action_nullifiers = case
+            .replay_actions
+            .iter()
+            .map(|action| {
+                action
+                    .nullifiers
+                    .iter()
+                    .map(|key| synthetic_stream_nullifier(*key, &case.name))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let replay_keys = case
+            .replay_actions
+            .iter()
+            .map(|action| {
+                action
+                    .bridge_replay_key
+                    .map(|key| synthetic_stream_replay_key(key, &case.name))
+            })
+            .collect::<Vec<_>>();
+        let mut nullifier_state = NullifierState::new(spent_nullifiers, BTreeSet::new());
+        let mut bridge_replay_state = InboundReplayState::new(consumed_replays, BTreeSet::new());
+        let replay_input = NativeBlockReplayRefinementInput {
+            leaf_start: case.replay_leaf_start,
+            parent_supply: parse_u128(&case.replay_parent_supply),
+            height: case.replay_height,
+            fee_total: case.replay_fee_total,
+            has_coinbase: case.replay_has_coinbase,
+            claimed_supply: parse_u128(&case.replay_claimed_supply),
+            tx_count_matches: case.replay_tx_count_matches,
+            state_root_matches: case.replay_state_root_matches,
+            kernel_root_matches: case.replay_kernel_root_matches,
+            nullifier_root_matches: case.replay_nullifier_root_matches,
+            extrinsics_root_matches: case.replay_extrinsics_root_matches,
+            message_root_matches: case.replay_message_root_matches,
+            message_count_matches: case.replay_message_count_matches,
+            header_mmr_root_matches: case.replay_header_mmr_root_matches,
+            header_mmr_len_matches: case.replay_header_mmr_len_matches,
+        };
+        let (_trace, replay_result) = evaluate_native_block_replay_refinement_with_trace(
+            replay_input,
+            case.replay_actions
+                .iter()
+                .zip(action_nullifiers.iter())
+                .zip(replay_keys.iter())
+                .map(
+                    |((action, nullifiers), replay_key)| NativeActionStreamStep {
+                        commitment_count: action.commitment_count,
+                        ciphertext_count: action.ciphertext_count,
+                        nullifiers: nullifiers.as_slice(),
+                        replay_key: *replay_key,
+                    },
+                ),
+            &mut nullifier_state,
+            &mut bridge_replay_state,
+        );
+        let replay_summary = replay_result
+            .map_err(|_| NativeBlockActionReplayPublicationRejection::ReplayRejected)?;
+
+        let wire_steps = case
+            .wire_actions
+            .iter()
+            .map(|action| NativeActionWireReplayProjectionStep {
+                ciphertext_hash_count: action.ciphertext_hash_count,
+                ciphertext_size_count: action.ciphertext_size_count,
+                planned_ciphertext_count: action.planned_ciphertext_count,
+                ciphertext_hashes_match: action.ciphertext_hashes_match,
+                ciphertext_sizes_match: action.ciphertext_sizes_match,
+                planned_replay_present: action.planned_replay_present,
+                replay_key_matches: action.replay_key_matches,
+            })
+            .collect::<Vec<_>>();
+        let wire_summary = evaluate_native_action_wire_replay_projection_admission(
+            case.wire_action_count,
+            case.wire_planned_count,
+            &wire_steps,
+        )
+        .map_err(|_| NativeBlockActionReplayPublicationRejection::WireProjectionRejected)?;
+
+        if case.wire_action_count != case.validation_actions.len() {
+            return Err(
+                NativeBlockActionReplayPublicationRejection::ValidationWireActionCountMismatch,
+            );
+        }
+        if wire_summary.projected_action_count != case.replay_actions.len() {
+            return Err(NativeBlockActionReplayPublicationRejection::WireReplayActionCountMismatch);
+        }
+        if validation_summary.imported_bridge_replay_count
+            != wire_summary.projected_bridge_replay_row_count
+        {
+            return Err(
+                NativeBlockActionReplayPublicationRejection::ValidationBridgeReplayCountMismatch,
+            );
+        }
+        if replay_summary.imported_bridge_replay_count
+            != wire_summary.projected_bridge_replay_row_count
+        {
+            return Err(
+                NativeBlockActionReplayPublicationRejection::ReplayBridgeReplayCountMismatch,
+            );
+        }
+
+        Ok(NativeBlockActionReplayPublicationSummary {
+            validated_action_count: validation_summary.validated_action_count,
+            replay_action_count: case.replay_actions.len(),
+            wire_projected_action_count: wire_summary.projected_action_count,
+            imported_bridge_replay_count: validation_summary.imported_bridge_replay_count,
+            wire_projected_bridge_replay_count: wire_summary.projected_bridge_replay_row_count,
+            replay_next_leaf_count: replay_summary.next_leaf_count,
+            replay_supply: replay_summary.expected_supply,
+        })
     }
 
     fn lean_block_action_validation_scope(
