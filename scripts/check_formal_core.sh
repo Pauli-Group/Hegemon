@@ -136,6 +136,7 @@ LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS="$(mktemp)"
 LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$(mktemp)"
 LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$(mktemp)"
 LEAN_TRANSACTION_VECTORS="$(mktemp)"
+LEAN_AIR_BALANCE_BOUNDARY_VECTORS="$(mktemp)"
 LEAN_NOTE_COMMITMENT_INPUT_VECTORS="$(mktemp)"
 LEAN_NULLIFIER_INPUT_VECTORS="$(mktemp)"
 LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS="$(mktemp)"
@@ -265,6 +266,7 @@ trap 'rm -f "$LEAN_BRIDGE_VECTORS" "$LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS" "$LE
   lake exe gen_native_tx_leaf_artifact_vectors > "$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS"
   lake exe gen_native_receipt_root_vectors > "$LEAN_NATIVE_RECEIPT_ROOT_VECTORS"
   lake exe gen_transaction_vectors > "$LEAN_TRANSACTION_VECTORS"
+  lake exe gen_air_balance_boundary_vectors > "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS"
   lake exe gen_note_commitment_input_vectors > "$LEAN_NOTE_COMMITMENT_INPUT_VECTORS"
   lake exe gen_nullifier_input_vectors > "$LEAN_NULLIFIER_INPUT_VECTORS"
   lake exe gen_smallwood_spend_authorization_vectors > "$LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS"
@@ -710,6 +712,8 @@ cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helpe
 cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
+HEGEMON_LEAN_AIR_BALANCE_BOUNDARY_VECTORS="$LEAN_AIR_BALANCE_BOUNDARY_VECTORS" \
+  cargo test -p transaction-circuit lean_generated_air_balance_boundary_vectors_match_production --lib -- --nocapture
 cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture
 HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS="$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" \
   cargo test -p wallet lean_generated_note_commitment_input_vectors_match_wallet_plaintext_note_data --lib -- --nocapture
@@ -827,6 +831,6 @@ else
   printf 'set HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 to run installed TLC/Apalache binaries\n'
 fi
 
-rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS"
+rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS"
 
 printf '\n=== Hegemon formal-core gate passed ===\n'
