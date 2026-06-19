@@ -33,12 +33,16 @@ The visible outcome is that `bash scripts/check_formal_core.sh` fails if any res
 - [x] (2026-06-19 01:24Z) Validated the pending-action field projection vector slice with targeted Lean build, generated-vector JSON validation, and the focused `lean_generated_pending_action_field_projection_vectors_match_production` Rust gate.
 - [x] (2026-06-19 02:35Z) Added an action-request raw JSON projection milestone: `Hegemon.Native.ActionRequestRawJsonProjection` now emits representative `hegemon_submitAction` request byte strings for valid outbound bridge ingress and parser/projection rejects, and the Rust gate drives those bytes through serde_json, strict `SubmitActionRpcRequest` decoding, base64 decoding, and exact route-payload admission.
 - [x] (2026-06-19 02:38Z) Validated the raw JSON projection slice with targeted Lean build, generated-vector JSON validation, and the focused `lean_generated_action_request_raw_json_projection_vectors_match_production` Rust gate.
+- [x] (2026-06-19 05:21Z) Validated the deployed branch on hegemon-dev at `d81c874b`: remote full `bash scripts/check_formal_core.sh` passed with 121 claims, 2533 named Lean theorem declarations, 111 production-eligible claims, 50 residual risks, 637 falsification cases, 228 implementation bindings, 174 result obligations, 151 theorem-indexed order constraints, and 136 theorem-indexed dominance constraints.
+- [x] (2026-06-19 05:27Z) Rebuilt and restarted the hegemon-dev release service from `target/release/hegemon-node`; RPC/P2P listened on 127.0.0.1:9944/0.0.0.0:30333, live mining advanced height 18854 to 18859 over 20 seconds, wallet transaction submission smoke passed, isolated single-node mining reached height 1, isolated two-node restart/sync caught the follower from height 16 to 32 while the miner reached 39, NTP was active, and cleanup left only the systemd release node running.
 - [ ] For later milestones, replace each mechanized-track proposition with deeper theorem packages and generated Rust conformance gates.
 
 ## Surprises & Discoveries
 
 - Observation: The highest-standard completion certificate already has broad external assumption fields, but it did not classify which residuals are supposed to be closed by further mechanization versus which are legitimate cryptographic or system-model assumptions.
   Evidence: `Hegemon.Release.HighestStandardCompletionCertificate.ExternalSecurityAssumptionBundle` carries parser, proof, storage, DA, native-node, primitive crypto, privacy, bridge, release, and performance fields in one bundle.
+- Observation: The hegemon-dev formal-core failure was not a consensus regression; `scripts/test-node.sh` was reusing a stale default `target/debug/hegemon-node` when the binary already existed. Remote tracing also emitted ANSI escapes into the SIGTERM log, making exact grep checks brittle.
+  Evidence: remote SIGTERM smoke initially exited 143 before rebuild; after forced default rebuild the node logged `signal="sigterm"` and `operation="shutdown_flush"`, but exact grep failed until the matcher tolerated ANSI formatting.
 
 ## Decision Log
 
@@ -58,6 +62,10 @@ The visible outcome is that `bash scripts/check_formal_core.sh` fails if any res
   Rationale: These depend on operators, networks, disks, cloud hosts, GitHub enforcement, advisory feeds, traffic behavior, and benchmarking. Lean can prove fail-closed policy and checked evidence consumption, not universal environmental honesty.
   Date/Author: 2026-06-18 / Codex
 
+- Decision: Default smoke runs rebuild the repo-local `target/debug/hegemon-node`; explicit `HEGEMON_NODE_BIN` remains an external-binary override.
+  Rationale: Branch validation must execute the current checkout by default, while release-binary smoke still needs an explicit opt-in path.
+  Date/Author: 2026-06-19 / Codex
+
 ## Outcomes & Retrospective
 
 This first slice converts the user-facing classification into a Lean theorem surface and makes the next milestones explicit. It does not yet close the deep parser/native/proof/bridge gaps; it prevents them from being mislabeled as ordinary cryptographic assumptions.
@@ -67,6 +75,8 @@ The second slice starts closing the fail-closed system-model bucket by adding a 
 The third slice starts burning down the parser mechanized-refinement bucket at a concrete trust boundary: native metadata exact decode now has an independent arbitrary-byte/mutation oracle gate. This narrows parser drift around current-first/legacy-fallback bincode metadata acceptance while keeping bincode implementation correctness itself outside the claim.
 
 The fourth slice starts burning down the bridge mechanized-refinement bucket at the future mint boundary: a verified receipt can no longer carry arbitrary bytes as the would-be mint instruction. It must exact-decode as `BridgeMintPayloadV1` and pass a theorem/vector-checked decoded admission table before hitting the disabled mint authorization gate. This still does not enable positive bridge minting or prove external receipt soundness.
+
+The hegemon-dev validation slice closed a real deployment-evidence gap: remote formal-core now executes the current checkout, and the deployed release node was rebuilt/restarted and observed mining with wallet submission and restart/sync smokes green. This is validation/harness hardening, not a new cryptographic theorem.
 
 ## Context and Orientation
 
