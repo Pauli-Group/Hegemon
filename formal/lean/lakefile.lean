@@ -286,6 +286,9 @@ lean_exe gen_storage_durability_admission_vectors where
 lean_exe gen_sync_admission_vectors where
   root := `Hegemon.Native.GenerateSyncAdmissionVectors
 
+lean_exe gen_sync_block_range_publication_admission_vectors where
+  root := `Hegemon.Native.GenerateSyncBlockRangePublicationAdmissionVectors
+
 lean_exe gen_sync_response_import_vectors where
   root := `Hegemon.Native.GenerateSyncResponseImportVectors
 

@@ -445,6 +445,19 @@ struct NativeSyncResponseCountAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncBlockRangePublicationAdmissionInput {
+    range_admitted: bool,
+    served_count_matches_range: bool,
+    first_height_matches_range: bool,
+    last_height_matches_range: bool,
+    served_heights_contiguous: bool,
+    previous_parent_anchor_verified: bool,
+    parent_hashes_contiguous: bool,
+    canonical_rows_verified: bool,
+    action_bodies_verified: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeSyncAdmissionRejection {
     ResponseBlockCountTooLarge,
 }
@@ -2325,6 +2338,33 @@ impl NativeBoundedRequestAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSyncBlockRangePublicationAdmissionRejection {
+    RangeNotAdmitted,
+    ServedCountMismatch,
+    FirstHeightMismatch,
+    LastHeightMismatch,
+    HeightContinuityMismatch,
+    ParentHashMismatch,
+    CanonicalRowsUnverified,
+    ActionBodiesUnverified,
+}
+
+impl NativeSyncBlockRangePublicationAdmissionRejection {
+    fn label(self) -> &'static str {
+        match self {
+            Self::RangeNotAdmitted => "range_not_admitted",
+            Self::ServedCountMismatch => "served_count_mismatch",
+            Self::FirstHeightMismatch => "first_height_mismatch",
+            Self::LastHeightMismatch => "last_height_mismatch",
+            Self::HeightContinuityMismatch => "height_continuity_mismatch",
+            Self::ParentHashMismatch => "parent_hash_mismatch",
+            Self::CanonicalRowsUnverified => "canonical_rows_unverified",
+            Self::ActionBodiesUnverified => "action_bodies_unverified",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeSidecarRequestCountAdmissionInput {
     item_count: usize,
     max_items: usize,
@@ -3406,6 +3446,9 @@ impl NativeNode {
             return Ok(Vec::new());
         };
         let mut blocks = Vec::new();
+        let mut canonical_rows_verified = 0usize;
+        let mut action_bodies_verified = 0usize;
+        let mut previous_parent_anchor_verified = range.from_height == 0;
         let mut parent = if range.from_height == 0 {
             None
         } else {
@@ -3413,6 +3456,10 @@ impl NativeNode {
         };
         for height in range.from_height..=range.to_height {
             let meta = self.load_canonical_sync_block_at_height(height)?;
+            canonical_rows_verified = canonical_rows_verified.saturating_add(1);
+            if meta.height != 0 {
+                action_bodies_verified = action_bodies_verified.saturating_add(1);
+            }
             if let Some(parent) = parent.as_ref() {
                 if meta.parent_hash != parent.hash {
                     return Err(anyhow!(
@@ -3422,11 +3469,29 @@ impl NativeNode {
                         hex32(&meta.parent_hash)
                     ));
                 }
+                if height == range.from_height {
+                    previous_parent_anchor_verified = true;
+                }
             }
             parent = Some(meta.clone());
             blocks.push(meta);
         }
-        Ok(blocks)
+        evaluate_native_sync_block_range_publication_admission(
+            native_sync_block_range_publication_admission_input(
+                range,
+                &blocks,
+                canonical_rows_verified,
+                action_bodies_verified,
+                previous_parent_anchor_verified,
+            ),
+        )
+        .map_err(|rejection| {
+            anyhow!(
+                "native sync block range publication admission: {}",
+                rejection.label()
+            )
+        })?;
+        Ok(native_sync_block_range_publication_rows(blocks))
     }
 
     fn load_canonical_sync_block_at_height(&self, height: u64) -> Result<NativeBlockMeta> {
@@ -9017,6 +9082,82 @@ fn native_sync_missing_request_range(
         from_height,
         to_height: input.announced_height.min(cap_end),
     })
+}
+
+fn native_sync_block_range_publication_rows(blocks: Vec<NativeBlockMeta>) -> Vec<NativeBlockMeta> {
+    blocks
+}
+
+fn evaluate_native_sync_block_range_publication_admission(
+    input: NativeSyncBlockRangePublicationAdmissionInput,
+) -> Result<(), NativeSyncBlockRangePublicationAdmissionRejection> {
+    if !input.range_admitted {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::RangeNotAdmitted)
+    } else if !input.served_count_matches_range {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::ServedCountMismatch)
+    } else if !input.first_height_matches_range {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::FirstHeightMismatch)
+    } else if !input.last_height_matches_range {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::LastHeightMismatch)
+    } else if !input.served_heights_contiguous {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::HeightContinuityMismatch)
+    } else if !input.previous_parent_anchor_verified {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::ParentHashMismatch)
+    } else if !input.parent_hashes_contiguous {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::ParentHashMismatch)
+    } else if !input.canonical_rows_verified {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::CanonicalRowsUnverified)
+    } else if !input.action_bodies_verified {
+        Err(NativeSyncBlockRangePublicationAdmissionRejection::ActionBodiesUnverified)
+    } else {
+        Ok(())
+    }
+}
+
+fn native_sync_block_range_publication_admission_input(
+    range: NativeSyncRange,
+    blocks: &[NativeBlockMeta],
+    canonical_rows_verified: usize,
+    action_bodies_verified: usize,
+    previous_parent_anchor_verified: bool,
+) -> NativeSyncBlockRangePublicationAdmissionInput {
+    let expected_count = range
+        .to_height
+        .checked_sub(range.from_height)
+        .and_then(|delta| delta.checked_add(1))
+        .and_then(|count| usize::try_from(count).ok());
+    let served_count_matches_range = expected_count == Some(blocks.len());
+    let first_height_matches_range = blocks
+        .first()
+        .map(|meta| meta.height == range.from_height)
+        .unwrap_or(false);
+    let last_height_matches_range = blocks
+        .last()
+        .map(|meta| meta.height == range.to_height)
+        .unwrap_or(false);
+    let served_heights_contiguous = blocks.windows(2).all(|window| {
+        window[0]
+            .height
+            .checked_add(1)
+            .map(|expected| window[1].height == expected)
+            .unwrap_or(false)
+    });
+    let parent_hashes_contiguous = blocks
+        .windows(2)
+        .all(|window| window[1].parent_hash == window[0].hash);
+    let expected_action_body_rows = blocks.iter().filter(|meta| meta.height != 0).count();
+
+    NativeSyncBlockRangePublicationAdmissionInput {
+        range_admitted: true,
+        served_count_matches_range,
+        first_height_matches_range,
+        last_height_matches_range,
+        served_heights_contiguous,
+        previous_parent_anchor_verified,
+        parent_hashes_contiguous,
+        canonical_rows_verified: canonical_rows_verified == blocks.len(),
+        action_bodies_verified: action_bodies_verified == expected_action_body_rows,
+    }
 }
 
 fn evaluate_native_sync_response_count_admission(
@@ -16452,6 +16593,13 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanSyncBlockRangePublicationAdmissionVectorFile {
+        schema_version: u32,
+        sync_block_range_publication_cases: Vec<LeanSyncBlockRangePublicationAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanSyncResponseRangeCase {
         name: String,
         from_height: u64,
@@ -16500,6 +16648,23 @@ mod tests {
         expected_imported_blocks: u64,
         expected_stopped_on_error: bool,
         expected_request_more: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncBlockRangePublicationAdmissionCase {
+        name: String,
+        range_admitted: bool,
+        served_count_matches_range: bool,
+        first_height_matches_range: bool,
+        last_height_matches_range: bool,
+        served_heights_contiguous: bool,
+        previous_parent_anchor_verified: bool,
+        parent_hashes_contiguous: bool,
+        canonical_rows_verified: bool,
+        action_bodies_verified: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
     }
 
     #[test]
@@ -28895,6 +29060,116 @@ mod tests {
         meta.hash[..8].copy_from_slice(&height.to_le_bytes());
         meta.parent_hash = [discriminator.wrapping_add(1); 32];
         meta
+    }
+
+    #[test]
+    fn lean_generated_sync_block_range_publication_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean sync block-range publication admission vectors");
+        let vectors: LeanSyncBlockRangePublicationAdmissionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean sync block-range publication admission vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.sync_block_range_publication_cases.is_empty(),
+            "Lean sync block-range publication cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.sync_block_range_publication_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_block_range_publication_admission_case(case);
+        }
+    }
+
+    fn verify_lean_sync_block_range_publication_admission_case(
+        case: &LeanSyncBlockRangePublicationAdmissionCase,
+    ) {
+        let input = NativeSyncBlockRangePublicationAdmissionInput {
+            range_admitted: case.range_admitted,
+            served_count_matches_range: case.served_count_matches_range,
+            first_height_matches_range: case.first_height_matches_range,
+            last_height_matches_range: case.last_height_matches_range,
+            served_heights_contiguous: case.served_heights_contiguous,
+            previous_parent_anchor_verified: case.previous_parent_anchor_verified,
+            parent_hashes_contiguous: case.parent_hashes_contiguous,
+            canonical_rows_verified: case.canonical_rows_verified,
+            action_bodies_verified: case.action_bodies_verified,
+        };
+        let actual = evaluate_native_sync_block_range_publication_admission(input);
+        let actual_rejection = actual.err().map(|rejection| rejection.label().to_owned());
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native sync block-range publication validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native sync block-range publication rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    #[test]
+    fn sync_block_range_publication_input_rejects_truncated_or_unverified_rows() {
+        let mut genesis = genesis_meta(0x207f_ffff).expect("genesis metadata");
+        genesis.height = 0;
+        genesis.hash = [1u8; 32];
+        let mut child = genesis.clone();
+        child.height = 1;
+        child.parent_hash = genesis.hash;
+        child.hash = [2u8; 32];
+        let range = NativeSyncRange {
+            from_height: 0,
+            to_height: 1,
+        };
+
+        let truncated = native_sync_block_range_publication_admission_input(
+            range,
+            &[genesis.clone()],
+            1,
+            0,
+            true,
+        );
+        assert_eq!(
+            evaluate_native_sync_block_range_publication_admission(truncated),
+            Err(NativeSyncBlockRangePublicationAdmissionRejection::ServedCountMismatch)
+        );
+
+        let unverified_body = native_sync_block_range_publication_admission_input(
+            range,
+            &[genesis.clone(), child.clone()],
+            2,
+            0,
+            true,
+        );
+        assert_eq!(
+            evaluate_native_sync_block_range_publication_admission(unverified_body),
+            Err(NativeSyncBlockRangePublicationAdmissionRejection::ActionBodiesUnverified)
+        );
+
+        let anchored_range = NativeSyncRange {
+            from_height: 1,
+            to_height: 1,
+        };
+        let anchor_mismatch = native_sync_block_range_publication_admission_input(
+            anchored_range,
+            &[child],
+            1,
+            1,
+            false,
+        );
+        assert_eq!(
+            evaluate_native_sync_block_range_publication_admission(anchor_mismatch),
+            Err(NativeSyncBlockRangePublicationAdmissionRejection::ParentHashMismatch)
+        );
     }
 
     #[test]

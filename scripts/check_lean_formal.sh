@@ -209,8 +209,10 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Native/GenerateCandidateArtifactScaleWireVectors.lean
   lake env lean Hegemon/Native/SyncAdmission.lean
   lake env lean Hegemon/Native/SyncBlockReplayPublication.lean
+  lake env lean Hegemon/Native/SyncBlockRangePublicationAdmission.lean
   lake env lean Hegemon/Native/SyncResponseImport.lean
   lake env lean Hegemon/Native/GenerateSyncAdmissionVectors.lean
+  lake env lean Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean
   lake env lean Hegemon/Native/GenerateSyncResponseImportVectors.lean
   lake env lean Hegemon/Network/SecureChannel.lean
   lake env lean Hegemon/Network/GenerateSecureChannelVectors.lean

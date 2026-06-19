@@ -5485,8 +5485,8 @@
       "id": "native.sync-admission",
       "claim_id": "native.sync-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sync admission and response-import predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; every accepted response range exposes generic bounded-request item-count facts for the served block count. Missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Accepted inbound response imports expose count-before-sort/import admission, deterministic sorted response heights, import-attempt and imported-block counts bounded by the response, stop-on-first-error behavior, and continuation requests only when the accepted response was nonempty and the peer remains ahead. Blueprint implementation bindings require inbound response-count admission to call the generic bounded-request helper with the sync response count as item count, require native_sync_loop to route response blocks through the admission/sort helper before progress tracking or import, require that helper to call the count gate before sort, require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response, and require non-genesis sync rows to decode their native action bodies and verify the decoded action root before that materializer returns.",
-      "informal_argument": "The Lean theorems in Hegemon.Native.SyncAdmission prove the executable native sync range and count-admission behavior plus bounded-request item-count facts for accepted outbound response ranges. Hegemon.Native.SyncResponseImport adds the inbound response-import control-flow proof: accepted imports have response counts within the cap, impossible outcome traces longer than the response reject, import attempts and imported counts are bounded, first import error stops the suffix, sorted heights are deterministic, and follow-up requests require both a nonempty response and a still-ahead peer. gen_sync_admission_vectors and gen_sync_response_import_vectors emit Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, over-limit, unsorted, error-stop, empty-ahead, peer-caught-up, and impossible-outcome examples; formal-core checks them against production helpers used by NativeNode::block_range, request_missing_blocks, native_sync_loop response handling, admit_and_sort_native_sync_response_blocks, and NativeSyncResponseImportProgress. Production inbound response-count admission constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and the sync response count as item count; the admitted response path now calls admit_and_sort_native_sync_response_blocks before allocating import progress or invoking import_announced_block, and the helper calls evaluate_native_sync_response_count_admission before blocks.sort_by_key. Production outbound block_range serving uses the same capped response-range helper before canonical row materialization and response-row publication; focused regressions corrupt local canonical indexes and canonical action bodies to prove an admitted range errors instead of returning a truncated prefix, mismatched row, or forged body commitment.",
+      "formal_statement": "For the executable Lean native sync admission, block-range publication, and response-import predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; every accepted response range exposes generic bounded-request item-count facts for the served block count. Published sync block ranges additionally accept only when an admitted range produced a matching served count, matching first and last heights, contiguous heights, a verified previous-parent anchor for non-genesis starts, contiguous served parent hashes, verified canonical rows, and verified non-genesis action bodies. Missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Accepted inbound response imports expose count-before-sort/import admission, deterministic sorted response heights, import-attempt and imported-block counts bounded by the response, stop-on-first-error behavior, and continuation requests only when the accepted response was nonempty and the peer remains ahead. Blueprint implementation bindings require inbound response-count admission to call the generic bounded-request helper with the sync response count as item count, require native_sync_loop to route response blocks through the admission/sort helper before progress tracking or import, require that helper to call the count gate before sort, require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response, require non-genesis sync rows to decode their native action bodies and verify the decoded action root before that materializer returns, and require `NativeNode::block_range` to evaluate the sync block-range publication table before returning rows.",
+      "informal_argument": "The Lean theorems in Hegemon.Native.SyncAdmission prove the executable native sync range and count-admission behavior plus bounded-request item-count facts for accepted outbound response ranges. Hegemon.Native.SyncBlockRangePublicationAdmission adds the peer-visible outbound publication table: accepted publication carries admitted-range, served-count, first/last-height, height-continuity, previous-parent-anchor, parent-continuity, canonical-row verification, and action-body verification facts, with generated vectors for each rejection and precedence case. Hegemon.Native.SyncResponseImport adds the inbound response-import control-flow proof: accepted imports have response counts within the cap, impossible outcome traces longer than the response reject, import attempts and imported counts are bounded, first import error stops the suffix, sorted heights are deterministic, and follow-up requests require both a nonempty response and a still-ahead peer. gen_sync_admission_vectors, gen_sync_block_range_publication_admission_vectors, and gen_sync_response_import_vectors emit Lean-derived normal, capped, empty, zero-cap, saturating-u64, exact-limit, over-limit, served-row drift, previous-parent drift, unverified-row, unsorted, error-stop, empty-ahead, peer-caught-up, and impossible-outcome examples; formal-core checks them against production helpers used by NativeNode::block_range, request_missing_blocks, outbound block-range publication admission, native_sync_loop response handling, admit_and_sort_native_sync_response_blocks, and NativeSyncResponseImportProgress. Production inbound response-count admission constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and the sync response count as item count; the admitted response path now calls admit_and_sort_native_sync_response_blocks before allocating import progress or invoking import_announced_block, and the helper calls evaluate_native_sync_response_count_admission before blocks.sort_by_key. Production outbound block_range serving uses the same capped response-range helper before canonical row materialization and response-row publication, then evaluates `evaluate_native_sync_block_range_publication_admission` before returning blocks; focused regressions corrupt local canonical indexes and canonical action bodies to prove an admitted range errors instead of returning a truncated prefix, mismatched row, or forged body commitment.",
       "depends_on": [
         "native.codec-admission",
         "network.pq-noise-key-schedule",
@@ -5496,6 +5496,8 @@
       "implementation_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/SyncBlockRangePublicationAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -5687,6 +5689,38 @@
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "evaluate_native_sync_block_range_publication_admission",
+          "required_callers": [
+            "NativeNode::block_range"
+          ],
+          "result_obligation": "must_propagate_result",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::block_range",
+              "callee_must_precede": [
+                "native_sync_block_range_publication_rows"
+              ],
+              "must_dominate_successors": true,
+              "lean_theorems": [
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.accepts_iff_sync_block_range_publication_preconditions",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.valid_accepts",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.range_not_admitted_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.served_count_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.first_height_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.last_height_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.height_continuity_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.previous_parent_anchor_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.parent_hash_mismatch_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.canonical_rows_unverified_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.action_bodies_unverified_rejects",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.served_count_precedes_height_mismatch",
+                "Hegemon.Native.SyncBlockRangePublicationAdmission.parent_hash_precedes_verification_mismatch"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "native_sync_missing_request_range",
           "required_callers": [
             "request_missing_blocks"
@@ -5815,6 +5849,8 @@
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
         "formal/lean/Hegemon/Native/GenerateSyncAdmissionVectors.lean",
+        "formal/lean/Hegemon/Native/SyncBlockRangePublicationAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncBlockRangePublicationAdmissionVectors.lean",
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -5825,7 +5861,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, and bounded-request item-count facts for accepted outbound response ranges. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication and non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication. Scope is semantic sync admission and canonical row materialization after decode, not full block validity or network liveness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, bounded-request item-count facts for accepted outbound response ranges, and served block_range publication facts. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication, non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication, and the final peer-visible range to pass the served-count/height/previous-parent/parent/verification table. Scope is semantic sync admission and canonical row materialization after decode, not full block validity or network liveness."
       },
       "falsification_cases": [
         {
@@ -5837,6 +5873,16 @@
           "id": "lean-generated-sync-admission-conformance",
           "description": "Changing production native sync response-range, missing-request, zero-cap, saturating, or response-count behavior away from the Lean executable spec must fail the generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_SYNC_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "lean-generated-sync-block-range-publication-conformance",
+          "description": "Changing production outbound sync block-range publication admission away from the Lean executable served-count, height, previous-parent, parent, canonical-row, or body-verification table must fail generated-vector conformance.",
+          "gate": "HEGEMON_LEAN_SYNC_BLOCK_RANGE_PUBLICATION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_block_range_publication_admission_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-sync-block-range-publication-derived-facts-regression",
+          "description": "The production publication input helper must reject truncated served ranges and unverified non-genesis body rows before peer-visible block_range publication.",
+          "gate": "cargo test -p hegemon-node sync_block_range_publication_input_rejects_truncated_or_unverified_rows --lib --no-default-features -- --nocapture"
         },
         {
           "id": "native-sync-admission-regressions",
