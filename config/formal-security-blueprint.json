@@ -14930,8 +14930,8 @@
       "id": "native.mined-block-commit-publication",
       "claim_id": "native.mined-block-commit-publication",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean mined-block commit publication surface, accepted local mined publication implies local mined-work freshness preconditions, native block-commitment preconditions, atomic mined-block commit-manifest preconditions, manifest kind equality to `minedBlockCommit`, and production persisted-head readback before the order gates can publish mined state or broadcast.",
-      "informal_argument": "`Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts` composes the existing `MinedWorkAdmission`, `BlockCommitmentAdmission`, and `AtomicCommitManifestAdmission` accepted predicates. The theorem extracts the underlying preconditions from each accepted helper and proves the manifest kind is the mined-block commit kind. Production now calls `verify_persisted_canonical_head` after the mined-block or canonical-reorg durability barrier and before in-memory publication, checking the persisted best pointer, height index, and block record exact-decode back to the head being published. The existing blueprint bindings still enforce production order: mined-work admission and PoW metadata verification precede mutation/publication, and atomic mined commit plus persisted-head readback precede state publication and broadcast.",
+      "formal_statement": "For the executable Lean mined-block commit publication surface, accepted local mined publication implies local mined-work freshness preconditions, native block-commitment preconditions, atomic mined-block commit-manifest preconditions, manifest kind equality to `minedBlockCommit`, and production persisted-head readback before the order gates can publish mined state or broadcast. The companion executable publication rejection table must match production helper order: mined-work rejection, block-commitment rejection, mined-manifest kind mismatch, then manifest-shape rejection.",
+      "informal_argument": "`Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts` composes the existing `MinedWorkAdmission`, `BlockCommitmentAdmission`, and `AtomicCommitManifestAdmission` accepted predicates. The theorem extracts the underlying preconditions from each accepted helper and proves the manifest kind is the mined-block commit kind. Production now calls `verify_persisted_canonical_head` after the mined-block or canonical-reorg durability barrier and before in-memory publication, checking the persisted best pointer, height index, and block record exact-decode back to the head being published. The existing blueprint bindings still enforce production order: mined-work admission and PoW metadata verification precede mutation/publication, and atomic mined commit plus persisted-head readback precede state publication and broadcast. `Hegemon.Native.MinedBlockCommitPublication.rejection_accepts_iff_publication_accepts` and `accepted_mined_block_commit_publication_rejection_facts` connect the executable rejection table to the accepted publication facts, while `GenerateMinedBlockCommitPublicationVectors` emits mined-work, block-commitment, wrong-kind, and malformed-manifest cases checked against production helper calls in `node/src/native/mod.rs`.",
       "depends_on": [
         "native.mined-work-admission",
         "native.block-commitment-admission",
@@ -14939,54 +14939,62 @@
         "release.dependency-waivers"
       ],
       "implementation_paths": [
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedBlockCommitPublicationVectors.lean",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
         "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
-        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
-        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
         "node/src/native/mod.rs",
-        "scripts/check_lean_formal.sh",
-        "scripts/check_formal_core.sh"
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh"
       ],
       "implementation_bindings": [],
       "evidence_paths": [
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedBlockCommitPublicationVectors.lean",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
         "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
-        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
-        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
-        "formal/lean/Hegemon.lean",
         "formal/lean/README.md",
-        "scripts/hegemon_formal_core/src/lib.rs",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
+        "scripts/hegemon_formal_core/src/lib.rs"
       ],
       "target_review": {
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
-        "notes": "Accepted as a zero-runtime-cost Lean composition over existing mined-work, block-commitment, and atomic mined-commit manifest gates. It strengthens the review surface but keeps PoW cryptographic threshold validity, replay/body equivalence, storage durability, and complete native-node refinement explicit."
+        "notes": "Accepted as a zero-runtime-cost Lean composition plus generated production conformance vectors over existing mined-work, block-commitment, and atomic mined-commit manifest gates. It strengthens the review surface but keeps PoW cryptographic threshold validity, replay/body equivalence, storage durability, and complete native-node refinement explicit."
       },
       "falsification_cases": [
-        {
-          "id": "lean-mined-block-commit-publication-theorem",
-          "description": "Removing or weakening the mined-block commit publication theorem must fail the Lean formal gate or claims check.",
-          "gate": "bash scripts/check_lean_formal.sh"
-        },
         {
           "id": "formal-core-mined-block-commit-publication-claim",
           "description": "The formal-core claims and blueprint gates must reject the slice if the theorem, evidence path, or inventory entry is removed.",
           "gate": "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json"
         },
         {
-          "id": "native-mined-publication-order-regressions-still-cover-production-binding",
-          "description": "Existing mined-work publication order and reload regressions must remain in the formal-core gate while this theorem packages the Lean-side accepted predicate surface.",
-          "gate": "bash scripts/check_formal_core.sh"
+          "id": "lean-generated-mined-block-commit-publication-conformance",
+          "description": "Changing production mined-block publication helper order away from mined-work, block-commitment, mined-manifest kind, then manifest-shape rejection must fail the generated vector gate.",
+          "gate": "HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS=$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS cargo test -p hegemon-node lean_generated_mined_block_commit_publication_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "lean-mined-block-commit-publication-theorem",
+          "description": "Removing or weakening the mined-block commit publication theorem must fail the Lean formal gate or claims check.",
+          "gate": "bash scripts/check_lean_formal.sh"
         },
         {
           "id": "native-canonical-head-readback-before-publication",
           "description": "Mined and reorg block commits must read back the persisted best pointer, height index, and block record before publishing in-memory canonical state.",
           "gate": "cargo test -p hegemon-node action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-mined-publication-order-regressions-still-cover-production-binding",
+          "description": "Existing mined-work publication order and reload regressions must remain in the formal-core gate while this theorem packages the Lean-side accepted predicate surface.",
+          "gate": "bash scripts/check_formal_core.sh"
         }
       ],
-      "scope_boundary": "This node composes accepted local mined-work freshness, native block-commitment admission, atomic mined-block manifest admission, and production persisted-head readback into one Lean publication surface. It does not prove mining work-template construction, body/replay parser internals, proof-system soundness, PoW hash-threshold validity beyond the production verifier call, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, or complete native-node equivalence."
+      "scope_boundary": "This node composes accepted local mined-work freshness, native block-commitment admission, atomic mined-block manifest admission, production persisted-head readback, and a Lean-generated production conformance gate for the composed mined publication rejection order into one review surface. It does not prove mining work-template construction, body/replay parser internals, proof-system soundness, PoW hash-threshold validity beyond the production verifier call, fork-choice, sled transaction implementation correctness, filesystem/fsync durability, or complete native-node equivalence."
     },
     {
       "id": "network.frame-resource-admission",

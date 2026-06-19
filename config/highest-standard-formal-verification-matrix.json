@@ -976,7 +976,8 @@
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean ciphertext path-family content theorem now includes startup repair, reorg replay, block_range, canonical-index rebuild, announced import, sync import, mined commit, and raw-ingress ciphertext rows",
         "formal/lean/Hegemon/Release/HighestStandardCompletionCertificate.lean binds this internal theorem surface into the final completion certificate with explicit external-assumption fields and the production release gate.",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean now proves inbound sync response import control flow facts: count-before-sort/import, sorted-height projection, bounded attempted/imported counts, stop-on-first-error, impossible outcome-trace rejection, and nonempty/still-ahead continuation requests.",
-        "node/src/native/mod.rs native_sync_loop response handling now routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; Lean-generated vectors check sorted heights, import progress, over-limit rejection, and continuation decisions against production helpers."
+        "node/src/native/mod.rs native_sync_loop response handling now routes through admit_and_sort_native_sync_response_blocks before NativeSyncResponseImportProgress and import_announced_block; Lean-generated vectors check sorted heights, import progress, over-limit rejection, and continuation decisions against production helpers.",
+        "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean and GenerateMinedBlockCommitPublicationVectors.lean now bind the composed mined publication rejection order to production helper calls: mined-work, block commitment, mined manifest kind, then manifest shape"
       ],
       "missing_work": [],
       "performance_constraint": "Refinement proof should reuse existing replay planning; avoid extra full replay on normal block import.",
@@ -1558,6 +1559,24 @@
     "known_limitations": [
       "This proves and production-binds verifier-call surface construction, not STARK/AIR/PCS soundness, witness extraction, bincode correctness, hash security, or complete native-node equivalence.",
       "The final verifier result remains an explicit soundness handoff field, so primitive proof-system assumptions stay named rather than hidden."
+    ]
+  },
+  "last_mined_block_commit_publication_slice": {
+    "status": "passed_full_formal_core",
+    "summary": "Added a mined-block commit publication rejection table and Lean-generated production conformance gate. The gate binds the composed native publication decision to production helper order: mined-work freshness, block-commitment admission, mined atomic-manifest kind, then atomic manifest shape.",
+    "lean_modules": [
+      "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
+      "formal/lean/Hegemon/Native/GenerateMinedBlockCommitPublicationVectors.lean"
+    ],
+    "rust_gate": "HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS=<generated> cargo test -p hegemon-node lean_generated_mined_block_commit_publication_vectors_match_production --lib --no-default-features -- --nocapture",
+    "validation": {
+      "focused_lean_build": "passed: lake build Hegemon.Native.MinedBlockCommitPublication Hegemon.Native.GenerateMinedBlockCommitPublicationVectors",
+      "focused_rust_gate": "passed: lean_generated_mined_block_commit_publication_vectors_match_production",
+      "full_formal_core": "passed: bash scripts/check_formal_core.sh",
+      "format": "passed: cargo fmt --check"
+    },
+    "known_limitations": [
+      "This narrows mined native publication helper-order equivalence. It does not prove PoW threshold soundness, body/replay parser internals, sled/fsync correctness, or complete native-node refinement."
     ]
   }
 }

@@ -7218,38 +7218,49 @@
       "id": "native.mined-block-commit-publication",
       "component": "native mined block commit publication surface",
       "claim_class": "lean_theorem",
-      "summary": "The Lean mined-block commit publication surface composes local mined-work freshness, native block-commitment admission, and atomic mined-block commit-manifest admission into one accepted publication package. Accepted local mined publication now exposes fresh parent/height preconditions, header/body/supply commitment preconditions, the mined-block manifest kind, atomic manifest preconditions, and a production persisted-head readback regression before state publication or broadcast.",
+      "summary": "The Lean mined-block commit publication surface composes local mined-work freshness, native block-commitment admission, and atomic mined-block commit-manifest admission into one accepted publication package. Accepted local mined publication exposes fresh parent/height preconditions, header/body/supply commitment preconditions, the mined-block manifest kind, atomic manifest preconditions, and production persisted-head readback before state publication or broadcast. The slice now also has a Lean-generated production conformance gate for the composed publication rejection order: mined-work first, block commitment second, mined-manifest kind third, and mined manifest shape last.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_mined_work_commitment_atomic_manifest_composition",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.MinedBlockCommitPublication.mined_commit_kind_eq_of_accepts",
+        "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts",
+        "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_rejection_facts",
         "Hegemon.Native.MinedBlockCommitPublication.accepts_iff_mined_block_commit_publication_preconditions",
-        "Hegemon.Native.MinedBlockCommitPublication.accepted_mined_block_commit_publication_facts"
+        "Hegemon.Native.MinedBlockCommitPublication.block_commitment_rejects_before_commit_kind",
+        "Hegemon.Native.MinedBlockCommitPublication.commit_kind_rejects_before_manifest_shape",
+        "Hegemon.Native.MinedBlockCommitPublication.commit_manifest_rejects_after_mined_kind",
+        "Hegemon.Native.MinedBlockCommitPublication.mined_commit_kind_eq_of_accepts",
+        "Hegemon.Native.MinedBlockCommitPublication.mined_work_rejects_before_block_commitment",
+        "Hegemon.Native.MinedBlockCommitPublication.rejection_accepts_iff_publication_accepts",
+        "Hegemon.Native.MinedBlockCommitPublication.valid_mined_block_commit_publication_accepts"
       ],
       "assumptions": [
-        "This is a zero-runtime-cost Lean composition over existing executable mined-work, block-commitment, and atomic-commit manifest admission predicates.",
+        "The generated conformance gate checks the composed publication rejection order against production helper calls; it does not prove PoW threshold soundness, replay/body equivalence, sled correctness, filesystem durability, or full native-node refinement.",
+        "The theorem keeps proof-of-work hash-threshold soundness, parent-hash computation, body/replay implementation equivalence, supply-accounting implementation equivalence, sled transaction correctness, filesystem durability, and complete native-node refinement explicit.",
         "The theorem packages the predicates that production order bindings already require before mined state publication or broadcast; production now additionally reads back the persisted best pointer, height index, and block record after the durability barrier and before mined/reorg state publication.",
-        "The theorem keeps proof-of-work hash-threshold soundness, parent-hash computation, body/replay implementation equivalence, supply-accounting implementation equivalence, sled transaction correctness, filesystem durability, and complete native-node refinement explicit."
+        "This is a zero-runtime-cost Lean composition over existing executable mined-work, block-commitment, and atomic-commit manifest admission predicates."
       ],
       "evidence_paths": [
+        "formal/lean/Hegemon.lean",
+        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
+        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
+        "formal/lean/Hegemon/Native/GenerateMinedBlockCommitPublicationVectors.lean",
         "formal/lean/Hegemon/Native/MinedBlockCommitPublication.lean",
         "formal/lean/Hegemon/Native/MinedWorkAdmission.lean",
-        "formal/lean/Hegemon/Native/BlockCommitmentAdmission.lean",
-        "formal/lean/Hegemon/Native/AtomicCommitManifestAdmission.lean",
-        "node/src/native/mod.rs",
-        "formal/lean/Hegemon.lean",
         "formal/lean/README.md",
-        "scripts/hegemon_formal_core/src/lib.rs",
-        "scripts/check_lean_formal.sh"
+        "node/src/native/mod.rs",
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
+        "scripts/hegemon_formal_core/src/lib.rs"
       ],
       "gates": [
-        "bash scripts/check_lean_formal.sh",
+        "HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS=$LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS cargo test -p hegemon-node lean_generated_mined_block_commit_publication_vectors_match_production --lib --no-default-features -- --nocapture",
         "PATH=\"$HOME/.elan/bin:$HOME/.lake/bin:$PATH\" lake build Hegemon.Native.MinedBlockCommitPublication Hegemon",
-        "cargo test -p hegemon-node action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture",
-        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh",
+        "bash scripts/check_lean_formal.sh",
         "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
-        "bash scripts/check_formal_core.sh"
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo test -p hegemon-node action_block_commit_reloads_canonical_sled_state --lib --no-default-features -- --nocapture"
       ],
       "residual_risks": [
         {

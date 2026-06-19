@@ -14839,6 +14839,59 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     #[serde(deny_unknown_fields)]
+    struct LeanMinedBlockCommitPublicationVectorFile {
+        schema_version: u32,
+        mined_block_commit_publication_cases: Vec<LeanMinedBlockCommitPublicationCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMinedBlockCommitPublicationCase {
+        name: String,
+        best_height: u64,
+        work_height: u64,
+        parent_hash_matches: bool,
+        tx_count_matches: bool,
+        state_root_matches: bool,
+        kernel_root_matches: bool,
+        nullifier_root_matches: bool,
+        extrinsics_root_matches: bool,
+        message_root_matches: bool,
+        message_count_matches: bool,
+        header_mmr_root_matches: bool,
+        header_mmr_len_matches: bool,
+        supply_digest_matches: bool,
+        commit_kind: String,
+        action_count: usize,
+        planned_action_count: usize,
+        chain_block_count: usize,
+        height_entry_count: usize,
+        pending_entry_count: usize,
+        source_commitment_count: usize,
+        source_nullifier_count: usize,
+        source_bridge_replay_count: usize,
+        source_ciphertext_index_count: usize,
+        source_ciphertext_archive_count: usize,
+        source_staged_ciphertext_removal_count: usize,
+        block_record_writes: usize,
+        height_index_writes: usize,
+        best_pointer_writes: usize,
+        canonical_index_cleared: bool,
+        pending_tree_cleared: bool,
+        pending_action_removals: usize,
+        pending_action_writes: usize,
+        commitment_writes: usize,
+        nullifier_writes: usize,
+        bridge_replay_writes: usize,
+        ciphertext_index_writes: usize,
+        ciphertext_archive_writes: usize,
+        staged_ciphertext_removals: usize,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
     struct LeanWorkTemplateAdmissionVectorFile {
         schema_version: u32,
         work_template_admission_cases: Vec<LeanWorkTemplateAdmissionCase>,
@@ -21210,6 +21263,115 @@ mod tests {
             "{} native mined-work admission rejection drifted from Lean spec",
             case.name
         );
+    }
+
+    #[test]
+    fn lean_generated_mined_block_commit_publication_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_MINED_BLOCK_COMMIT_PUBLICATION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean mined-block commit publication vectors");
+        let vectors: LeanMinedBlockCommitPublicationVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean mined-block commit publication vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.mined_block_commit_publication_cases.is_empty(),
+            "Lean mined-block commit publication cases must not be empty"
+        );
+
+        let mut names = BTreeSet::new();
+        for case in &vectors.mined_block_commit_publication_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mined_block_commit_publication_case(case);
+        }
+    }
+
+    fn verify_lean_mined_block_commit_publication_case(case: &LeanMinedBlockCommitPublicationCase) {
+        let mined_work = NativeMinedWorkAdmissionInput {
+            best_height: case.best_height,
+            work_height: case.work_height,
+            parent_hash_matches: case.parent_hash_matches,
+        };
+        let block_commitment = NativeBlockCommitmentAdmissionInput {
+            tx_count_matches: case.tx_count_matches,
+            state_root_matches: case.state_root_matches,
+            kernel_root_matches: case.kernel_root_matches,
+            nullifier_root_matches: case.nullifier_root_matches,
+            extrinsics_root_matches: case.extrinsics_root_matches,
+            message_root_matches: case.message_root_matches,
+            message_count_matches: case.message_count_matches,
+            header_mmr_root_matches: case.header_mmr_root_matches,
+            header_mmr_len_matches: case.header_mmr_len_matches,
+            supply_digest_matches: case.supply_digest_matches,
+        };
+        let commit_manifest = NativeAtomicCommitManifestAdmissionInput {
+            kind: native_atomic_commit_kind_from_label(&case.commit_kind),
+            action_count: case.action_count,
+            planned_action_count: case.planned_action_count,
+            chain_block_count: case.chain_block_count,
+            height_entry_count: case.height_entry_count,
+            pending_entry_count: case.pending_entry_count,
+            source_commitment_count: case.source_commitment_count,
+            source_nullifier_count: case.source_nullifier_count,
+            source_bridge_replay_count: case.source_bridge_replay_count,
+            source_ciphertext_index_count: case.source_ciphertext_index_count,
+            source_ciphertext_archive_count: case.source_ciphertext_archive_count,
+            source_staged_ciphertext_removal_count: case.source_staged_ciphertext_removal_count,
+            block_record_writes: case.block_record_writes,
+            height_index_writes: case.height_index_writes,
+            best_pointer_writes: case.best_pointer_writes,
+            canonical_index_cleared: case.canonical_index_cleared,
+            pending_tree_cleared: case.pending_tree_cleared,
+            pending_action_removals: case.pending_action_removals,
+            pending_action_writes: case.pending_action_writes,
+            commitment_writes: case.commitment_writes,
+            nullifier_writes: case.nullifier_writes,
+            bridge_replay_writes: case.bridge_replay_writes,
+            ciphertext_index_writes: case.ciphertext_index_writes,
+            ciphertext_archive_writes: case.ciphertext_archive_writes,
+            staged_ciphertext_removals: case.staged_ciphertext_removals,
+        };
+        let actual_rejection = evaluate_native_mined_block_commit_publication_rejection(
+            mined_work,
+            block_commitment,
+            commit_manifest,
+        );
+        assert_eq!(
+            actual_rejection.is_none(),
+            case.expected_valid,
+            "{} native mined-block commit publication validity drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            actual_rejection, case.expected_rejection,
+            "{} native mined-block commit publication rejection drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn evaluate_native_mined_block_commit_publication_rejection(
+        mined_work: NativeMinedWorkAdmissionInput,
+        block_commitment: NativeBlockCommitmentAdmissionInput,
+        commit_manifest: NativeAtomicCommitManifestAdmissionInput,
+    ) -> Option<String> {
+        if evaluate_native_mined_work_admission(mined_work).is_err() {
+            Some("mined_work_rejected".to_owned())
+        } else if evaluate_native_block_commitment_admission(block_commitment).is_err() {
+            Some("block_commitment_rejected".to_owned())
+        } else if !matches!(
+            commit_manifest.kind,
+            NativeAtomicCommitKind::MinedBlockCommit
+        ) {
+            Some("commit_kind_mismatch".to_owned())
+        } else if evaluate_native_atomic_commit_manifest_admission(commit_manifest).is_err() {
+            Some("commit_manifest_rejected".to_owned())
+        } else {
+            None
+        }
     }
 
     #[test]
