@@ -145,7 +145,7 @@
       "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash"
     ],
     "validation": {
-      "status": "Targeted Lean build, generated-vector JSON validation, decoded and raw Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally."
+      "status": "Targeted Lean build, generated-vector JSON validation, decoded and raw Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally. hegemon-dev at fdbc885f passed the raw bridge mint-payload Lean-vector conformance gate; RPC was healthy, NTP synchronized, and miningStatus reported active mining at about 11 kH/s."
     },
     "known_limitations": [
       "This narrows the bridge mechanized-refinement gap at the mint payload boundary. It does not enable positive bridge minting, prove external receipt soundness, prove SCALE implementation correctness for all arbitrary bytes, or replace the required future PQ-clean receipt verifier and authorization story."
