@@ -40,7 +40,13 @@ All miners should use the same approved `HEGEMON_SEEDS` list when joining the sh
 make node
 ```
 
-The native testnet starts from native genesis state and does not use chain-spec generation.
+The 0.10 native testnet starts from fresh native genesis state and does not use
+the deleted 0.9 JSON chain-spec files or a runtime `--chain` flag. When the
+public testnet migrates from 0.9.1 to 0.10.0, publish the new genesis/release
+record under a versioned directory such as `config/testnet/0.10.0/` with the
+genesis hash, chain id/rules hash, binary commit, approved seed list, PoW bits,
+and operator notes. Private devnets can start directly with `--dev` and an
+isolated base path.
 
 ### 4. Start the Testnet
 

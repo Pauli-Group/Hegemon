@@ -683,7 +683,6 @@ const buildDefaultConnection = (): NodeConnection => ({
   wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
   httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: true,
-  chainSpecPath: 'config/dev-chainspec.json',
   tmp: false,
   basePath: '~/.hegemon-node',
   rpcPort: defaultRpcPort,
@@ -718,7 +717,6 @@ const buildTestnetConnection = (): NodeConnection => ({
   daStoreCapacity: 1024,
   rpcMethods: 'safe',
   rpcCorsAll: false,
-  chainSpecPath: 'testnet',
   seeds: approvedSeeds,
   maxPeers: 50
 });
@@ -756,10 +754,6 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   }
   if (next.mode === 'remote' && !next.httpUrl?.trim()) {
     next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
-  }
-
-  if (isDefaultLocal && sanitizedConnection.dev && !sanitizedConnection.chainSpecPath) {
-    next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
   }
 
   const currentSeeds = (next.seeds ?? '').trim();
@@ -1084,21 +1078,6 @@ export default function App() {
     }
   }, []);
 
-  const handlePickChainSpec = useCallback(async () => {
-    if (!activeConnection) {
-      return;
-    }
-    const selection = await openDialogPath({
-      title: 'Select chain spec',
-      defaultPath: activeConnection.chainSpecPath?.trim() || undefined,
-      properties: ['openFile'],
-      filters: [{ name: 'Chain spec', extensions: ['json'] }]
-    });
-    if (selection) {
-      updateActiveConnection({ chainSpecPath: selection });
-    }
-  }, [activeConnection, openDialogPath, updateActiveConnection]);
-
   const handlePickBasePath = useCallback(async () => {
     if (!activeConnection) {
       return;
@@ -1412,7 +1391,6 @@ export default function App() {
     try {
       await window.hegemon.node.start({
         connectionId: normalizedConnection.id,
-        chainSpecPath: normalizedConnection.chainSpecPath || undefined,
         basePath: normalizedConnection.basePath || undefined,
         dev: normalizedConnection.dev,
         tmp: normalizedConnection.tmp,
@@ -2713,28 +2691,9 @@ export default function App() {
           <div className="panel space-y-4">
             <div>
               <p className="label">Paths</p>
-              <p className="text-sm text-surfaceMuted/80">Chain spec and storage locations.</p>
+              <p className="text-sm text-surfaceMuted/80">Native node storage locations.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2 md:col-span-2">
-                <span className="label">Chain spec (path or name)</span>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs text-surfaceMuted/70">
-                    JSON file or built-in name (e.g. <span className="mono">testnet</span>).
-                  </span>
-                  <button className="secondary text-xs px-3" type="button" onClick={handlePickChainSpec}>
-                    Browse
-                  </button>
-                </div>
-                <input
-                  className="mono"
-                  value={activeConnection.chainSpecPath ?? ''}
-                  onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
-                  placeholder="config/dev-chainspec.json"
-                  spellCheck={false}
-                  title={activeConnection.chainSpecPath ?? ''}
-                />
-              </label>
               <label className="space-y-2 md:col-span-2">
                 <span className="label">Base path</span>
                 <div className="flex items-center justify-between gap-3">
@@ -2989,11 +2948,6 @@ export default function App() {
           </div>
 
           <div className="space-y-2">
-            {activeConnection.dev && !activeConnection.chainSpecPath ? (
-              <p className="text-sm text-surfaceMuted">
-                Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
-              </p>
-            ) : null}
             {activeConnection.listenAddr ? (
               <p className="text-sm text-surfaceMuted">
                 Listen address overrides the P2P port setting.

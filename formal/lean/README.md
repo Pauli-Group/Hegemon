@@ -10,6 +10,18 @@ bash ../../scripts/check_lean_formal.sh
 
 Current proved kernel:
 
+- `Hegemon.Essence.Core` defines the small semantic core for the formal
+  essence of Hegemon: `LedgerState`, `Action`, `Block`, `ObserverView`, and
+  `Transition`. The core proves no counterfeiting, derives no double
+  spend/nullifier uniqueness from freshness, proves no theft from authorization
+  witnesses, tracks per-asset conservation and isolation directly, binds bridge
+  replay safety to receipt metadata, proves local privacy projection, and keeps
+  timing/topology/miner-ordering/global privacy as explicit system-model
+  assumptions. It also defines exact-byte parser -> admitted action -> replay ->
+  storage -> publication production-path refinement, fail-closed rejected paths,
+  canonical public action terms with roundtrip/injectivity/non-malleability
+  facts, encoding bounds that prevent fixed-width truncation, and generated
+  essence vectors checked by `scripts/check_essence_core_vectors.py`.
 - `Hegemon.Release.HighestStandardCompletionCertificate.accepted_internal_bundle_and_release_gate_yield_highest_standard_completion_certificate`, `completion_certificate_exposes_critical_chain_security_and_residuals`, and `completion_certificate_binds_release_gate_and_native_backend_posture` define the top-level closure certificate for the formal-verification matrix. The certificate requires the internal theorem bundle for no counterfeiting, no double spend, no theft/input authorization, per-asset conservation, statement binding, proof-system residual boundaries, canonical encoding, replay/reorg/startup refinement, DA binding, bridge safety, PQ channel safety, resource bounds, privacy/ciphertext publication, admission safety, and the production release gate. It also requires primitive crypto, zero-knowledge simulator, ciphertext confidentiality, external bridge proof, release infrastructure, parser/hash/proof/storage/DA/native-node, and performance assumptions as explicit fields; it does not prove those external assumptions unconditionally.
 - `Hegemon.Release.AssumptionClosureRoadmap.residual_closure_roadmap_splits_all_open_assumptions` and companion projection theorems split those explicit residuals into three formal buckets: parser/native/proof/bridge mechanized-refinement tracks, named primitive cryptographic assumptions, and fail-closed system-model assumptions for DA, storage, global privacy, release enforcement, scanner completeness, and performance monitoring. This keeps future work from treating implementation-equivalence gaps as ordinary cryptographic assumptions.
 - `Hegemon.Release.SystemModelAssumptionGate.accepted_system_model_gate_exposes_fail_closed_monitoring` and `accepted_system_model_gate_yields_facts` model the fail-closed evidence table for the system-model bucket. Formal-core now checks `config/system-model-assumption-gates.json`, requiring DA retention, storage durability, global privacy boundary, release infrastructure, dependency scanner completeness, and performance-budget categories to be fail-closed, release-blocking, freshness-bounded, and backed by checked-in evidence paths.

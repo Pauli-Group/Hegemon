@@ -7586,6 +7586,64 @@
           "tracking": "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md"
         }
       ]
+    },
+    {
+      "id": "formal.essence-core",
+      "component": "Lean formal essence semantic core",
+      "claim_class": "lean_theorem",
+      "summary": "The Lean essence core defines LedgerState, Action, Block, ObserverView, and Transition once, proves no counterfeiting, derived no double spend, no theft through authorization witnesses, per-asset conservation/isolation, receipt-bound bridge replay safety, local privacy projection, encoding no-truncation bounds, exact parser/storage production-path refinement, fail-closed rejected paths, explicit system privacy assumptions, and canonical-term roundtrip/injectivity/non-malleability over the core public action data.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_semantic_core_generated_vectors_and_progress_gate",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Essence.Core.transition_no_counterfeiting",
+        "Hegemon.Essence.Core.transition_no_double_spend",
+        "Hegemon.Essence.Core.transition_no_theft",
+        "Hegemon.Essence.Core.transition_asset_isolation",
+        "Hegemon.Essence.Core.transition_per_asset_conservation",
+        "Hegemon.Essence.Core.transition_bridge_safety",
+        "Hegemon.Essence.Core.transition_privacy_projection",
+        "Hegemon.Essence.Core.transition_encoding_no_truncation",
+        "Hegemon.Essence.Core.transition_nullifiers_unique_derived",
+        "Hegemon.Essence.Core.transition_bridge_replay_keys_unique_derived",
+        "Hegemon.Essence.Core.action_chain_supply_integrity",
+        "Hegemon.Essence.Core.action_chain_nullifiers_unique",
+        "Hegemon.Essence.Core.block_transition_supply_integrity",
+        "Hegemon.Essence.Core.block_transition_nullifiers_unique",
+        "Hegemon.Essence.Core.production_path_refines_core_transition",
+        "Hegemon.Essence.Core.production_path_refines_core_security",
+        "Hegemon.Essence.Core.production_path_exact_bytes",
+        "Hegemon.Essence.Core.failed_production_path_publishes_no_state",
+        "Hegemon.Essence.Core.external_assumption_boundary_is_named",
+        "Hegemon.Essence.Core.global_privacy_requires_system_model",
+        "Hegemon.Essence.Core.canonical_encoding_source_is_core",
+        "Hegemon.Essence.Core.canonical_action_encoding_comes_from_core",
+        "Hegemon.Essence.Core.canonical_action_term_roundtrip",
+        "Hegemon.Essence.Core.canonical_action_term_injective",
+        "Hegemon.Essence.Core.canonical_action_term_non_malleable"
+      ],
+      "assumptions": [
+        "The essence core is the small semantic target for Hegemon validity and privacy projection; existing production-specific Lean/vector gates remain the detailed path-specific evidence.",
+        "ML-KEM, ML-DSA, AEAD, hash/transcript security, STARK/PCS soundness, DA retention, storage durability, local zero-knowledge, timing privacy, topology privacy, miner-ordering privacy, and global traffic privacy remain named assumptions unless discharged by separate proof or review artifacts.",
+        "The production-path refinement relation now requires exact raw canonical action bytes, exact stored canonical action bytes, reload equality, publication equality, and fail-closed rejected paths; complete arbitrary Rust/native-node refinement remains the broader implementation-equivalence track."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Essence/Core.lean",
+        "formal/lean/Hegemon/Essence/GenerateCoreVectors.lean",
+        "scripts/check_essence_core_vectors.py",
+        "config/formal-essence-progress.json",
+        "scripts/check_formal_core.sh",
+        ".agent/FORMAL_ESSENCE_CORE_EXECPLAN.md"
+      ],
+      "gates": [
+        "cd formal/lean && lake build Hegemon.Essence.Core Hegemon.Essence.GenerateCoreVectors Hegemon",
+        "cd formal/lean && lake exe gen_essence_core_vectors > <generated-json>",
+        "python3 scripts/check_essence_core_vectors.py <generated-json> config/formal-essence-progress.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-claims config/formal-security-claims.json",
+        "cargo run --quiet --manifest-path scripts/hegemon_formal_core/Cargo.toml -- check-blueprint config/formal-security-blueprint.json --claims config/formal-security-claims.json",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": []
     }
   ]
 }

@@ -33,15 +33,21 @@
 //! service and integration tests.
 
 use crate::pq_transport::{PqPeerIdentity, PqTransportConfig};
+use futures::{Sink, SinkExt, StreamExt, channel::mpsc as futures_mpsc};
 use pq_noise::{PqTransport as PqNoiseTransport, SecureSession};
+use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
+use tokio::sync::{mpsc, oneshot};
+
+const NATIVE_PQ_BRIDGE_QUEUE_CAPACITY: usize = 64;
 
 /// Result type for native transport operations
 pub type Result<T> = std::result::Result<T, NativeTransportError>;
@@ -212,18 +218,30 @@ impl NativePqTransport {
 ///
 /// Wraps a SecureSession and exposes direct async send/receive helpers.
 pub struct NativePqConnection {
-    /// The underlying secure session
-    session: SecureSession<TcpStream>,
+    /// Outbound bridge to the background session task.
+    outbound_tx: futures_mpsc::Sender<BridgeCommand>,
+    /// Inbound bridge from the background session task.
+    inbound_rx: mpsc::Receiver<io::Result<Vec<u8>>>,
     /// Remote peer ID
     peer_id: [u8; 32],
     /// Remote address
     addr: SocketAddr,
     /// Whether this was an outbound connection
     is_outbound: bool,
+    /// Whether the underlying PQ-noise session is the initiator.
+    is_initiator: bool,
+    /// Wire bytes sent by the underlying secure session.
+    bytes_sent: Arc<AtomicU64>,
+    /// Wire bytes received by the underlying secure session.
+    bytes_received: Arc<AtomicU64>,
+    /// Whether the background bridge has closed.
+    bridge_closed: Arc<AtomicBool>,
     /// Read buffer for partial reads
     read_buffer: Vec<u8>,
     /// Current position in read buffer
     read_pos: usize,
+    /// In-flight flush barrier for AsyncWrite.
+    pending_flush: Option<oneshot::Receiver<io::Result<()>>>,
 }
 
 impl NativePqConnection {
@@ -233,13 +251,35 @@ impl NativePqConnection {
         addr: SocketAddr,
         is_outbound: bool,
     ) -> Self {
-        Self {
+        let is_initiator = session.is_initiator();
+        let bytes_sent = Arc::new(AtomicU64::new(session.bytes_sent()));
+        let bytes_received = Arc::new(AtomicU64::new(session.bytes_received()));
+        let bridge_closed = Arc::new(AtomicBool::new(false));
+        let (outbound_tx, outbound_rx) = futures_mpsc::channel(NATIVE_PQ_BRIDGE_QUEUE_CAPACITY);
+        let (inbound_tx, inbound_rx) = mpsc::channel(NATIVE_PQ_BRIDGE_QUEUE_CAPACITY);
+
+        tokio::spawn(run_native_pq_session_bridge(
             session,
+            outbound_rx,
+            inbound_tx,
+            bytes_sent.clone(),
+            bytes_received.clone(),
+            bridge_closed.clone(),
+        ));
+
+        Self {
+            outbound_tx,
+            inbound_rx,
             peer_id,
             addr,
             is_outbound,
+            is_initiator,
+            bytes_sent,
+            bytes_received,
+            bridge_closed,
             read_buffer: Vec::new(),
             read_pos: 0,
+            pending_flush: None,
         }
     }
 
@@ -258,98 +298,229 @@ impl NativePqConnection {
         self.is_outbound
     }
 
+    /// Whether this side was the PQ-noise handshake initiator.
+    pub fn is_initiator(&self) -> bool {
+        self.is_initiator
+    }
+
     /// Get bytes sent
     pub fn bytes_sent(&self) -> u64 {
-        self.session.bytes_sent()
+        self.bytes_sent.load(Ordering::Relaxed)
     }
 
     /// Get bytes received
     pub fn bytes_received(&self) -> u64 {
-        self.session.bytes_received()
+        self.bytes_received.load(Ordering::Relaxed)
     }
 
     /// Send raw data over the secure channel
     pub async fn send(&mut self, data: &[u8]) -> io::Result<()> {
-        self.session
-            .send(data)
+        let (completion_tx, completion_rx) = oneshot::channel();
+        let mut outbound_tx = self.outbound_tx.clone();
+        outbound_tx
+            .send(BridgeCommand::Send {
+                data: data.to_vec(),
+                completion: Some(completion_tx),
+            })
             .await
-            .map_err(|e| io::Error::other(e.to_string()))
+            .map_err(|_| native_bridge_closed_error())?;
+        completion_rx
+            .await
+            .unwrap_or_else(|_| Err(native_bridge_closed_error()))
     }
 
     /// Receive raw data from the secure channel
     pub async fn recv(&mut self) -> io::Result<Option<Vec<u8>>> {
-        self.session
-            .recv()
-            .await
-            .map_err(|e| io::Error::other(e.to_string()))
+        match self.inbound_rx.recv().await {
+            Some(result) => result.map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn poll_bridge_flush(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if let Some(completion) = &mut self.pending_flush {
+            return match Pin::new(completion).poll(cx) {
+                Poll::Ready(Ok(result)) => {
+                    self.pending_flush = None;
+                    Poll::Ready(result)
+                }
+                Poll::Ready(Err(_)) => {
+                    self.pending_flush = None;
+                    Poll::Ready(Err(native_bridge_closed_error()))
+                }
+                Poll::Pending => Poll::Pending,
+            };
+        }
+
+        if self.bridge_closed.load(Ordering::Acquire) {
+            return Poll::Ready(Err(native_bridge_closed_error()));
+        }
+
+        match Pin::new(&mut self.outbound_tx).poll_ready(cx) {
+            Poll::Ready(Ok(())) => {
+                let (completion_tx, completion_rx) = oneshot::channel();
+                Pin::new(&mut self.outbound_tx)
+                    .start_send(BridgeCommand::Flush {
+                        completion: completion_tx,
+                    })
+                    .map_err(|_| native_bridge_closed_error())?;
+                self.pending_flush = Some(completion_rx);
+                self.poll_bridge_flush(cx)
+            }
+            Poll::Ready(Err(_)) => Poll::Ready(Err(native_bridge_closed_error())),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
 impl AsyncRead for NativePqConnection {
     fn poll_read(
         mut self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        // If we have buffered data, return it first
-        if self.read_pos < self.read_buffer.len() {
-            let remaining = &self.read_buffer[self.read_pos..];
-            let to_copy = std::cmp::min(remaining.len(), buf.remaining());
-            buf.put_slice(&remaining[..to_copy]);
-            self.read_pos += to_copy;
+        loop {
+            if self.read_pos < self.read_buffer.len() {
+                let remaining = &self.read_buffer[self.read_pos..];
+                let to_copy = std::cmp::min(remaining.len(), buf.remaining());
+                buf.put_slice(&remaining[..to_copy]);
+                self.read_pos += to_copy;
 
-            // Clear buffer if fully consumed
-            if self.read_pos >= self.read_buffer.len() {
-                self.read_buffer.clear();
-                self.read_pos = 0;
+                if self.read_pos >= self.read_buffer.len() {
+                    self.read_buffer.clear();
+                    self.read_pos = 0;
+                }
+
+                return Poll::Ready(Ok(()));
             }
 
-            return Poll::Ready(Ok(()));
+            match Pin::new(&mut self.inbound_rx).poll_recv(cx) {
+                Poll::Ready(Some(Ok(frame))) => {
+                    if frame.is_empty() {
+                        continue;
+                    }
+                    self.read_buffer = frame;
+                    self.read_pos = 0;
+                }
+                Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
+                Poll::Ready(None) => return Poll::Ready(Ok(())),
+                Poll::Pending => return Poll::Pending,
+            }
         }
-
-        // For now, return Pending since we can't poll async methods in poll_read
-        // The caller should use the async recv() method directly for receiving data,
-        // then this can read from the buffer.
-        //
-        // In practice, higher-level code should:
-        // 1. Call recv() to get data
-        // 2. Use AsyncRead to read from the buffer
-        //
-        // This is a limitation of the current design - the SecureSession recv() is async
-        // and can't be easily polled in a non-async context without restructuring.
-        //
-        // For full integration, consider:
-        // - Using a background task to recv() and fill the buffer
-        // - Or restructuring SecureSession to support poll-based IO
-        Poll::Pending
     }
 }
 
 impl AsyncWrite for NativePqConnection {
     fn poll_write(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        // For now, return Pending - the caller should use async send() directly
-        // This is a limitation similar to poll_read
-        //
-        // In practice, higher-level code should use the async send() method.
-        // For full AsyncWrite support, we would need to restructure SecureSession
-        // to support poll-based IO.
-        let _ = buf;
-        Poll::Pending
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        if self.bridge_closed.load(Ordering::Acquire) {
+            return Poll::Ready(Err(native_bridge_closed_error()));
+        }
+
+        match Pin::new(&mut self.outbound_tx).poll_ready(cx) {
+            Poll::Ready(Ok(())) => {
+                let written = buf.len();
+                Pin::new(&mut self.outbound_tx)
+                    .start_send(BridgeCommand::Send {
+                        data: buf.to_vec(),
+                        completion: None,
+                    })
+                    .map_err(|_| native_bridge_closed_error())?;
+                Poll::Ready(Ok(written))
+            }
+            Poll::Ready(Err(_)) => Poll::Ready(Err(native_bridge_closed_error())),
+            Poll::Pending => Poll::Pending,
+        }
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // SecureSession handles flushing internally
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        self.poll_bridge_flush(cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        // SecureSession handles shutdown internally
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.poll_bridge_flush(cx) {
+            Poll::Ready(Ok(())) => {
+                self.outbound_tx.close_channel();
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
     }
+}
+
+enum BridgeCommand {
+    Send {
+        data: Vec<u8>,
+        completion: Option<oneshot::Sender<io::Result<()>>>,
+    },
+    Flush {
+        completion: oneshot::Sender<io::Result<()>>,
+    },
+}
+
+async fn run_native_pq_session_bridge(
+    mut session: SecureSession<TcpStream>,
+    mut outbound_rx: futures_mpsc::Receiver<BridgeCommand>,
+    inbound_tx: mpsc::Sender<io::Result<Vec<u8>>>,
+    bytes_sent: Arc<AtomicU64>,
+    bytes_received: Arc<AtomicU64>,
+    bridge_closed: Arc<AtomicBool>,
+) {
+    loop {
+        tokio::select! {
+            command = outbound_rx.next() => {
+                match command {
+                    Some(BridgeCommand::Send { data, completion }) => {
+                        let result = session
+                            .send(&data)
+                            .await
+                            .map_err(|err| io::Error::other(err.to_string()));
+                        bytes_sent.store(session.bytes_sent(), Ordering::Relaxed);
+                        let send_failed = result.is_err();
+                        if let Some(completion) = completion {
+                            let _ = completion.send(result);
+                        }
+                        if send_failed {
+                            break;
+                        }
+                    }
+                    Some(BridgeCommand::Flush { completion }) => {
+                        let _ = completion.send(Ok(()));
+                    }
+                    None => break,
+                }
+            }
+            received = session.recv() => {
+                match received {
+                    Ok(Some(data)) => {
+                        bytes_received.store(session.bytes_received(), Ordering::Relaxed);
+                        if inbound_tx.send(Ok(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(err) => {
+                        let _ = inbound_tx
+                            .send(Err(io::Error::other(err.to_string())))
+                            .await;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    bridge_closed.store(true, Ordering::Release);
+}
+
+fn native_bridge_closed_error() -> io::Error {
+    io::Error::new(io::ErrorKind::BrokenPipe, "native PQ session bridge closed")
 }
 
 /// Connection info for a PQ-secured peer
@@ -405,6 +576,7 @@ impl PqUpgradeOutput {
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     #[derive(Deserialize)]
@@ -663,13 +835,13 @@ mod tests {
             );
             assert!(!peer_conn.is_outbound(), "{} peer inbound flag", case.name);
             assert_eq!(
-                local_conn.session.is_initiator(),
+                local_conn.is_initiator(),
                 case.expected_local_is_initiator,
                 "{} local session role flag",
                 case.name
             );
             assert_eq!(
-                peer_conn.session.is_initiator(),
+                peer_conn.is_initiator(),
                 case.expected_peer_is_initiator,
                 "{} peer session role flag",
                 case.name
@@ -764,6 +936,65 @@ mod tests {
         responder_conn.send(b"Hello from responder").await.unwrap();
         let received = initiator_conn.recv().await.unwrap().unwrap();
         assert_eq!(received, b"Hello from responder".to_vec());
+    }
+
+    #[tokio::test]
+    async fn native_pq_connection_async_io_bridge_round_trips() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let initiator = NativePqTransport::from_seed(
+            b"async-io-test-initiator",
+            NativePqTransportConfig::development(),
+        );
+        let responder = NativePqTransport::from_seed(
+            b"async-io-test-responder",
+            NativePqTransportConfig::development(),
+        );
+
+        let responder_handle = tokio::spawn({
+            let responder = responder.clone();
+            async move {
+                let (socket, peer_addr) = listener.accept().await.unwrap();
+                responder.upgrade_inbound(socket, peer_addr).await
+            }
+        });
+
+        let initiator_socket = TcpStream::connect(addr).await.unwrap();
+        let mut initiator_conn = initiator
+            .upgrade_outbound(initiator_socket, addr)
+            .await
+            .unwrap();
+        let mut responder_conn = responder_handle.await.unwrap().unwrap();
+
+        let first = b"stream bridge from initiator";
+        let second = b"stream bridge from responder";
+
+        let initiator_write = async {
+            initiator_conn.write_all(first).await?;
+            initiator_conn.flush().await
+        };
+        let responder_read = async {
+            let mut buf = vec![0u8; first.len()];
+            responder_conn.read_exact(&mut buf).await?;
+            io::Result::Ok(buf)
+        };
+        let (write_result, read_result) = tokio::join!(initiator_write, responder_read);
+        write_result.unwrap();
+        assert_eq!(read_result.unwrap(), first);
+
+        let responder_write = async {
+            responder_conn.write_all(second).await?;
+            responder_conn.flush().await
+        };
+        let initiator_read = async {
+            let mut buf = vec![0u8; second.len()];
+            initiator_conn.read_exact(&mut buf).await?;
+            io::Result::Ok(buf)
+        };
+        let (write_result, read_result) = tokio::join!(responder_write, initiator_read);
+        write_result.unwrap();
+        assert_eq!(read_result.unwrap(), second);
     }
 
     #[test]

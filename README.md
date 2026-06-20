@@ -58,7 +58,7 @@ flowchart TB
     BR --> SM
 ```
 
-The operator `hegemon-node` binary is native. It starts a fresh chain, stores native block and shielded-state metadata in `sled`, mines development PoW blocks, syncs over the Hegemon PQ service, and preserves the existing JSON-RPC method names for walletd, Electron, and scripts.
+The operator `hegemon-node` binary is native. It starts a fresh chain, stores native block and shielded-state metadata in `sled`, mines development PoW blocks, syncs over the Hegemon PQ service, and preserves the existing JSON-RPC method names for walletd, Electron, and scripts. Version 0.10 launches by native profile and environment rather than legacy JSON chain-spec files; the public 0.10 testnet migration is a fresh-genesis restart with a versioned release record, while private devnets use `--dev` plus an isolated base path.
 
 #### Recursive block artifacts and data availability
 On the shipped lane, blocks carry one same-block `recursive_block_v2` artifact that binds the ordered verified `tx_leaf` stream to the block’s canonical `tx_statements_commitment`, state roots, nullifier root, and DA root. The legacy `commitment_proof` bytes remain empty on that lane. Validators accept a non-empty shielded block by (1) verifying the ordered native `tx_leaf` artifacts, (2) recomputing the semantic tuple from parent state plus block order, and (3) verifying the `recursive_block_v2` artifact against that tuple. The explicit `ReceiptRoot` lane still exists for comparison and research, but it is not the shipped default.

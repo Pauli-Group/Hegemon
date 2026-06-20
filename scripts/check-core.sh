@@ -14,6 +14,7 @@ EOF
 
 run_lint() {
   cargo fmt --all -- --check
+  python3 scripts/check_native_startup_policy.py
   cargo clippy \
     -p hegemon-node \
     -p protocol-kernel \

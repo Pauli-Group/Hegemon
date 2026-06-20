@@ -8,7 +8,6 @@ export type NodeConnection = {
   participationRole?: NodeParticipationRole;
   wsUrl: string;
   httpUrl?: string;
-  chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
   basePath?: string;
@@ -284,7 +283,6 @@ export type Contact = {
 
 export type NodeStartOptions = {
   connectionId?: string;
-  chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
   basePath?: string;

@@ -184,6 +184,9 @@ lean_exe gen_ci_release_gate_vectors where
 lean_exe gen_dependency_audit_policy_vectors where
   root := `Hegemon.Release.GenerateDependencyAuditPolicyVectors
 
+lean_exe gen_essence_core_vectors where
+  root := `Hegemon.Essence.GenerateCoreVectors
+
 lean_exe gen_transfer_action_payload_admission_vectors where
   root := `Hegemon.Native.GenerateTransferActionPayloadAdmissionVectors
 

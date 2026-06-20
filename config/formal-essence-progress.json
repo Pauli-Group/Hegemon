@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "generated_for_branch": "codex/superneo-formal-verification",
+  "goal_thread_id": "019e6319-afca-7233-988d-63f8830fbc7a",
+  "measurement_timestamp": "2026-06-20T02:07:28Z",
+  "objective": "Implement the formal essence of Hegemon in Lean: a small semantic core with LedgerState, Action, Block, ObserverView, and Transition; one proof surface for no counterfeiting, no double spend, no theft, asset isolation, per-asset conservation, bridge safety, and privacy projection; a production path refinement relation for parser -> admitted action -> replay -> storage -> publication with exact raw/stored canonical bytes and fail-closed failure paths; named primitive/proof/DA/storage/local-ZK/timing/topology/miner-ordering/global-privacy assumptions; and canonical term evidence from one source of truth.",
+  "measurement_method": "The checked generator formal/lean/Hegemon/Essence/GenerateCoreVectors.lean emits the required type set, theorem set, production stage order, named assumption boundary, canonical term source, and progress items. scripts/check_essence_core_vectors.py recomputes the overall percentage from those generated progress items and compares this ledger to the generated source.",
+  "overall_completion_percent": 100.0,
+  "required_core_types": [
+    "LedgerState",
+    "Action",
+    "Block",
+    "ObserverView",
+    "Transition"
+  ],
+  "required_theorems": [
+    "Hegemon.Essence.Core.transition_no_counterfeiting",
+    "Hegemon.Essence.Core.transition_no_double_spend",
+    "Hegemon.Essence.Core.transition_no_theft",
+    "Hegemon.Essence.Core.transition_asset_isolation",
+    "Hegemon.Essence.Core.transition_per_asset_conservation",
+    "Hegemon.Essence.Core.transition_bridge_safety",
+    "Hegemon.Essence.Core.transition_privacy_projection",
+    "Hegemon.Essence.Core.transition_encoding_no_truncation",
+    "Hegemon.Essence.Core.transition_nullifiers_unique_derived",
+    "Hegemon.Essence.Core.transition_bridge_replay_keys_unique_derived",
+    "Hegemon.Essence.Core.action_chain_supply_integrity",
+    "Hegemon.Essence.Core.action_chain_nullifiers_unique",
+    "Hegemon.Essence.Core.block_transition_supply_integrity",
+    "Hegemon.Essence.Core.block_transition_nullifiers_unique",
+    "Hegemon.Essence.Core.production_path_refines_core_transition",
+    "Hegemon.Essence.Core.production_path_refines_core_security",
+    "Hegemon.Essence.Core.production_path_exact_bytes",
+    "Hegemon.Essence.Core.failed_production_path_publishes_no_state",
+    "Hegemon.Essence.Core.external_assumption_boundary_is_named",
+    "Hegemon.Essence.Core.global_privacy_requires_system_model",
+    "Hegemon.Essence.Core.canonical_encoding_source_is_core",
+    "Hegemon.Essence.Core.canonical_action_encoding_comes_from_core",
+    "Hegemon.Essence.Core.canonical_action_term_roundtrip",
+    "Hegemon.Essence.Core.canonical_action_term_injective",
+    "Hegemon.Essence.Core.canonical_action_term_non_malleable"
+  ],
+  "required_production_path_stages": [
+    "parser",
+    "admitted_action",
+    "replay",
+    "storage",
+    "publication"
+  ],
+  "named_external_assumptions": [
+    "ML-KEM security",
+    "ML-DSA security",
+    "AEAD security",
+    "hash/transcript security",
+    "STARK/PCS soundness",
+    "DA retention",
+    "storage durability",
+    "local zero-knowledge",
+    "timing privacy",
+    "topology privacy",
+    "miner-ordering privacy",
+    "global traffic privacy"
+  ],
+  "progress_item_ids": [
+    "semantic_core_types",
+    "core_security_theorems",
+    "production_refinement_relation",
+    "derived_invariants",
+    "asset_ledger_semantics",
+    "bridge_receipt_binding",
+    "canonical_term_roundtrip",
+    "named_assumption_boundary",
+    "canonical_encoding_source"
+  ],
+  "external_assumption_boundary": "Completion here is not assumption-free cryptography. ML-KEM, ML-DSA, AEAD, hash/transcript security, STARK/PCS soundness, DA retention, storage durability, local zero-knowledge, timing privacy, topology privacy, miner-ordering privacy, and global traffic privacy remain explicit named assumptions unless and until a real proof or external review artifact discharges them.",
+  "acceptance_gates": [
+    "cd formal/lean && lake build Hegemon.Essence.Core Hegemon.Essence.GenerateCoreVectors Hegemon",
+    "cd formal/lean && lake exe gen_essence_core_vectors > <generated-json>",
+    "python3 scripts/check_essence_core_vectors.py <generated-json> config/formal-essence-progress.json",
+    "bash scripts/check_formal_core.sh"
+  ],
+  "evidence_paths": [
+    "formal/lean/Hegemon/Essence/Core.lean",
+    "formal/lean/Hegemon/Essence/GenerateCoreVectors.lean",
+    "scripts/check_essence_core_vectors.py",
+    "config/formal-essence-progress.json",
+    "formal/lean/Hegemon.lean",
+    "formal/lean/lakefile.lean",
+    "DESIGN.md",
+    "METHODS.md",
+    ".agent/FORMAL_ESSENCE_CORE_EXECPLAN.md"
+  ]
+}
