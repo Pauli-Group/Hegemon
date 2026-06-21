@@ -8,7 +8,7 @@ use crate::{
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
@@ -226,8 +226,9 @@ impl P2PService {
 
         let nat_result = NatTraversal::attempt_mapping(&self.nat_config).await;
         self.advertised_addrs = nat_result.external_addresses.clone();
-        let listen_advertised = dialable_listen_addr(self.addr);
-        if !self.advertised_addrs.contains(&listen_advertised) {
+        if let Some(listen_advertised) = dialable_listen_addr(self.addr)
+            && !self.advertised_addrs.contains(&listen_advertised)
+        {
             self.advertised_addrs.push(listen_advertised);
         }
         self.peer_manager
@@ -856,9 +857,21 @@ impl P2PService {
                         resolved.push(addr);
                     }
                 }
-                Err(e) => {
-                    warn!(seed, error = %e, "failed to resolve seed hostname");
-                }
+                Err(e) => match lookup_host(seed.as_str()).await {
+                    Ok(addrs) => {
+                        for addr in addrs {
+                            resolved.push(addr);
+                        }
+                    }
+                    Err(host_port_err) => {
+                        warn!(
+                            seed,
+                            error = %e,
+                            host_port_error = %host_port_err,
+                            "failed to resolve seed hostname"
+                        );
+                    }
+                },
             }
         }
 
@@ -891,11 +904,11 @@ impl P2PService {
     }
 }
 
-fn dialable_listen_addr(addr: SocketAddr) -> SocketAddr {
+fn dialable_listen_addr(addr: SocketAddr) -> Option<SocketAddr> {
     if addr.ip().is_unspecified() {
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), addr.port())
+        None
     } else {
-        addr
+        Some(addr)
     }
 }
 
@@ -916,6 +929,24 @@ mod tests {
         let mut path = std::env::temp_dir();
         path.push(format!("p2p_service_store_{}_{}.bin", tag, random::<u64>()));
         PeerStore::new(PeerStoreConfig::with_path(path))
+    }
+
+    #[test]
+    fn unspecified_listen_addr_is_not_advertised_as_loopback() {
+        let addr: SocketAddr = "0.0.0.0:30333".parse().unwrap();
+        assert_eq!(dialable_listen_addr(addr), None);
+
+        let loopback: SocketAddr = "127.0.0.1:30333".parse().unwrap();
+        assert_eq!(dialable_listen_addr(loopback), Some(loopback));
+    }
+
+    #[tokio::test]
+    async fn resolve_seeds_accepts_hostname_with_embedded_port() {
+        let resolved = P2PService::resolve_seeds(vec!["localhost:34567".into()], 30333).await;
+        assert!(
+            resolved.iter().any(|addr| addr.port() == 34567),
+            "hostname:port seeds must preserve the explicit port: {resolved:?}"
+        );
     }
 
     #[test]

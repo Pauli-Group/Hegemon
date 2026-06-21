@@ -943,6 +943,78 @@ fn verify_recursive_block_artifact_against_verified_records(
     }
 }
 
+pub fn build_recursive_block_v2_artifact_for_native_txs<BH>(
+    block: &Block<BH>,
+    artifacts: &[TxValidityArtifact],
+    parent_commitment_tree: &CommitmentTreeState,
+) -> Result<RecursiveBlockV2ArtifactBuild, ProofError>
+where
+    BH: HeaderProofExt,
+{
+    verify_commitments(block)?;
+    if block.transactions.is_empty() {
+        return Err(ProofError::ProvenBatchBindingMismatch(
+            "recursive block artifact requires at least one transaction".to_string(),
+        ));
+    }
+    if artifacts.len() != block.transactions.len() {
+        return Err(ProofError::TransactionProofCountMismatch {
+            expected: block.transactions.len(),
+            observed: artifacts.len(),
+        });
+    }
+
+    let claims = tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts)?;
+    let statement_bindings = tx_statement_bindings_from_claims(&claims)?;
+    validate_statement_anchor_history(
+        parent_commitment_tree,
+        block.transactions.len(),
+        &statement_bindings,
+    )?;
+    let tx_statements_commitment = commitment_from_statement_bindings(&statement_bindings)?;
+    if let Some(expected) = block.tx_statements_commitment
+        && expected != tx_statements_commitment
+    {
+        return Err(ProofError::CommitmentProofInputsMismatch(
+            "tx_statements_commitment does not match native tx artifacts".to_string(),
+        ));
+    }
+
+    let verified_records = verify_native_tx_leaf_artifact_records(&block.transactions, artifacts)?;
+    let records = verified_records
+        .iter()
+        .enumerate()
+        .map(|(tx_index, record)| {
+            recursive_block_leaf_record_from_verified(tx_index as u32, record)
+        })
+        .collect::<Vec<_>>();
+    let semantic = recursive_block_semantic_inputs_from_block(
+        block,
+        parent_commitment_tree,
+        tx_statements_commitment,
+    )?;
+    let recursive = crate::backend_interface::prove_block_recursive_v2(
+        &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
+    )
+    .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    let artifact_bytes =
+        crate::backend_interface::serialize_recursive_block_artifact_v2(&recursive)
+            .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
+    let da_encoding = crate::types::encode_da_blob(&block.transactions, block.header.da_params())
+        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    let da_chunk_count = u32::try_from(da_encoding.chunks().len())
+        .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
+
+    Ok(RecursiveBlockV2ArtifactBuild {
+        artifact_bytes,
+        tx_count: block.transactions.len() as u32,
+        tx_statements_commitment,
+        da_root: da_encoding.root(),
+        da_chunk_count,
+        verifier_profile: backend_recursive_block_profile_v2(),
+    })
+}
+
 fn recursive_block_semantic_inputs_from_block(
     block: &Block<impl HeaderProofExt>,
     parent_commitment_tree: &CommitmentTreeState,
@@ -1046,6 +1118,16 @@ pub struct BlockArtifactVerifyReport {
     pub cache_hit: Option<bool>,
     pub cache_build_ms: Option<u128>,
     pub root_verify_mode: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecursiveBlockV2ArtifactBuild {
+    pub artifact_bytes: Vec<u8>,
+    pub tx_count: u32,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: [u8; 48],
+    pub da_chunk_count: u32,
+    pub verifier_profile: VerifierProfileDigest,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

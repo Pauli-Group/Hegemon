@@ -270,38 +270,6 @@ pub struct TransactionResponse {
     pub error: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-struct ShieldedTransferRequest {
-    proof: String,
-    nullifiers: Vec<String>,
-    commitments: Vec<String>,
-    encrypted_notes: Vec<String>,
-    anchor: String,
-    balance_slot_asset_ids: [u64; 4],
-    binding_hash: String,
-    fee: u64,
-    value_balance: i128,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stablecoin: Option<ShieldedStablecoinPolicyBindingRequest>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-struct ShieldedStablecoinPolicyBindingRequest {
-    asset_id: u64,
-    policy_hash: String,
-    oracle_commitment: String,
-    attestation_commitment: String,
-    issuance_delta: i128,
-    policy_version: u32,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-struct ShieldedTransferResponse {
-    success: bool,
-    tx_hash: Option<String>,
-    error: Option<String>,
-}
-
 /// Ciphertext entry with decoded content
 #[derive(Clone, Debug)]
 pub struct CiphertextEntry {
@@ -703,17 +671,9 @@ impl NodeRpcClient {
             }
 
             for hex in response.nullifiers {
-                let bytes = hex::decode(&hex).map_err(|e| {
-                    WalletError::Serialization(format!("Invalid hex nullifier: {}", e))
-                })?;
-                if bytes.len() != 48 {
-                    return Err(WalletError::Serialization(
-                        "invalid nullifier length".into(),
-                    ));
-                }
-                let mut out = [0u8; 48];
-                out.copy_from_slice(&bytes);
-                nullifiers.insert(out);
+                nullifiers.insert(hex_to_array48(&hex).map_err(|err| {
+                    WalletError::Serialization(format!("Invalid hex nullifier: {err}"))
+                })?);
             }
 
             if !response.has_more {
@@ -824,59 +784,7 @@ impl NodeRpcClient {
         &self,
         bundle: &TransactionBundle,
     ) -> Result<[u8; 32], WalletError> {
-        use base64::Engine;
-
-        self.ensure_connected().await?;
-        let client = self.client.read().await;
-
-        let request = ShieldedTransferRequest {
-            proof: base64::engine::general_purpose::STANDARD.encode(&bundle.proof_bytes),
-            nullifiers: bundle.nullifiers.iter().map(hex::encode).collect(),
-            commitments: bundle.commitments.iter().map(hex::encode).collect(),
-            encrypted_notes: bundle
-                .ciphertexts
-                .iter()
-                .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
-                .collect(),
-            anchor: hex::encode(bundle.anchor),
-            balance_slot_asset_ids: bundle.balance_slot_asset_ids,
-            binding_hash: hex::encode(bundle.binding_hash),
-            fee: bundle.fee,
-            value_balance: bundle.value_balance,
-            stablecoin: bundle
-                .stablecoin
-                .enabled
-                .then(|| ShieldedStablecoinPolicyBindingRequest {
-                    asset_id: bundle.stablecoin.asset_id,
-                    policy_hash: hex::encode(bundle.stablecoin.policy_hash),
-                    oracle_commitment: hex::encode(bundle.stablecoin.oracle_commitment),
-                    attestation_commitment: hex::encode(bundle.stablecoin.attestation_commitment),
-                    issuance_delta: bundle.stablecoin.issuance_delta,
-                    policy_version: bundle.stablecoin.policy_version,
-                }),
-        };
-
-        let response: ShieldedTransferResponse = client
-            .request("hegemon_submitShieldedTransfer", rpc_params![request])
-            .await
-            .map_err(|e| {
-                WalletError::Rpc(format!("hegemon_submitShieldedTransfer failed: {}", e))
-            })?;
-
-        if !response.success {
-            return Err(WalletError::Http(format!(
-                "Shielded transfer submission failed: {}",
-                response
-                    .error
-                    .unwrap_or_else(|| "unknown error".to_string())
-            )));
-        }
-
-        let tx_hash = response.tx_hash.ok_or_else(|| {
-            WalletError::Rpc("Missing tx_hash in shielded transfer response".to_string())
-        })?;
-
-        hex_to_array(&tx_hash)
+        self.submit_transaction(bundle).await
     }
 
     /// Check if connected to the node
@@ -2171,6 +2079,14 @@ mod tests {
         let hex = "gg00";
         let result = hex_to_array(hex);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hex_to_array48_accepts_prefixed_nullifier() {
+        let bare = "11".repeat(48);
+        let prefixed = format!("0x{bare}");
+        assert_eq!(hex_to_array48(&prefixed).unwrap(), [0x11; 48]);
+        assert_eq!(hex_to_array48(&bare).unwrap(), [0x11; 48]);
     }
 
     fn sample_stablecoin_policy(asset_id: u32) -> StablecoinPolicyStorage {

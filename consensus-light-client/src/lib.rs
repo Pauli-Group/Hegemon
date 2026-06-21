@@ -1145,7 +1145,7 @@ pub fn header_mmr_append(
     ])
 }
 
-fn header_mmr_peaks_from_hashes(hashes: &[Hash32]) -> Vec<Hash32> {
+pub fn header_mmr_peaks_from_hashes(hashes: &[Hash32]) -> Vec<Hash32> {
     let mut stack: Vec<(u32, Hash32)> = Vec::new();
     for hash in hashes {
         stack.push((0, *hash));
@@ -1165,6 +1165,41 @@ fn header_mmr_peaks_from_hashes(hashes: &[Hash32]) -> Vec<Hash32> {
         }
     }
     stack.into_iter().map(|(_, hash)| hash).collect()
+}
+
+pub fn header_mmr_append_peaks(
+    leaf_count: u64,
+    peaks: &[Hash32],
+    appended_hash: Hash32,
+) -> Result<Vec<Hash32>, LightClientError> {
+    if leaf_count == u64::MAX {
+        return Err(LightClientError::HeaderMmrMismatch);
+    }
+    let ranges = header_mmr_peak_ranges(leaf_count);
+    if ranges.len() != peaks.len() {
+        return Err(LightClientError::HeaderMmrPeakMismatch);
+    }
+    let mut stack = ranges
+        .iter()
+        .zip(peaks.iter())
+        .map(|((_, size), hash)| (size.trailing_zeros(), *hash))
+        .collect::<Vec<_>>();
+    stack.push((0, appended_hash));
+    while stack.len() >= 2 {
+        let right_index = stack.len() - 1;
+        let left_index = stack.len() - 2;
+        if stack[left_index].0 != stack[right_index].0 {
+            break;
+        }
+        let (right_height, right_hash) = stack.pop().expect("right peak exists");
+        let (_, left_hash) = stack.pop().expect("left peak exists");
+        let parent_height = right_height.saturating_add(1);
+        stack.push((
+            parent_height,
+            header_mmr_parent_hash(parent_height, left_hash, right_hash),
+        ));
+    }
+    Ok(stack.into_iter().map(|(_, hash)| hash).collect())
 }
 
 fn header_mmr_peak_ranges(leaf_count: u64) -> Vec<(u64, u64)> {
@@ -2962,6 +2997,19 @@ mod tests {
             verify_header_mmr_opening(two, [9u8; 32], &opening),
             Err(LightClientError::HeaderMmrOpeningMismatch)
         );
+    }
+
+    #[test]
+    fn header_mmr_append_peaks_matches_root_recompute() {
+        let hashes = [[1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]];
+        let mut peaks = Vec::new();
+        for (idx, hash) in hashes.iter().copied().enumerate() {
+            peaks = header_mmr_append_peaks(idx as u64, &peaks, hash).unwrap();
+            assert_eq!(
+                header_mmr_root_from_peaks((idx + 1) as u64, &peaks),
+                header_mmr_root_from_hashes(&hashes[..=idx])
+            );
+        }
     }
 
     fn long_range_test_proof() -> HegemonLongRangeProofV1 {

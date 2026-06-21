@@ -1,6 +1,6 @@
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::{rngs::OsRng, RngCore};
-use superneo_hegemon::build_native_tx_leaf_artifact_bytes;
+use superneo_hegemon::{build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, merkle_node,
@@ -42,36 +42,31 @@ struct SubmissionProofMaterial {
     value_balance: i128,
 }
 
-fn balance_slot_asset_ids_from_witness(
-    witness: &TransactionWitness,
-) -> Result<[u64; 4], WalletError> {
-    let slots = witness
-        .balance_slots()
-        .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
-    let ids = slots.iter().map(|slot| slot.asset_id).collect::<Vec<_>>();
-    ids.try_into()
-        .map_err(|_| WalletError::InvalidState("balance slot count mismatch"))
-}
-
 fn submission_proof_material_from_witness(
     witness: &TransactionWitness,
 ) -> Result<SubmissionProofMaterial, WalletError> {
     witness
         .validate()
         .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
-    let public_inputs = witness
-        .public_inputs()
-        .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
     let built = build_native_tx_leaf_artifact_bytes(witness).map_err(|err| {
         WalletError::Serialization(format!("native tx-leaf artifact generation failed: {err}"))
     })?;
+    let decoded = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).map_err(|err| {
+        WalletError::Serialization(format!("native tx-leaf artifact decode failed: {err}"))
+    })?;
+    let balance_slot_asset_ids = decoded
+        .stark_public_inputs
+        .balance_slot_asset_ids
+        .clone()
+        .try_into()
+        .map_err(|_| WalletError::InvalidState("native tx-leaf balance slot count mismatch"))?;
     Ok(SubmissionProofMaterial {
         proof_bytes: built.artifact_bytes,
-        nullifiers: public_inputs.nullifiers[..witness.inputs.len()].to_vec(),
-        commitments: public_inputs.commitments[..witness.outputs.len()].to_vec(),
-        anchor: witness.merkle_root,
-        balance_slot_asset_ids: balance_slot_asset_ids_from_witness(witness)?,
-        fee: witness.fee,
+        nullifiers: decoded.tx.nullifiers,
+        commitments: decoded.tx.commitments,
+        anchor: decoded.stark_public_inputs.merkle_root,
+        balance_slot_asset_ids,
+        fee: decoded.stark_public_inputs.fee,
         value_balance: witness.value_balance,
     })
 }
@@ -1570,6 +1565,36 @@ mod tests {
             .expect("decoded notes should serialize to DA bytes");
         assert_eq!(decoded.tx.ciphertext_hashes.len(), decoded_notes.len());
         assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
+        let artifact_balance_slot_asset_ids: [u64; 4] = decoded
+            .stark_public_inputs
+            .balance_slot_asset_ids
+            .clone()
+            .try_into()
+            .expect("artifact balance slot count");
+        assert_eq!(decoded.stark_public_inputs.merkle_root, built.bundle.anchor);
+        assert_eq!(decoded.tx.nullifiers, built.bundle.nullifiers);
+        assert_eq!(decoded.tx.commitments, built.bundle.commitments);
+        assert_eq!(decoded.tx.ciphertext_hashes, decoded_ciphertext_hashes);
+        assert_eq!(
+            artifact_balance_slot_asset_ids,
+            built.bundle.balance_slot_asset_ids
+        );
+        assert_eq!(decoded.stark_public_inputs.fee, built.bundle.fee);
+        let artifact_binding_inputs = ShieldedTransferInputs {
+            anchor: decoded.stark_public_inputs.merkle_root,
+            nullifiers: decoded.tx.nullifiers.clone(),
+            commitments: decoded.tx.commitments.clone(),
+            ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
+            balance_slot_asset_ids: artifact_balance_slot_asset_ids,
+            fee: decoded.stark_public_inputs.fee,
+            value_balance: 0,
+            stablecoin: None,
+        };
+        assert_eq!(
+            StarkVerifier::compute_binding_hash(&artifact_binding_inputs).data,
+            built.bundle.binding_hash,
+            "wallet action binding hash must match the native tx-leaf artifact binding"
+        );
         verify_native_tx_leaf_artifact_bytes(
             &decoded.tx,
             &decoded.receipt,

@@ -21,8 +21,9 @@ use consensus_light_client::{
     bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
     canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
     compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
-    flyclient_sample_indices, hash_meets_target, header_mmr_opening_from_hashes,
-    header_mmr_root_from_hashes, pow_hash_from_pre_hash, verify_pow_header,
+    flyclient_sample_indices, hash_meets_target, header_mmr_append_peaks,
+    header_mmr_opening_from_hashes, header_mmr_peaks_from_hashes, header_mmr_root_from_hashes,
+    header_mmr_root_from_peaks, pow_hash_from_pre_hash, verify_pow_header,
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
     RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
@@ -54,9 +55,10 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
-    DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
-    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    ProofArtifactKind as PoolProofArtifactKind, RecursiveBlockProofPayload,
+    StablecoinPolicyBinding, StarkProof, BLOCK_PROOF_BUNDLE_SCHEMA, DIVERSIFIED_ADDRESS_SIZE,
+    ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
+    RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use protocol_shielded_pool::{NullifierReject, NullifierState};
@@ -75,6 +77,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
@@ -101,10 +104,13 @@ const MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES: usize =
 const MAX_NATIVE_BRIDGE_MINT_AMOUNT: u64 = i64::MAX as u64;
 const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
+const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 2048;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
+const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
+const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
 const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
@@ -2801,6 +2807,7 @@ struct NativePagination {
 #[derive(Clone, Debug)]
 struct NativeState {
     best: NativeBlockMeta,
+    header_mmr_peaks: Vec<Hash32>,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
     commitment_tree: CommitmentTreeState,
     nullifiers: BTreeSet<[u8; 48]>,
@@ -2853,6 +2860,7 @@ pub struct NativeNode {
     sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
     miner_identity: NativeMinerIdentity,
     prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
+    prepared_candidate_actions: Mutex<BTreeMap<[u8; 32], PendingAction>>,
 }
 
 impl NativeNode {
@@ -2902,10 +2910,12 @@ impl NativeNode {
         validate_loaded_bridge_replay_state(&best, &block_tree, &consumed_bridge_messages)?;
         let staged_ciphertexts = load_staged_sizes(&db, &da_ciphertext_tree)?;
         let staged_proofs = load_staged_proofs(&db, &da_proof_tree)?;
+        let header_mmr_peaks = load_header_mmr_peaks_for_best(&block_tree, &best)?;
         let startup_state = build_validated_startup_state(
             &db,
             &action_tree,
             best,
+            header_mmr_peaks,
             pending_actions,
             commitment_state,
             nullifiers,
@@ -2945,6 +2955,7 @@ impl NativeNode {
             sync_tx: Mutex::new(None),
             miner_identity,
             prepared_mining_actions: Mutex::new(BTreeMap::new()),
+            prepared_candidate_actions: Mutex::new(BTreeMap::new()),
         });
         Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
@@ -3062,6 +3073,176 @@ impl NativeNode {
         Ok(Some(action))
     }
 
+    fn auto_candidate_cache_key(
+        parent_hash: [u8; 32],
+        transfer_actions: &[PendingAction],
+    ) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"hegemon-native-auto-recursive-candidate-v1");
+        hasher.update(&parent_hash);
+        let count = u32::try_from(transfer_actions.len()).unwrap_or(u32::MAX);
+        hasher.update(&count.to_le_bytes());
+        for action in transfer_actions {
+            hasher.update(&action.tx_hash);
+        }
+        *hasher.finalize().as_bytes()
+    }
+
+    fn prepared_candidate_action(&self, key: [u8; 32]) -> Option<PendingAction> {
+        self.prepared_candidate_actions.lock().get(&key).cloned()
+    }
+
+    fn cache_prepared_candidate_action(&self, key: [u8; 32], action: PendingAction) {
+        let mut cache = self.prepared_candidate_actions.lock();
+        cache.insert(key, action);
+        while cache.len() > MAX_PREPARED_CANDIDATE_ACTIONS {
+            let Some(oldest_key) = cache.keys().next().copied() else {
+                break;
+            };
+            cache.remove(&oldest_key);
+        }
+    }
+
+    fn build_auto_recursive_candidate_action(
+        &self,
+        state: &NativeState,
+        height: u64,
+        received_ms: u64,
+        actions: &[PendingAction],
+    ) -> Result<Option<PendingAction>> {
+        let transfer_actions = actions
+            .iter()
+            .filter(|action| is_shielded_transfer_action(action))
+            .cloned()
+            .collect::<Vec<_>>();
+        if transfer_actions.is_empty() {
+            return Ok(None);
+        }
+        if actions.iter().any(|action| {
+            is_candidate_artifact_action(action)
+                && action
+                    .candidate_artifact
+                    .as_ref()
+                    .is_some_and(|artifact| artifact.tx_count as usize == transfer_actions.len())
+        }) {
+            return Ok(None);
+        }
+
+        let cache_key = Self::auto_candidate_cache_key(state.best.hash, &transfer_actions);
+        if let Some(action) = self.prepared_candidate_action(cache_key) {
+            return Ok(Some(action));
+        }
+
+        let materialized = materialize_native_action_payloads_from_state(
+            &self.da_ciphertext_tree,
+            Some(&self.ciphertext_archive_tree),
+            state,
+            &transfer_actions,
+        )?;
+        let mut transactions = Vec::with_capacity(transfer_actions.len());
+        let mut artifacts = Vec::with_capacity(transfer_actions.len());
+        for (action, payload) in transfer_actions.iter().zip(materialized.iter()) {
+            let (tx, artifact) = consensus_tx_and_artifact_from_action(action, payload)?;
+            transactions.push(tx);
+            artifacts.push(artifact);
+        }
+
+        let transfer_refs = transfer_actions.iter().collect::<Vec<_>>();
+        let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfer_refs)?;
+        let mut expected_nullifiers = state.nullifiers.clone();
+        for action in &transfer_actions {
+            for nullifier in &action.nullifiers {
+                expected_nullifiers.insert(*nullifier);
+            }
+        }
+        let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
+        let expected_kernel_root =
+            consensus::types::kernel_root_from_shielded_root(&expected_tree.root());
+        let da_params = native_da_params();
+        let da_encoding = consensus::encode_da_blob(&transactions, da_params)
+            .map_err(|err| anyhow!("native recursive candidate DA encoding failed: {err}"))?;
+        let tx_count = u32::try_from(transactions.len())
+            .map_err(|_| anyhow!("native recursive candidate tx_count exceeds u32"))?;
+        let header = consensus::BlockHeader {
+            version: 1,
+            height,
+            view: 0,
+            timestamp_ms: received_ms.max(state.best.timestamp_ms.saturating_add(1)),
+            parent_hash: state.best.hash,
+            state_root: expected_tree.root(),
+            kernel_root: expected_kernel_root,
+            nullifier_root: expected_nullifier_root,
+            proof_commitment: consensus::types::compute_proof_commitment(&transactions),
+            da_root: da_encoding.root(),
+            da_params,
+            version_commitment: consensus::types::compute_version_commitment(&transactions),
+            tx_count,
+            fee_commitment: consensus::types::compute_fee_commitment(&transactions),
+            supply_digest: state.best.supply_digest,
+            validator_set_commitment: [0u8; 48],
+            signature_aggregate: Vec::new(),
+            signature_bitmap: None,
+            pow: None,
+        };
+        let block = consensus::types::Block {
+            header,
+            transactions,
+            coinbase: None,
+            proven_batch: None,
+            block_artifact: None,
+            tx_validity_claims: None,
+            tx_statements_commitment: None,
+            proof_verification_mode:
+                consensus::types::ProofVerificationMode::SelfContainedAggregation,
+        };
+        let built = consensus::proof::build_recursive_block_v2_artifact_for_native_txs(
+            &block,
+            &artifacts,
+            &state.commitment_tree,
+        )
+        .map_err(|err| anyhow!("build native recursive candidate artifact failed: {err}"))?;
+        let artifact = CandidateArtifact {
+            version: BLOCK_PROOF_BUNDLE_SCHEMA,
+            tx_count: built.tx_count,
+            tx_statements_commitment: built.tx_statements_commitment,
+            da_root: built.da_root,
+            da_chunk_count: built.da_chunk_count,
+            commitment_proof: StarkProof::default(),
+            proof_mode: BlockProofMode::RecursiveBlock,
+            proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
+            verifier_profile: built.verifier_profile,
+            receipt_root: None,
+            recursive_block: Some(RecursiveBlockProofPayload {
+                proof: StarkProof {
+                    data: built.artifact_bytes,
+                },
+            }),
+        };
+        validate_candidate_artifact(&artifact)?;
+        let mut action = PendingAction {
+            tx_hash: [0u8; 32],
+            binding: protocol_versioning::DEFAULT_VERSION_BINDING.into(),
+            family_id: FAMILY_SHIELDED_POOL,
+            action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
+            anchor: [0u8; 48],
+            nullifiers: Vec::new(),
+            commitments: Vec::new(),
+            ciphertext_hashes: Vec::new(),
+            ciphertext_sizes: Vec::new(),
+            public_args: SubmitCandidateArtifactArgs {
+                payload: artifact.clone(),
+            }
+            .encode(),
+            fee: 0,
+            candidate_artifact: Some(artifact),
+            received_ms,
+        };
+        action.tx_hash = pending_action_hash(&action);
+        validate_candidate_action_payload(&action)?;
+        self.cache_prepared_candidate_action(cache_key, action.clone());
+        Ok(Some(action))
+    }
+
     fn cache_prepared_mining_actions(&self, pre_hash: [u8; 32], actions: Vec<PendingAction>) {
         let mut cache = self.prepared_mining_actions.lock();
         cache.insert(pre_hash, actions);
@@ -3116,6 +3297,22 @@ impl NativeNode {
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
         let received_ms = current_time_ms();
+        match self.build_auto_recursive_candidate_action(
+            &state,
+            height,
+            received_ms,
+            &pending_actions,
+        ) {
+            Ok(Some(action)) => pending_actions.push(action),
+            Ok(None) => {}
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "dropping native pending actions before recursive candidate artifact"
+                );
+                pending_actions.clear();
+            }
+        }
         let mut prepared_coinbase =
             match self.append_auto_coinbase_action(height, &mut pending_actions, received_ms) {
                 Ok(action) => action,
@@ -3190,9 +3387,8 @@ impl NativeNode {
         let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
-        let header_history = self.header_hashes_to_hash(best.hash)?;
-        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
-        let header_mmr_len = header_history.len() as u64;
+        let header_mmr_len = header_mmr_leaf_count_after_best(&best)?;
+        let header_mmr_root = header_mmr_root_from_peaks(header_mmr_len, &state.header_mmr_peaks);
         let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
@@ -3365,6 +3561,7 @@ impl NativeNode {
         )?;
         self.verify_persisted_canonical_head(&meta, "native mined block commit")?;
         self.forget_prepared_mining_actions(work);
+        next_state.header_mmr_peaks = append_header_mmr_peak_state(&state, &meta)?;
         next_state.best = meta.clone();
         publish_mined_state(&mut state, next_state);
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
@@ -3386,11 +3583,27 @@ impl NativeNode {
             return Ok(false);
         };
         validate_announced_block(&parent, &meta)?;
-        let expected_header_history = self.header_hashes_to_hash(parent.hash)?;
+        let (expected_header_mmr_root, expected_header_mmr_len) = if parent.hash == state.best.hash
+        {
+            (
+                header_mmr_root_from_peaks(
+                    header_mmr_leaf_count_after_best(&state.best)?,
+                    &state.header_mmr_peaks,
+                ),
+                header_mmr_leaf_count_after_best(&state.best)?,
+            )
+        } else {
+            let expected_header_history = self.header_hashes_to_hash(parent.hash)?;
+            (
+                header_mmr_root_from_hashes(&expected_header_history),
+                expected_header_history.len() as u64,
+            )
+        };
 
         let parent_state = if parent.hash == state.best.hash {
             NativeState {
                 best: state.best.clone(),
+                header_mmr_peaks: state.header_mmr_peaks.clone(),
                 pending_actions: BTreeMap::new(),
                 commitment_tree: state.commitment_tree.clone(),
                 nullifiers: state.nullifiers.clone(),
@@ -3431,17 +3644,21 @@ impl NativeNode {
                 extrinsics_root == meta.extrinsics_root,
                 message_root == meta.message_root,
                 message_count == meta.message_count,
-                meta.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
-                meta.header_mmr_len == expected_header_history.len() as u64,
+                meta.header_mmr_root == expected_header_mmr_root,
+                meta.header_mmr_len == expected_header_mmr_len,
             ),
         )?;
         validate_block_actions_locked(&parent_state, &actions)?;
         verify_native_block_artifacts_locked(self, &parent_state, &actions, &meta)?;
         let candidate_wins = native_meta_better_than(&meta, &state.best);
         if candidate_wins {
-            let mut new_chain = self.chain_to_hash(parent.hash)?;
-            new_chain.push(meta.clone());
-            self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
+            if parent.hash == state.best.hash {
+                self.commit_announced_tip_extension_locked(&mut state, &actions, &meta)?;
+            } else {
+                let mut new_chain = self.chain_to_hash(parent.hash)?;
+                new_chain.push(meta.clone());
+                self.reorganize_chain_to_best_locked(&mut state, new_chain)?;
+            }
             Ok(true)
         } else {
             self.persist_noncanonical_block_record(&meta)?;
@@ -3650,6 +3867,7 @@ impl NativeNode {
             .cloned()
             .ok_or_else(|| anyhow!("empty native chain replay"))?;
         let mut state = NativeState {
+            header_mmr_peaks: header_mmr_peaks_from_hashes(&[genesis.hash]),
             best: genesis,
             pending_actions: BTreeMap::new(),
             commitment_tree: CommitmentTreeState::default(),
@@ -3659,7 +3877,7 @@ impl NativeNode {
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
-        for (idx, meta) in chain.iter().cloned().enumerate().skip(1) {
+        for meta in chain.iter().cloned().skip(1) {
             verify_native_block_meta_projection(Some(&state.best), &meta).with_context(|| {
                 format!(
                     "replay stored native block metadata at height {} ({})",
@@ -3682,8 +3900,9 @@ impl NativeNode {
             let message_root = bridge_message_root(&bridge_messages);
             let message_count = u32::try_from(bridge_messages.len())
                 .map_err(|_| anyhow!("native bridge message count overflow"))?;
-            let expected_header_history: Vec<Hash32> =
-                chain[..idx].iter().map(|header| header.hash).collect();
+            let expected_header_mmr_len = header_mmr_leaf_count_after_best(&state.best)?;
+            let expected_header_mmr_root =
+                header_mmr_root_from_peaks(expected_header_mmr_len, &state.header_mmr_peaks);
             let (fee_total, has_coinbase) =
                 native_block_replay_supply_parts(&actions, meta.height)?;
             evaluate_native_block_replay_refinement_for_actions(
@@ -3705,8 +3924,8 @@ impl NativeNode {
                     extrinsics_root == meta.extrinsics_root,
                     message_root == meta.message_root,
                     message_count == meta.message_count,
-                    meta.header_mmr_root == header_mmr_root_from_hashes(&expected_header_history),
-                    meta.header_mmr_len == expected_header_history.len() as u64,
+                    meta.header_mmr_root == expected_header_mmr_root,
+                    meta.header_mmr_len == expected_header_mmr_len,
                 ),
             )?;
             verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
@@ -3716,6 +3935,7 @@ impl NativeNode {
                 &mut state,
                 &actions,
             )?;
+            state.header_mmr_peaks = append_header_mmr_peak_state(&state, &meta)?;
             state.best = meta;
         }
         Ok(state)
@@ -3792,6 +4012,34 @@ impl NativeNode {
 
         new_state.pending_actions = pending;
         publish_reorganized_state(state, new_state);
+        Ok(())
+    }
+
+    fn commit_announced_tip_extension_locked(
+        &self,
+        state: &mut NativeState,
+        actions: &[PendingAction],
+        meta: &NativeBlockMeta,
+    ) -> Result<()> {
+        let planned = plan_pending_action_effects(&self.da_ciphertext_tree, state, actions)?;
+        let mut next_state = state.clone();
+        apply_planned_actions_to_memory(&mut next_state, actions, &planned)?;
+        if next_state.commitment_tree.root() != meta.state_root
+            || nullifier_root_from_set(&next_state.nullifiers) != meta.nullifier_root
+        {
+            return Err(anyhow!("native announced tip extension preview mismatch"));
+        }
+
+        self.commit_mined_block_atomically(actions, &planned, meta)?;
+        self.flush_native_durability_barrier(
+            "native announced tip extension commit",
+            NativeStorageDurabilityOperation::MinedBlockCommit,
+        )?;
+        self.verify_persisted_canonical_head(meta, "native announced tip extension commit")?;
+
+        next_state.header_mmr_peaks = append_header_mmr_peak_state(state, meta)?;
+        next_state.best = meta.clone();
+        publish_mined_state(state, next_state);
         Ok(())
     }
 
@@ -5031,7 +5279,20 @@ fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> 
 }
 
 async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
-    while let Some((peer_id, msg)) = handle.recv().await {
+    let sync_tx = handle.sender();
+    let mut best_announce = interval(NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL);
+    best_announce.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        let Some((peer_id, msg)) = (tokio::select! {
+            maybe_msg = handle.recv() => maybe_msg,
+            _ = best_announce.tick() => {
+                queue_native_best_sync_announce(&node, &sync_tx);
+                continue;
+            }
+        }) else {
+            break;
+        };
         if msg.protocol != NATIVE_SYNC_PROTOCOL_ID {
             continue;
         }
@@ -5075,9 +5336,14 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 if to_height < from_height {
                     continue;
                 }
-                let blocks = match node.block_range(from_height, to_height) {
-                    Ok(blocks) => blocks,
-                    Err(err) => {
+                let range_node = Arc::clone(&node);
+                let blocks = match tokio::task::spawn_blocking(move || {
+                    range_node.block_range(from_height, to_height)
+                })
+                .await
+                {
+                    Ok(Ok(blocks)) => blocks,
+                    Ok(Err(err)) => {
                         warn!(
                             from_height,
                             to_height,
@@ -5086,16 +5352,17 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         );
                         continue;
                     }
+                    Err(err) => {
+                        warn!(
+                            from_height,
+                            to_height,
+                            error = %err,
+                            "native sync block range worker failed"
+                        );
+                        continue;
+                    }
                 };
-                send_sync_message(
-                    &handle,
-                    peer_id,
-                    NativeSyncMessage::Response {
-                        best_height: node.best_meta().height,
-                        blocks,
-                    },
-                )
-                .await;
+                send_sync_response(&handle, peer_id, node.best_meta().height, blocks).await;
             }
             NativeSyncMessage::Response {
                 best_height,
@@ -5117,26 +5384,26 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         continue;
                     }
                 };
-                let mut progress = NativeSyncResponseImportProgress::new(blocks.len());
-                for meta in blocks {
-                    match node.import_announced_block(meta.clone()) {
-                        Ok(true) => {
-                            progress.record(NativeSyncResponseImportOutcome::Imported);
-                        }
-                        Ok(false) => {
-                            progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
-                        }
-                        Err(err) => {
-                            progress.record(NativeSyncResponseImportOutcome::Error);
-                            warn!(
-                                height = meta.height,
-                                hash = %hex32(&meta.hash),
-                                error = %err,
-                                "failed to import native sync block"
-                            );
-                            break;
-                        }
+                let import_node = Arc::clone(&node);
+                let report = match tokio::task::spawn_blocking(move || {
+                    import_native_sync_response_blocks(&import_node, blocks)
+                })
+                .await
+                {
+                    Ok(report) => report,
+                    Err(err) => {
+                        warn!(error = %err, "native sync import worker failed");
+                        continue;
                     }
+                };
+                let progress = report.progress;
+                if let Some(failure) = report.failure {
+                    warn!(
+                        height = failure.height,
+                        hash = %hex32(&failure.hash),
+                        error = %failure.error,
+                        "failed to import native sync block"
+                    );
                 }
                 if progress.imported_blocks > 0 {
                     info!(
@@ -5154,6 +5421,74 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
     }
 }
 
+struct NativeSyncImportFailure {
+    height: u64,
+    hash: [u8; 32],
+    error: String,
+}
+
+struct NativeSyncImportReport {
+    progress: NativeSyncResponseImportProgress,
+    failure: Option<NativeSyncImportFailure>,
+}
+
+fn import_native_sync_response_blocks(
+    node: &NativeNode,
+    blocks: Vec<NativeBlockMeta>,
+) -> NativeSyncImportReport {
+    let mut progress = NativeSyncResponseImportProgress::new(blocks.len());
+    let mut failure = None;
+    for meta in blocks {
+        match node.import_announced_block(meta.clone()) {
+            Ok(true) => {
+                progress.record(NativeSyncResponseImportOutcome::Imported);
+            }
+            Ok(false) => {
+                progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
+            }
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                failure = Some(NativeSyncImportFailure {
+                    height: meta.height,
+                    hash: meta.hash,
+                    error: err.to_string(),
+                });
+                break;
+            }
+        }
+    }
+    NativeSyncImportReport { progress, failure }
+}
+
+fn queue_native_best_sync_announce(
+    node: &NativeNode,
+    sync_tx: &mpsc::Sender<DirectedProtocolMessage>,
+) {
+    let meta = node.best_meta();
+    let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
+    let payload = match encode_sync_message(&announce) {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!(error = %err, "failed to encode native best sync announce");
+            return;
+        }
+    };
+    let message = DirectedProtocolMessage {
+        target: None,
+        message: ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload,
+        },
+    };
+    if let Err(err) = sync_tx.try_send(message) {
+        debug!(
+            height = meta.height,
+            error = %err,
+            "failed to queue native best sync announce"
+        );
+    }
+}
+
 async fn request_missing_blocks(
     node: &NativeNode,
     handle: &ProtocolHandle,
@@ -5161,13 +5496,23 @@ async fn request_missing_blocks(
     announced_height: u64,
 ) {
     let best_height = node.best_meta().height;
-    let Some(range) = native_sync_missing_request_range(NativeSyncMissingRequestInput {
-        best_height,
-        announced_height,
-        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-    }) else {
+    let Some(range) = native_sync_missing_request_range_with_reorg_backfill(
+        NativeSyncMissingRequestInput {
+            best_height,
+            announced_height,
+            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        },
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    ) else {
         return;
     };
+    debug!(
+        best_height,
+        announced_height,
+        from_height = range.from_height,
+        to_height = range.to_height,
+        "requesting missing native sync blocks"
+    );
     send_sync_message(
         handle,
         peer_id,
@@ -5189,6 +5534,48 @@ async fn send_sync_message(handle: &ProtocolHandle, peer_id: PeerId, message: Na
     };
     if let Err(err) = handle.send_to(peer_id, payload).await {
         warn!(error = %err, "failed to send native sync message");
+    }
+}
+
+async fn send_sync_response(
+    handle: &ProtocolHandle,
+    peer_id: PeerId,
+    best_height: u64,
+    mut blocks: Vec<NativeBlockMeta>,
+) {
+    loop {
+        let response = NativeSyncMessage::Response {
+            best_height,
+            blocks: blocks.clone(),
+        };
+        match encode_sync_message(&response) {
+            Ok(payload) => {
+                if let Err(err) = handle.send_to(peer_id, payload).await {
+                    warn!(error = %err, "failed to send native sync response");
+                }
+                return;
+            }
+            Err(err) if blocks.len() > 1 => {
+                let previous = blocks.len();
+                blocks.truncate(previous / 2);
+                warn!(
+                    previous_blocks = previous,
+                    truncated_blocks = blocks.len(),
+                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                    error = %err,
+                    "native sync response exceeded wire cap; truncating response"
+                );
+            }
+            Err(err) => {
+                warn!(
+                    block_count = blocks.len(),
+                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                    error = %err,
+                    "failed to encode native sync response"
+                );
+                return;
+            }
+        }
     }
 }
 
@@ -6075,6 +6462,37 @@ fn load_best_or_genesis(
     Ok(genesis)
 }
 
+fn load_header_mmr_peaks_for_best(
+    block_tree: &sled::Tree,
+    best: &NativeBlockMeta,
+) -> Result<Vec<Hash32>> {
+    let hashes = load_chain_to_hash(block_tree, best.hash)?
+        .into_iter()
+        .map(|meta| meta.hash)
+        .collect::<Vec<_>>();
+    if hashes.len() as u64 != header_mmr_leaf_count_after_best(best)? {
+        return Err(anyhow!(
+            "native header MMR peak state chain length mismatch"
+        ));
+    }
+    Ok(header_mmr_peaks_from_hashes(&hashes))
+}
+
+fn header_mmr_leaf_count_after_best(best: &NativeBlockMeta) -> Result<u64> {
+    best.height
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("native header MMR leaf count overflow"))
+}
+
+fn append_header_mmr_peak_state(
+    state: &NativeState,
+    meta: &NativeBlockMeta,
+) -> Result<Vec<Hash32>> {
+    let leaf_count = header_mmr_leaf_count_after_best(&state.best)?;
+    header_mmr_append_peaks(leaf_count, &state.header_mmr_peaks, meta.hash)
+        .map_err(|err| anyhow!("native header MMR peak append failed: {err:?}"))
+}
+
 fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
     let state_root = CommitmentTreeState::default().root();
     let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
@@ -6954,6 +7372,7 @@ fn build_validated_startup_state(
     db: &sled::Db,
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
+    header_mmr_peaks: Vec<Hash32>,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
     commitment_tree: CommitmentTreeState,
     nullifiers: BTreeSet<[u8; 48]>,
@@ -6965,6 +7384,7 @@ fn build_validated_startup_state(
         db,
         action_tree,
         best,
+        header_mmr_peaks,
         pending_actions,
         commitment_tree,
         nullifiers,
@@ -6980,6 +7400,7 @@ fn build_validated_startup_state_with_limits(
     db: &sled::Db,
     action_tree: &sled::Tree,
     best: NativeBlockMeta,
+    header_mmr_peaks: Vec<Hash32>,
     pending_actions: BTreeMap<[u8; 32], PendingAction>,
     commitment_tree: CommitmentTreeState,
     nullifiers: BTreeSet<[u8; 48]>,
@@ -6991,6 +7412,7 @@ fn build_validated_startup_state_with_limits(
 ) -> Result<NativeState> {
     let mut state = NativeState {
         best,
+        header_mmr_peaks,
         pending_actions: BTreeMap::new(),
         commitment_tree,
         nullifiers,
@@ -9155,6 +9577,34 @@ fn native_sync_missing_request_range(
     })
 }
 
+fn native_sync_missing_request_range_with_reorg_backfill(
+    input: NativeSyncMissingRequestInput,
+    backfill_blocks: u64,
+) -> Option<NativeSyncRange> {
+    let range = native_sync_missing_request_range(input)?;
+    let gap = input.announced_height.saturating_sub(input.best_height);
+    if gap == 0
+        || backfill_blocks == 0
+        || gap > backfill_blocks
+        || input.max_blocks <= backfill_blocks
+    {
+        return Some(range);
+    }
+
+    let from_height = input
+        .best_height
+        .saturating_sub(backfill_blocks)
+        .saturating_add(1)
+        .min(range.from_height);
+    let to_height = input
+        .announced_height
+        .min(from_height.saturating_add(input.max_blocks - 1));
+    Some(NativeSyncRange {
+        from_height,
+        to_height,
+    })
+}
+
 fn native_sync_block_range_publication_rows(blocks: Vec<NativeBlockMeta>) -> Vec<NativeBlockMeta> {
     blocks
 }
@@ -9442,7 +9892,7 @@ fn select_mineable_actions(state: &NativeState) -> Vec<PendingAction> {
 fn prepared_mining_actions_match_state(state: &NativeState, actions: &[PendingAction]) -> bool {
     actions
         .iter()
-        .filter(|action| !is_coinbase_action(action))
+        .filter(|action| !is_coinbase_action(action) && !is_candidate_artifact_action(action))
         .all(|action| {
             state
                 .pending_actions
@@ -12423,6 +12873,7 @@ fn revalidate_reorg_pending_actions(
 ) -> BTreeMap<[u8; 32], PendingAction> {
     let mut staged_state = NativeState {
         best: canonical_state.best.clone(),
+        header_mmr_peaks: canonical_state.header_mmr_peaks.clone(),
         pending_actions: BTreeMap::new(),
         commitment_tree: canonical_state.commitment_tree.clone(),
         nullifiers: canonical_state.nullifiers.clone(),
@@ -13005,15 +13456,6 @@ fn verify_native_block_artifacts_locked(
     let expected_nullifier_root = nullifier_root_from_set(&expected_nullifiers);
     let expected_kernel_root =
         consensus::types::kernel_root_from_shielded_root(&expected_tree.root());
-    if meta.state_root != expected_tree.root()
-        || meta.kernel_root != expected_kernel_root
-        || meta.nullifier_root != expected_nullifier_root
-    {
-        return Err(anyhow!("native block artifact root mismatch"));
-    }
-    if meta.tx_count != transactions.len() as u32 {
-        return Err(anyhow!("native block artifact tx_count mismatch"));
-    }
     let height = evaluate_native_recursive_artifact_context_admission(
         NativeRecursiveArtifactContextAdmissionInput {
             best_height: state.best.height,
@@ -13029,14 +13471,14 @@ fn verify_native_block_artifacts_locked(
         view: 0,
         timestamp_ms: meta.timestamp_ms,
         parent_hash: meta.parent_hash,
-        state_root: meta.state_root,
-        kernel_root: meta.kernel_root,
-        nullifier_root: meta.nullifier_root,
+        state_root: expected_tree.root(),
+        kernel_root: expected_kernel_root,
+        nullifier_root: expected_nullifier_root,
         proof_commitment: consensus::types::compute_proof_commitment(&transactions),
         da_root: computed_da_root,
         da_params,
         version_commitment: consensus::types::compute_version_commitment(&transactions),
-        tx_count: meta.tx_count,
+        tx_count: transactions.len() as u32,
         fee_commitment: consensus::types::compute_fee_commitment(&transactions),
         supply_digest: meta.supply_digest,
         validator_set_commitment: [0u8; 48],
@@ -30376,6 +30818,33 @@ mod tests {
     }
 
     #[test]
+    fn native_sync_near_tip_request_backfills_reorg_window() {
+        let range = native_sync_missing_request_range_with_reorg_backfill(
+            NativeSyncMissingRequestInput {
+                best_height: 20592,
+                announced_height: 20618,
+                max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            },
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("near-tip announced fork should request a bounded backfill range");
+        assert_eq!(range.from_height, 20465);
+        assert_eq!(range.to_height, 20618);
+
+        let straight_sync = native_sync_missing_request_range_with_reorg_backfill(
+            NativeSyncMissingRequestInput {
+                best_height: 0,
+                announced_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 100,
+                max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            },
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("bulk sync should still start after local best");
+        assert_eq!(straight_sync.from_height, 1);
+        assert_eq!(straight_sync.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+    }
+
+    #[test]
     fn native_sync_response_range_caps_overwide_response_with_bounded_request_item_facts() {
         let range = native_sync_response_range(NativeSyncResponseRangeInput {
             from_height: 0,
@@ -31785,7 +32254,8 @@ mod tests {
         let startup = build_validated_startup_state_with_limits(
             &db,
             &action_tree,
-            state.best,
+            state.best.clone(),
+            state.header_mmr_peaks.clone(),
             pending_actions,
             state.commitment_tree,
             state.nullifiers,
@@ -31813,7 +32283,8 @@ mod tests {
         let startup = build_validated_startup_state_with_limits(
             &db,
             &action_tree,
-            state.best,
+            state.best.clone(),
+            state.header_mmr_peaks.clone(),
             pending_actions,
             state.commitment_tree,
             state.nullifiers,
@@ -36541,8 +37012,10 @@ mod tests {
     }
 
     fn test_state(best: NativeBlockMeta) -> NativeState {
+        let header_mmr_peaks = header_mmr_peaks_from_hashes(&[best.hash]);
         NativeState {
             best,
+            header_mmr_peaks,
             pending_actions: BTreeMap::new(),
             commitment_tree: CommitmentTreeState::default(),
             nullifiers: BTreeSet::new(),
