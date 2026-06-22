@@ -3387,8 +3387,9 @@ impl NativeNode {
         let bridge_messages = bridge_messages_from_actions(&actions, height)?;
         let message_root = bridge_message_root(&bridge_messages);
         let message_count = u32::try_from(bridge_messages.len()).unwrap_or(u32::MAX);
-        let header_mmr_len = header_mmr_leaf_count_after_best(&best)?;
-        let header_mmr_root = header_mmr_root_from_peaks(header_mmr_len, &state.header_mmr_peaks);
+        let header_history = self.header_hashes_to_hash(best.hash)?;
+        let header_mmr_len = header_history.len() as u64;
+        let header_mmr_root = header_mmr_root_from_hashes(&header_history);
         let pre_header = native_pow_header_from_parts(
             height,
             timestamp_ms,
@@ -5336,9 +5337,10 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 if to_height < from_height {
                     continue;
                 }
-                let range_node = Arc::clone(&node);
+                let best_height = node.best_meta().height;
+                let node = Arc::clone(&node);
                 let blocks = match tokio::task::spawn_blocking(move || {
-                    range_node.block_range(from_height, to_height)
+                    node.block_range(from_height, to_height)
                 })
                 .await
                 {
@@ -5362,31 +5364,28 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         continue;
                     }
                 };
-                send_sync_response(&handle, peer_id, node.best_meta().height, blocks).await;
+                send_sync_response(&handle, peer_id, best_height, blocks).await;
             }
             NativeSyncMessage::Response {
                 best_height,
-                blocks,
+                mut blocks,
             } => {
-                let response_block_count = blocks.len();
-                let blocks = match admit_and_sort_native_sync_response_blocks(
-                    blocks,
+                if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
+                    &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
                 ) {
-                    Ok(blocks) => blocks,
-                    Err(rejection) => {
-                        warn!(
-                            block_count = response_block_count,
-                            max_blocks = MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
-                            rejection = rejection.label(),
-                            "rejecting oversized native sync response"
-                        );
-                        continue;
-                    }
-                };
+                    warn!(
+                        block_count = blocks.len(),
+                        max_blocks = MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
+                        rejection = rejection.label(),
+                        "rejecting oversized native sync response"
+                    );
+                    continue;
+                }
+                let progress = NativeSyncResponseImportProgress::new(blocks.len());
                 let import_node = Arc::clone(&node);
                 let report = match tokio::task::spawn_blocking(move || {
-                    import_native_sync_response_blocks(&import_node, blocks)
+                    import_native_sync_response_blocks(&import_node, blocks, progress)
                 })
                 .await
                 {
@@ -5435,8 +5434,8 @@ struct NativeSyncImportReport {
 fn import_native_sync_response_blocks(
     node: &NativeNode,
     blocks: Vec<NativeBlockMeta>,
+    mut progress: NativeSyncResponseImportProgress,
 ) -> NativeSyncImportReport {
-    let mut progress = NativeSyncResponseImportProgress::new(blocks.len());
     let mut failure = None;
     for meta in blocks {
         match node.import_announced_block(meta.clone()) {
@@ -5496,16 +5495,19 @@ async fn request_missing_blocks(
     announced_height: u64,
 ) {
     let best_height = node.best_meta().height;
-    let Some(range) = native_sync_missing_request_range_with_reorg_backfill(
-        NativeSyncMissingRequestInput {
-            best_height,
-            announced_height,
-            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-        },
-        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
-    ) else {
+    let input = NativeSyncMissingRequestInput {
+        best_height,
+        announced_height,
+        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+    };
+    let Some(admitted_range) = native_sync_missing_request_range(input) else {
         return;
     };
+    let range = native_sync_missing_request_range_apply_reorg_backfill(
+        input,
+        admitted_range,
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    );
     debug!(
         best_height,
         announced_height,
@@ -9577,18 +9579,31 @@ fn native_sync_missing_request_range(
     })
 }
 
+#[cfg(test)]
 fn native_sync_missing_request_range_with_reorg_backfill(
     input: NativeSyncMissingRequestInput,
     backfill_blocks: u64,
 ) -> Option<NativeSyncRange> {
     let range = native_sync_missing_request_range(input)?;
+    Some(native_sync_missing_request_range_apply_reorg_backfill(
+        input,
+        range,
+        backfill_blocks,
+    ))
+}
+
+fn native_sync_missing_request_range_apply_reorg_backfill(
+    input: NativeSyncMissingRequestInput,
+    range: NativeSyncRange,
+    backfill_blocks: u64,
+) -> NativeSyncRange {
     let gap = input.announced_height.saturating_sub(input.best_height);
     if gap == 0
         || backfill_blocks == 0
         || gap > backfill_blocks
         || input.max_blocks <= backfill_blocks
     {
-        return Some(range);
+        return range;
     }
 
     let from_height = input
@@ -9599,10 +9614,10 @@ fn native_sync_missing_request_range_with_reorg_backfill(
     let to_height = input
         .announced_height
         .min(from_height.saturating_add(input.max_blocks - 1));
-    Some(NativeSyncRange {
+    NativeSyncRange {
         from_height,
         to_height,
-    })
+    }
 }
 
 fn native_sync_block_range_publication_rows(blocks: Vec<NativeBlockMeta>) -> Vec<NativeBlockMeta> {
@@ -9709,15 +9724,15 @@ fn native_sync_response_count_bounded_request(
 }
 
 fn admit_and_sort_native_sync_response_blocks(
-    mut blocks: Vec<NativeBlockMeta>,
+    blocks: &mut Vec<NativeBlockMeta>,
     max_blocks: usize,
-) -> Result<Vec<NativeBlockMeta>, NativeSyncAdmissionRejection> {
+) -> Result<(), NativeSyncAdmissionRejection> {
     evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
         block_count: blocks.len(),
         max_blocks,
     })?;
     blocks.sort_by_key(|meta| meta.height);
-    Ok(blocks)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -30455,11 +30470,12 @@ mod tests {
                     case.name
                 );
 
-                match admit_and_sort_native_sync_response_blocks(blocks, case.max_blocks) {
+                let mut blocks = blocks;
+                match admit_and_sort_native_sync_response_blocks(&mut blocks, case.max_blocks) {
                     Err(rejection) => Some(rejection.label().to_owned()),
-                    Ok(sorted) => {
+                    Ok(()) => {
                         let sorted_heights: Vec<_> =
-                            sorted.iter().map(|block| block.height).collect();
+                            blocks.iter().map(|block| block.height).collect();
                         assert_eq!(
                             sorted_heights, case.expected_sorted_heights,
                             "{} raw sync response sorted heights drifted from Lean",
@@ -30596,7 +30612,8 @@ mod tests {
             .enumerate()
             .map(|(idx, height)| lean_sync_response_import_meta(height, idx as u8))
             .collect();
-        let sorted = admit_and_sort_native_sync_response_blocks(blocks, case.max_blocks)
+        let mut sorted = blocks;
+        admit_and_sort_native_sync_response_blocks(&mut sorted, case.max_blocks)
             .expect("valid Lean sync-response import case should sort");
         let sorted_heights: Vec<_> = sorted.iter().map(|meta| meta.height).collect();
         assert_eq!(

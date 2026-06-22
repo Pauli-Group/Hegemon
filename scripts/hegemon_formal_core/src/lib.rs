@@ -4518,7 +4518,7 @@ fn call_is_inside_loop(source: &str, target: usize) -> bool {
 
 fn rust_block_is_loop_body(source: &str, block_start: usize) -> bool {
     let prefix_start = rust_control_prefix_start_before_block(source, block_start);
-    let prefix = source[prefix_start..block_start].trim_start();
+    let prefix = source[prefix_start..block_start].trim();
     prefix.starts_with("for ")
         || prefix.starts_with("while ")
         || prefix.starts_with("while let ")
@@ -6975,6 +6975,52 @@ mod tests {
 
         let report = check_blueprint_file(&blueprint_path, &claims_path)
             .expect("sync response continue branch");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_plain_loop_sync_response_continue_branch() {
+        let root = test_root("plain-loop-sync-response-continue-branch");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "enum Message { Response(Vec<u8>), Other }\n\
+             fn verified_helper() {}\n\
+             fn native_sync_loop() {\n\
+                 loop {\n\
+                     match recv() {\n\
+                         Message::Response(mut blocks) => {\n\
+                             if let Err(rejection) = verified_helper() { warn(rejection); continue; }\n\
+                             blocks_sort_by_key(&mut blocks);\n\
+                         }\n\
+                         Message::Other => {}\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn recv() {}\n\
+             fn warn<T>(_value: T) {}\n\
+             fn blocks_sort_by_key<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["native_sync_loop"],
+                "native_sync_loop",
+                &["blocks_sort_by_key"],
+                Some("must_check_result_loop_skip_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("plain loop sync response continue branch");
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_edges, 1);
         assert_eq!(report.implementation_result_obligations, 1);
