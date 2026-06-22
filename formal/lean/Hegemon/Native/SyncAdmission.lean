@@ -50,8 +50,13 @@ def missingRequestRange (input : SyncMissingRequestInput) : Option (Nat × Nat) 
     if input.announcedHeight ≤ input.bestHeight then
       none
     else
-      let fromHeight := saturatingAddU64 input.bestHeight 1
-      let capEnd := max fromHeight (saturatingAddU64 input.bestHeight input.maxBlocks)
+      let fromHeight :=
+        if 0 < input.bestHeight ∧ input.bestHeight < input.maxBlocks then
+          1
+        else
+          saturatingAddU64 input.bestHeight 1
+      let capEnd :=
+        max fromHeight (saturatingAddU64 fromHeight (input.maxBlocks - 1))
       some (fromHeight, min input.announcedHeight capEnd)
 
 def responseCountRejects (input : SyncResponseCountInput) : Bool :=
@@ -214,11 +219,16 @@ theorem missing_request_some_when_announced_ahead
     (max_nonzero : input.maxBlocks ≠ 0)
     (h : ¬ input.announcedHeight ≤ input.bestHeight) :
     missingRequestRange input =
+      let fromHeight :=
+        if 0 < input.bestHeight ∧ input.bestHeight < input.maxBlocks then
+          1
+        else
+          saturatingAddU64 input.bestHeight 1
       some (
-        saturatingAddU64 input.bestHeight 1,
+        fromHeight,
         min input.announcedHeight
-          (max (saturatingAddU64 input.bestHeight 1)
-            (saturatingAddU64 input.bestHeight input.maxBlocks))
+          (max fromHeight
+            (saturatingAddU64 fromHeight (input.maxBlocks - 1)))
       ) := by
   unfold missingRequestRange
   simp [max_nonzero, h]
@@ -312,7 +322,7 @@ def missingRequestShort : SyncMissingRequestInput :=
   }
 
 theorem missing_request_short :
-    missingRequestRange missingRequestShort = some (51, 55) := by
+    missingRequestRange missingRequestShort = some (1, 55) := by
   decide
 
 def missingRequestCapsAtMaxBlocks : SyncMissingRequestInput :=
@@ -323,7 +333,18 @@ def missingRequestCapsAtMaxBlocks : SyncMissingRequestInput :=
   }
 
 theorem missing_request_caps_at_max_blocks :
-    missingRequestRange missingRequestCapsAtMaxBlocks = some (51, 562) := by
+    missingRequestRange missingRequestCapsAtMaxBlocks = some (1, 512) := by
+  decide
+
+def missingRequestBootstrapFork : SyncMissingRequestInput :=
+  {
+    bestHeight := 145,
+    announcedHeight := 21971,
+    maxBlocks := 2048
+  }
+
+theorem missing_request_bootstrap_fork_backfills_from_height_one :
+    missingRequestRange missingRequestBootstrapFork = some (1, 2048) := by
   decide
 
 def missingRequestAtU64Max : SyncMissingRequestInput :=

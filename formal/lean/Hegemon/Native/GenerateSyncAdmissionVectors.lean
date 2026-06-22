@@ -105,6 +105,8 @@ def vectorJson : String :=
     ++ missingRequestCaseJson "missing-request-short" missingRequestShort ++ ",\n"
     ++ missingRequestCaseJson "missing-request-caps-at-max-blocks"
       missingRequestCapsAtMaxBlocks ++ ",\n"
+    ++ missingRequestCaseJson "missing-request-bootstrap-fork"
+      missingRequestBootstrapFork ++ ",\n"
     ++ missingRequestCaseJson "missing-request-at-u64-max"
       missingRequestAtU64Max ++ ",\n"
     ++ missingRequestCaseJson "missing-request-saturating" missingRequestSaturating ++ ",\n"

@@ -111,6 +111,7 @@ const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BL
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
+const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
 const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
@@ -2856,6 +2857,8 @@ pub struct NativeNode {
     mining_hashes: AtomicU64,
     blocks_found: AtomicU64,
     last_announce_height: AtomicU64,
+    sync_target_height: AtomicU64,
+    mining_sync_gate_open: AtomicBool,
     mining_task: Mutex<Option<JoinHandle<()>>>,
     sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
     miner_identity: NativeMinerIdentity,
@@ -2929,6 +2932,7 @@ impl NativeNode {
             "native Hegemon node storage reload completed"
         );
 
+        let initial_mining_sync_gate_open = config.seeds.is_empty();
         let node = Arc::new(Self {
             config,
             db,
@@ -2951,6 +2955,8 @@ impl NativeNode {
             mining_hashes: AtomicU64::new(0),
             blocks_found: AtomicU64::new(0),
             last_announce_height: AtomicU64::new(0),
+            sync_target_height: AtomicU64::new(0),
+            mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
             miner_identity,
@@ -2963,6 +2969,37 @@ impl NativeNode {
 
     fn set_sync_sender(&self, sync_tx: mpsc::Sender<DirectedProtocolMessage>) {
         *self.sync_tx.lock() = Some(sync_tx);
+    }
+
+    fn observe_sync_peer_height(&self, peer_best_height: u64) {
+        self.sync_target_height
+            .fetch_max(peer_best_height, Ordering::Relaxed);
+        self.refresh_mining_sync_gate();
+    }
+
+    fn refresh_mining_sync_gate(&self) {
+        if self.config.seeds.is_empty() {
+            self.mining_sync_gate_open.store(true, Ordering::SeqCst);
+            return;
+        }
+        let target = self.sync_target_height.load(Ordering::Relaxed);
+        if target == 0 {
+            return;
+        }
+        self.mining_sync_gate_open
+            .store(self.best_meta().height >= target, Ordering::SeqCst);
+    }
+
+    fn mining_sync_gate_allows_work(&self) -> bool {
+        self.config.seeds.is_empty() || self.mining_sync_gate_open.load(Ordering::SeqCst)
+    }
+
+    fn sync_status_fields(&self) -> (bool, u64) {
+        let target = self.sync_target_height.load(Ordering::Relaxed);
+        let syncing = !self.config.seeds.is_empty()
+            && (!self.mining_sync_gate_open.load(Ordering::SeqCst)
+                || (target > 0 && self.best_meta().height < target));
+        (syncing, target)
     }
 
     fn start_mining(self: &Arc<Self>, threads: u32) {
@@ -4564,6 +4601,7 @@ impl NativeNode {
 
     fn mining_status(&self) -> Value {
         let best = self.best_meta();
+        let (syncing, sync_target_height) = self.sync_status_fields();
         json!({
             "is_mining": self.mining.load(Ordering::SeqCst),
             "threads": self.mining_threads.load(Ordering::Relaxed),
@@ -4571,18 +4609,23 @@ impl NativeNode {
             "blocks_found": self.blocks_found.load(Ordering::Relaxed),
             "difficulty": self.config.pow_bits,
             "block_height": best.height,
+            "syncing": syncing,
+            "sync_target_height": sync_target_height,
+            "mining_sync_gate_open": self.mining_sync_gate_allows_work(),
         })
     }
 
     fn consensus_status(&self) -> Value {
         let best = self.best_meta();
+        let (syncing, sync_target_height) = self.sync_status_fields();
         json!({
             "height": best.height,
             "best_hash": hex32(&best.hash),
             "state_root": hex48(&best.state_root),
             "nullifier_root": hex48(&best.nullifier_root),
             "supply_digest": best.supply_digest,
-            "syncing": false,
+            "syncing": syncing,
+            "sync_target_height": sync_target_height,
             "peers": 0,
         })
     }
@@ -5309,6 +5352,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             NativeSyncMessage::Announce(meta) => {
                 let meta = *meta;
                 let announced_height = meta.height;
+                node.observe_sync_peer_height(announced_height);
                 match node.import_announced_block(meta.clone()) {
                     Ok(true) => {
                         info!(
@@ -5370,6 +5414,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 best_height,
                 mut blocks,
             } => {
+                node.observe_sync_peer_height(best_height);
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
                     &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
@@ -5396,6 +5441,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     }
                 };
                 let progress = report.progress;
+                node.refresh_mining_sync_gate();
                 if let Some(failure) = report.failure {
                     warn!(
                         height = failure.height,
@@ -5414,6 +5460,8 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 }
                 if progress.should_request_more(node.best_meta().height, best_height) {
                     request_missing_blocks(&node, &handle, peer_id, best_height).await;
+                } else {
+                    node.refresh_mining_sync_gate();
                 }
             }
         }
@@ -6368,6 +6416,11 @@ fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV1) -> Value {
 
 async fn mining_loop(node: Arc<NativeNode>) {
     while node.mining.load(Ordering::SeqCst) {
+        node.refresh_mining_sync_gate();
+        if !node.mining_sync_gate_allows_work() {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
+        }
         let work = match node.prepare_work() {
             Ok(work) => work,
             Err(err) => {
@@ -9568,10 +9621,15 @@ fn native_sync_missing_request_range(
     if input.max_blocks == 0 || input.announced_height <= input.best_height {
         return None;
     }
-    let from_height = input.best_height.saturating_add(1);
+    let from_height = if input.best_height > 0 && input.best_height < input.max_blocks {
+        NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR
+    } else {
+        input.best_height.saturating_add(1)
+    };
     let cap_end = input
-        .best_height
-        .saturating_add(input.max_blocks)
+        .max_blocks
+        .saturating_sub(1)
+        .saturating_add(from_height)
         .max(from_height);
     Some(NativeSyncRange {
         from_height,
@@ -30859,6 +30917,37 @@ mod tests {
         .expect("bulk sync should still start after local best");
         assert_eq!(straight_sync.from_height, 1);
         assert_eq!(straight_sync.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+    }
+
+    #[test]
+    fn native_sync_bootstrap_request_backfills_low_divergent_tip() {
+        let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
+            best_height: 145,
+            announced_height: 21_971,
+            max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        })
+        .expect("low divergent bootstrap should request the first bounded window");
+        assert_eq!(range.from_height, 1);
+        assert_eq!(range.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+    }
+
+    #[test]
+    fn seeded_mining_waits_until_sync_target_is_reached() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+
+        assert!(!node.mining_sync_gate_allows_work());
+        node.observe_sync_peer_height(3);
+        assert!(!node.mining_sync_gate_allows_work());
+        assert_eq!(node.sync_target_height.load(Ordering::Relaxed), 3);
+
+        for _ in 0..3 {
+            mine_empty_native_block(&node);
+        }
+        node.refresh_mining_sync_gate();
+        assert!(node.mining_sync_gate_allows_work());
     }
 
     #[test]
