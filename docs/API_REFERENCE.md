@@ -87,9 +87,9 @@ Hegemon-specific RPC methods exposed on the native JSON-RPC server:
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
-  - Unsafe-only local/operator control RPC. Requires `--rpc-methods=unsafe`; `auto` exposes it only on loopback.
+  - Unsafe-only local/operator control RPC. Requires explicit `--rpc-methods=unsafe`; `auto` resolves to safe-only.
 - `hegemon_stopMining() -> MiningControlResponse`
-  - Unsafe-only local/operator control RPC. Requires `--rpc-methods=unsafe`; `auto` exposes it only on loopback.
+  - Unsafe-only local/operator control RPC. Requires explicit `--rpc-methods=unsafe`; `auto` resolves to safe-only.
 - `hegemon_compactJob(params?: { auth_token?: String }) -> CompactJobResponse`
 - `hegemon_submitCompactSolution(request: { worker_name: String, job_id: String, nonce: String, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolWork(params?: { auth_token?: String }) -> PoolWorkResponse`

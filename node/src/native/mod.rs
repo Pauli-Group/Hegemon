@@ -161,7 +161,7 @@ pub struct NativeCli {
     /// RPC method policy: auto, safe, or unsafe.
     #[arg(long, default_value = "auto")]
     pub rpc_methods: String,
-    /// CORS policy. Accepted for CLI compatibility; currently reflected as a permissive header.
+    /// CORS policy. Default is no browser cross-origin access; set explicitly for trusted UIs.
     #[arg(long)]
     pub rpc_cors: Option<String>,
     /// P2P listen port.
@@ -1143,6 +1143,7 @@ struct NativeBridgeVerifierRegistrationPolicyEffect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeBridgeWitnessExportAdmissionInput {
     block_hash_parameter_valid: bool,
+    explicit_block_hash: bool,
     block_known: bool,
     canonical_height_present: bool,
     block_is_canonical: bool,
@@ -1151,6 +1152,7 @@ struct NativeBridgeWitnessExportAdmissionInput {
     parent_known: bool,
     best_height: u64,
     message_height: u64,
+    max_explicit_history: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1295,6 +1297,7 @@ enum NativeBridgeWitnessExportAdmissionRejection {
     MessageIndexOutOfBounds,
     MissingParent,
     TipBeforeMessage,
+    ExplicitHistoryTooLong,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1326,6 +1329,7 @@ impl NativeBridgeWitnessExportAdmissionRejection {
             Self::MessageIndexOutOfBounds => "message_index_out_of_bounds",
             Self::MissingParent => "missing_parent",
             Self::TipBeforeMessage => "tip_before_message",
+            Self::ExplicitHistoryTooLong => "explicit_history_too_long",
         }
     }
 }
@@ -6055,7 +6059,9 @@ fn validate_wallet_ciphertext_archive_value(bytes: &[u8]) -> Result<()> {
 
 fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
     let message_index = bridge_witness_message_index(&params)?;
-    let block_hash = match bridge_witness_explicit_block_hash(&params)? {
+    let explicit_block_hash = bridge_witness_explicit_block_hash(&params)?;
+    let block_hash_was_explicit = explicit_block_hash.is_some();
+    let block_hash = match explicit_block_hash {
         Some(hash) => hash,
         None => latest_bridge_message_block_hash(node, message_index)?,
     };
@@ -6096,6 +6102,7 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
     let confirmations_checked =
         evaluate_native_bridge_witness_export_admission(NativeBridgeWitnessExportAdmissionInput {
             block_hash_parameter_valid: true,
+            explicit_block_hash: block_hash_was_explicit,
             block_known: meta.is_some(),
             canonical_height_present,
             block_is_canonical,
@@ -6108,6 +6115,7 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
                     && message_index_in_bounds),
             best_height: best.height,
             message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
+            max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
         })
         .map_err(native_bridge_witness_export_admission_error)?;
     let meta = meta.expect("bridge witness admission ensures block exists");
@@ -10723,8 +10731,14 @@ fn evaluate_native_bridge_witness_export_admission(
     } else if !input.parent_known {
         Err(NativeBridgeWitnessExportAdmissionRejection::MissingParent)
     } else {
-        native_bridge_witness_confirmations_checked(input.best_height, input.message_height)
-            .ok_or(NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage)
+        let confirmations =
+            native_bridge_witness_confirmations_checked(input.best_height, input.message_height)
+                .ok_or(NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage)?;
+        if input.explicit_block_hash && u64::from(confirmations) > input.max_explicit_history {
+            Err(NativeBridgeWitnessExportAdmissionRejection::ExplicitHistoryTooLong)
+        } else {
+            Ok(confirmations)
+        }
     }
 }
 
@@ -10820,6 +10834,10 @@ fn native_bridge_witness_export_admission_error(
         }
         NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage => anyhow!(
             "bridge witness tip height is before message height ({})",
+            rejection.label()
+        ),
+        NativeBridgeWitnessExportAdmissionRejection::ExplicitHistoryTooLong => anyhow!(
+            "explicit bridge witness block is too old for full export; checked confirmations exceed {MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS} ({})",
             rejection.label()
         ),
     }
@@ -14441,7 +14459,7 @@ fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
             if rpc_external {
                 Ok(RpcMethodPolicy::Safe)
             } else {
-                Ok(RpcMethodPolicy::Unsafe)
+                Ok(RpcMethodPolicy::Safe)
             }
         }
         other => Err(anyhow!(
@@ -14985,24 +15003,31 @@ fn json_response(node: &NativeNode, status: StatusCode, body: Value) -> Response
 
 fn with_cors(node: &NativeNode, mut response: Response) -> Response {
     let headers = response.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("POST, GET, OPTIONS"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type, authorization"),
-    );
-    if let Some(cors) = node.config.rpc_cors.as_deref() {
-        if let Ok(value) = HeaderValue::from_str(cors) {
-            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
-        }
+    if let Some(origin) = rpc_cors_origin(node) {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin);
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("POST, GET, OPTIONS"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("content-type, authorization"),
+        );
+        headers.insert(header::VARY, HeaderValue::from_static("origin"));
     }
     response
+}
+
+fn rpc_cors_origin(node: &NativeNode) -> Option<HeaderValue> {
+    let cors = node.config.rpc_cors.as_deref()?.trim();
+    if cors.is_empty() {
+        return None;
+    }
+    if cors == "*" && node.rpc_policy().ok() == Some(RpcMethodPolicy::Unsafe) {
+        warn!("ignoring wildcard RPC CORS while unsafe RPC methods are enabled");
+        return None;
+    }
+    HeaderValue::from_str(cors).ok()
 }
 
 fn rpc_error(id: Value, code: i64, message: impl Into<String>) -> Value {
@@ -15480,6 +15505,7 @@ mod tests {
     struct LeanBridgeWitnessExportAdmissionCase {
         name: String,
         block_hash_parameter_valid: bool,
+        explicit_block_hash: bool,
         block_known: bool,
         canonical_height_present: bool,
         block_is_canonical: bool,
@@ -15488,6 +15514,7 @@ mod tests {
         parent_known: bool,
         best_height: u64,
         message_height: u64,
+        max_explicit_history: u64,
         expected_valid: bool,
         expected_confirmations_checked: Option<u32>,
         expected_rejection: Option<String>,
@@ -20018,7 +20045,7 @@ mod tests {
         );
         assert_eq!(
             rpc_method_policy("auto", false).expect("local auto"),
-            RpcMethodPolicy::Unsafe
+            RpcMethodPolicy::Safe
         );
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -20038,6 +20065,44 @@ mod tests {
         assert!(!methods.contains(&"hegemon_submitAction"));
         let unsafe_methods = native_rpc_methods(RpcMethodPolicy::Unsafe);
         assert!(unsafe_methods.contains(&"hegemon_submitAction"));
+    }
+
+    #[test]
+    fn rpc_cors_defaults_closed_and_rejects_wildcard_for_unsafe_policy() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let response = with_cors(&node, StatusCode::NO_CONTENT.into_response());
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "default RPC must not expose browser CORS"
+        );
+
+        let tmp_safe = tempfile::tempdir().expect("tempdir");
+        let mut safe_config = test_config(tmp_safe.path(), 0x207f_ffff, "safe", false);
+        safe_config.rpc_cors = Some("*".to_string());
+        let safe_node = NativeNode::open(safe_config).expect("safe cors node");
+        let response = with_cors(&safe_node, StatusCode::NO_CONTENT.into_response());
+        assert_eq!(
+            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN),
+            Some(&HeaderValue::from_static("*"))
+        );
+
+        let tmp_unsafe = tempfile::tempdir().expect("tempdir");
+        let mut unsafe_config = test_config(tmp_unsafe.path(), 0x207f_ffff, "unsafe", false);
+        unsafe_config.rpc_cors = Some("*".to_string());
+        let unsafe_node = NativeNode::open(unsafe_config).expect("unsafe cors node");
+        let response = with_cors(&unsafe_node, StatusCode::NO_CONTENT.into_response());
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none(),
+            "unsafe RPC must not accept wildcard CORS"
+        );
     }
 
     #[test]
@@ -21981,6 +22046,7 @@ mod tests {
     ) {
         let input = NativeBridgeWitnessExportAdmissionInput {
             block_hash_parameter_valid: case.block_hash_parameter_valid,
+            explicit_block_hash: case.explicit_block_hash,
             block_known: case.block_known,
             canonical_height_present: case.canonical_height_present,
             block_is_canonical: case.block_is_canonical,
@@ -21989,6 +22055,7 @@ mod tests {
             parent_known: case.parent_known,
             best_height: case.best_height,
             message_height: case.message_height,
+            max_explicit_history: case.max_explicit_history,
         };
         let actual = evaluate_native_bridge_witness_export_admission(input);
         let actual_rejection = actual
@@ -36387,6 +36454,39 @@ mod tests {
             .expect_err("unknown explicit hash must be rejected");
 
         assert!(err.to_string().contains("unknown bridge witness block"));
+    }
+
+    #[test]
+    fn bridge_witness_admission_rejects_explicit_history_over_cap() {
+        let input = NativeBridgeWitnessExportAdmissionInput {
+            block_hash_parameter_valid: true,
+            explicit_block_hash: true,
+            block_known: true,
+            canonical_height_present: true,
+            block_is_canonical: true,
+            block_actions_decoded: true,
+            message_index_in_bounds: true,
+            parent_known: true,
+            best_height: 4_200,
+            message_height: 1,
+            max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
+        };
+        let rejection = evaluate_native_bridge_witness_export_admission(input)
+            .expect_err("explicit old witness must reject before full history export");
+        assert_eq!(
+            rejection,
+            NativeBridgeWitnessExportAdmissionRejection::ExplicitHistoryTooLong
+        );
+
+        let latest_backscan_input = NativeBridgeWitnessExportAdmissionInput {
+            explicit_block_hash: false,
+            ..input
+        };
+        assert_eq!(
+            evaluate_native_bridge_witness_export_admission(latest_backscan_input)
+                .expect("bounded latest backscan admission"),
+            4_200
+        );
     }
 
     #[test]

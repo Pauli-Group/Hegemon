@@ -2468,16 +2468,18 @@
         "Hegemon.Consensus.DaRoot.page_proof_path_len_max_accepts",
         "Hegemon.Consensus.DaRoot.page_proof_path_len_over_cap_rejects",
         "Hegemon.Consensus.DaRoot.sample_blob_hex",
+        "Hegemon.Consensus.DaRoot.max_shards_max_chunk_allocation_within_budget",
         "Hegemon.Consensus.DaRoot.shard_count_empty_blob",
         "Hegemon.Consensus.DaRoot.shard_count_max_accepts",
         "Hegemon.Consensus.DaRoot.shard_count_partial_third_blob",
+        "Hegemon.Consensus.DaRoot.shard_count_rejects_oversized_chunk",
         "Hegemon.Consensus.DaRoot.shard_count_rejects_too_many",
         "Hegemon.Consensus.DaRoot.shard_count_rejects_zero_chunk",
         "Hegemon.Consensus.DaRoot.shard_count_rejects_zero_sample"
       ],
       "assumptions": [
         "The Lean model represents the deterministic bytes and shard-count arithmetic that consensus uses before hashing and comparing a block's DA root.",
-        "Generated Lean conformance vectors cover empty and multi-transaction DA blobs, empty ciphertext length-prefixing, leaf preimages for index zero and max u32, ordered and reversed node preimages, empty/partial/max shard counts, zero chunk-size rejection, zero sample-count rejection, too-many-shards rejection, chunk/page proof-path cap admission, and even/odd Merkle proof-step orientation.",
+        "Generated Lean conformance vectors cover empty and multi-transaction DA blobs, empty ciphertext length-prefixing, leaf preimages for index zero and max u32, ordered and reversed node preimages, empty/partial/max shard counts, zero chunk-size rejection, oversized chunk-size rejection, zero sample-count rejection, too-many-shards rejection, shard allocation budget admission, chunk/page proof-path cap admission, and even/odd Merkle proof-step orientation.",
         "The independent state-da oracle rebuilds da-leaf/da-node preimages, chunk and page Merkle levels, duplicate-last odd padding, production proof paths, and proof replay for empty, single-page, multipage, and odd-leaf cases while rejecting orientation/index/root mutations; the overlong-path regression requires chunk and page proof paths over their caps to fail before hash replay.",
         "The theorem covers executable DA byte grammar and shard-count admission only. It does not prove Reed-Solomon erasure-code correctness, BLAKE3 security or implementation equivalence, chunk network availability, sampling probability, ciphertext sidecar availability, or complete block proof validity."
       ],
@@ -3275,7 +3277,7 @@
         "Hegemon.Native.RpcAdmission.overlarge_timestamp_range_rejects",
         "Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens",
         "Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe",
-        "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe",
+        "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe",
         "Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid",
         "Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods",
         "Hegemon.Native.RpcAdmission.safe_policy_allows_safe_methods",
@@ -3291,7 +3293,7 @@
       ],
       "assumptions": [
         "The Lean model represents the finite RPC policy/method table and cap arithmetic after JSON field discovery, with raw policy string parsing represented by enumerated tokens and checked by generated Rust conformance vectors.",
-        "Generated Lean conformance vectors cover safe/unsafe/auto/empty/invalid policy resolution, external auto safe fallback, local auto unsafe fallback, unsafe method rejection under safe policy, unsafe method allowance under unsafe policy, safe method-list filtering, timestamp exact/inverted/overflow/over-limit ranges, base64/hex text caps, decoded byte caps, and empty/exact/over-limit JSON-RPC batches.",
+        "Generated Lean conformance vectors cover safe/unsafe/auto/empty/invalid policy resolution, external auto safe fallback, local auto safe fallback, unsafe method rejection under safe policy, unsafe method allowance under unsafe policy, safe method-list filtering, timestamp exact/inverted/overflow/over-limit ranges, base64/hex text caps, decoded byte caps, and empty/exact/over-limit JSON-RPC batches.",
         "The theorem covers executable native RPC admission only. It does not prove RPC authentication, host firewall posture, plaintext control-plane safety, JSON parser correctness, base64/hex parser correctness beyond cap behavior, handler method semantics, mining liveness, or complete native-node equivalence."
       ],
       "evidence_paths": [
@@ -5970,7 +5972,9 @@
       "lean_theorems": [
         "Hegemon.Native.BridgeWitnessExportAdmission.accepts_iff_bridge_witness_export_preconditions",
         "Hegemon.Native.BridgeWitnessExportAdmission.block_actions_decode_failed_rejects",
+        "Hegemon.Native.BridgeWitnessExportAdmission.explicit_history_too_long_rejects",
         "Hegemon.Native.BridgeWitnessExportAdmission.large_confirmation_count_caps_to_u32_max",
+        "Hegemon.Native.BridgeWitnessExportAdmission.latest_backscan_not_rejected_by_explicit_history_cap",
         "Hegemon.Native.BridgeWitnessExportAdmission.malformed_block_hash_rejects",
         "Hegemon.Native.BridgeWitnessExportAdmission.malformed_hash_precedes_unknown_block",
         "Hegemon.Native.BridgeWitnessExportAdmission.message_index_out_of_bounds_rejects",
@@ -5987,7 +5991,7 @@
       ],
       "assumptions": [
         "The Lean model treats block-hash lookup, canonical-height lookup, canonical hash comparison, block-action decoding, bridge-message derivation, and parent lookup as production-derived predicates; it proves the deterministic admission table and confirmation-count output once those predicates are observed.",
-        "Generated Lean conformance vectors cover valid exports, same-height one-confirmation exports, u32 confirmation capping, malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, action decode failure, out-of-bounds message indexes, missing parents, best-tip-before-message rejection, and rejection precedence.",
+        "Generated Lean conformance vectors cover valid exports, same-height one-confirmation exports, u32 confirmation capping, malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, action decode failure, out-of-bounds message indexes, missing parents, best-tip-before-message rejection, explicit old-hash history cap rejection, latest-backscan exemption from the explicit-history cap, and rejection precedence.",
         "The theorem covers executable native witness-export admission and capped confirmation-count computation only. It does not prove latest-message backscan selection, sled atomicity, filesystem durability, SCALE/Bincode decode implementation equivalence, BLAKE3 message-root or output-digest security, header-MMR hash binding, FlyClient sampling soundness, long-range light-client soundness, external-chain verifier behavior, or complete native-node equivalence. Latest-message backscan selection, long-range proof shape, FlyClient transcript derivation, header-MMR shape/transcripts, and checkpoint-output byte grammar are covered by separate bridge claims."
       ],
       "evidence_paths": [

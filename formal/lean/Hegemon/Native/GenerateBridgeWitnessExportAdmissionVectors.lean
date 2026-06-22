@@ -27,6 +27,8 @@ def rejectionJson : Option BridgeWitnessExportReject -> String
       "\"missing_parent\""
   | some BridgeWitnessExportReject.tipBeforeMessage =>
       "\"tip_before_message\""
+  | some BridgeWitnessExportReject.explicitHistoryTooLong =>
+      "\"explicit_history_too_long\""
 
 def bridgeWitnessExportCaseJson
     (name : String)
@@ -37,6 +39,8 @@ def bridgeWitnessExportCaseJson
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"block_hash_parameter_valid\": "
       ++ boolJson input.blockHashParameterValid ++ ",\n"
+    ++ "      \"explicit_block_hash\": "
+      ++ boolJson input.explicitBlockHash ++ ",\n"
     ++ "      \"block_known\": " ++ boolJson input.blockKnown ++ ",\n"
     ++ "      \"canonical_height_present\": "
       ++ boolJson input.canonicalHeightPresent ++ ",\n"
@@ -50,6 +54,8 @@ def bridgeWitnessExportCaseJson
       ++ boolJson input.parentKnown ++ ",\n"
     ++ "      \"best_height\": " ++ toString input.bestHeight ++ ",\n"
     ++ "      \"message_height\": " ++ toString input.messageHeight ++ ",\n"
+    ++ "      \"max_explicit_history\": "
+      ++ toString input.maxExplicitHistory ++ ",\n"
     ++ "      \"expected_valid\": " ++ boolJson (result.isOk) ++ ",\n"
     ++ "      \"expected_confirmations_checked\": "
       ++ natOptionJson confirmations ++ ",\n"
@@ -87,6 +93,11 @@ def vectorJson : String :=
       "missing-parent-rejected" missingParent ++ ",\n"
     ++ bridgeWitnessExportCaseJson
       "tip-before-message-rejected" tipBeforeMessage ++ ",\n"
+    ++ bridgeWitnessExportCaseJson
+      "explicit-history-too-long-rejected" explicitHistoryTooLong ++ ",\n"
+    ++ bridgeWitnessExportCaseJson
+      "latest-backscan-can-exceed-explicit-history-bound"
+      latestBackscanCanExceedExplicitHistoryBound ++ ",\n"
     ++ bridgeWitnessExportCaseJson
       "malformed-hash-precedes-unknown-block"
       malformed_hash_precedes_unknown_block_input ++ ",\n"

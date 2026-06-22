@@ -104,7 +104,8 @@ impl PeerStore {
             }
         }
 
-        if changed || self.enforce_max_entries() {
+        let capped = self.enforce_max_entries();
+        if changed || capped {
             self.persist()?;
         }
 
@@ -143,7 +144,8 @@ impl PeerStore {
             }
         }
 
-        if changed || self.enforce_max_entries() {
+        let capped = self.enforce_max_entries();
+        if changed || capped {
             self.persist()?;
         }
 
@@ -521,6 +523,53 @@ mod tests {
         assert!(!store.entries.contains_key(&addrs[2]));
         assert!(!store.entries.contains_key(&addrs[1]));
         assert!(!store.entries.contains_key(&addrs[0]));
+    }
+
+    #[test]
+    fn record_learned_enforces_max_entries_before_persisting() {
+        let path = temp_path("peer_store_learned_cap");
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path: path.clone(),
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+        let addrs: Vec<SocketAddr> = (0..5)
+            .map(|i| format!("127.0.0.1:93{:02}", i).parse().unwrap())
+            .collect();
+
+        store.record_learned(addrs).unwrap();
+        assert_eq!(store.entries.len(), 2);
+
+        let mut reloaded = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+        reloaded.load().unwrap();
+        assert_eq!(reloaded.entries.len(), 2);
+    }
+
+    #[test]
+    fn record_connected_enforces_max_entries_before_persisting() {
+        let path = temp_path("peer_store_connected_cap");
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path: path.clone(),
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+        for i in 0..5 {
+            let addr: SocketAddr = format!("127.0.0.1:94{:02}", i).parse().unwrap();
+            store.record_connected(addr).unwrap();
+        }
+        assert_eq!(store.entries.len(), 2);
+
+        let mut reloaded = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+        reloaded.load().unwrap();
+        assert_eq!(reloaded.entries.len(), 2);
     }
 
     #[test]

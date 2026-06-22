@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1064,10 +1065,47 @@ impl WalletStore {
         OsRng.fill_bytes(&mut tmp_suffix);
         let tmp_id = u64::from_le_bytes(tmp_suffix);
         let tmp = self.path.with_extension(format!("tmp-{tmp_id:x}"));
-        fs::write(&tmp, &bytes)?;
+        write_wallet_file_private(&tmp, &bytes)?;
         fs::rename(&tmp, &self.path)?;
+        set_wallet_file_private_permissions(&self.path)?;
         Ok(())
     }
+}
+
+fn write_wallet_file_private(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        set_wallet_file_private_permissions(path)?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, bytes)?;
+        Ok(())
+    }
+}
+
+fn set_wallet_file_private_permissions(path: &Path) -> Result<(), WalletError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
@@ -1517,6 +1555,20 @@ mod tests {
         let reopened = WalletStore::open(&path, "passphrase").unwrap();
         let addr2 = reopened.next_address().unwrap();
         assert_ne!(addr1.pk_recipient, addr2.pk_recipient);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wallet_file_is_created_private_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        drop(store);
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]

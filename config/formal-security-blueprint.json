@@ -4834,8 +4834,8 @@
       "id": "native.rpc-admission",
       "claim_id": "native.rpc-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for external listeners and unsafe for local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap. Blueprint implementation bindings additionally require timestamp, block-row, and wallet archive materialization helpers to propagate storage/key/value failures before returning JSON rows, and require mining thread parameters to pass through a bounded parser before starting mining.",
-      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior. Separate blueprint implementation bindings require the production block metadata, timestamp, commitment archive, and ciphertext archive materializers to be called by the exported RPC paths with propagated results, require mining thread parsing before `start_mining`, and focused regressions corrupt sled rows or malformed explicit parameters to prove those paths fail closed.",
+      "formal_statement": "For the executable Lean native RPC admission predicates, RPC policy resolution accepts only safe/unsafe/auto/empty tokens with auto and empty resolving to safe for both external and local listeners; safe policy rejects unsafe methods and hides them from rpc_methods; timestamp queries accept only non-inverted, non-overflowing ranges within the row cap; base64/hex byte strings accept only within raw and decoded caps; and JSON-RPC batches accept only when nonempty and within the batch cap. Blueprint implementation bindings additionally require timestamp, block-row, and wallet archive materialization helpers to propagate storage/key/value failures before returning JSON rows, and require mining thread parameters to pass through a bounded parser before starting mining.",
+      "informal_argument": "The Lean theorems `Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens`, `Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe`, `Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe`, `Hegemon.Native.RpcAdmission.safe_policy_rejects_unsafe_methods`, `Hegemon.Native.RpcAdmission.unsafe_policy_allows_every_method`, `Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods`, `Hegemon.Native.RpcAdmission.timestamp_range_accepts_iff_requested_within_limit`, `Hegemon.Native.RpcAdmission.hex_byte_parse_accepts_iff_caps_hold`, `Hegemon.Native.RpcAdmission.base64_byte_parse_accepts_iff_caps_hold`, and `Hegemon.Native.RpcAdmission.batch_accepts_iff_nonempty_within_limit` prove the executable RPC admission behavior. `gen_rpc_admission_vectors` emits Lean-derived examples, and the formal-core gate checks them against production `rpc_method_policy`, `dispatch_rpc_method`, `native_rpc_methods`, `block_timestamps`, `parse_bytes_value`, and `rpc_handler` behavior. Separate blueprint implementation bindings require the production block metadata, timestamp, commitment archive, and ciphertext archive materializers to be called by the exported RPC paths with propagated results, require mining thread parsing before `start_mining`, and focused regressions corrupt sled rows or malformed explicit parameters to prove those paths fail closed.",
       "depends_on": [
         "release.dependency-waivers"
       ],
@@ -4881,7 +4881,7 @@
                 "Hegemon.Native.RpcAdmission.overlarge_timestamp_range_rejects",
                 "Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens",
                 "Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe",
-                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe",
+                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe",
                 "Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid",
                 "Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods",
                 "Hegemon.Native.RpcAdmission.safe_policy_allows_safe_methods",
@@ -4928,7 +4928,7 @@
                 "Hegemon.Native.RpcAdmission.overlarge_timestamp_range_rejects",
                 "Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens",
                 "Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe",
-                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe",
+                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe",
                 "Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid",
                 "Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods",
                 "Hegemon.Native.RpcAdmission.safe_policy_allows_safe_methods",
@@ -5009,7 +5009,7 @@
                 "Hegemon.Native.RpcAdmission.overlarge_timestamp_range_rejects",
                 "Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens",
                 "Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe",
-                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe",
+                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe",
                 "Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid",
                 "Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods",
                 "Hegemon.Native.RpcAdmission.safe_policy_allows_safe_methods",
@@ -5048,7 +5048,7 @@
                 "Hegemon.Native.RpcAdmission.overlarge_timestamp_range_rejects",
                 "Hegemon.Native.RpcAdmission.rpc_policy_accepts_valid_tokens",
                 "Hegemon.Native.RpcAdmission.rpc_policy_auto_external_safe",
-                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_unsafe",
+                "Hegemon.Native.RpcAdmission.rpc_policy_auto_local_safe",
                 "Hegemon.Native.RpcAdmission.rpc_policy_rejects_invalid",
                 "Hegemon.Native.RpcAdmission.safe_method_list_hides_unsafe_methods",
                 "Hegemon.Native.RpcAdmission.safe_policy_allows_safe_methods",
@@ -5093,7 +5093,7 @@
         },
         {
           "id": "native-rpc-policy-regressions",
-          "description": "Focused native tests must keep unsafe RPC methods disabled under safe policy, with external auto resolving safe and local auto resolving unsafe.",
+          "description": "Focused native tests must keep unsafe RPC methods disabled under safe policy, with external and local auto both resolving safe.",
           "gate": "cargo test -p hegemon-node rpc_policy_gates_unsafe_methods --lib --no-default-features -- --nocapture"
         },
         {

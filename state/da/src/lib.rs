@@ -17,6 +17,8 @@ const LEAF_DOMAIN: &[u8] = b"da-leaf";
 const NODE_DOMAIN: &[u8] = b"da-node";
 const MIN_SAMPLE_COUNT: u32 = 1;
 const MAX_SHARDS: usize = 255;
+pub const MAX_DA_CHUNK_SIZE: u32 = 256 * 1024;
+pub const MAX_DA_TOTAL_SHARD_BYTES: usize = 64 * 1024 * 1024;
 pub const MAX_DA_CHUNK_MERKLE_PATH_LEN: usize = 8;
 pub const MAX_DA_PAGE_MERKLE_PATH_LEN: usize = 32;
 
@@ -50,12 +52,16 @@ pub struct DaMultiChunkProof {
 pub enum DaError {
     #[error("chunk size must be non-zero")]
     ChunkSizeZero,
+    #[error("chunk size {chunk_size} exceeds max {max}")]
+    ChunkSizeTooLarge { chunk_size: u32, max: u32 },
     #[error("sample count must be at least 1")]
     SampleCountZero,
     #[error("data shard count overflow")]
     ShardCountOverflow,
     #[error("total shard count {total} exceeds max {max}")]
     TooManyShards { total: usize, max: usize },
+    #[error("total shard allocation {total_bytes} bytes exceeds max {max} bytes")]
+    ShardAllocationTooLarge { total_bytes: usize, max: usize },
     #[error("chunk index out of range")]
     ChunkIndex,
     #[error("Merkle proof path length {path_len} exceeds max {max}")]
@@ -222,6 +228,7 @@ pub fn encode_da_blob(blob: &[u8], params: DaParams) -> Result<DaEncoding, DaErr
     if total_shards > u32::MAX as usize {
         return Err(DaError::ShardCountOverflow);
     }
+    validate_shard_allocation(total_shards, chunk_size)?;
 
     let mut shards = vec![vec![0u8; chunk_size]; total_shards];
     for (idx, shard) in shards.iter_mut().take(data_shards).enumerate() {
@@ -351,6 +358,7 @@ pub fn chunk_count_for_blob(blob_len: usize, params: DaParams) -> Result<usize, 
             max: MAX_SHARDS,
         });
     }
+    validate_shard_allocation(total, chunk_size)?;
     Ok(total)
 }
 
@@ -358,13 +366,37 @@ fn validate_params(params: DaParams) -> Result<(), DaError> {
     if params.chunk_size == 0 {
         return Err(DaError::ChunkSizeZero);
     }
+    if params.chunk_size > MAX_DA_CHUNK_SIZE {
+        return Err(DaError::ChunkSizeTooLarge {
+            chunk_size: params.chunk_size,
+            max: MAX_DA_CHUNK_SIZE,
+        });
+    }
     if params.sample_count < MIN_SAMPLE_COUNT {
         return Err(DaError::SampleCountZero);
     }
     Ok(())
 }
 
+fn validate_shard_allocation(total_shards: usize, chunk_size: usize) -> Result<(), DaError> {
+    let total_bytes =
+        total_shards
+            .checked_mul(chunk_size)
+            .ok_or(DaError::ShardAllocationTooLarge {
+                total_bytes: usize::MAX,
+                max: MAX_DA_TOTAL_SHARD_BYTES,
+            })?;
+    if total_bytes > MAX_DA_TOTAL_SHARD_BYTES {
+        return Err(DaError::ShardAllocationTooLarge {
+            total_bytes,
+            max: MAX_DA_TOTAL_SHARD_BYTES,
+        });
+    }
+    Ok(())
+}
+
 fn max_page_len(params: DaParams) -> Result<usize, DaError> {
+    validate_params(params)?;
     let chunk_size = params.chunk_size as usize;
     let data_shards = max_data_shards();
     chunk_size
@@ -845,6 +877,40 @@ mod tests {
                 assert_eq!(max, MAX_DA_PAGE_MERKLE_PATH_LEN);
             }
             other => panic!("expected page proof path cap rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn da_params_reject_oversized_chunk_before_allocation() {
+        let params = DaParams {
+            chunk_size: MAX_DA_CHUNK_SIZE + 1,
+            sample_count: 1,
+        };
+        match encode_da_blob(&[], params) {
+            Err(DaError::ChunkSizeTooLarge { chunk_size, max }) => {
+                assert_eq!(chunk_size, MAX_DA_CHUNK_SIZE + 1);
+                assert_eq!(max, MAX_DA_CHUNK_SIZE);
+            }
+            other => panic!("expected oversized chunk rejection, got {other:?}"),
+        }
+        match chunk_count_for_blob(0, params) {
+            Err(DaError::ChunkSizeTooLarge { chunk_size, max }) => {
+                assert_eq!(chunk_size, MAX_DA_CHUNK_SIZE + 1);
+                assert_eq!(max, MAX_DA_CHUNK_SIZE);
+            }
+            other => panic!("expected public chunk-count oversized rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn da_shard_allocation_budget_is_enforced_before_allocation() {
+        let oversized_total = MAX_DA_TOTAL_SHARD_BYTES + 1;
+        match validate_shard_allocation(1, oversized_total) {
+            Err(DaError::ShardAllocationTooLarge { total_bytes, max }) => {
+                assert_eq!(total_bytes, oversized_total);
+                assert_eq!(max, MAX_DA_TOTAL_SHARD_BYTES);
+            }
+            other => panic!("expected shard allocation budget rejection, got {other:?}"),
         }
     }
 

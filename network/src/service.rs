@@ -8,7 +8,7 @@ use crate::{
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
@@ -160,6 +160,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_INBOUND_HANDSHAKES: usize = 32;
 const ADDRESS_EXCHANGE_LIMIT: usize = 16;
 const ADDRESS_RATE_LIMIT: Duration = Duration::from_secs(5);
+const PUNCH_RATE_LIMIT: Duration = Duration::from_secs(5);
 const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 
@@ -178,6 +179,7 @@ pub struct P2PService {
     advertised_addrs: Vec<SocketAddr>,
     learned_addresses: HashSet<SocketAddr>,
     last_addr_request: HashMap<PeerId, Instant>,
+    last_punch_request: HashMap<PeerId, Instant>,
 }
 
 impl P2PService {
@@ -208,6 +210,7 @@ impl P2PService {
             advertised_addrs: Vec::new(),
             learned_addresses: HashSet::new(),
             last_addr_request: HashMap::new(),
+            last_punch_request: HashMap::new(),
         }
     }
 
@@ -628,8 +631,15 @@ impl P2PService {
                 target,
                 requester_addr,
             } => {
+                if self.punch_rate_limited(&sender) {
+                    return;
+                }
+                let addr = requester_addr.to_socket_addr();
+                if !is_dialable_addr(addr) {
+                    warn!(%addr, "rejected non-public punch-request address");
+                    return;
+                }
                 if target == self.identity.peer_id() {
-                    let addr = requester_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
                     if let Err(err) = self.persist_learned_addresses([addr]) {
                         warn!(?err, "failed to persist punch-request address");
@@ -658,8 +668,15 @@ impl P2PService {
                 target,
                 responder_addr,
             } => {
+                if self.punch_rate_limited(&sender) {
+                    return;
+                }
+                let addr = responder_addr.to_socket_addr();
+                if !is_dialable_addr(addr) {
+                    warn!(%addr, "rejected non-public punch-response address");
+                    return;
+                }
                 if target == self.identity.peer_id() {
-                    let addr = responder_addr.to_socket_addr();
                     self.peer_manager.record_addresses(sender, [addr]);
                     if let Err(err) = self.persist_learned_addresses([addr]) {
                         warn!(?err, "failed to persist punch-response address");
@@ -688,6 +705,17 @@ impl P2PService {
             return true;
         }
         self.last_addr_request.insert(*peer_id, now);
+        false
+    }
+
+    fn punch_rate_limited(&mut self, peer_id: &PeerId) -> bool {
+        let now = Instant::now();
+        if let Some(last) = self.last_punch_request.get(peer_id)
+            && now.duration_since(*last) < PUNCH_RATE_LIMIT
+        {
+            return true;
+        }
+        self.last_punch_request.insert(*peer_id, now);
         false
     }
 
@@ -913,7 +941,40 @@ fn dialable_listen_addr(addr: SocketAddr) -> Option<SocketAddr> {
 }
 
 fn is_dialable_addr(addr: SocketAddr) -> bool {
-    addr.port() != 0 && !addr.ip().is_unspecified()
+    if addr.port() == 0 {
+        return false;
+    }
+    match addr.ip() {
+        IpAddr::V4(ip) => {
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_private()
+                || ip.is_link_local()
+                || ip.is_multicast()
+                || ip.is_broadcast()
+                || ip.is_documentation())
+        }
+        IpAddr::V6(ip) => {
+            !(ip.is_unspecified()
+                || ip.is_loopback()
+                || ip.is_multicast()
+                || ipv6_is_unique_local(ip)
+                || ipv6_is_unicast_link_local(ip)
+                || ipv6_is_documentation(ip))
+        }
+    }
+}
+
+fn ipv6_is_unique_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+fn ipv6_is_unicast_link_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+fn ipv6_is_documentation(ip: Ipv6Addr) -> bool {
+    ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
 }
 
 #[cfg(test)]
@@ -938,6 +999,34 @@ mod tests {
 
         let loopback: SocketAddr = "127.0.0.1:30333".parse().unwrap();
         assert_eq!(dialable_listen_addr(loopback), Some(loopback));
+    }
+
+    #[test]
+    fn peer_supplied_addresses_must_be_public_routable() {
+        let rejected = [
+            "0.0.0.0:30333",
+            "127.0.0.1:30333",
+            "10.0.0.1:30333",
+            "172.16.0.1:30333",
+            "192.168.1.1:30333",
+            "169.254.1.1:30333",
+            "224.0.0.1:30333",
+            "192.0.2.1:30333",
+            "[::1]:30333",
+            "[fc00::1]:30333",
+            "[fe80::1]:30333",
+            "[2001:db8::1]:30333",
+        ];
+        for raw in rejected {
+            let addr: SocketAddr = raw.parse().unwrap();
+            assert!(!is_dialable_addr(addr), "{raw} must be rejected");
+        }
+
+        let accepted: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        assert!(is_dialable_addr(accepted));
+
+        let zero_port: SocketAddr = "8.8.8.8:0".parse().unwrap();
+        assert!(!is_dialable_addr(zero_port));
     }
 
     #[tokio::test]

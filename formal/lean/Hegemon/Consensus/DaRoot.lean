@@ -12,6 +12,10 @@ def nodeDomain : List Byte :=
 
 def maxShards : Nat := 255
 
+def maxChunkSize : Nat := 262144
+
+def maxTotalShardBytes : Nat := 67108864
+
 def maxChunkMerklePathLen : Nat := 8
 
 def maxPageMerklePathLen : Nat := 32
@@ -52,8 +56,13 @@ def dataShardsForLen (blobLen chunkSize : Nat) : Nat :=
 def parityShardsForData (dataShards : Nat) : Nat :=
   max ((dataShards + 1) / 2) 1
 
+def shardAllocationWithinBudget (totalShards chunkSize : Nat) : Bool :=
+  decide (totalShards * chunkSize <= maxTotalShardBytes)
+
 def shardCountForBlob (blobLen : Nat) (params : DaParams) : Option ShardCount :=
   if params.chunkSize = 0 then
+    none
+  else if params.chunkSize > maxChunkSize then
     none
   else if params.sampleCount = 0 then
     none
@@ -62,6 +71,8 @@ def shardCountForBlob (blobLen : Nat) (params : DaParams) : Option ShardCount :=
     let parity := parityShardsForData data
     let total := data + parity
     if total > maxShards then
+      none
+    else if !shardAllocationWithinBudget total params.chunkSize then
       none
     else
       some { dataShards := data, parityShards := parity, totalShards := total }
@@ -172,12 +183,20 @@ theorem shard_count_rejects_zero_chunk :
     shardCountForBlob 1 { chunkSize := 0, sampleCount := 1 } = none := by
   decide
 
+theorem shard_count_rejects_oversized_chunk :
+    shardCountForBlob 1 { chunkSize := maxChunkSize + 1, sampleCount := 1 } = none := by
+  decide
+
 theorem shard_count_rejects_zero_sample :
     shardCountForBlob 1 { chunkSize := 8, sampleCount := 0 } = none := by
   decide
 
 theorem shard_count_rejects_too_many :
     shardCountForBlob 1361 { chunkSize := 8, sampleCount := 1 } = none := by
+  decide
+
+theorem max_shards_max_chunk_allocation_within_budget :
+    shardAllocationWithinBudget maxShards maxChunkSize = true := by
   decide
 
 theorem chunk_proof_path_len_empty_accepts :

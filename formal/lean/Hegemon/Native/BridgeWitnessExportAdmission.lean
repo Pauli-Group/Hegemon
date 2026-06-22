@@ -11,6 +11,17 @@ def bridgeWitnessConfirmationsChecked
   else
     some (Nat.min (bestHeight - messageHeight + 1) u32Max)
 
+def maxBridgeWitnessExplicitHistory : Nat := 4096
+
+def bridgeWitnessExplicitHistoryWithinBound
+    (explicitBlockHash : Bool)
+    (maxExplicitHistory : Nat)
+    (confirmations : Nat) : Bool :=
+  if explicitBlockHash then
+    !(decide (maxExplicitHistory < confirmations))
+  else
+    true
+
 inductive BridgeWitnessExportReject where
   | malformedBlockHash
   | unknownBlock
@@ -20,10 +31,12 @@ inductive BridgeWitnessExportReject where
   | messageIndexOutOfBounds
   | missingParent
   | tipBeforeMessage
+  | explicitHistoryTooLong
 deriving DecidableEq, Repr
 
 structure BridgeWitnessExportInput where
   blockHashParameterValid : Bool
+  explicitBlockHash : Bool
   blockKnown : Bool
   canonicalHeightPresent : Bool
   blockIsCanonical : Bool
@@ -32,6 +45,7 @@ structure BridgeWitnessExportInput where
   parentKnown : Bool
   bestHeight : Nat
   messageHeight : Nat
+  maxExplicitHistory : Nat
 deriving DecidableEq, Repr
 
 def evaluateBridgeWitnessExport
@@ -54,7 +68,11 @@ def evaluateBridgeWitnessExport
   else
     match bridgeWitnessConfirmationsChecked input.bestHeight input.messageHeight with
     | none => Except.error BridgeWitnessExportReject.tipBeforeMessage
-    | some confirmations => Except.ok confirmations
+    | some confirmations =>
+        if input.explicitBlockHash && decide (input.maxExplicitHistory < confirmations) then
+          Except.error BridgeWitnessExportReject.explicitHistoryTooLong
+        else
+          Except.ok confirmations
 
 def bridgeWitnessExportAccepts
     (input : BridgeWitnessExportInput) : Bool :=
@@ -84,23 +102,30 @@ def bridgeWitnessExportPreconditions
     && input.blockActionsDecoded
     && input.messageIndexInBounds
     && input.parentKnown
-    && (bridgeWitnessConfirmationsChecked
-      input.bestHeight input.messageHeight).isSome
+    && match bridgeWitnessConfirmationsChecked
+        input.bestHeight input.messageHeight with
+      | none => false
+      | some confirmations =>
+          bridgeWitnessExplicitHistoryWithinBound
+            input.explicitBlockHash input.maxExplicitHistory confirmations
 
 theorem accepts_iff_bridge_witness_export_preconditions
     {input : BridgeWitnessExportInput} :
     bridgeWitnessExportAccepts input = true ↔
       bridgeWitnessExportPreconditions input = true := by
   cases input with
-  | mk blockHashParameterValid blockKnown canonicalHeightPresent blockIsCanonical
-      blockActionsDecoded messageIndexInBounds parentKnown bestHeight messageHeight =>
+  | mk blockHashParameterValid explicitBlockHash blockKnown canonicalHeightPresent blockIsCanonical
+      blockActionsDecoded messageIndexInBounds parentKnown bestHeight messageHeight
+      maxExplicitHistory =>
       simp [
         bridgeWitnessExportAccepts,
         bridgeWitnessExportPreconditions,
         evaluateBridgeWitnessExport,
-        bridgeWitnessConfirmationsChecked
+        bridgeWitnessConfirmationsChecked,
+        bridgeWitnessExplicitHistoryWithinBound
       ]
       cases blockHashParameterValid <;>
+        cases explicitBlockHash <;>
         cases blockKnown <;>
         cases canonicalHeightPresent <;>
         cases blockIsCanonical <;>
@@ -108,14 +133,18 @@ theorem accepts_iff_bridge_witness_export_preconditions
         cases messageIndexInBounds <;>
         cases parentKnown <;>
         simp
-      · by_cases h : bestHeight < messageHeight
+      all_goals
+        by_cases h : bestHeight < messageHeight
         · simp [h]
-        · have hle : messageHeight ≤ bestHeight := Nat.le_of_not_lt h
-          simp [h, hle]
+        · by_cases over :
+            maxExplicitHistory < Nat.min (bestHeight - messageHeight + 1) u32Max
+          · simp [h, over]
+          · simp [h, over]
 
 def valid : BridgeWitnessExportInput :=
   {
     blockHashParameterValid := true,
+    explicitBlockHash := false,
     blockKnown := true,
     canonicalHeightPresent := true,
     blockIsCanonical := true,
@@ -123,7 +152,8 @@ def valid : BridgeWitnessExportInput :=
     messageIndexInBounds := true,
     parentKnown := true,
     bestHeight := 45,
-    messageHeight := 42
+    messageHeight := 42,
+    maxExplicitHistory := maxBridgeWitnessExplicitHistory
   }
 
 theorem valid_accepts :
@@ -207,6 +237,26 @@ def tipBeforeMessage : BridgeWitnessExportInput :=
 theorem tip_before_message_rejects :
     evaluateBridgeWitnessExport tipBeforeMessage =
       Except.error BridgeWitnessExportReject.tipBeforeMessage := by
+  rfl
+
+def explicitHistoryTooLong : BridgeWitnessExportInput :=
+  { valid with
+    explicitBlockHash := true,
+    bestHeight := 4200,
+    messageHeight := 1,
+    maxExplicitHistory := maxBridgeWitnessExplicitHistory }
+
+theorem explicit_history_too_long_rejects :
+    evaluateBridgeWitnessExport explicitHistoryTooLong =
+      Except.error BridgeWitnessExportReject.explicitHistoryTooLong := by
+  rfl
+
+def latestBackscanCanExceedExplicitHistoryBound : BridgeWitnessExportInput :=
+  { explicitHistoryTooLong with explicitBlockHash := false }
+
+theorem latest_backscan_not_rejected_by_explicit_history_cap :
+    evaluateBridgeWitnessExport latestBackscanCanExceedExplicitHistoryBound =
+      Except.ok 4200 := by
   rfl
 
 def malformed_hash_precedes_unknown_block_input :

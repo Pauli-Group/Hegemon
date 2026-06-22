@@ -27,20 +27,14 @@ deriving DecidableEq, Repr
 
 def resolveRpcPolicy
     (raw : RawRpcPolicy)
-    (rpcExternal : Bool) : Except RpcPolicyReject RpcPolicy :=
+    (_rpcExternal : Bool) : Except RpcPolicyReject RpcPolicy :=
   match raw with
   | RawRpcPolicy.safeToken => Except.ok RpcPolicy.safeOnly
   | RawRpcPolicy.unsafeToken => Except.ok RpcPolicy.unsafeAllowed
   | RawRpcPolicy.autoToken =>
-      if rpcExternal then
-        Except.ok RpcPolicy.safeOnly
-      else
-        Except.ok RpcPolicy.unsafeAllowed
+      Except.ok RpcPolicy.safeOnly
   | RawRpcPolicy.emptyToken =>
-      if rpcExternal then
-        Except.ok RpcPolicy.safeOnly
-      else
-        Except.ok RpcPolicy.unsafeAllowed
+      Except.ok RpcPolicy.safeOnly
   | RawRpcPolicy.invalidToken => Except.error RpcPolicyReject.invalidPolicy
 
 def rpcPolicyAccepts (raw : RawRpcPolicy) (rpcExternal : Bool) : Bool :=
@@ -66,9 +60,9 @@ theorem rpc_policy_auto_external_safe :
       Except.ok RpcPolicy.safeOnly := by
   rfl
 
-theorem rpc_policy_auto_local_unsafe :
+theorem rpc_policy_auto_local_safe :
     resolveRpcPolicy RawRpcPolicy.autoToken false =
-      Except.ok RpcPolicy.unsafeAllowed := by
+      Except.ok RpcPolicy.safeOnly := by
   rfl
 
 inductive RpcMethod where

@@ -105,6 +105,8 @@ def vectorJson : String :=
     ++ shardCountCaseJson "partial-third-data-shard" 17 { chunkSize := 8, sampleCount := 1 } ++ ",\n"
     ++ shardCountCaseJson "max-total-shards" 1360 { chunkSize := 8, sampleCount := 1 } ++ ",\n"
     ++ shardCountCaseJson "reject-zero-chunk-size" 1 { chunkSize := 0, sampleCount := 1 } ++ ",\n"
+    ++ shardCountCaseJson "reject-oversized-chunk-size" 1
+      { chunkSize := 262145, sampleCount := 1 } ++ ",\n"
     ++ shardCountCaseJson "reject-zero-sample-count" 1 { chunkSize := 8, sampleCount := 0 } ++ ",\n"
     ++ shardCountCaseJson "reject-too-many-shards" 1361 { chunkSize := 8, sampleCount := 1 } ++ "\n"
     ++ "  ],\n"
