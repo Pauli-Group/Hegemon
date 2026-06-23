@@ -24,7 +24,7 @@ All mining hosts must share the same approved bootstrap seeds:
 HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
 
-If you are bringing up the first public authoring node after a full reset, do not seed it to itself. Start that first node with `HEGEMON_SEEDS` unset, then use the approved public join seed list on every other miner and relay.
+If you are bringing up the first public authoring node after a full reset, do not seed it to itself. Start that first node with `HEGEMON_SEEDS` unset only when `HEGEMON_BOOTSTRAP_AUTHORING=1` is also set, then remove the bootstrap override and use the approved public join seed list on every other miner and relay.
 
 All mining hosts must also keep NTP/chrony time sync healthy. PoW headers beyond the future-skew bound are rejected.
 

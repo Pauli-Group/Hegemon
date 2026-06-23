@@ -33,6 +33,7 @@ fn identity_finalize_handshake_for_connection(
 fn identity_complete_handshake_for_connection(
     identity: &PeerIdentity,
     offer: &HandshakeOffer,
+    acceptance: &HandshakeAcceptance,
     confirmation: &HandshakeConfirmation,
     offer_bytes: &[u8],
     acceptance_bytes: &[u8],
@@ -41,6 +42,7 @@ fn identity_complete_handshake_for_connection(
 ) -> Result<SecureChannel, NetworkError> {
     identity.complete_handshake(
         offer,
+        acceptance,
         confirmation,
         offer_bytes,
         acceptance_bytes,
@@ -191,7 +193,7 @@ where
         let offer: HandshakeOffer = wire::decode(&offer_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 2. Accept offer
-        let (_acceptance, responder_secret, acceptance_bytes) = identity.accept_offer(&offer)?;
+        let (acceptance, responder_secret, acceptance_bytes) = identity.accept_offer(&offer)?;
         self.send_raw(&acceptance_bytes).await?;
 
         // 3. Receive confirmation
@@ -204,6 +206,7 @@ where
         let channel = identity_complete_handshake_for_connection(
             identity,
             &offer,
+            &acceptance,
             &confirmation,
             &offer_bytes,
             &acceptance_bytes,

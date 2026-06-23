@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,10 +30,16 @@ use wallet::{
     notes::MemoPlaintext,
     parse_recipients, precheck_nullifiers,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
+    submission::{is_ambiguous_submission_error, provisional_pending_tx_id},
     transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 2;
+const MAX_WALLETD_REQUEST_LINE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DISCLOSURE_PACKAGE_JSON_BYTES: usize = 8 * 1024 * 1024;
+const MAX_DISCLOSURE_PROOF_BYTES: usize = 4 * 1024 * 1024;
+const MAX_DISCLOSURE_PROOF_BASE64_BYTES: usize = ((MAX_DISCLOSURE_PROOF_BYTES + 2) / 3) * 4;
+const DISCLOSURE_MERKLE_DEPTH: usize = transaction_circuit::note::MERKLE_TREE_DEPTH as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalletdMode {
@@ -86,6 +92,20 @@ struct WalletdError {
 }
 
 type WalletdResult<T> = std::result::Result<T, WalletdError>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WalletdSubmissionFailurePolicy {
+    PreservePendingWithProvisionalTx,
+    UnlockSpentNotes,
+}
+
+fn walletd_submission_failure_policy(err: &WalletError) -> WalletdSubmissionFailurePolicy {
+    if is_ambiguous_submission_error(err) {
+        WalletdSubmissionFailurePolicy::PreservePendingWithProvisionalTx
+    } else {
+        WalletdSubmissionFailurePolicy::UnlockSpentNotes
+    }
+}
 
 impl WalletdError {
     fn new(code: WalletdErrorCode, message: impl Into<String>) -> Self {
@@ -285,10 +305,9 @@ struct DisclosureVerifyResponse {
 fn main() -> Result<()> {
     let (store_path, mode) = parse_args()?;
     let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
-    let passphrase = lines
-        .next()
-        .ok_or_else(|| anyhow!("expected passphrase on first line"))??
+    let mut stdin = stdin.lock();
+    let passphrase = read_limited_line(&mut stdin, MAX_WALLETD_REQUEST_LINE_BYTES)?
+        .ok_or_else(|| anyhow!("expected passphrase on first line"))?
         .trim()
         .to_string();
 
@@ -308,9 +327,10 @@ fn main() -> Result<()> {
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
 
-    for line in lines {
-        let line = match line {
-            Ok(line) => line,
+    loop {
+        let line = match read_limited_line(&mut stdin, MAX_WALLETD_REQUEST_LINE_BYTES) {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
             Err(err) => {
                 eprintln!("walletd stdin error: {err}");
                 break;
@@ -338,6 +358,35 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn read_limited_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<Option<String>> {
+    let mut buf = Vec::new();
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        let newline = available.iter().position(|byte| *byte == b'\n');
+        let take = newline.map(|idx| idx + 1).unwrap_or(available.len());
+        if buf.len().saturating_add(take) > max_bytes {
+            return Err(io::Error::new(
+                ErrorKind::InvalidData,
+                format!("walletd request line exceeds {max_bytes} bytes"),
+            ));
+        }
+        buf.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            break;
+        }
+    }
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|err| io::Error::new(ErrorKind::InvalidData, err))
 }
 
 fn parse_args() -> Result<(String, WalletdMode)> {
@@ -470,6 +519,7 @@ fn handle_request(
                 to_json(disclosure_create(runtime, store, params)?)
             }
             "disclosure.verify" => {
+                ensure_disclosure_verify_params_json_size(&request.params)?;
                 let params: DisclosureVerifyParams = parse_params(request.params)?;
                 to_json(disclosure_verify(runtime, params)?)
             }
@@ -506,6 +556,22 @@ fn parse_params<T: for<'de> Deserialize<'de>>(params: Value) -> WalletdResult<T>
             format!("invalid params: {err}"),
         )
     })
+}
+
+fn ensure_disclosure_verify_params_json_size(params: &Value) -> WalletdResult<()> {
+    let size = serde_json::to_vec(params)
+        .map_err(WalletdError::internal)?
+        .len();
+    if size > MAX_DISCLOSURE_PACKAGE_JSON_BYTES {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!(
+                "disclosure.verify package exceeds {} bytes",
+                MAX_DISCLOSURE_PACKAGE_JSON_BYTES
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn to_json<T: Serialize>(value: T) -> WalletdResult<Value> {
@@ -817,6 +883,15 @@ fn is_bad_proof_submission(msg: &str) -> bool {
 
 fn parse_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    if trimmed.len() != 96 {
+        return Err(WalletdError::new(
+            WalletdErrorCode::RpcConnectionFailed,
+            format!(
+                "invalid 48-byte hex length from node root: {}",
+                trimmed.len() / 2
+            ),
+        ));
+    }
     let bytes = hex::decode(trimmed).map_err(|e| {
         WalletdError::new(
             WalletdErrorCode::RpcConnectionFailed,
@@ -891,6 +966,23 @@ async fn ensure_wallet_root_consistency(
     }
 
     Ok(refreshed_chain_root)
+}
+
+async fn ensure_walletd_genesis_hash(
+    store: &Arc<WalletStore>,
+    client: &NodeRpcClient,
+) -> WalletdResult<[u8; 32]> {
+    if let Some(hash) = store.genesis_hash().map_err(WalletdError::internal)? {
+        return Ok(hash);
+    }
+    let metadata = client
+        .get_chain_metadata()
+        .await
+        .map_err(|e| WalletdError::new(WalletdErrorCode::RpcConnectionFailed, e.to_string()))?;
+    store
+        .set_genesis_hash(metadata.genesis_hash)
+        .map_err(WalletdError::internal)?;
+    Ok(metadata.genesis_hash)
 }
 
 async fn submit_bundle_strict(
@@ -1122,21 +1214,7 @@ fn tx_send(
 
             match result {
                 Ok(tx_hash) => {
-                    let genesis_hash = match store.genesis_hash().map_err(WalletdError::internal)? {
-                        Some(hash) => hash,
-                        None => {
-                            let metadata = client.get_chain_metadata().await.map_err(|e| {
-                                WalletdError::new(
-                                    WalletdErrorCode::RpcConnectionFailed,
-                                    e.to_string(),
-                                )
-                            })?;
-                            store
-                                .set_genesis_hash(metadata.genesis_hash)
-                                .map_err(WalletdError::internal)?;
-                            metadata.genesis_hash
-                        }
-                    };
+                    let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
                     store
                         .record_outgoing_disclosures(
                             tx_hash,
@@ -1351,6 +1429,35 @@ fn tx_send(
                     continue;
                 }
                 Err(err) => {
+                    if walletd_submission_failure_policy(&err)
+                        == WalletdSubmissionFailurePolicy::PreservePendingWithProvisionalTx
+                    {
+                        let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                        let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
+                        store
+                            .record_outgoing_disclosures(
+                                provisional_tx_id,
+                                genesis_hash,
+                                built.outgoing_disclosures.clone(),
+                            )
+                            .map_err(WalletdError::internal)?;
+                        store
+                            .record_pending_submission(
+                                provisional_tx_id,
+                                built.nullifiers.clone(),
+                                built.spent_note_indexes.clone(),
+                                metadata.clone(),
+                                params.fee,
+                            )
+                            .map_err(WalletdError::internal)?;
+                        return Err(WalletdError::new(
+                            WalletdErrorCode::TransactionFailed,
+                            format!(
+                                "Transaction submission status unknown after ambiguous RPC failure; recorded provisional pending transaction 0x{}: {err}",
+                                hex::encode(provisional_tx_id)
+                            ),
+                        ));
+                    }
                     store
                         .mark_notes_pending(&built.spent_note_indexes, false)
                         .map_err(WalletdError::internal)?;
@@ -1610,6 +1717,24 @@ fn disclosure_verify(
     params: DisclosureVerifyParams,
 ) -> WalletdResult<DisclosureVerifyResponse> {
     let package = params.package;
+    if package.confirmation.siblings.len() != DISCLOSURE_MERKLE_DEPTH {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!(
+                "disclosure merkle path must contain {} siblings",
+                DISCLOSURE_MERKLE_DEPTH
+            ),
+        ));
+    }
+    if package.proof.bytes.len() > MAX_DISCLOSURE_PROOF_BASE64_BYTES {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!(
+                "disclosure proof exceeds {} decoded bytes",
+                MAX_DISCLOSURE_PROOF_BYTES
+            ),
+        ));
+    }
     let bound_recipient = decode_bound_recipient_address(&package.claim)?;
     if !is_canonical_asset_id(package.claim.asset_id) {
         return Err(WalletdError::new(
@@ -1690,6 +1815,15 @@ fn disclosure_verify(
 
     let proof_bytes = decode_base64(&package.proof.bytes)
         .map_err(|e| WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string()))?;
+    if proof_bytes.len() > MAX_DISCLOSURE_PROOF_BYTES {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!(
+                "disclosure proof exceeds {} decoded bytes",
+                MAX_DISCLOSURE_PROOF_BYTES
+            ),
+        ));
+    }
     let bundle = PaymentDisclosureProofBundle {
         claim: PaymentDisclosureClaim {
             value: package.claim.value,
@@ -1742,6 +1876,12 @@ fn decode_bound_recipient_address(
 
 fn parse_hex_32(input: &str) -> WalletdResult<[u8; 32]> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    if trimmed.len() != 64 {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "expected 32-byte hex value",
+        ));
+    }
     let bytes = hex::decode(trimmed).map_err(|e| {
         WalletdError::new(WalletdErrorCode::InvalidParams, format!("invalid hex: {e}"))
     })?;
@@ -1764,5 +1904,31 @@ fn memo_to_disclosed_string(memo: &Option<MemoPlaintext>) -> Option<String> {
     match String::from_utf8(memo.as_bytes().to_vec()) {
         Ok(text) => Some(text),
         Err(_) => Some(format!("base64:{}", encode_base64(memo.as_bytes()))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn walletd_submission_policy_preserves_pending_for_ambiguous_rpc_failures() {
+        let timeout = WalletError::Rpc("request timeout while submitting action".to_string());
+        assert_eq!(
+            walletd_submission_failure_policy(&timeout),
+            WalletdSubmissionFailurePolicy::PreservePendingWithProvisionalTx
+        );
+
+        let transport = WalletError::Rpc("transport error: connection reset".to_string());
+        assert_eq!(
+            walletd_submission_failure_policy(&transport),
+            WalletdSubmissionFailurePolicy::PreservePendingWithProvisionalTx
+        );
+
+        let bad_proof = WalletError::Rpc("InvalidTransaction::BadProof".to_string());
+        assert_eq!(
+            walletd_submission_failure_policy(&bad_proof),
+            WalletdSubmissionFailurePolicy::UnlockSpentNotes
+        );
     }
 }

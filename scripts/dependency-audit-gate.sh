@@ -54,7 +54,7 @@ fi
 
 if [[ -z "$AUDIT_JSON" ]]; then
   if ! command -v cargo-audit >/dev/null 2>&1; then
-    echo "cargo-audit is not installed. Install with: cargo install cargo-audit --locked" >&2
+    echo "cargo-audit is not installed. Install with: cargo install cargo-audit --version 0.22.2 --locked" >&2
     exit 2
   fi
   cd "$ROOT"

@@ -20,6 +20,7 @@ pub mod peer_manager;
 pub mod peer_store;
 pub mod pq_transport;
 pub mod protocol;
+pub(crate) mod queue_budget;
 pub mod service;
 pub mod wire;
 
@@ -75,6 +76,8 @@ pub struct HandshakeOffer {
     pub kem_public: Vec<u8>,
     pub signature: Vec<u8>,
     pub nonce: u64,
+    #[serde(skip)]
+    local_ephemeral_kem: Option<MlKemKeyPair>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -84,6 +87,8 @@ pub struct HandshakeAcceptance {
     pub ciphertext_to_initiator: Vec<u8>,
     pub signature: Vec<u8>,
     pub nonce: u64,
+    #[serde(skip)]
+    local_ephemeral_kem: Option<MlKemKeyPair>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,20 +102,13 @@ pub struct HandshakeConfirmation {
 pub struct PeerIdentity {
     signing: MlDsaSecretKey,
     verify: MlDsaPublicKey,
-    kem: MlKemKeyPair,
 }
 
 impl PeerIdentity {
     pub fn generate(seed: &[u8]) -> Self {
         let signing = MlDsaSecretKey::generate_deterministic(seed);
         let verify = signing.verify_key();
-        let kem_seed = sha256(&[seed, b"kem"].concat());
-        let kem = MlKemKeyPair::generate_deterministic(&kem_seed);
-        Self {
-            signing,
-            verify,
-            kem,
-        }
+        Self { signing, verify }
     }
 
     pub fn identity_key(&self) -> &MlDsaPublicKey {
@@ -126,7 +124,8 @@ impl PeerIdentity {
     }
 
     pub fn create_offer(&self) -> Result<HandshakeOffer, NetworkError> {
-        let kem_public = self.kem.public_key().to_bytes();
+        let ephemeral_kem = random_kem_keypair();
+        let kem_public = ephemeral_kem.public_key().to_bytes();
         let nonce = random_nonce();
         let preimage = offer_preimage(&self.verify.to_bytes(), &kem_public, nonce);
         let signature = self.signing.sign(&preimage);
@@ -135,6 +134,7 @@ impl PeerIdentity {
             kem_public,
             signature: signature.to_bytes().to_vec(),
             nonce,
+            local_ephemeral_kem: Some(ephemeral_kem),
         })
     }
 
@@ -153,20 +153,23 @@ impl PeerIdentity {
         let seed_material = random_encapsulation_seed();
         let (ciphertext, shared_secret) = encapsulate_with_seed(&kem_pk, &seed_material);
         let ciphertext_bytes = ciphertext.to_bytes().to_vec();
+        let local_ephemeral_kem = random_kem_keypair();
+        let local_ephemeral_public = local_ephemeral_kem.public_key().to_bytes();
         let nonce = random_nonce();
         let acceptance_preimage = acceptance_preimage(
             &self.verify.to_bytes(),
-            &self.kem.public_key().to_bytes(),
+            &local_ephemeral_public,
             &ciphertext_bytes,
             nonce,
         );
         let signature = self.signing.sign(&acceptance_preimage);
         let acceptance = HandshakeAcceptance {
             identity_key: self.verify.to_bytes(),
-            kem_public: self.kem.public_key().to_bytes(),
+            kem_public: local_ephemeral_public,
             ciphertext_to_initiator: ciphertext_bytes,
             signature: signature.to_bytes().to_vec(),
             nonce,
+            local_ephemeral_kem: Some(local_ephemeral_kem),
         };
         let encoded = wire::encode(&acceptance, wire::MAX_HANDSHAKE_FRAME_LEN)?;
         Ok((acceptance, shared_secret, encoded))
@@ -174,7 +177,7 @@ impl PeerIdentity {
 
     pub fn finalize_handshake(
         &self,
-        _offer: &HandshakeOffer,
+        offer: &HandshakeOffer,
         acceptance: &HandshakeAcceptance,
         offer_bytes: &[u8],
         acceptance_bytes: &[u8],
@@ -192,7 +195,13 @@ impl PeerIdentity {
             .map_err(|_| NetworkError::InvalidSignature)?;
 
         let ciphertext = MlKemCiphertext::from_bytes(&acceptance.ciphertext_to_initiator)?;
-        let responder_secret = self.kem.decapsulate(&ciphertext)?;
+        let responder_secret = offer
+            .local_ephemeral_kem
+            .as_ref()
+            .ok_or(NetworkError::Handshake(
+                "missing initiator ephemeral KEM state",
+            ))?
+            .decapsulate(&ciphertext)?;
         let responder_kem = MlKemPublicKey::from_bytes(&acceptance.kem_public)?;
         let seed_material = random_encapsulation_seed();
         let (ciphertext_to_responder, initiator_secret) =
@@ -221,6 +230,7 @@ impl PeerIdentity {
     pub fn complete_handshake(
         &self,
         offer: &HandshakeOffer,
+        acceptance: &HandshakeAcceptance,
         confirmation: &HandshakeConfirmation,
         offer_bytes: &[u8],
         acceptance_bytes: &[u8],
@@ -236,7 +246,13 @@ impl PeerIdentity {
             .map_err(|_| NetworkError::InvalidSignature)?;
 
         let ciphertext = MlKemCiphertext::from_bytes(&confirmation.ciphertext_to_responder)?;
-        let initiator_secret = self.kem.decapsulate(&ciphertext)?;
+        let initiator_secret = acceptance
+            .local_ephemeral_kem
+            .as_ref()
+            .ok_or(NetworkError::Handshake(
+                "missing responder ephemeral KEM state",
+            ))?
+            .decapsulate(&ciphertext)?;
         secure_channel_from_transcript(
             offer_bytes,
             acceptance_bytes,
@@ -259,6 +275,7 @@ pub fn establish_secure_channel(
         initiator.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
     let responder_channel = responder.complete_handshake(
         &offer,
+        &acceptance,
         &confirmation,
         &offer_bytes,
         &acceptance_bytes,
@@ -469,6 +486,14 @@ fn random_encapsulation_seed() -> [u8; 32] {
     let mut seed = [0u8; 32];
     OsRng.fill_bytes(&mut seed);
     seed
+}
+
+fn random_kem_keypair() -> MlKemKeyPair {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    let keypair = MlKemKeyPair::generate_deterministic(&seed);
+    seed.fill(0);
+    keypair
 }
 
 fn encapsulate_with_seed(
@@ -931,5 +956,28 @@ mod tests {
 
         assert_eq!(ciphertext.to_bytes(), expected_ciphertext.to_bytes());
         assert_eq!(shared_secret.as_bytes(), expected_shared_secret.as_bytes());
+    }
+
+    #[test]
+    fn handshake_messages_use_serde_skipped_ephemeral_kem_state() {
+        let initiator = PeerIdentity::generate(b"legacy-ephemeral-initiator");
+        let responder = PeerIdentity::generate(b"legacy-ephemeral-responder");
+
+        let offer = initiator.create_offer().expect("offer");
+        assert!(offer.local_ephemeral_kem.is_some());
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN).expect("offer wire");
+        let decoded_offer: HandshakeOffer =
+            wire::decode(&offer_bytes, wire::MAX_HANDSHAKE_FRAME_LEN).expect("decoded offer");
+        assert_eq!(decoded_offer.kem_public, offer.kem_public);
+        assert!(decoded_offer.local_ephemeral_kem.is_none());
+
+        let (acceptance, _secret, acceptance_bytes) =
+            responder.accept_offer(&offer).expect("acceptance");
+        assert!(acceptance.local_ephemeral_kem.is_some());
+        let decoded_acceptance: HandshakeAcceptance =
+            wire::decode(&acceptance_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)
+                .expect("decoded acceptance");
+        assert_eq!(decoded_acceptance.kem_public, acceptance.kem_public);
+        assert!(decoded_acceptance.local_ephemeral_kem.is_none());
     }
 }

@@ -490,6 +490,8 @@ HEGEMON_LEAN_BRIDGE_MINT_REPLAY_POLICY_VECTORS="$LEAN_BRIDGE_MINT_REPLAY_POLICY_
   cargo test -p hegemon-node lean_generated_bridge_mint_replay_policy_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS="$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_mint_payload_admission_vectors_match_production --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS="$LEAN_BRIDGE_MINT_PAYLOAD_ADMISSION_VECTORS" \
+  cargo test -p cashvm-bridge lean_generated_cashvm_mint_binding_vectors_match_production --lib -- --nocapture
 HEGEMON_LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS="$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS" \
   cargo test -p hegemon-node lean_generated_bridge_mint_payload_raw_admission_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS="$LEAN_BRIDGE_VERIFIER_REGISTRATION_POLICY_VECTORS" \
@@ -738,6 +740,10 @@ HEGEMON_LEAN_WALLET_OUTPUT_BATCH_VECTORS="$LEAN_WALLET_OUTPUT_BATCH_VECTORS" \
   cargo test -p wallet lean_generated_wallet_output_batch_vectors_match_production --lib -- --nocapture
 HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS="$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" \
   cargo test -p hegemon-node lean_generated_ciphertext_archive_boundary_vectors_match_native_rpc --lib --no-default-features -- --nocapture
+HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS="$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" \
+  cargo test -p wallet lean_generated_wallet_page_admission_vectors_match_production --lib -- --nocapture
+HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS="$LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS" \
+  cargo test -p wallet lean_generated_wallet_sync_snapshot_vectors_match_production_helper --lib -- --nocapture
 cargo test -p wallet note_ciphertext_version_gate_rejects_unsupported_wire_and_crypto_formats --lib -- --nocapture
 cargo test -p wallet from_da_bytes_rejects_ --lib -- --nocapture
 cargo test -p wallet decode_ciphertext_entries_ --lib -- --nocapture
@@ -818,7 +824,7 @@ HEGEMON_AGG_LEGACY_V4=1 \
 
 printf '\n[5/14] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then
-  printf 'cargo-audit is not installed. Install with: cargo install cargo-audit --locked\n' >&2
+  printf 'cargo-audit is not installed. Install with: cargo install cargo-audit --version 0.22.2 --locked\n' >&2
   exit 2
 fi
 (

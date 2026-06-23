@@ -27,6 +27,8 @@ def rejectionJson : Option CiReleaseGateReject -> String
   | some
       CiReleaseGateReject.releaseBuildNativeBackendSecurityDependencyMissing =>
       "\"release_build_native_backend_security_dependency_missing\""
+  | some CiReleaseGateReject.nonReleaseJobContentsWrite =>
+      "\"non_release_job_contents_write\""
   | some CiReleaseGateReject.releaseBinaryAuditMissing =>
       "\"release_binary_audit_missing\""
   | some CiReleaseGateReject.tagReleaseNativeBackendReviewMissing =>
@@ -59,6 +61,8 @@ def ciReleaseGateCaseJson
     ++ boolJson input.releaseBuildNeedsSecurityAdversarial ++ ",\n"
     ++ "      \"release_build_needs_native_backend_security\": "
     ++ boolJson input.releaseBuildNeedsNativeBackendSecurity ++ ",\n"
+    ++ "      \"non_release_jobs_no_contents_write\": "
+    ++ boolJson input.nonReleaseJobsNoContentsWrite ++ ",\n"
     ++ "      \"release_binary_audit_step\": "
     ++ boolJson input.releaseBinaryAuditStep ++ ",\n"
     ++ "      \"tag_release_native_backend_review_step\": "
@@ -100,6 +104,9 @@ def vectorJson : String :=
     ++ ciReleaseGateCaseJson
       "release-build-native-backend-security-dependency-missing-rejects"
       missingReleaseBuildNativeBackendSecurityDependency ++ ",\n"
+    ++ ciReleaseGateCaseJson
+      "non-release-job-contents-write-rejects"
+      nonReleaseJobContentsWrite ++ ",\n"
     ++ ciReleaseGateCaseJson "release-binary-audit-missing-rejects"
       missingReleaseBinaryAuditStep ++ ",\n"
     ++ ciReleaseGateCaseJson
@@ -122,6 +129,7 @@ def vectorJson : String :=
         releaseBuildNeedsSecurityGates := false,
         releaseBuildNeedsSecurityAdversarial := false,
         releaseBuildNeedsNativeBackendSecurity := false,
+        nonReleaseJobsNoContentsWrite := false,
         releaseBinaryAuditStep := false,
         tagReleaseNativeBackendReviewStep := false,
         tagReleaseNativeBackendPostureStep := false,

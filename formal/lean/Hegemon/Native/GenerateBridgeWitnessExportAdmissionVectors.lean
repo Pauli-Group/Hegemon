@@ -29,6 +29,8 @@ def rejectionJson : Option BridgeWitnessExportReject -> String
       "\"tip_before_message\""
   | some BridgeWitnessExportReject.explicitHistoryTooLong =>
       "\"explicit_history_too_long\""
+  | some BridgeWitnessExportReject.materializedHistoryTooLong =>
+      "\"materialized_history_too_long\""
 
 def bridgeWitnessExportCaseJson
     (name : String)
@@ -53,10 +55,12 @@ def bridgeWitnessExportCaseJson
     ++ "      \"parent_known\": "
       ++ boolJson input.parentKnown ++ ",\n"
     ++ "      \"best_height\": " ++ toString input.bestHeight ++ ",\n"
-    ++ "      \"message_height\": " ++ toString input.messageHeight ++ ",\n"
-    ++ "      \"max_explicit_history\": "
-      ++ toString input.maxExplicitHistory ++ ",\n"
-    ++ "      \"expected_valid\": " ++ boolJson (result.isOk) ++ ",\n"
+      ++ "      \"message_height\": " ++ toString input.messageHeight ++ ",\n"
+      ++ "      \"max_explicit_history\": "
+        ++ toString input.maxExplicitHistory ++ ",\n"
+      ++ "      \"max_materialized_history\": "
+        ++ toString input.maxMaterializedHistory ++ ",\n"
+      ++ "      \"expected_valid\": " ++ boolJson (result.isOk) ++ ",\n"
     ++ "      \"expected_confirmations_checked\": "
       ++ natOptionJson confirmations ++ ",\n"
     ++ "      \"expected_rejection\": "
@@ -95,9 +99,12 @@ def vectorJson : String :=
       "tip-before-message-rejected" tipBeforeMessage ++ ",\n"
     ++ bridgeWitnessExportCaseJson
       "explicit-history-too-long-rejected" explicitHistoryTooLong ++ ",\n"
-    ++ bridgeWitnessExportCaseJson
-      "latest-backscan-can-exceed-explicit-history-bound"
-      latestBackscanCanExceedExplicitHistoryBound ++ ",\n"
+      ++ bridgeWitnessExportCaseJson
+        "latest-backscan-rejects-oversized-materialized-history"
+        latestBackscanCanExceedExplicitHistoryBound ++ ",\n"
+      ++ bridgeWitnessExportCaseJson
+        "latest-backscan-at-materialized-history-bound-accepted"
+        latestBackscanAtMaterializedHistoryBound ++ ",\n"
     ++ bridgeWitnessExportCaseJson
       "malformed-hash-precedes-unknown-block"
       malformed_hash_precedes_unknown_block_input ++ ",\n"

@@ -19,7 +19,7 @@ use crate::{
     is_ambiguous_submission_error,
     notes::MemoPlaintext,
     provisional_pending_tx_id,
-    rpc::WalletRpcClient,
+    node_rpc::BlockingNodeRpcClient as WalletRpcClient,
     store::{
         PendingStatus, PendingTransaction, RecentTransaction, TransferRecipient, WalletMode,
         WalletStore,
@@ -38,7 +38,7 @@ pub async fn serve_wallet_api(
         anyhow::bail!("wallet http api requires a non-empty auth token");
     }
 
-    let state = ApiState::new(store, client, Some(auth_token));
+    let state = ApiState::new(store, client, auth_token)?;
     let app = wallet_router(state);
     let listener = TcpListener::bind(addr).await?;
     println!("wallet http api listening on http://{addr}");
@@ -57,20 +57,23 @@ pub fn wallet_router(state: ApiState) -> Router {
 pub struct ApiState {
     pub store: Arc<WalletStore>,
     pub client: Arc<WalletRpcClient>,
-    pub auth_token: Option<String>,
+    pub auth_token: String,
 }
 
 impl ApiState {
     pub fn new(
         store: Arc<WalletStore>,
         client: Arc<WalletRpcClient>,
-        auth_token: Option<String>,
-    ) -> Self {
-        Self {
+        auth_token: String,
+    ) -> anyhow::Result<Self> {
+        if auth_token.trim().is_empty() {
+            anyhow::bail!("wallet http api requires a non-empty auth token");
+        }
+        Ok(Self {
             store,
             client,
             auth_token,
-        }
+        })
     }
 }
 
@@ -389,27 +392,23 @@ pub struct RecipientSpec {
     pub memo: Option<String>,
 }
 
-fn require_auth(headers: &HeaderMap, token: &Option<String>) -> Result<(), ApiError> {
-    if let Some(expected) = token {
-        let direct = headers
-            .get("x-auth-token")
-            .is_some_and(|value| value == expected);
-        let bearer = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|as_str| as_str.strip_prefix("Bearer "))
-            .is_some_and(|auth_token| auth_token == expected);
+fn require_auth(headers: &HeaderMap, expected: &str) -> Result<(), ApiError> {
+    let direct = headers
+        .get("x-auth-token")
+        .is_some_and(|value| value == expected);
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|as_str| as_str.strip_prefix("Bearer "))
+        .is_some_and(|auth_token| auth_token == expected);
 
-        if direct || bearer {
-            Ok(())
-        } else {
-            Err(ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "missing or invalid wallet auth token",
-            ))
-        }
-    } else {
+    if direct || bearer {
         Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "missing or invalid wallet auth token",
+        ))
     }
 }
 
@@ -449,7 +448,7 @@ mod tests {
     #[test]
     fn require_auth_rejects_missing_token() {
         let headers = HeaderMap::new();
-        let err = require_auth(&headers, &Some("secret".into())).expect_err("missing auth");
+        let err = require_auth(&headers, "secret").expect_err("missing auth");
         assert_eq!(err.status, StatusCode::UNAUTHORIZED);
     }
 
@@ -457,6 +456,7 @@ mod tests {
     fn require_auth_accepts_bearer_token() {
         let mut headers = HeaderMap::new();
         headers.insert(AUTHORIZATION, HeaderValue::from_static("Bearer secret"));
-        require_auth(&headers, &Some("secret".into())).expect("auth accepted");
+        require_auth(&headers, "secret").expect("auth accepted");
     }
+
 }

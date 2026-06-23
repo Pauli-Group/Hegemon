@@ -1,8 +1,8 @@
 # Build Stage - Native Node
-FROM rust:stable-slim-bookworm AS builder
+FROM rust:1-slim-bookworm@sha256:c8a94a78f67ec8c4d474ec7f71e0720f21eb7e584e158daec0874cafa7c30e4d AS builder
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     git \
@@ -18,13 +18,13 @@ WORKDIR /app
 COPY . .
 
 # Build native node binary
-RUN cargo build --release -p hegemon-node --bin hegemon-node --no-default-features
+RUN cargo build --locked --release -p hegemon-node --bin hegemon-node --no-default-features
 
 # Runtime Stage
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:96e378d7e6531ac9a15ad505478fcc2e69f371b10f5cdf87857c4b8188404716
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl3 \
     curl \
@@ -55,5 +55,5 @@ ENV RUST_BACKTRACE=1
 # Entrypoint
 ENTRYPOINT ["hegemon-node"]
 
-# Default command - development mode
-CMD ["--dev", "--tmp", "--rpc-cors=all", "--rpc-external"]
+# Default command - development mode with loopback RPC.
+CMD ["--dev", "--tmp"]

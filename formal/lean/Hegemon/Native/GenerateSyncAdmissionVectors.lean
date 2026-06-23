@@ -59,6 +59,47 @@ def requestRateCaseJson (name : String) (input : SyncRequestRateInput) : String 
     ++ "      \"expected_valid\": " ++ boolJson (requestRateAccepts input) ++ "\n"
     ++ "    }"
 
+def requestRateStateCaseJson
+    (name : String)
+    (input : SyncRequestRateStateBoundInput) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"current_entries\": " ++ natJson input.currentEntries ++ ",\n"
+    ++ "      \"max_entries\": " ++ natJson input.maxEntries ++ ",\n"
+    ++ "      \"expected_retained_before_insert\": "
+      ++ natJson (requestRateStateRetainedBeforeInsert input) ++ ",\n"
+    ++ "      \"expected_entries_after_insert\": "
+      ++ natJson (requestRateStateEntriesAfterInsert input) ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (requestRateStateAccepts input) ++ "\n"
+    ++ "    }"
+
+def miningSyncEvidenceCaseJson
+    (name : String)
+    (input : MiningSyncEvidenceInput) : String :=
+  let observed := miningSyncObservedPeerHeight input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"verified_new_progress\": " ++ boolJson input.verifiedNewProgress ++ ",\n"
+    ++ "      \"verified_known_at_or_below_local_best\": "
+      ++ boolJson input.verifiedKnownAtOrBelowLocalBest ++ ",\n"
+    ++ "      \"local_best_height\": " ++ natJson input.localBestHeight ++ ",\n"
+    ++ "      \"peer_best_height\": " ++ natJson input.peerBestHeight ++ ",\n"
+    ++ "      \"stopped_on_error\": " ++ boolJson input.stoppedOnError ++ ",\n"
+    ++ "      \"expected_observed_height\": " ++ optionNatJson observed ++ "\n"
+    ++ "    }"
+
+def miningGateCaseJson
+    (name : String)
+    (input : MiningGateInput) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"has_seeds\": " ++ boolJson input.hasSeeds ++ ",\n"
+    ++ "      \"dev\": " ++ boolJson input.dev ++ ",\n"
+    ++ "      \"bootstrap_authoring\": " ++ boolJson input.bootstrapAuthoring ++ ",\n"
+    ++ "      \"observed_gate_open\": " ++ boolJson input.observedGateOpen ++ ",\n"
+    ++ "      \"expected_allows_work\": " ++ boolJson (miningGateAllowsWork input) ++ "\n"
+    ++ "    }"
+
 def responseRangeToBeforeFrom : SyncResponseRangeInput :=
   {
     fromHeight := 100,
@@ -132,6 +173,37 @@ def vectorJson : String :=
     ++ requestRateCaseJson "request-rate-full-window-rejected" requestRateFullWindow ++ ",\n"
     ++ requestRateCaseJson "request-rate-elapsed-window-accepted" requestRateElapsedWindow ++ ",\n"
     ++ requestRateCaseJson "request-rate-zero-cap-rejected" requestRateZeroCap ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"sync_request_rate_state_cases\": [\n"
+    ++ requestRateStateCaseJson "request-rate-state-below-cap" requestRateStateBelowCap ++ ",\n"
+    ++ requestRateStateCaseJson "request-rate-state-at-cap" requestRateStateAtCap ++ ",\n"
+    ++ requestRateStateCaseJson "request-rate-state-over-cap" requestRateStateOverCap ++ ",\n"
+    ++ requestRateStateCaseJson "request-rate-state-zero-cap" requestRateStateZeroCap ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"mining_sync_evidence_cases\": [\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-imported-progress"
+      miningEvidenceImportedProgress ++ ",\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-known-equal-tip"
+      miningEvidenceKnownEqualTip ++ ",\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-known-below-tip"
+      miningEvidenceKnownBelowTip ++ ",\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-known-ahead-rejects"
+      miningEvidenceKnownAheadRejects ++ ",\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-missing-parent-rejects"
+      miningEvidenceMissingParentRejects ++ ",\n"
+    ++ miningSyncEvidenceCaseJson "mining-evidence-error-rejects"
+      miningEvidenceErrorRejects ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"mining_gate_cases\": [\n"
+    ++ miningGateCaseJson "mining-gate-live-empty-no-bootstrap-rejects"
+      miningGateLiveEmptyNoBootstrap ++ ",\n"
+    ++ miningGateCaseJson "mining-gate-dev-empty-allows" miningGateDevEmpty ++ ",\n"
+    ++ miningGateCaseJson "mining-gate-bootstrap-empty-allows"
+      miningGateBootstrapEmpty ++ ",\n"
+    ++ miningGateCaseJson "mining-gate-seeded-closed-rejects"
+      miningGateSeededClosed ++ ",\n"
+    ++ miningGateCaseJson "mining-gate-seeded-open-allows"
+      miningGateSeededOpen ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

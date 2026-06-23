@@ -75,6 +75,18 @@ def sendCaseJson (name : String) (input : BoundedSendInput) : String :=
       ++ toString (queuedBytesAfterBoundedSend input) ++ "\n"
     ++ "    }"
 
+def rateLimitStateCaseJson (name : String) (input : RateLimitStateBoundInput) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"current_entries\": " ++ toString input.currentEntries ++ ",\n"
+    ++ "      \"max_entries\": " ++ toString input.maxEntries ++ ",\n"
+    ++ "      \"expected_retained_before_insert\": "
+      ++ toString (rateLimitStateRetainedBeforeInsert input) ++ ",\n"
+    ++ "      \"expected_entries_after_insert\": "
+      ++ toString (rateLimitStateEntriesAfterInsert input) ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (rateLimitStateAccepts input) ++ "\n"
+    ++ "    }"
+
 def reserveCases : List (String × QueueReserveInput) := [
   ("peer-exact-limit-reserve-accepted", peerExactLimitReserve),
   ("event-remaining-limit-reserve-accepted", eventRemainingLimitReserve),
@@ -103,6 +115,13 @@ def sendCases : List (String × BoundedSendInput) := [
   ("peer-send-closed-rolls-back-bytes", peerSendClosedRollback),
   ("peer-send-reserve-rejection-precedes-full",
     peerSendReserveRejectedBeforeFull)
+  ]
+
+def rateLimitStateCases : List (String × RateLimitStateBoundInput) := [
+  ("rate-limit-state-below-cap", rateLimitStateBelowCap),
+  ("rate-limit-state-at-cap", rateLimitStateAtCap),
+  ("rate-limit-state-over-cap", rateLimitStateOverCap),
+  ("rate-limit-state-zero-cap", rateLimitStateZeroCap)
 ]
 
 def vectorJson : String :=
@@ -122,6 +141,11 @@ def vectorJson : String :=
     ++ "  \"send_cases\": [\n"
     ++ String.intercalate ",\n"
       (sendCases.map fun item => sendCaseJson item.fst item.snd)
+    ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"rate_limit_state_cases\": [\n"
+    ++ String.intercalate ",\n"
+      (rateLimitStateCases.map fun item => rateLimitStateCaseJson item.fst item.snd)
     ++ "\n"
     ++ "  ]\n"
     ++ "}\n"

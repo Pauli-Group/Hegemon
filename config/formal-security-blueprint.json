@@ -2660,7 +2660,7 @@
       "id": "bridge.checkpoint-output-binding",
       "claim_id": "bridge.checkpoint-output-binding",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean checkpoint-output transition, canonical BridgeCheckpointOutputV1 bytes must equal the exact 35-byte output domain followed by the fixed 404-byte journal tuple, with source/rules/header/work/message fields in protocol order and u64/u128/u32 scalars encoded little-endian.",
+      "formal_statement": "For the executable Lean checkpoint-output transition, canonical BridgeCheckpointOutputV1 bytes must equal the exact 35-byte output domain followed by the fixed 436-byte journal tuple, with source/rules/trusted-checkpoint/header/work/message fields in protocol order and u64/u128/u32 scalars encoded little-endian.",
       "informal_argument": "The Lean theorems `Hegemon.Bridge.CheckpointOutput.checkpoint_output_domain_bytes`, `Hegemon.Bridge.CheckpointOutput.canonical_preimage_is_domain_prefixed_wire`, `Hegemon.Bridge.CheckpointOutput.sample_wire_length`, `Hegemon.Bridge.CheckpointOutput.sample_canonical_length_exact`, `Hegemon.Bridge.CheckpointOutput.sample_checkpoint_height_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_canonical_tip_height_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_message_nonce_little_endian`, `Hegemon.Bridge.CheckpointOutput.sample_confirmations_little_endian`, and the max-scalar little-endian theorems prove representative executable facts about the output byte grammar. `gen_bridge_checkpoint_output_vectors` emits Lean-derived canonical and journal bytes, and the formal-core gate checks those vectors against `canonical_bridge_checkpoint_output_bytes_v1`, `bridge_checkpoint_output_wire_bytes_v1`, `bridge_checkpoint_output_wire_array_v1`, and `decode_bridge_checkpoint_output_wire_v1`, including decode round-trip and fixed-length rejection for truncated or trailing journal bytes.",
       "depends_on": [
         "consensus.pow-admission",
@@ -10676,8 +10676,8 @@
               "caller": "export_bridge_witness",
               "callee_must_precede": [
                 "evaluate_native_bridge_witness_export_admission",
-                "bridge_checkpoint_output_with_tip",
-                "bridge_checkpoint_output",
+                "bridge_checkpoint_output_with_tip_from_anchor",
+                "bridge_checkpoint_output_from_anchor",
                 "build_long_range_bridge_proof"
               ],
               "lean_theorems": [
@@ -11810,8 +11810,8 @@
             {
               "caller": "export_bridge_witness",
               "callee_must_precede": [
-                "bridge_checkpoint_output_with_tip",
-                "bridge_checkpoint_output",
+                "bridge_checkpoint_output_with_tip_from_anchor",
+                "bridge_checkpoint_output_from_anchor",
                 "build_long_range_bridge_proof"
               ],
               "must_dominate_successors": true,

@@ -32,6 +32,7 @@ inductive BridgeWitnessExportReject where
   | missingParent
   | tipBeforeMessage
   | explicitHistoryTooLong
+  | materializedHistoryTooLong
 deriving DecidableEq, Repr
 
 structure BridgeWitnessExportInput where
@@ -46,6 +47,7 @@ structure BridgeWitnessExportInput where
   bestHeight : Nat
   messageHeight : Nat
   maxExplicitHistory : Nat
+  maxMaterializedHistory : Nat
 deriving DecidableEq, Repr
 
 def evaluateBridgeWitnessExport
@@ -71,6 +73,8 @@ def evaluateBridgeWitnessExport
     | some confirmations =>
         if input.explicitBlockHash && decide (input.maxExplicitHistory < confirmations) then
           Except.error BridgeWitnessExportReject.explicitHistoryTooLong
+        else if decide (input.maxMaterializedHistory < input.bestHeight) then
+          Except.error BridgeWitnessExportReject.materializedHistoryTooLong
         else
           Except.ok confirmations
 
@@ -108,6 +112,7 @@ def bridgeWitnessExportPreconditions
       | some confirmations =>
           bridgeWitnessExplicitHistoryWithinBound
             input.explicitBlockHash input.maxExplicitHistory confirmations
+            && !(decide (input.maxMaterializedHistory < input.bestHeight))
 
 theorem accepts_iff_bridge_witness_export_preconditions
     {input : BridgeWitnessExportInput} :
@@ -116,7 +121,7 @@ theorem accepts_iff_bridge_witness_export_preconditions
   cases input with
   | mk blockHashParameterValid explicitBlockHash blockKnown canonicalHeightPresent blockIsCanonical
       blockActionsDecoded messageIndexInBounds parentKnown bestHeight messageHeight
-      maxExplicitHistory =>
+      maxExplicitHistory maxMaterializedHistory =>
       simp [
         bridgeWitnessExportAccepts,
         bridgeWitnessExportPreconditions,
@@ -138,8 +143,14 @@ theorem accepts_iff_bridge_witness_export_preconditions
         · simp [h]
         · by_cases over :
             maxExplicitHistory < Nat.min (bestHeight - messageHeight + 1) u32Max
-          · simp [h, over]
-          · simp [h, over]
+          · by_cases materializedOver :
+              maxMaterializedHistory < bestHeight
+            · simp [h, over, materializedOver]
+            · simp [h, over, materializedOver]
+          · by_cases materializedOver :
+              maxMaterializedHistory < bestHeight
+            · simp [h, over, materializedOver]
+            · simp [h, over, materializedOver]
 
 def valid : BridgeWitnessExportInput :=
   {
@@ -153,7 +164,8 @@ def valid : BridgeWitnessExportInput :=
     parentKnown := true,
     bestHeight := 45,
     messageHeight := 42,
-    maxExplicitHistory := maxBridgeWitnessExplicitHistory
+    maxExplicitHistory := maxBridgeWitnessExplicitHistory,
+    maxMaterializedHistory := maxBridgeWitnessExplicitHistory
   }
 
 theorem valid_accepts :
@@ -168,7 +180,10 @@ theorem same_height_valid_has_one_confirmation :
   rfl
 
 def cappedConfirmationsValid : BridgeWitnessExportInput :=
-  { valid with bestHeight := 18446744073709551615, messageHeight := 0 }
+  { valid with
+    bestHeight := 18446744073709551615,
+    messageHeight := 0,
+    maxMaterializedHistory := 18446744073709551615 }
 
 theorem large_confirmation_count_caps_to_u32_max :
     evaluateBridgeWitnessExport cappedConfirmationsValid =
@@ -254,9 +269,21 @@ theorem explicit_history_too_long_rejects :
 def latestBackscanCanExceedExplicitHistoryBound : BridgeWitnessExportInput :=
   { explicitHistoryTooLong with explicitBlockHash := false }
 
-theorem latest_backscan_not_rejected_by_explicit_history_cap :
+theorem latest_backscan_rejects_oversized_materialized_history :
     evaluateBridgeWitnessExport latestBackscanCanExceedExplicitHistoryBound =
-      Except.ok 4200 := by
+      Except.error BridgeWitnessExportReject.materializedHistoryTooLong := by
+  rfl
+
+def latestBackscanAtMaterializedHistoryBound : BridgeWitnessExportInput :=
+  { valid with
+    explicitBlockHash := false,
+    bestHeight := maxBridgeWitnessExplicitHistory,
+    messageHeight := maxBridgeWitnessExplicitHistory,
+    maxMaterializedHistory := maxBridgeWitnessExplicitHistory }
+
+theorem latest_backscan_at_materialized_history_bound_accepts :
+    evaluateBridgeWitnessExport latestBackscanAtMaterializedHistoryBound =
+      Except.ok 1 := by
   rfl
 
 def malformed_hash_precedes_unknown_block_input :

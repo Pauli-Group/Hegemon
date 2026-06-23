@@ -18,6 +18,7 @@ REJECTION_NAMES = {
     "release_build_dependency_missing",
     "release_build_security_adversarial_dependency_missing",
     "release_build_native_backend_security_dependency_missing",
+    "non_release_job_contents_write",
     "release_binary_audit_missing",
     "tag_release_native_backend_review_missing",
     "tag_release_native_backend_posture_missing",
@@ -52,6 +53,8 @@ def evaluate(case: dict) -> tuple[bool, str | None]:
         return False, "release_build_security_adversarial_dependency_missing"
     if not case["release_build_needs_native_backend_security"]:
         return False, "release_build_native_backend_security_dependency_missing"
+    if not case["non_release_jobs_no_contents_write"]:
+        return False, "non_release_job_contents_write"
     if not case["release_binary_audit_step"]:
         return False, "release_binary_audit_missing"
     if not case["tag_release_native_backend_review_step"]:
@@ -82,6 +85,7 @@ def check_vectors(path: Path) -> None:
             "release_build_needs_security_gates",
             "release_build_needs_security_adversarial",
             "release_build_needs_native_backend_security",
+            "non_release_jobs_no_contents_write",
             "release_binary_audit_step",
             "tag_release_native_backend_review_step",
             "tag_release_native_backend_posture_step",
@@ -157,8 +161,46 @@ def check_ci_workflow(path: Path) -> None:
 
 def check_release_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
+    if re.search(r"(?m)^permissions:\n\s+contents:\s+write\b", workflow):
+        raise SystemExit("release workflow must not grant workflow-wide contents: write")
+    if not re.search(r"(?m)^permissions:\n\s+contents:\s+read\b", workflow):
+        raise SystemExit("release workflow must default to workflow-wide contents: read")
     security_gates = job_block(workflow, "security-gates")
+    create_release = job_block(workflow, "create-release")
+    if not re.search(r"(?m)^    permissions:\n\s+contents:\s+write\b", create_release):
+        raise SystemExit("create-release job must carry the only contents: write permission")
+    for job_match in re.finditer(r"(?m)^  ([A-Za-z0-9_-]+):\n", workflow):
+        job_name = job_match.group(1)
+        if job_name == "create-release":
+            continue
+        block = job_block(workflow, job_name)
+        if re.search(r"(?m)^    permissions:\n(?:      .*\n)*?      contents:\s+write\b", block):
+            raise SystemExit(
+                f"{job_name}: only create-release may request contents: write"
+            )
+    for match in re.finditer(r"(?m)^\s*uses:\s*([^\s#]+)", workflow):
+        value = match.group(1)
+        if "@" not in value:
+            raise SystemExit(f"release workflow action reference lacks ref: {value}")
+        _, ref = value.rsplit("@", 1)
+        if not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise SystemExit(f"release workflow action ref must be pinned to a full SHA: {value}")
+    for match in re.finditer(
+        r"(?m)^(\s*)-\s+uses:\s+actions/checkout@[0-9a-f]{40}\s*$",
+        workflow,
+    ):
+        next_step = workflow.find("\n      - ", match.end())
+        step_body = workflow[match.end() : next_step if next_step != -1 else len(workflow)]
+        if "persist-credentials: false" not in step_body:
+            raise SystemExit("release workflow checkout must disable persist-credentials")
     require_contains("release security-gates", security_gates, "./scripts/dependency-audit-gate.sh")
+    require_contains(
+        "release security-gates cargo-audit pin",
+        security_gates,
+        "cargo install cargo-audit --version 0.22.2 --locked",
+    )
+    require_contains("release security-gates elan hash", security_gates, "ELAN_INIT_SHA256:")
+    require_contains("release security-gates elan hash check", security_gates, "sha256sum -c -")
     require_contains("release security-gates", security_gates, "bash scripts/check_formal_core.sh")
     require_contains(
         "release security-gates",

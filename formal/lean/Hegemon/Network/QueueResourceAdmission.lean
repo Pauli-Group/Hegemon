@@ -55,6 +55,11 @@ structure BoundedSendInput extends QueueReserveInput where
   sendOutcome : QueueSendOutcome
 deriving DecidableEq, Repr
 
+structure RateLimitStateBoundInput where
+  currentEntries : Nat
+  maxEntries : Nat
+deriving DecidableEq, Repr
+
 def queueReservePreconditions (input : QueueReserveInput) : Prop :=
   ¬ input.messageBytes > input.maxQueuedBytes
     ∧ ¬ input.currentQueuedBytes + input.messageBytes > input.usizeMax
@@ -95,6 +100,23 @@ def queuedBytesAfterBoundedSend (input : BoundedSendInput) : Nat :=
           input.currentQueuedBytes + input.messageBytes
       | QueueSendOutcome.full => input.currentQueuedBytes
       | QueueSendOutcome.closed => input.currentQueuedBytes
+
+def rateLimitStateRetainedBeforeInsert
+    (input : RateLimitStateBoundInput) : Nat :=
+  if input.maxEntries = 0 then
+    0
+  else
+    min input.currentEntries (input.maxEntries - 1)
+
+def rateLimitStateEntriesAfterInsert
+    (input : RateLimitStateBoundInput) : Nat :=
+  if input.maxEntries = 0 then
+    0
+  else
+    rateLimitStateRetainedBeforeInsert input + 1
+
+def rateLimitStateAccepts (input : RateLimitStateBoundInput) : Bool :=
+  rateLimitStateEntriesAfterInsert input ≤ input.maxEntries
 
 structure AcceptedQueueReserveFacts (input : QueueReserveInput) : Prop where
   accepted : evaluateQueueReserve input = none
@@ -236,6 +258,68 @@ theorem bounded_send_rejection_rolls_back_queued_bytes
           outcome] at rejected ⊢
   | some reserveReject =>
       simp [queuedBytesAfterBoundedSend, reserve]
+
+theorem rate_limit_state_after_insert_within_max
+    {input : RateLimitStateBoundInput}
+    (maxNonzero : input.maxEntries ≠ 0) :
+    rateLimitStateAccepts input = true := by
+  unfold rateLimitStateAccepts rateLimitStateEntriesAfterInsert
+    rateLimitStateRetainedBeforeInsert
+  simp [maxNonzero]
+  have maxPositive : 1 ≤ input.maxEntries :=
+    Nat.succ_le_of_lt (Nat.pos_of_ne_zero maxNonzero)
+  omega
+
+theorem rate_limit_state_zero_cap_stays_empty
+    {input : RateLimitStateBoundInput}
+    (maxZero : input.maxEntries = 0) :
+    rateLimitStateEntriesAfterInsert input = 0
+      ∧ rateLimitStateAccepts input = true := by
+  unfold rateLimitStateAccepts rateLimitStateEntriesAfterInsert
+  simp [maxZero]
+
+def rateLimitStateBelowCap : RateLimitStateBoundInput :=
+  {
+    currentEntries := 8,
+    maxEntries := 4096
+  }
+
+theorem rate_limit_state_below_cap_accepts :
+    rateLimitStateAccepts rateLimitStateBelowCap = true := by
+  decide
+
+def rateLimitStateAtCap : RateLimitStateBoundInput :=
+  {
+    currentEntries := 4096,
+    maxEntries := 4096
+  }
+
+theorem rate_limit_state_at_cap_evicts_one_before_insert :
+    rateLimitStateRetainedBeforeInsert rateLimitStateAtCap = 4095
+      ∧ rateLimitStateEntriesAfterInsert rateLimitStateAtCap = 4096 := by
+  decide
+
+def rateLimitStateOverCap : RateLimitStateBoundInput :=
+  {
+    currentEntries := 4104,
+    maxEntries := 4096
+  }
+
+theorem rate_limit_state_over_cap_evicts_to_cap_before_insert :
+    rateLimitStateRetainedBeforeInsert rateLimitStateOverCap = 4095
+      ∧ rateLimitStateEntriesAfterInsert rateLimitStateOverCap = 4096 := by
+  decide
+
+def rateLimitStateZeroCap : RateLimitStateBoundInput :=
+  {
+    currentEntries := 1,
+    maxEntries := 0
+  }
+
+theorem rate_limit_state_zero_cap_stays_empty_example :
+    rateLimitStateEntriesAfterInsert rateLimitStateZeroCap = 0
+      ∧ rateLimitStateAccepts rateLimitStateZeroCap = true := by
+  decide
 
 inductive NetworkPreHeavyResourceReject where
   | frameRejected (reject : FrameResourceAdmission.FrameReject)

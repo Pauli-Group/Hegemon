@@ -2328,7 +2328,7 @@
       ],
       "assumptions": [
         "The Lean model represents exact bytes for already-computed source chain ids, rules hashes, header hashes, work values, message roots, message hashes, nonce, confirmation count, and minimum-work policy.",
-        "Generated Lean conformance vectors cover the 35-byte canonical domain, 439-byte canonical preimage, 404-byte authenticated journal tuple, field order, u64/u128/u32 little-endian scalar encodings including max scalar cases, decode/re-encode round trips, and fixed-length rejection for truncated or trailing journal bytes.",
+        "Generated Lean conformance vectors cover the 35-byte canonical domain, 471-byte canonical preimage, 436-byte authenticated journal tuple, trusted-checkpoint digest binding, field order, u64/u128/u32 little-endian scalar encodings including max scalar cases, decode/re-encode round trips, and fixed-length rejection for truncated or trailing journal bytes.",
         "The theorem covers byte grammar and Rust conformance to that grammar, not BLAKE3 cryptographic security, BLAKE3 implementation equivalence, bridge message-root/hash derivation, external verifier behavior, or complete bridge light-client soundness."
       ],
       "evidence_paths": [
@@ -5982,7 +5982,7 @@
       "id": "native.bridge-witness-export-admission",
       "component": "native outbound bridge witness export admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean bridge-witness export admission kernel proves the executable native witness-export table for malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, block-action decode failures, out-of-bounds message indexes, missing parents, tip-before-message rejection, and capped confirmation-count output; generated Lean vectors are checked against the production helper used by `hegemon_exportBridgeWitness`.",
+      "summary": "The Lean bridge-witness export admission kernel proves the executable native witness-export table for malformed explicit block hashes, unknown blocks, missing canonical height indexes, noncanonical blocks, block-action decode failures, out-of-bounds message indexes, missing parents, tip-before-message rejection, explicit-history caps, materialized-history caps for latest backscan exports, and capped confirmation-count output; generated Lean vectors are checked against the production helper used by `hegemon_exportBridgeWitness`.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -5991,7 +5991,7 @@
         "Hegemon.Native.BridgeWitnessExportAdmission.block_actions_decode_failed_rejects",
         "Hegemon.Native.BridgeWitnessExportAdmission.explicit_history_too_long_rejects",
         "Hegemon.Native.BridgeWitnessExportAdmission.large_confirmation_count_caps_to_u32_max",
-        "Hegemon.Native.BridgeWitnessExportAdmission.latest_backscan_not_rejected_by_explicit_history_cap",
+        "Hegemon.Native.BridgeWitnessExportAdmission.latest_backscan_rejects_oversized_materialized_history",
         "Hegemon.Native.BridgeWitnessExportAdmission.malformed_block_hash_rejects",
         "Hegemon.Native.BridgeWitnessExportAdmission.malformed_hash_precedes_unknown_block",
         "Hegemon.Native.BridgeWitnessExportAdmission.message_index_out_of_bounds_rejects",

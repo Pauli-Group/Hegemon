@@ -6,7 +6,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::tempdir;
 
-use wallet::{keys::RootSecret, viewing::IncomingViewingKey};
+use wallet::{
+    keys::RootSecret,
+    store::{write_private_file, WalletStore},
+    viewing::IncomingViewingKey,
+};
 
 #[cfg(unix)]
 fn assert_private_file(path: &Path) {
@@ -148,34 +152,17 @@ fn secret_export_files_are_private() {
     assert_private_file(&export_out);
 
     let root = RootSecret::from_bytes([5u8; 32]);
-    let root_hex = hex::encode(root.to_bytes());
     let store_path = temp.path().join("wallet.dat");
-    cargo_bin_cmd!("wallet")
-        .args([
-            "init",
-            "--store",
-            store_path.to_str().unwrap(),
-            "--passphrase",
-            "passphrase",
-            "--root-hex",
-            &root_hex,
-        ])
-        .assert()
-        .success();
+    let store =
+        WalletStore::create_from_root(&store_path, "passphrase", root).expect("create wallet");
+    drop(store);
+    assert_private_file(&store_path);
 
     let viewing_out = temp.path().join("viewing-key.json");
-    cargo_bin_cmd!("wallet")
-        .args([
-            "export-viewing-key",
-            "--store",
-            store_path.to_str().unwrap(),
-            "--passphrase",
-            "passphrase",
-            "--out",
-            viewing_out.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
+    let store = WalletStore::open(&store_path, "passphrase").expect("open wallet");
+    let ivk = store.incoming_key().expect("incoming key");
+    let json = serde_json::to_string_pretty(&ivk).expect("viewing key json");
+    write_private_file(&viewing_out, json.as_bytes()).expect("write viewing key");
     assert_private_file(&viewing_out);
 }
 

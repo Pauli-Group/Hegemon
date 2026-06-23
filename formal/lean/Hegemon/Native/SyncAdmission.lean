@@ -36,6 +36,26 @@ structure SyncRequestRateInput where
   windowMs : Nat
 deriving DecidableEq, Repr
 
+structure SyncRequestRateStateBoundInput where
+  currentEntries : Nat
+  maxEntries : Nat
+deriving DecidableEq, Repr
+
+structure MiningSyncEvidenceInput where
+  verifiedNewProgress : Bool
+  verifiedKnownAtOrBelowLocalBest : Bool
+  localBestHeight : Nat
+  peerBestHeight : Nat
+  stoppedOnError : Bool
+deriving DecidableEq, Repr
+
+structure MiningGateInput where
+  hasSeeds : Bool
+  dev : Bool
+  bootstrapAuthoring : Bool
+  observedGateOpen : Bool
+deriving DecidableEq, Repr
+
 def responseCapEnd (input : SyncResponseRangeInput) : Nat :=
   let maxEnd := saturatingAddU64 input.fromHeight (input.maxBlocks - 1)
   min input.toHeight (min input.bestHeight maxEnd)
@@ -82,6 +102,42 @@ def requestRateRejects (input : SyncRequestRateInput) : Bool :=
 
 def requestRateAccepts (input : SyncRequestRateInput) : Bool :=
   requestRateRejects input = false
+
+def requestRateStateRetainedBeforeInsert
+    (input : SyncRequestRateStateBoundInput) : Nat :=
+  if input.maxEntries = 0 then
+    0
+  else
+    min input.currentEntries (input.maxEntries - 1)
+
+def requestRateStateEntriesAfterInsert
+    (input : SyncRequestRateStateBoundInput) : Nat :=
+  if input.maxEntries = 0 then
+    0
+  else
+    requestRateStateRetainedBeforeInsert input + 1
+
+def requestRateStateAccepts
+    (input : SyncRequestRateStateBoundInput) : Bool :=
+  requestRateStateEntriesAfterInsert input ≤ input.maxEntries
+
+def miningSyncObservedPeerHeight
+    (input : MiningSyncEvidenceInput) : Option Nat :=
+  if input.stoppedOnError then
+    none
+  else if input.verifiedNewProgress then
+    some input.localBestHeight
+  else if input.verifiedKnownAtOrBelowLocalBest
+      && input.peerBestHeight ≤ input.localBestHeight then
+    some input.peerBestHeight
+  else
+    none
+
+def miningGateAllowsWork (input : MiningGateInput) : Bool :=
+  if input.hasSeeds then
+    input.observedGateOpen
+  else
+    input.dev || input.bootstrapAuthoring
 
 def responseRangeBlockCount (range : Nat × Nat) : Nat :=
   range.snd + 1 - range.fst
@@ -280,6 +336,82 @@ theorem request_rate_rejects_full_unelapsed_window
     Nat.not_le_of_gt notElapsed
   simp [maxNonzero, notElapsedLe, full]
 
+theorem request_rate_state_after_insert_within_max
+    {input : SyncRequestRateStateBoundInput}
+    (maxNonzero : input.maxEntries ≠ 0) :
+    requestRateStateAccepts input = true := by
+  unfold requestRateStateAccepts requestRateStateEntriesAfterInsert
+    requestRateStateRetainedBeforeInsert
+  simp [maxNonzero]
+  have maxPositive : 1 ≤ input.maxEntries :=
+    Nat.succ_le_of_lt (Nat.pos_of_ne_zero maxNonzero)
+  omega
+
+theorem request_rate_state_zero_cap_stays_empty
+    {input : SyncRequestRateStateBoundInput}
+    (maxZero : input.maxEntries = 0) :
+    requestRateStateEntriesAfterInsert input = 0
+      ∧ requestRateStateAccepts input = true := by
+  unfold requestRateStateAccepts requestRateStateEntriesAfterInsert
+  simp [maxZero]
+
+theorem mining_sync_observation_none_on_error
+    {input : MiningSyncEvidenceInput}
+    (stopped : input.stoppedOnError = true) :
+    miningSyncObservedPeerHeight input = none := by
+  unfold miningSyncObservedPeerHeight
+  simp [stopped]
+
+theorem mining_sync_observation_imported_progress_uses_local_best
+    {input : MiningSyncEvidenceInput}
+    (notStopped : input.stoppedOnError = false)
+    (newProgress : input.verifiedNewProgress = true) :
+    miningSyncObservedPeerHeight input = some input.localBestHeight := by
+  unfold miningSyncObservedPeerHeight
+  simp [notStopped, newProgress]
+
+theorem mining_sync_observation_known_peer_uses_peer_height
+    {input : MiningSyncEvidenceInput}
+    (notStopped : input.stoppedOnError = false)
+    (noNewProgress : input.verifiedNewProgress = false)
+    (known : input.verifiedKnownAtOrBelowLocalBest = true)
+    (within : input.peerBestHeight ≤ input.localBestHeight) :
+    miningSyncObservedPeerHeight input = some input.peerBestHeight := by
+  unfold miningSyncObservedPeerHeight
+  simp [notStopped, noNewProgress, known, within]
+
+theorem mining_gate_seeded_follows_observed_gate
+    {input : MiningGateInput}
+    (seeded : input.hasSeeds = true) :
+    miningGateAllowsWork input = input.observedGateOpen := by
+  unfold miningGateAllowsWork
+  simp [seeded]
+
+theorem mining_gate_empty_live_without_bootstrap_rejects
+    {input : MiningGateInput}
+    (unseeded : input.hasSeeds = false)
+    (notDev : input.dev = false)
+    (notBootstrap : input.bootstrapAuthoring = false) :
+    miningGateAllowsWork input = false := by
+  unfold miningGateAllowsWork
+  simp [unseeded, notDev, notBootstrap]
+
+theorem mining_gate_empty_dev_allows
+    {input : MiningGateInput}
+    (unseeded : input.hasSeeds = false)
+    (dev : input.dev = true) :
+    miningGateAllowsWork input = true := by
+  unfold miningGateAllowsWork
+  simp [unseeded, dev]
+
+theorem mining_gate_empty_bootstrap_allows
+    {input : MiningGateInput}
+    (unseeded : input.hasSeeds = false)
+    (bootstrap : input.bootstrapAuthoring = true) :
+    miningGateAllowsWork input = true := by
+  unfold miningGateAllowsWork
+  simp [unseeded, bootstrap]
+
 def responseRangeValid : SyncResponseRangeInput :=
   {
     fromHeight := 10,
@@ -461,6 +593,171 @@ def requestRateZeroCap : SyncRequestRateInput :=
 
 theorem request_rate_zero_cap_rejects :
     requestRateRejects requestRateZeroCap = true := by
+  decide
+
+def requestRateStateBelowCap : SyncRequestRateStateBoundInput :=
+  {
+    currentEntries := 8,
+    maxEntries := 4096
+  }
+
+theorem request_rate_state_below_cap_accepts :
+    requestRateStateAccepts requestRateStateBelowCap = true := by
+  decide
+
+def requestRateStateAtCap : SyncRequestRateStateBoundInput :=
+  {
+    currentEntries := 4096,
+    maxEntries := 4096
+  }
+
+theorem request_rate_state_at_cap_evicts_one_before_insert :
+    requestRateStateRetainedBeforeInsert requestRateStateAtCap = 4095
+      ∧ requestRateStateEntriesAfterInsert requestRateStateAtCap = 4096 := by
+  decide
+
+def requestRateStateOverCap : SyncRequestRateStateBoundInput :=
+  {
+    currentEntries := 4104,
+    maxEntries := 4096
+  }
+
+theorem request_rate_state_over_cap_evicts_to_cap_before_insert :
+    requestRateStateRetainedBeforeInsert requestRateStateOverCap = 4095
+      ∧ requestRateStateEntriesAfterInsert requestRateStateOverCap = 4096 := by
+  decide
+
+def requestRateStateZeroCap : SyncRequestRateStateBoundInput :=
+  {
+    currentEntries := 1,
+    maxEntries := 0
+  }
+
+theorem request_rate_state_zero_cap_stays_empty_example :
+    requestRateStateEntriesAfterInsert requestRateStateZeroCap = 0
+      ∧ requestRateStateAccepts requestRateStateZeroCap = true := by
+  decide
+
+def miningEvidenceImportedProgress : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := true,
+    verifiedKnownAtOrBelowLocalBest := false,
+    localBestHeight := 9,
+    peerBestHeight := 12,
+    stoppedOnError := false
+  }
+
+def miningEvidenceKnownEqualTip : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := false,
+    verifiedKnownAtOrBelowLocalBest := true,
+    localBestHeight := 12,
+    peerBestHeight := 12,
+    stoppedOnError := false
+  }
+
+def miningEvidenceKnownBelowTip : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := false,
+    verifiedKnownAtOrBelowLocalBest := true,
+    localBestHeight := 12,
+    peerBestHeight := 10,
+    stoppedOnError := false
+  }
+
+def miningEvidenceKnownAheadRejects : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := false,
+    verifiedKnownAtOrBelowLocalBest := true,
+    localBestHeight := 10,
+    peerBestHeight := 12,
+    stoppedOnError := false
+  }
+
+def miningEvidenceMissingParentRejects : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := false,
+    verifiedKnownAtOrBelowLocalBest := false,
+    localBestHeight := 10,
+    peerBestHeight := 10,
+    stoppedOnError := false
+  }
+
+def miningEvidenceErrorRejects : MiningSyncEvidenceInput :=
+  {
+    verifiedNewProgress := true,
+    verifiedKnownAtOrBelowLocalBest := true,
+    localBestHeight := 10,
+    peerBestHeight := 10,
+    stoppedOnError := true
+  }
+
+def miningGateLiveEmptyNoBootstrap : MiningGateInput :=
+  {
+    hasSeeds := false,
+    dev := false,
+    bootstrapAuthoring := false,
+    observedGateOpen := true
+  }
+
+theorem mining_gate_live_empty_no_bootstrap_rejects :
+    miningGateAllowsWork miningGateLiveEmptyNoBootstrap = false := by
+  decide
+
+def miningGateDevEmpty : MiningGateInput :=
+  {
+    hasSeeds := false,
+    dev := true,
+    bootstrapAuthoring := false,
+    observedGateOpen := false
+  }
+
+theorem mining_gate_dev_empty_allows :
+    miningGateAllowsWork miningGateDevEmpty = true := by
+  decide
+
+def miningGateBootstrapEmpty : MiningGateInput :=
+  {
+    hasSeeds := false,
+    dev := false,
+    bootstrapAuthoring := true,
+    observedGateOpen := false
+  }
+
+theorem mining_gate_bootstrap_empty_allows :
+    miningGateAllowsWork miningGateBootstrapEmpty = true := by
+  decide
+
+def miningGateSeededClosed : MiningGateInput :=
+  {
+    hasSeeds := true,
+    dev := true,
+    bootstrapAuthoring := true,
+    observedGateOpen := false
+  }
+
+theorem mining_gate_seeded_closed_rejects :
+    miningGateAllowsWork miningGateSeededClosed = false := by
+  decide
+
+def miningGateSeededOpen : MiningGateInput :=
+  {
+    hasSeeds := true,
+    dev := false,
+    bootstrapAuthoring := false,
+    observedGateOpen := true
+  }
+
+theorem mining_gate_seeded_open_allows :
+    miningGateAllowsWork miningGateSeededOpen = true := by
+  decide
+
+theorem mining_evidence_known_equal_tip_observes_peer_height :
+    miningSyncObservedPeerHeight miningEvidenceKnownEqualTip = some 12 := by
+  decide
+
+theorem mining_evidence_known_ahead_rejects :
+    miningSyncObservedPeerHeight miningEvidenceKnownAheadRejects = none := by
   decide
 
 end SyncAdmission

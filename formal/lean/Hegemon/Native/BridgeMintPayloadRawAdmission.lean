@@ -15,6 +15,7 @@ structure BridgeMintPayloadRawAdmissionInput where
   payloadHashMatches : Bool
   receiptMessageHashMatches : Bool
   versionMatches : Bool
+  sourceAppFamilyMatches : Bool
   destinationMatches : Bool
   mintNonceMatches : Bool
   recipientCommitmentNonzero : Bool
@@ -39,6 +40,7 @@ def bridgeMintPayloadInputOfRaw
     payloadHashMatches := input.payloadHashMatches,
     receiptMessageHashMatches := input.receiptMessageHashMatches,
     versionMatches := input.versionMatches,
+    sourceAppFamilyMatches := input.sourceAppFamilyMatches,
     destinationMatches := input.destinationMatches,
     mintNonceMatches := input.mintNonceMatches,
     recipientCommitmentNonzero := input.recipientCommitmentNonzero,
@@ -90,6 +92,7 @@ def validRawBridgeMintPayload : BridgeMintPayloadRawAdmissionInput :=
     payloadHashMatches := true,
     receiptMessageHashMatches := true,
     versionMatches := true,
+    sourceAppFamilyMatches := true,
     destinationMatches := true,
     mintNonceMatches := true,
     recipientCommitmentNonzero := true,

@@ -132,9 +132,6 @@ enum Commands {
 struct InitArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     #[arg(long)]
     root_hex: Option<String>,
     #[arg(long)]
@@ -145,18 +142,12 @@ struct InitArgs {
 struct StoreArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
 }
 
 #[derive(Parser)]
 struct StatusArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -169,9 +160,6 @@ struct StatusArgs {
 struct ExportArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -187,9 +175,6 @@ enum PaymentProofCommands {
 struct PaymentProofCreateArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -224,9 +209,6 @@ struct PaymentProofVerifyArgs {
 struct PaymentProofPurgeArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Transaction hash (0x-prefixed hex)
     #[arg(long)]
     tx: Option<String>,
@@ -244,9 +226,6 @@ struct NodeSyncArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -262,9 +241,6 @@ struct NodeDaemonArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -282,9 +258,6 @@ struct NodeSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -314,9 +287,6 @@ struct NodeBatchSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -340,9 +310,6 @@ struct StablecoinMintArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
     #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
@@ -372,9 +339,6 @@ struct StablecoinBurnArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
@@ -392,43 +356,30 @@ struct StablecoinBurnArgs {
     dry_run: bool,
 }
 
-/// Get passphrase from argument, or prompt interactively if not provided.
+/// Get wallet passphrase from the controlling terminal.
 /// Uses rpassword to hide input from terminal.
-fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
-    match passphrase {
-        Some(p) => Ok(p),
-        None => {
-            eprint!("{}", prompt);
-            let pass =
-                rpassword::read_password().context("Failed to read passphrase from terminal")?;
-            if pass.is_empty() {
-                anyhow::bail!("Passphrase cannot be empty");
-            }
-            Ok(pass)
-        }
+fn get_passphrase(prompt: &str) -> Result<String> {
+    eprint!("{}", prompt);
+    let pass = rpassword::read_password().context("Failed to read passphrase from terminal")?;
+    if pass.is_empty() {
+        anyhow::bail!("Passphrase cannot be empty");
     }
+    Ok(pass)
 }
 
 /// Get passphrase for wallet init (prompts twice for confirmation)
-fn get_new_passphrase(passphrase: Option<String>) -> Result<String> {
-    match passphrase {
-        Some(p) => Ok(p),
-        None => {
-            eprint!("Enter new wallet passphrase: ");
-            let pass1 =
-                rpassword::read_password().context("Failed to read passphrase from terminal")?;
-            if pass1.is_empty() {
-                anyhow::bail!("Passphrase cannot be empty");
-            }
-            eprint!("Confirm passphrase: ");
-            let pass2 =
-                rpassword::read_password().context("Failed to read passphrase confirmation")?;
-            if pass1 != pass2 {
-                anyhow::bail!("Passphrases do not match");
-            }
-            Ok(pass1)
-        }
+fn get_new_passphrase() -> Result<String> {
+    eprint!("Enter new wallet passphrase: ");
+    let pass1 = rpassword::read_password().context("Failed to read passphrase from terminal")?;
+    if pass1.is_empty() {
+        anyhow::bail!("Passphrase cannot be empty");
     }
+    eprint!("Confirm passphrase: ");
+    let pass2 = rpassword::read_password().context("Failed to read passphrase confirmation")?;
+    if pass1 != pass2 {
+        anyhow::bail!("Passphrases do not match");
+    }
+    Ok(pass1)
 }
 
 fn main() -> Result<()> {
@@ -578,7 +529,7 @@ fn cmd_init(args: InitArgs) -> Result<()> {
     if args.viewing_key.is_some() && args.root_hex.is_some() {
         anyhow::bail!("specify either --root-hex or --viewing-key");
     }
-    let passphrase = get_new_passphrase(args.passphrase)?;
+    let passphrase = get_new_passphrase()?;
     let store = if let Some(path) = args.viewing_key {
         let ivk: IncomingViewingKey = read_json(&path)?;
         WalletStore::import_viewing_key(&args.store, &passphrase, ivk)?
@@ -608,7 +559,7 @@ fn cmd_init(args: InitArgs) -> Result<()> {
 }
 
 fn cmd_status(args: StatusArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let mut metadata_map: BTreeMap<u64, String> = BTreeMap::new();
     // Sync first unless --no-sync is specified
     if !args.no_sync {
@@ -658,7 +609,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
 }
 
 fn cmd_reset_sync(args: StoreArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     store.reset_sync_state()?;
     println!("wallet sync state reset (keys preserved)");
@@ -793,7 +744,7 @@ fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) ->
 
 /// Print just the hex account ID (for use in shell command substitution)
 fn cmd_account_id(args: StoreArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
 
     if let Ok(Some(derived)) = store.derived_keys() {
@@ -808,7 +759,7 @@ fn cmd_account_id(args: StoreArgs) -> Result<()> {
 }
 
 fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     let ivk = store.incoming_key()?;
     let json = serde_json::to_string_pretty(&ivk)?;
@@ -830,7 +781,7 @@ fn cmd_payment_proof(args: PaymentProofCommands) -> Result<()> {
 }
 
 fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot create payment proofs");
@@ -1053,7 +1004,7 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
 }
 
 fn cmd_payment_proof_purge(args: PaymentProofPurgeArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
 
     if args.all {
@@ -1228,7 +1179,7 @@ fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
         );
     }
 
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
@@ -1450,7 +1401,7 @@ fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
 
 /// Sync wallet using native node RPC
 fn cmd_node_sync(args: NodeSyncArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
     // Build async runtime
@@ -1489,7 +1440,7 @@ fn cmd_node_sync(args: NodeSyncArgs) -> Result<()> {
 
 /// Run wallet daemon with native node WebSocket RPC
 fn cmd_node_daemon(args: NodeDaemonArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
     let runtime = RuntimeBuilder::new_multi_thread()
@@ -1616,7 +1567,7 @@ async fn submit_bundle_with_fallback(
 
 /// Send transaction using native node RPC
 fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
@@ -1921,7 +1872,7 @@ fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
 }
 
 fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot mint");
@@ -2052,7 +2003,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
 }
 
 fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot burn");

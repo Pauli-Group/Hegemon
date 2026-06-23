@@ -13,7 +13,8 @@ pub use bridge::{
     BridgeMessageV1, BridgeMintPayloadV1, BridgeVerifierRegistrationV1, ChainId,
     InboundBridgeArgsV1, InboundReplayReject, InboundReplayState, MessageHash, MessageRoot,
     OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
-    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_PAYLOAD_VERSION_V1, FAMILY_BRIDGE,
+    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_APP_FAMILY_ID_V1, BRIDGE_MINT_PAYLOAD_VERSION_V1,
+    FAMILY_BRIDGE,
 };
 pub use manifest::{FamilySpec, KernelManifest};
 pub use router::FamilyRouter;

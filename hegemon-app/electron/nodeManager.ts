@@ -295,7 +295,36 @@ export class NodeManager extends EventEmitter {
 
   async getSummary(request: NodeSummaryRequest): Promise<NodeSummary> {
     const isLocal = request.isLocal;
-    const reachable = await this.ping(request.httpUrl);
+    let httpUrl: string;
+    try {
+      httpUrl = normalizeRendererRpcEndpoint(request.httpUrl);
+    } catch (error) {
+      return {
+        connectionId: request.connectionId,
+        label: request.label,
+        reachable: false,
+        isLocal,
+        nodeVersion: null,
+        peers: null,
+        isSyncing: null,
+        bestBlock: null,
+        bestNumber: null,
+        genesisHash: null,
+        mining: null,
+        miningThreads: null,
+        hashRate: null,
+        blocksFound: null,
+        difficulty: null,
+        blockHeight: null,
+        supplyDigest: null,
+        storage: null,
+        telemetry: null,
+        config: null,
+        updatedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'RPC endpoint rejected'
+      };
+    }
+    const reachable = await this.ping(httpUrl);
 
     if (!reachable) {
       return {
@@ -324,14 +353,14 @@ export class NodeManager extends EventEmitter {
       };
     }
 
-    const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], request.httpUrl);
-    const mining = await this.safeRpcCall('hegemon_miningStatus', [], request.httpUrl);
-    const health = await this.safeRpcCall('system_health', [], request.httpUrl);
-    const nodeVersion = await this.safeRpcCall('system_version', [], request.httpUrl);
-    const storage = await this.safeRpcCall('hegemon_storageFootprint', [], request.httpUrl);
-    const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
-    const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
-    const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
+    const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], httpUrl);
+    const mining = await this.safeRpcCall('hegemon_miningStatus', [], httpUrl);
+    const health = await this.safeRpcCall('system_health', [], httpUrl);
+    const nodeVersion = await this.safeRpcCall('system_version', [], httpUrl);
+    const storage = await this.safeRpcCall('hegemon_storageFootprint', [], httpUrl);
+    const telemetry = await this.safeRpcCall('hegemon_telemetry', [], httpUrl);
+    const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], httpUrl);
+    const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], httpUrl);
 
     return {
       connectionId: request.connectionId,
@@ -408,7 +437,7 @@ export class NodeManager extends EventEmitter {
 
   private resolveMiningRpcEndpoint(httpUrl: string | undefined, hasAuthToken: boolean): string | undefined {
     if (!hasAuthToken) {
-      return httpUrl;
+      return httpUrl ? normalizeRendererRpcEndpoint(httpUrl) : undefined;
     }
     if (!this.process) {
       throw new Error('Mining RPC token can only be used with the managed local node.');
@@ -496,4 +525,23 @@ const normalizeRpcEndpoint = (value: string) => {
     parsed.port ||
     (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
   return `${parsed.protocol}//${hostname}${port ? `:${port}` : ''}`;
+};
+
+const normalizeRendererRpcEndpoint = (value: string) => {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('RPC endpoint must use HTTP or HTTPS.');
+  }
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error('RPC endpoint must not include credentials or fragments.');
+  }
+  const rawHostname = parsed.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  const hostname = rawHostname === 'localhost' ? '127.0.0.1' : rawHostname;
+  if (hostname !== '127.0.0.1' && hostname !== '::1') {
+    throw new Error('Desktop RPC endpoints must be loopback-only; use an SSH tunnel for remote nodes.');
+  }
+  const port =
+    parsed.port ||
+    (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return `${parsed.protocol}//${hostname === '::1' ? '[::1]' : hostname}${port ? `:${port}` : ''}`;
 };

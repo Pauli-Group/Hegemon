@@ -10,6 +10,8 @@ def outputCaseJson (name : String) (output : OutputInput) : String :=
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"source_chain_id_hex\": \"" ++ hexBytes output.sourceChainId ++ "\",\n"
     ++ "      \"rules_hash_hex\": \"" ++ hexBytes output.rulesHash ++ "\",\n"
+    ++ "      \"trusted_checkpoint_digest_hex\": \""
+      ++ hexBytes output.trustedCheckpointDigest ++ "\",\n"
     ++ "      \"checkpoint_height\": " ++ toString output.checkpointHeight ++ ",\n"
     ++ "      \"checkpoint_header_hash_hex\": \"" ++ hexBytes output.checkpointHeaderHash ++ "\",\n"
     ++ "      \"checkpoint_cumulative_work_hex\": \"" ++ hexBytes output.checkpointCumulativeWork ++ "\",\n"

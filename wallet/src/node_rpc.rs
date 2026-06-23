@@ -126,11 +126,82 @@ fn env_u64(name: &str) -> Option<u64> {
 
 const NULLIFIER_PAGE_LIMIT: u64 = 1024;
 const DEFAULT_MAX_NULLIFIERS: u64 = 1_000_000;
+const MAX_RPC_STORAGE_VALUE_BYTES: usize = 64 * 1024;
 
 fn max_nullifier_fetch() -> u64 {
     env_u64("HEGEMON_WALLET_MAX_NULLIFIERS")
         .map(|value| value.max(1))
         .unwrap_or(DEFAULT_MAX_NULLIFIERS)
+}
+
+fn note_ciphertext_da_wire_bytes() -> Result<usize, WalletError> {
+    NoteCiphertext::empty()
+        .to_da_bytes()
+        .map(|bytes| bytes.len())
+}
+
+fn ensure_base64_encoded_max_bytes(
+    input: &str,
+    max_decoded_bytes: usize,
+    label: &'static str,
+) -> Result<(), WalletError> {
+    let max_encoded_len = max_decoded_bytes.saturating_add(2) / 3 * 4;
+    if input.len() > max_encoded_len {
+        return Err(WalletError::Serialization(format!(
+            "{label} base64 length {} exceeds encoded limit {} for {max_decoded_bytes} decoded bytes",
+            input.len(),
+            max_encoded_len
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_hex_encoded_exact_bytes(
+    input: &str,
+    expected_bytes: usize,
+    label: &'static str,
+) -> Result<(), WalletError> {
+    let expected_len = expected_bytes.saturating_mul(2);
+    if input.len() != expected_len {
+        return Err(WalletError::Serialization(format!(
+            "{label} hex length {} != {expected_len} for {expected_bytes} decoded bytes",
+            input.len()
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_hex_encoded_max_bytes(
+    input: &str,
+    max_decoded_bytes: usize,
+    label: &'static str,
+) -> Result<(), WalletError> {
+    if input.len() % 2 != 0 {
+        return Err(WalletError::Serialization(format!(
+            "{label} hex length must be even"
+        )));
+    }
+    let max_encoded_len = max_decoded_bytes.saturating_mul(2);
+    if input.len() > max_encoded_len {
+        return Err(WalletError::Serialization(format!(
+            "{label} hex length {} exceeds encoded limit {max_encoded_len} for {max_decoded_bytes} decoded bytes",
+            input.len()
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_wallet_page_within_requested_limit(
+    method: &str,
+    returned_entries: usize,
+    requested_limit: usize,
+) -> Result<(), WalletError> {
+    if returned_entries > requested_limit {
+        return Err(WalletError::Rpc(format!(
+            "{method} returned {returned_entries} entries in one page (limit {requested_limit})"
+        )));
+    }
+    Ok(())
 }
 
 /// Note status response from the node
@@ -283,7 +354,13 @@ fn decode_ciphertext_entries(
     entries: Vec<CiphertextEntryWire>,
 ) -> Result<Vec<CiphertextEntry>, WalletError> {
     let mut decoded = Vec::with_capacity(entries.len());
+    let max_ciphertext_bytes = note_ciphertext_da_wire_bytes()?;
     for entry in entries {
+        ensure_base64_encoded_max_bytes(
+            &entry.ciphertext,
+            max_ciphertext_bytes,
+            "note ciphertext",
+        )?;
         let bytes = base64::Engine::decode(
             &base64::engine::general_purpose::STANDARD,
             &entry.ciphertext,
@@ -545,6 +622,11 @@ impl NodeRpcClient {
             .request("hegemon_walletCommitments", rpc_params![params])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCommitments failed: {}", e)))?;
+        ensure_wallet_page_within_requested_limit(
+            "hegemon_walletCommitments",
+            response.entries.len(),
+            limit,
+        )?;
 
         response
             .entries
@@ -584,6 +666,11 @@ impl NodeRpcClient {
             .request("hegemon_walletCiphertexts", rpc_params![params])
             .await
             .map_err(|e| WalletError::Rpc(format!("hegemon_walletCiphertexts failed: {}", e)))?;
+        ensure_wallet_page_within_requested_limit(
+            "hegemon_walletCiphertexts",
+            response.entries.len(),
+            limit,
+        )?;
 
         decode_ciphertext_entries(response.entries)
     }
@@ -617,6 +704,11 @@ impl NodeRpcClient {
             .request("hegemon_walletCiphertexts", rpc_params![params])
             .await
             .map_err(|e| WalletError::Rpc(format!("archive walletCiphertexts failed: {}", e)))?;
+        ensure_wallet_page_within_requested_limit(
+            "archive walletCiphertexts",
+            response.entries.len(),
+            limit,
+        )?;
 
         decode_ciphertext_entries(response.entries)
     }
@@ -918,7 +1010,10 @@ impl NodeRpcClient {
 
         // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
         // Nonce is the first u32 (4 bytes)
-        let data = hex::decode(data_hex.trim_start_matches("0x"))
+        let trimmed = data_hex.trim_start_matches("0x");
+        ensure_hex_encoded_max_bytes(trimmed, MAX_RPC_STORAGE_VALUE_BYTES, "account storage")
+            .map_err(|e| WalletError::Rpc(e.to_string()))?;
+        let data = hex::decode(trimmed)
             .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
 
         if data.len() < 4 {
@@ -965,7 +1060,10 @@ impl NodeRpcClient {
         // Decode AccountInfo: { nonce: u32, consumers: u32, providers: u32, sufficients: u32, data: AccountData }
         // AccountData: { free: u128, reserved: u128, misc_frozen: u128, fee_frozen: u128 }
         // Layout: nonce(4) + consumers(4) + providers(4) + sufficients(4) = 16 bytes, then free(16 bytes)
-        let data = hex::decode(data_hex.trim_start_matches("0x"))
+        let trimmed = data_hex.trim_start_matches("0x");
+        ensure_hex_encoded_max_bytes(trimmed, MAX_RPC_STORAGE_VALUE_BYTES, "account storage")
+            .map_err(|e| WalletError::Rpc(e.to_string()))?;
+        let data = hex::decode(trimmed)
             .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
 
         if data.len() < 32 {
@@ -1414,7 +1512,10 @@ impl NodeRpcClient {
             return Ok(None);
         };
 
-        let data = hex::decode(data_hex.trim_start_matches("0x"))
+        let trimmed = data_hex.trim_start_matches("0x");
+        ensure_hex_encoded_max_bytes(trimmed, MAX_RPC_STORAGE_VALUE_BYTES, "storage value")
+            .map_err(|e| WalletError::Rpc(e.to_string()))?;
+        let data = hex::decode(trimmed)
             .map_err(|e| WalletError::Rpc(format!("failed to decode storage: {}", e)))?;
         Ok(Some(data))
     }
@@ -1669,6 +1770,7 @@ fn build_shielded_envelope(
 
 fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    ensure_hex_encoded_exact_bytes(trimmed, 32, "hash")?;
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
     if bytes.len() != 32 {
@@ -1681,6 +1783,7 @@ fn hex_to_array(hex_str: &str) -> Result<[u8; 32], WalletError> {
 
 fn hex_to_array48(hex_str: &str) -> Result<[u8; 48], WalletError> {
     let trimmed = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    ensure_hex_encoded_exact_bytes(trimmed, 48, "hash")?;
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid hex: {}", e)))?;
     if bytes.len() != 48 {
@@ -2287,6 +2390,130 @@ mod tests {
             decode_ciphertext_entries(vec![ciphertext_entry_for_bytes(0, &bytes)]).is_err(),
             "DA ciphertext parser must reject nonzero container padding"
         );
+    }
+
+    #[test]
+    fn wallet_rpc_page_limit_rejects_oversized_pages_before_decoding() {
+        ensure_wallet_page_within_requested_limit("hegemon_walletCommitments", 128, 128)
+            .expect("exact page limit is valid");
+        ensure_wallet_page_within_requested_limit("hegemon_walletCiphertexts", 0, 0)
+            .expect("empty zero-limit response is valid");
+
+        let err = ensure_wallet_page_within_requested_limit("hegemon_walletCiphertexts", 129, 128)
+            .expect_err("oversized wallet page must reject");
+        assert!(err
+            .to_string()
+            .contains("hegemon_walletCiphertexts returned 129 entries in one page (limit 128)"));
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanCiphertextArchiveBoundaryVectorFile {
+        schema_version: u32,
+        wallet_page_admission_cases: Vec<LeanWalletPageAdmissionCase>,
+        wallet_sync_snapshot_admission_cases: Vec<LeanWalletSyncSnapshotAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletPageAdmissionCase {
+        name: String,
+        requested_limit: usize,
+        returned_entries: usize,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletSyncSnapshotAdmissionCase {
+        name: String,
+        expected_depth: u64,
+        depth: u64,
+        leaf_count: u64,
+        next_index: u64,
+        commitment_cursor: u64,
+        ciphertext_cursor: u64,
+        tree_capacity: u128,
+        max_snapshot_gap: u64,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    #[test]
+    fn lean_generated_wallet_page_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS not set; skipping wallet page admission vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean ciphertext archive boundary vectors");
+        let vectors: LeanCiphertextArchiveBoundaryVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean wallet page vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.wallet_page_admission_cases.is_empty(),
+            "Lean wallet page admission cases must not be empty"
+        );
+        assert!(
+            !vectors.wallet_sync_snapshot_admission_cases.is_empty(),
+            "Lean wallet sync snapshot admission cases must not be empty"
+        );
+
+        for case in &vectors.wallet_page_admission_cases {
+            let actual = ensure_wallet_page_within_requested_limit(
+                "hegemon_walletCiphertexts",
+                case.returned_entries,
+                case.requested_limit,
+            );
+            assert_eq!(
+                actual.is_ok(),
+                case.expected_valid,
+                "{} wallet page admission validity drifted from Lean spec",
+                case.name
+            );
+            match case.expected_error.as_deref() {
+                None => assert!(actual.is_ok(), "{} should be accepted", case.name),
+                Some("page_too_large") => assert!(
+                    actual
+                        .expect_err("oversized Lean page case must reject")
+                        .to_string()
+                        .contains("returned"),
+                    "{} oversized page rejection drifted from production",
+                    case.name
+                ),
+                other => panic!("{} unexpected Lean wallet page error {other:?}", case.name),
+            }
+        }
+
+        for case in &vectors.wallet_sync_snapshot_admission_cases {
+            let actual_error = if case.depth != case.expected_depth {
+                Some("depth_mismatch")
+            } else if case.tree_capacity < u128::from(case.leaf_count) {
+                Some("leaf_count_exceeds_tree_capacity")
+            } else if case.tree_capacity < u128::from(case.next_index) {
+                Some("ciphertext_index_exceeds_tree_capacity")
+            } else if case.max_snapshot_gap < case.leaf_count.saturating_sub(case.commitment_cursor)
+            {
+                Some("commitment_snapshot_too_large")
+            } else if case.max_snapshot_gap < case.next_index.saturating_sub(case.ciphertext_cursor)
+            {
+                Some("ciphertext_snapshot_too_large")
+            } else {
+                None
+            };
+            assert_eq!(
+                actual_error.is_none(),
+                case.expected_valid,
+                "{} wallet sync snapshot admission validity drifted from Lean spec",
+                case.name
+            );
+            assert_eq!(
+                actual_error,
+                case.expected_error.as_deref(),
+                "{} wallet sync snapshot admission rejection drifted from Lean spec",
+                case.name
+            );
+        }
     }
 
     #[test]

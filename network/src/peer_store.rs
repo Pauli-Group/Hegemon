@@ -63,7 +63,9 @@ impl PeerStore {
             match wire::decode::<Vec<PeerRecord>>(&bytes, wire::MAX_PEER_STORE_LEN) {
                 Ok(records) => {
                     self.entries = records.into_iter().map(|rec| (rec.addr, rec)).collect();
-                    if self.prune_stale() {
+                    let pruned = self.prune_stale();
+                    let capped = self.enforce_max_entries();
+                    if pruned || capped {
                         self.persist()?;
                     }
                 }
@@ -570,6 +572,42 @@ mod tests {
         });
         reloaded.load().unwrap();
         assert_eq!(reloaded.entries.len(), 2);
+    }
+
+    #[test]
+    fn load_enforces_max_entries_for_directly_written_store() {
+        let path = temp_path("peer_store_load_cap");
+        let base_time = SystemTime::now();
+        let records = (0..5)
+            .map(|i| {
+                let addr: SocketAddr = format!("127.0.0.1:95{:02}", i).parse().unwrap();
+                PeerRecord {
+                    addr,
+                    last_updated: base_time + Duration::from_secs(i),
+                    last_connected: Some(base_time + Duration::from_secs(i)),
+                }
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            &path,
+            wire::encode(&records, wire::MAX_PEER_STORE_LEN).expect("encode peer records"),
+        )
+        .unwrap();
+
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path: path.clone(),
+            ttl: Duration::from_secs(60),
+            max_entries: 2,
+        });
+        store.load().unwrap();
+        assert_eq!(store.entries.len(), 2);
+
+        let persisted = fs::read(path).unwrap();
+        let persisted_records: Vec<PeerRecord> =
+            wire::decode(&persisted, wire::MAX_PEER_STORE_LEN).unwrap();
+        assert_eq!(persisted_records.len(), 2);
+        assert!(store.entries.contains_key(&records[4].addr));
+        assert!(store.entries.contains_key(&records[3].addr));
     }
 
     #[test]

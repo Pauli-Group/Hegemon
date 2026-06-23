@@ -11,6 +11,6 @@ cargo test -p cashvm-bridge --lib
 cargo run -p cashvm-bridge --bin cashvm_bridge_report
 ```
 
-The size report uses the measured Hegemon bridge objects from `docs/bridge_loopback.md`: a 9951-byte long-range proof input, a 404-byte RISC Zero journal, a 224508-byte succinct RISC Zero envelope, and a 492158-byte composite RISC Zero envelope.
+The size report uses the measured Hegemon bridge objects from `docs/bridge_loopback.md`: a 9951-byte long-range proof input, a 436-byte RISC Zero journal, a 224508-byte succinct RISC Zero envelope, and a 492158-byte composite RISC Zero envelope.
 
 The current model shows the Hegemon long-range proof input fits a one-transaction CashVM standardness model, while raw RISC Zero receipt envelopes require proof-fragment transactions. A BCH production bridge should therefore target a CashVM-native STARK/hash proof object rather than direct RISC Zero receipt verification.

@@ -4,6 +4,8 @@ namespace LongRange
 
 def u32Max : Nat := 4294967295
 def u64Max : Nat := 18446744073709551615
+def minSampleCount : Nat := 8
+def maxSampleCount : Nat := 64
 
 inductive Reject where
   | verifierHashMismatch
@@ -34,6 +36,7 @@ structure ShapeInput where
   messageIndex : Nat
   messageSourceChainMatches : Bool
   messageSourceHeight : Nat
+  sampleCount : Nat
   expectedSampleIndices : List Nat
   sampleHeaderHeights : List Nat
   sampleOpeningLeafIndices : List Nat
@@ -44,8 +47,40 @@ structure ShapeInput where
   expectedOutputMatches : Option Bool
 deriving DecidableEq, Repr
 
+structure DirectReceiptInput where
+  claimedOutputMatchesDerived : Bool
+  minConfirmations : Nat
+  checkpointWork : Nat
+  minWork : Nat
+deriving DecidableEq, Repr
+
 def confirmationsChecked (input : ShapeInput) : Nat :=
   Nat.min (input.tipHeight - input.messageHeight + 1) u32Max
+
+def directReceiptConfirmationsChecked : Nat := 1
+
+def sampleDomainLen (input : ShapeInput) : Nat :=
+  input.tipHeight - (input.trustedHeight + 1)
+
+def evaluateDirectReceipt (input : DirectReceiptInput) : Option Reject :=
+  if input.claimedOutputMatchesDerived = false then
+    some Reject.receiptOutputMismatch
+  else if directReceiptConfirmationsChecked < input.minConfirmations then
+    some Reject.confirmationPolicyMismatch
+  else if input.checkpointWork < input.minWork then
+    some Reject.workPolicyMismatch
+  else
+    none
+
+def containsNat (needle : Nat) : List Nat -> Bool
+  | [] => false
+  | head :: rest =>
+      head == needle || containsNat needle rest
+
+def noDuplicatesNat : List Nat -> Bool
+  | [] => true
+  | head :: rest =>
+      containsNat head rest == false && noDuplicatesNat rest
 
 def samplesMatch : List Nat -> List Nat -> List Nat -> Bool
   | [], [], [] => true
@@ -95,6 +130,16 @@ def evaluateShape (input : ShapeInput) : Option Reject :=
     some Reject.receiptOutputMismatch
   else if input.messageSourceHeight ≠ input.messageHeight then
     some Reject.receiptOutputMismatch
+  else if input.sampleCount < minSampleCount then
+    some Reject.flyClientSampleMismatch
+  else if input.sampleCount > maxSampleCount then
+    some Reject.flyClientSampleMismatch
+  else if sampleDomainLen input < input.sampleCount then
+    some Reject.flyClientSampleMismatch
+  else if input.expectedSampleIndices.length ≠ input.sampleCount then
+    some Reject.flyClientSampleMismatch
+  else if noDuplicatesNat input.expectedSampleIndices = false then
+    some Reject.flyClientSampleMismatch
   else if samplesMatch
       input.expectedSampleIndices
       input.sampleHeaderHeights
@@ -119,9 +164,9 @@ def validShape : ShapeInput :=
     messageCount := 2,
     messagesLen := 2,
     trustedHeight := 10,
-    tipHeight := 14,
-    tipHeaderMmrLen := 14,
-    tipParentOpeningLeafIndex := 13,
+    tipHeight := 22,
+    tipHeaderMmrLen := 22,
+    tipParentOpeningLeafIndex := 21,
     messageHeight := 12,
     messageHeaderMmrLen := 12,
     messageOpeningLeafIndex := 12,
@@ -129,22 +174,39 @@ def validShape : ShapeInput :=
     messageIndex := 1,
     messageSourceChainMatches := true,
     messageSourceHeight := 12,
-    expectedSampleIndices := [11, 12, 13],
-    sampleHeaderHeights := [11, 12, 13],
-    sampleOpeningLeafIndices := [11, 12, 13],
-    sampleParentOpeningLeafIndices := [10, 11, 12],
+    sampleCount := minSampleCount,
+    expectedSampleIndices := [11, 12, 13, 14, 15, 16, 17, 18],
+    sampleHeaderHeights := [11, 12, 13, 14, 15, 16, 17, 18],
+    sampleOpeningLeafIndices := [11, 12, 13, 14, 15, 16, 17, 18],
+    sampleParentOpeningLeafIndices := [10, 11, 12, 13, 14, 15, 16, 17],
     minConfirmations := 3,
     tipWork := 1000,
     minTipWork := 900,
     expectedOutputMatches := some true
   }
 
+def validDirectReceipt : DirectReceiptInput :=
+  {
+    claimedOutputMatchesDerived := true,
+    minConfirmations := 1,
+    checkpointWork := 1000,
+    minWork := 900
+  }
+
 theorem valid_shape_accepts :
     evaluateShape validShape = none := by
   decide
 
+theorem valid_direct_receipt_accepts :
+    evaluateDirectReceipt validDirectReceipt = none := by
+  decide
+
 theorem valid_shape_confirmations :
-    confirmationsChecked validShape = 3 := by
+    confirmationsChecked validShape = 11 := by
+  decide
+
+theorem valid_direct_receipt_confirmations :
+    directReceiptConfirmationsChecked = 1 := by
   decide
 
 theorem rejects_bad_verifier_hash :
@@ -226,28 +288,62 @@ theorem rejects_message_source_height_mismatch :
       some Reject.receiptOutputMismatch := by
   decide
 
+theorem rejects_zero_sample_count :
+    evaluateShape { validShape with sampleCount := 0 } =
+      some Reject.flyClientSampleMismatch := by
+  decide
+
+theorem rejects_sample_count_below_min :
+    evaluateShape { validShape with sampleCount := minSampleCount - 1 } =
+      some Reject.flyClientSampleMismatch := by
+  decide
+
+theorem rejects_sample_count_above_max :
+    evaluateShape { validShape with sampleCount := maxSampleCount + 1 } =
+      some Reject.flyClientSampleMismatch := by
+  decide
+
 theorem rejects_sample_count_mismatch :
     evaluateShape { validShape with sampleHeaderHeights := [11, 12] } =
       some Reject.flyClientSampleMismatch := by
   decide
 
+theorem rejects_sample_domain_smaller_than_count :
+    evaluateShape
+      { validShape with
+        tipHeight := 18,
+        tipHeaderMmrLen := 18,
+        tipParentOpeningLeafIndex := 17 } =
+      some Reject.flyClientSampleMismatch := by
+  decide
+
+theorem rejects_duplicate_sample_indices :
+    evaluateShape
+      { validShape with
+        expectedSampleIndices := [11, 12, 13, 14, 15, 16, 17, 17],
+        sampleHeaderHeights := [11, 12, 13, 14, 15, 16, 17, 17],
+        sampleOpeningLeafIndices := [11, 12, 13, 14, 15, 16, 17, 17],
+        sampleParentOpeningLeafIndices := [10, 11, 12, 13, 14, 15, 16, 16] } =
+      some Reject.flyClientSampleMismatch := by
+  decide
+
 theorem rejects_sample_height_mismatch :
-    evaluateShape { validShape with sampleHeaderHeights := [11, 13, 13] } =
+    evaluateShape { validShape with sampleHeaderHeights := [11, 12, 13, 14, 15, 16, 17, 19] } =
       some Reject.flyClientSampleMismatch := by
   decide
 
 theorem rejects_sample_opening_leaf_mismatch :
-    evaluateShape { validShape with sampleOpeningLeafIndices := [11, 12, 12] } =
+    evaluateShape { validShape with sampleOpeningLeafIndices := [11, 12, 13, 14, 15, 16, 17, 19] } =
       some Reject.flyClientSampleMismatch := by
   decide
 
 theorem rejects_sample_parent_opening_leaf_mismatch :
-    evaluateShape { validShape with sampleParentOpeningLeafIndices := [10, 11, 11] } =
+    evaluateShape { validShape with sampleParentOpeningLeafIndices := [10, 11, 12, 13, 14, 15, 16, 16] } =
       some Reject.parentHashMismatch := by
   decide
 
 theorem rejects_under_confirmed :
-    evaluateShape { validShape with minConfirmations := 4 } =
+    evaluateShape { validShape with minConfirmations := 12 } =
       some Reject.confirmationPolicyMismatch := by
   decide
 
@@ -259,6 +355,23 @@ theorem rejects_insufficient_tip_work :
 theorem rejects_output_mismatch :
     evaluateShape { validShape with expectedOutputMatches := some false } =
       some Reject.receiptOutputMismatch := by
+  decide
+
+theorem rejects_direct_receipt_claimed_output_mismatch :
+    evaluateDirectReceipt { validDirectReceipt with
+      claimedOutputMatchesDerived := false } =
+      some Reject.receiptOutputMismatch := by
+  decide
+
+theorem rejects_direct_receipt_under_confirmed :
+    evaluateDirectReceipt { validDirectReceipt with minConfirmations := 2 } =
+      some Reject.confirmationPolicyMismatch := by
+  decide
+
+theorem rejects_direct_receipt_insufficient_work :
+    evaluateDirectReceipt { validDirectReceipt with
+      minWork := 1001 } =
+      some Reject.workPolicyMismatch := by
   decide
 
 end LongRange

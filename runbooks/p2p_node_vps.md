@@ -62,7 +62,7 @@ ENV
 sudo chown node:node /etc/default/hegemon-node
 ```
 
-- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions. If this host is the first public authoring node after a fresh reset, leave `HEGEMON_SEEDS` empty until the node is already live.
+- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions. If this host is the first public authoring node after a fresh reset, leave `HEGEMON_SEEDS` empty only with the explicit `HEGEMON_BOOTSTRAP_AUTHORING=1` override; remove that override and publish the approved seed list before any additional miner joins.
 - Keep chrony/NTP healthy on every mining host so timestamps stay valid.
 
 ## 5. Systemd unit
@@ -116,9 +116,14 @@ journalctl -u hegemon-node.service -f
 Confirm the node is reachable and syncing:
 
 ```bash
-# Health (includes peer count / syncing)
+# Consensus sync state
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_consensusStatus"}' \
+  http://127.0.0.1:9944
+
+# Mining gate state, on authoring hosts
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_miningStatus"}' \
   http://127.0.0.1:9944
 
 # Latest block
@@ -129,6 +134,8 @@ curl -s -H "Content-Type: application/json" \
 # Time sync status
 chronyc tracking
 ```
+
+Use logs or host-level TCP checks for P2P connectivity. Do not expose unsafe topology RPCs or treat static peer fields as authoritative liveness evidence on public nodes.
 
 For upgrades, stop the service, replace the binary, then start:
 

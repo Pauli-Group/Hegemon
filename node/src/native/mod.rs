@@ -18,7 +18,7 @@ use consensus::{
     COMMITMENT_TREE_DEPTH,
 };
 use consensus_light_client::{
-    bridge_checkpoint_output, bridge_checkpoint_output_with_tip,
+    bridge_checkpoint_output_from_anchor, bridge_checkpoint_output_with_tip_from_anchor,
     canonical_bridge_checkpoint_output_bytes_v1, canonical_trusted_checkpoint_bytes_v1,
     compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
     flyclient_sample_indices, hash_meets_target, header_mmr_append_peaks,
@@ -26,9 +26,9 @@ use consensus_light_client::{
     header_mmr_root_from_peaks, pow_hash_from_pre_hash, verify_pow_header,
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
-    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
-    HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
-    HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1,
+    HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1, HEGEMON_CHAIN_ID_V1,
+    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
     HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use crypto::ml_dsa::{
@@ -36,9 +36,9 @@ use crypto::ml_dsa::{
 };
 use crypto::traits::{Signature, SigningKey, VerifyKey};
 use network::{
-    service::DirectedProtocolMessage, wire, GossipRouter, NatTraversalConfig, P2PService, PeerId,
-    PeerIdentity, PeerStore, PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage,
-    RelayConfig,
+    service::{DirectedProtocolMessage, ProtocolSender},
+    wire, GossipRouter, NatTraversalConfig, P2PService, PeerId, PeerIdentity, PeerStore,
+    PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage, RelayConfig,
 };
 use parking_lot::{Mutex, RwLock};
 use protocol_kernel::manifest::{
@@ -49,7 +49,8 @@ use protocol_kernel::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
     BridgeMintPayloadV1, BridgeVerifierRegistrationV1, InboundBridgeArgsV1, InboundReplayReject,
     InboundReplayState, OutboundBridgeArgsV1, ACTION_BRIDGE_INBOUND, ACTION_BRIDGE_OUTBOUND,
-    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_PAYLOAD_VERSION_V1, FAMILY_BRIDGE,
+    ACTION_REGISTER_BRIDGE_VERIFIER, BRIDGE_MINT_APP_FAMILY_ID_V1, BRIDGE_MINT_PAYLOAD_VERSION_V1,
+    FAMILY_BRIDGE,
 };
 use protocol_shielded_pool::family::{
     MintCoinbaseArgs, ShieldedTransferInlineArgs, ShieldedTransferSidecarArgs,
@@ -78,7 +79,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
@@ -92,7 +92,7 @@ const NATIVE_DEV_POW_BITS: u32 = 0x1f00_ffff;
 const HASHES_PER_ROUND: u64 = 16_384;
 const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
-const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = 8;
+const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1;
 const MIN_INBOUND_BRIDGE_CONFIRMATIONS: u32 = 2;
 const NATIVE_RISC0_RECEIPT_VERIFIER_ENABLED: bool = false;
 const NATIVE_PQ_CLEAN_BRIDGE_VERIFIER_BOUND: bool = false;
@@ -115,6 +115,8 @@ const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
+const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
+const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
@@ -197,6 +199,7 @@ pub struct NativeConfig {
     pub max_peers: u32,
     pub mine: bool,
     pub mine_threads: u32,
+    pub bootstrap_mining_authoring: bool,
     pub miner_address: Option<String>,
     pub pow_bits: u32,
 }
@@ -243,6 +246,12 @@ impl NativeConfig {
             .map(|raw| parse_mining_thread_count_str(&raw, "HEGEMON_MINE_THREADS"))
             .transpose()?
             .unwrap_or(1);
+        let bootstrap_mining_authoring = env_bool("HEGEMON_BOOTSTRAP_AUTHORING");
+        if mine && !cli.dev && seeds.is_empty() && !bootstrap_mining_authoring {
+            return Err(anyhow!(
+                "refusing live mining with empty HEGEMON_SEEDS; set HEGEMON_SEEDS=\"hegemon.pauli.group:30333\" or explicitly set HEGEMON_BOOTSTRAP_AUTHORING=1 for a deliberate first-author bootstrap"
+            ));
+        }
         let miner_address = std::env::var("HEGEMON_MINER_ADDRESS")
             .ok()
             .map(|raw| raw.trim().to_string())
@@ -268,9 +277,14 @@ impl NativeConfig {
             max_peers,
             mine,
             mine_threads,
+            bootstrap_mining_authoring,
             miner_address,
             pow_bits,
         })
+    }
+
+    fn permits_empty_seed_authoring(&self) -> bool {
+        self.dev || self.bootstrap_mining_authoring
     }
 }
 
@@ -503,6 +517,23 @@ struct NativeSyncRequestRateState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMiningSyncEvidenceInput {
+    verified_new_progress: bool,
+    verified_known_at_or_below_local_best: bool,
+    local_best_height: u64,
+    peer_best_height: u64,
+    stopped_on_error: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeMiningGateInput {
+    has_seeds: bool,
+    dev: bool,
+    bootstrap_mining_authoring: bool,
+    observed_gate_open: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeSyncResponseImportOutcome {
     Imported,
     AlreadyKnown,
@@ -549,6 +580,36 @@ impl NativeSyncResponseImportProgress {
 
     fn should_request_more(self, local_best_height: u64, peer_best_height: u64) -> bool {
         self.had_blocks && local_best_height < peer_best_height
+    }
+
+    fn completed_with_only_known_blocks(self) -> bool {
+        self.had_blocks
+            && self.attempted_blocks == self.response_block_count
+            && self.imported_blocks == 0
+            && !self.stopped_on_error
+    }
+}
+
+fn native_mining_sync_observed_peer_height(input: NativeMiningSyncEvidenceInput) -> Option<u64> {
+    if input.stopped_on_error {
+        return None;
+    }
+    if input.verified_new_progress {
+        return Some(input.local_best_height);
+    }
+    if input.verified_known_at_or_below_local_best
+        && input.peer_best_height <= input.local_best_height
+    {
+        return Some(input.peer_best_height);
+    }
+    None
+}
+
+fn native_mining_gate_allows_work(input: NativeMiningGateInput) -> bool {
+    if input.has_seeds {
+        input.observed_gate_open
+    } else {
+        input.dev || input.bootstrap_mining_authoring
     }
 }
 
@@ -1137,6 +1198,7 @@ struct NativeBridgeMintPayloadAdmissionInput {
     payload_hash_matches: bool,
     receipt_message_hash_matches: bool,
     version_matches: bool,
+    source_app_family_matches: bool,
     destination_matches: bool,
     mint_nonce_matches: bool,
     recipient_commitment_nonzero: bool,
@@ -1176,6 +1238,7 @@ struct NativeBridgeWitnessExportAdmissionInput {
     best_height: u64,
     message_height: u64,
     max_explicit_history: u64,
+    max_materialized_history: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1257,6 +1320,7 @@ enum NativeBridgeMintPayloadAdmissionRejection {
     PayloadHashMismatch,
     ReceiptMessageHashMismatch,
     VersionMismatch,
+    SourceAppFamilyMismatch,
     DestinationMismatch,
     MintNonceMismatch,
     RecipientCommitmentZero,
@@ -1279,6 +1343,7 @@ impl NativeBridgeMintPayloadAdmissionRejection {
             Self::PayloadHashMismatch => "payload_hash_mismatch",
             Self::ReceiptMessageHashMismatch => "receipt_message_hash_mismatch",
             Self::VersionMismatch => "version_mismatch",
+            Self::SourceAppFamilyMismatch => "source_app_family_mismatch",
             Self::DestinationMismatch => "destination_mismatch",
             Self::MintNonceMismatch => "mint_nonce_mismatch",
             Self::RecipientCommitmentZero => "recipient_commitment_zero",
@@ -1326,6 +1391,7 @@ enum NativeBridgeWitnessExportAdmissionRejection {
     MissingParent,
     TipBeforeMessage,
     ExplicitHistoryTooLong,
+    MaterializedHistoryTooLong,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1359,6 +1425,7 @@ impl NativeBridgeWitnessExportAdmissionRejection {
             Self::MissingParent => "missing_parent",
             Self::TipBeforeMessage => "tip_before_message",
             Self::ExplicitHistoryTooLong => "explicit_history_too_long",
+            Self::MaterializedHistoryTooLong => "materialized_history_too_long",
         }
     }
 }
@@ -2895,7 +2962,7 @@ pub struct NativeNode {
     mining_sync_gate_open: AtomicBool,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
     mining_task: Mutex<Option<JoinHandle<()>>>,
-    sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
+    sync_tx: Mutex<Option<ProtocolSender>>,
     miner_identity: NativeMinerIdentity,
     prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
     prepared_candidate_actions: Mutex<BTreeMap<[u8; 32], PendingAction>>,
@@ -2967,7 +3034,8 @@ impl NativeNode {
             "native Hegemon node storage reload completed"
         );
 
-        let initial_mining_sync_gate_open = config.seeds.is_empty();
+        let initial_mining_sync_gate_open =
+            config.seeds.is_empty() && config.permits_empty_seed_authoring();
         let node = Arc::new(Self {
             config,
             db,
@@ -3003,7 +3071,7 @@ impl NativeNode {
         Ok(node)
     }
 
-    fn set_sync_sender(&self, sync_tx: mpsc::Sender<DirectedProtocolMessage>) {
+    fn set_sync_sender(&self, sync_tx: ProtocolSender) {
         *self.sync_tx.lock() = Some(sync_tx);
     }
 
@@ -3013,6 +3081,10 @@ impl NativeNode {
         self.refresh_mining_sync_gate();
     }
 
+    fn has_verified_header_hash(&self, hash: &[u8; 32]) -> Result<bool> {
+        Ok(self.header_by_hash(hash)?.is_some())
+    }
+
     fn admit_sync_request_from_peer(
         &self,
         peer_id: PeerId,
@@ -3020,6 +3092,13 @@ impl NativeNode {
         let now = Instant::now();
         let window_ms = duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW);
         let mut limits = self.sync_request_rate_limits.lock();
+        Self::prune_sync_request_rate_limits(&mut limits, now);
+        debug_assert!(
+            Self::sync_request_rate_limit_entries_after_insert(
+                limits.len(),
+                MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS
+            ) <= MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS
+        );
         let state = limits.entry(peer_id).or_insert(NativeSyncRequestRateState {
             window_start: now,
             requests: 0,
@@ -3040,9 +3119,60 @@ impl NativeNode {
         Ok(())
     }
 
+    fn prune_sync_request_rate_limits(
+        limits: &mut BTreeMap<PeerId, NativeSyncRequestRateState>,
+        now: Instant,
+    ) {
+        limits.retain(|_, state| {
+            now.saturating_duration_since(state.window_start)
+                <= NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL
+        });
+        let retained_before_insert = Self::sync_request_rate_limit_entries_before_insert(
+            limits.len(),
+            MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS,
+        );
+        if limits.len() <= retained_before_insert {
+            return;
+        }
+
+        let evict_count = limits.len().saturating_sub(retained_before_insert);
+        let mut oldest: Vec<_> = limits
+            .iter()
+            .map(|(peer_id, state)| (*peer_id, state.window_start))
+            .collect();
+        oldest.sort_by_key(|(_, window_start)| *window_start);
+        for (peer_id, _) in oldest.into_iter().take(evict_count) {
+            limits.remove(&peer_id);
+        }
+    }
+
+    fn sync_request_rate_limit_entries_before_insert(
+        current_entries: usize,
+        max_entries: usize,
+    ) -> usize {
+        if max_entries == 0 {
+            0
+        } else {
+            current_entries.min(max_entries.saturating_sub(1))
+        }
+    }
+
+    fn sync_request_rate_limit_entries_after_insert(
+        current_entries: usize,
+        max_entries: usize,
+    ) -> usize {
+        if max_entries == 0 {
+            0
+        } else {
+            Self::sync_request_rate_limit_entries_before_insert(current_entries, max_entries)
+                .saturating_add(1)
+        }
+    }
+
     fn refresh_mining_sync_gate(&self) {
         if self.config.seeds.is_empty() {
-            self.mining_sync_gate_open.store(true, Ordering::SeqCst);
+            self.mining_sync_gate_open
+                .store(self.config.permits_empty_seed_authoring(), Ordering::SeqCst);
             return;
         }
         let target = self.sync_target_height.load(Ordering::Relaxed);
@@ -3054,7 +3184,12 @@ impl NativeNode {
     }
 
     fn mining_sync_gate_allows_work(&self) -> bool {
-        self.config.seeds.is_empty() || self.mining_sync_gate_open.load(Ordering::SeqCst)
+        native_mining_gate_allows_work(NativeMiningGateInput {
+            has_seeds: !self.config.seeds.is_empty(),
+            dev: self.config.dev,
+            bootstrap_mining_authoring: self.config.bootstrap_mining_authoring,
+            observed_gate_open: self.mining_sync_gate_open.load(Ordering::SeqCst),
+        })
     }
 
     fn sync_status_fields(&self) -> (bool, u64) {
@@ -3858,6 +3993,7 @@ impl NativeNode {
         let mut canonical_rows_verified = 0usize;
         let mut action_bodies_verified = 0usize;
         let mut previous_parent_anchor_verified = range.from_height == 0;
+        let mut published_to_height = None;
         let mut parent = if range.from_height == 0 {
             None
         } else {
@@ -3865,10 +4001,6 @@ impl NativeNode {
         };
         for height in range.from_height..=range.to_height {
             let meta = self.load_canonical_sync_block_at_height(height)?;
-            canonical_rows_verified = canonical_rows_verified.saturating_add(1);
-            if meta.height != 0 {
-                action_bodies_verified = action_bodies_verified.saturating_add(1);
-            }
             if let Some(parent) = parent.as_ref() {
                 if meta.parent_hash != parent.hash {
                     return Err(anyhow!(
@@ -3882,12 +4014,37 @@ impl NativeNode {
                     previous_parent_anchor_verified = true;
                 }
             }
+            let mut candidate = blocks.clone();
+            candidate.push(meta.clone());
+            if let Err(err) = admit_native_sync_response_wire_budget(best_height, &candidate) {
+                warn!(
+                    from_height = range.from_height,
+                    attempted_to_height = height,
+                    admitted_blocks = blocks.len(),
+                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                    error = %err,
+                    "truncated native sync response before materializing an oversized wire payload"
+                );
+                break;
+            }
             parent = Some(meta.clone());
             blocks.push(meta);
+            canonical_rows_verified = canonical_rows_verified.saturating_add(1);
+            if height != 0 {
+                action_bodies_verified = action_bodies_verified.saturating_add(1);
+            }
+            published_to_height = Some(height);
         }
+        let Some(published_to_height) = published_to_height else {
+            return Ok(Vec::new());
+        };
+        let published_range = NativeSyncRange {
+            from_height: range.from_height,
+            to_height: published_to_height,
+        };
         evaluate_native_sync_block_range_publication_admission(
             native_sync_block_range_publication_admission_input(
-                range,
+                published_range,
                 &blocks,
                 canonical_rows_verified,
                 action_bodies_verified,
@@ -4697,6 +4854,7 @@ impl NativeNode {
             "syncing": syncing,
             "sync_target_height": sync_target_height,
             "mining_sync_gate_open": self.mining_sync_gate_allows_work(),
+            "bootstrap_authoring": self.config.bootstrap_mining_authoring,
         })
     }
 
@@ -4738,7 +4896,17 @@ impl NativeNode {
         })
     }
 
-    fn node_config_snapshot(&self) -> Value {
+    fn node_config_snapshot(&self, policy: RpcMethodPolicy) -> Value {
+        if policy != RpcMethodPolicy::Unsafe {
+            return json!({
+                "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
+                "chainSpecName": if self.config.dev { "Hegemon Native Dev" } else { "Hegemon Native" },
+                "chainType": if self.config.dev { "dev" } else { "live" },
+                "rpcMethods": self.config.rpc_methods,
+                "redacted": true,
+            });
+        }
+
         json!({
             "nodeName": self.config.node_name,
             "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
@@ -4750,8 +4918,10 @@ impl NativeNode {
             "rpcMethods": self.config.rpc_methods,
             "rpcExternal": self.config.rpc_external,
             "bootstrapNodes": self.config.seeds,
+            "bootstrapMiningAuthoring": self.config.bootstrap_mining_authoring,
             "pqVerbose": env_bool("HEGEMON_PQ_VERBOSE"),
             "maxPeers": self.config.max_peers,
+            "redacted": false,
         })
     }
 
@@ -5454,6 +5624,29 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         );
                     }
                     Ok(false) => {
+                        let known_verified = match node.has_verified_header_hash(&meta.hash) {
+                            Ok(known_verified) => known_verified,
+                            Err(err) => {
+                                warn!(
+                                    height = meta.height,
+                                    hash = %hex32(&meta.hash),
+                                    error = %err,
+                                    "failed to check known native block announce for sync evidence"
+                                );
+                                false
+                            }
+                        };
+                        if let Some(observed_height) =
+                            native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+                                verified_new_progress: false,
+                                verified_known_at_or_below_local_best: known_verified,
+                                local_best_height: node.best_meta().height,
+                                peer_best_height: announced_height,
+                                stopped_on_error: false,
+                            })
+                        {
+                            node.observe_verified_sync_peer_height(observed_height);
+                        }
                         request_missing_blocks(&node, &handle, peer_id, announced_height).await;
                     }
                     Err(err) => {
@@ -5552,16 +5745,28 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         "failed to import native sync block"
                     );
                 }
+                let local_best_height = node.best_meta().height;
+                if let Some(observed_height) =
+                    native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+                        verified_new_progress: progress.imported_blocks > 0,
+                        verified_known_at_or_below_local_best: progress
+                            .completed_with_only_known_blocks(),
+                        local_best_height,
+                        peer_best_height: best_height,
+                        stopped_on_error: progress.stopped_on_error,
+                    })
+                {
+                    node.observe_verified_sync_peer_height(observed_height);
+                }
                 if progress.imported_blocks > 0 {
-                    node.observe_verified_sync_peer_height(node.best_meta().height);
                     info!(
                         imported = progress.imported_blocks,
-                        best_height = node.best_meta().height,
+                        best_height = local_best_height,
                         peer_best_height = best_height,
                         "imported native sync response"
                     );
                 }
-                if progress.should_request_more(node.best_meta().height, best_height) {
+                if progress.should_request_more(local_best_height, best_height) {
                     request_missing_blocks(&node, &handle, peer_id, best_height).await;
                 } else {
                     node.refresh_mining_sync_gate();
@@ -5610,10 +5815,7 @@ fn import_native_sync_response_blocks(
     NativeSyncImportReport { progress, failure }
 }
 
-fn queue_native_best_sync_announce(
-    node: &NativeNode,
-    sync_tx: &mpsc::Sender<DirectedProtocolMessage>,
-) {
+fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) {
     let meta = node.best_meta();
     let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
     let payload = match encode_sync_message(&announce) {
@@ -5694,42 +5896,37 @@ async fn send_sync_response(
     handle: &ProtocolHandle,
     peer_id: PeerId,
     best_height: u64,
-    mut blocks: Vec<NativeBlockMeta>,
+    blocks: Vec<NativeBlockMeta>,
 ) {
-    loop {
-        let response = NativeSyncMessage::Response {
-            best_height,
-            blocks: blocks.clone(),
-        };
-        match encode_sync_message(&response) {
-            Ok(payload) => {
-                if let Err(err) = handle.send_to(peer_id, payload).await {
-                    warn!(error = %err, "failed to send native sync response");
-                }
-                return;
-            }
-            Err(err) if blocks.len() > 1 => {
-                let previous = blocks.len();
-                blocks.truncate(previous / 2);
-                warn!(
-                    previous_blocks = previous,
-                    truncated_blocks = blocks.len(),
-                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
-                    error = %err,
-                    "native sync response exceeded wire cap; truncating response"
-                );
-            }
-            Err(err) => {
-                warn!(
-                    block_count = blocks.len(),
-                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
-                    error = %err,
-                    "failed to encode native sync response"
-                );
-                return;
-            }
+    let response = NativeSyncMessage::Response {
+        best_height,
+        blocks,
+    };
+    let payload = match encode_sync_message(&response) {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!(
+                max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                error = %err,
+                "failed to encode admitted native sync response"
+            );
+            return;
         }
+    };
+    if let Err(err) = handle.send_to(peer_id, payload).await {
+        warn!(error = %err, "failed to send native sync response");
     }
+}
+
+fn admit_native_sync_response_wire_budget(
+    best_height: u64,
+    blocks: &[NativeBlockMeta],
+) -> Result<()> {
+    let response = NativeSyncMessage::Response {
+        best_height,
+        blocks: blocks.to_vec(),
+    };
+    encode_sync_message(&response).map(|_| ())
 }
 
 fn encode_sync_message(message: &NativeSyncMessage) -> Result<Vec<u8>> {
@@ -5893,7 +6090,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         "hegemon_exportBridgeWitness" => export_bridge_witness(node, params),
         "hegemon_telemetry" => Ok(node.telemetry_snapshot()),
         "hegemon_storageFootprint" => Ok(node.storage_footprint()),
-        "hegemon_nodeConfig" => Ok(node.node_config_snapshot()),
+        "hegemon_nodeConfig" => Ok(node.node_config_snapshot(node.rpc_policy()?)),
         "hegemon_blockTimestamps" => block_timestamps(node, params, false),
         "hegemon_minedBlockTimestamps" => block_timestamps(node, Value::Array(vec![]), true),
         "hegemon_peerList" => Ok(Value::Array(Vec::new())),
@@ -6193,6 +6390,7 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
             best_height: best.height,
             message_height: meta.as_ref().map(|meta| meta.height).unwrap_or(best.height),
             max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
+            max_materialized_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
         })
         .map_err(native_bridge_witness_export_admission_error)?;
     let meta = meta.expect("bridge witness admission ensures block exists");
@@ -6211,16 +6409,34 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
     })?;
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
-    let output = bridge_checkpoint_output_with_tip(
-        &checkpoint_from_meta(&meta),
-        &checkpoint_from_meta(&best),
+    let long_range_trusted_checkpoint = if best.height > meta.height {
+        let genesis_hash = node
+            .hash_by_height(0)?
+            .ok_or_else(|| anyhow!("missing genesis hash for bridge witness"))?;
+        let genesis = node
+            .header_by_hash(&genesis_hash)?
+            .ok_or_else(|| anyhow!("missing genesis header for bridge witness"))?;
+        Some(checkpoint_from_meta(&genesis))
+    } else {
+        None
+    };
+    let output_anchor = long_range_trusted_checkpoint
+        .as_ref()
+        .unwrap_or(&parent_checkpoint);
+    let message_checkpoint = checkpoint_from_meta(&meta);
+    let best_checkpoint = checkpoint_from_meta(&best);
+    let output = bridge_checkpoint_output_with_tip_from_anchor(
+        output_anchor,
+        &message_checkpoint,
+        &best_checkpoint,
         meta.message_root,
         &message,
         confirmations_checked,
         HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
     );
-    let direct_output = bridge_checkpoint_output(
-        &checkpoint_from_meta(&meta),
+    let direct_output = bridge_checkpoint_output_from_anchor(
+        &parent_checkpoint,
+        &message_checkpoint,
         meta.message_root,
         &message,
         1,
@@ -6511,6 +6727,7 @@ fn bridge_checkpoint_output_json(output: &BridgeCheckpointOutputV1) -> Value {
     json!({
         "source_chain_id": hex32(&output.source_chain_id),
         "rules_hash": hex32(&output.rules_hash),
+        "trusted_checkpoint_digest": hex32(&output.trusted_checkpoint_digest),
         "checkpoint_height": output.checkpoint_height,
         "checkpoint_header_hash": hex32(&output.checkpoint_header_hash),
         "checkpoint_cumulative_work": format!("0x{}", hex::encode(output.checkpoint_cumulative_work)),
@@ -10599,6 +10816,8 @@ fn evaluate_native_bridge_mint_payload_admission(
         Err(NativeBridgeMintPayloadAdmissionRejection::ReceiptMessageHashMismatch)
     } else if !input.version_matches {
         Err(NativeBridgeMintPayloadAdmissionRejection::VersionMismatch)
+    } else if !input.source_app_family_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::SourceAppFamilyMismatch)
     } else if !input.destination_matches {
         Err(NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch)
     } else if !input.mint_nonce_matches {
@@ -10676,6 +10895,7 @@ fn bridge_mint_payload_admission_input(
             payload_hash_matches,
             receipt_message_hash_matches,
             version_matches: payload.version == BRIDGE_MINT_PAYLOAD_VERSION_V1,
+            source_app_family_matches: args.message.app_family_id == BRIDGE_MINT_APP_FAMILY_ID_V1,
             destination_matches: payload.destination_chain_id == HEGEMON_CHAIN_ID_V1,
             mint_nonce_matches: payload.mint_nonce == args.source_message_nonce,
             recipient_commitment_nonzero: payload.recipient_commitment != [0u8; 48],
@@ -10689,6 +10909,7 @@ fn bridge_mint_payload_admission_input(
             payload_hash_matches,
             receipt_message_hash_matches,
             version_matches: false,
+            source_app_family_matches: false,
             destination_matches: false,
             mint_nonce_matches: false,
             recipient_commitment_nonzero: false,
@@ -10717,6 +10938,10 @@ fn native_bridge_mint_payload_admission_error(
         ),
         NativeBridgeMintPayloadAdmissionRejection::VersionMismatch => anyhow!(
             "inbound bridge mint payload version mismatch ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::SourceAppFamilyMismatch => anyhow!(
+            "inbound bridge mint source app family mismatch ({})",
             rejection.label()
         ),
         NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch => anyhow!(
@@ -10863,6 +11088,8 @@ fn evaluate_native_bridge_witness_export_admission(
                 .ok_or(NativeBridgeWitnessExportAdmissionRejection::TipBeforeMessage)?;
         if input.explicit_block_hash && u64::from(confirmations) > input.max_explicit_history {
             Err(NativeBridgeWitnessExportAdmissionRejection::ExplicitHistoryTooLong)
+        } else if input.best_height > input.max_materialized_history {
+            Err(NativeBridgeWitnessExportAdmissionRejection::MaterializedHistoryTooLong)
         } else {
             Ok(confirmations)
         }
@@ -10969,6 +11196,10 @@ fn native_bridge_witness_export_admission_error(
         ),
         NativeBridgeWitnessExportAdmissionRejection::ExplicitHistoryTooLong => anyhow!(
             "explicit bridge witness block is too old for full export; checked confirmations exceed {MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS} ({})",
+            rejection.label()
+        ),
+        NativeBridgeWitnessExportAdmissionRejection::MaterializedHistoryTooLong => anyhow!(
+            "bridge witness export requires a materialized header history longer than {MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS}; enable an indexed bridge proof store before raising this safe-RPC cap ({})",
             rejection.label()
         ),
     }
@@ -14650,6 +14881,10 @@ fn is_unsafe_rpc_method(method: &str) -> bool {
         "hegemon_startMining"
             | "hegemon_stopMining"
             | "hegemon_submitAction"
+            | "hegemon_peerGraph"
+            | "hegemon_peerList"
+            | "hegemon_exportBridgeWitness"
+            | "system_peers"
             | "da_submitCiphertexts"
             | "da_submitProofs"
     )
@@ -15652,6 +15887,7 @@ mod tests {
         best_height: u64,
         message_height: u64,
         max_explicit_history: u64,
+        max_materialized_history: u64,
         expected_valid: bool,
         expected_confirmations_checked: Option<u32>,
         expected_rejection: Option<String>,
@@ -16322,6 +16558,9 @@ mod tests {
     struct LeanBridgeMintPayloadAdmissionVectorFile {
         schema_version: u32,
         bridge_mint_payload_admission_cases: Vec<LeanBridgeMintPayloadAdmissionCase>,
+        cashvm_mint_binding_cases: Vec<LeanCashVmMintBindingCase>,
+        cashvm_proof_admission_cases: Vec<LeanCashVmProofAdmissionCase>,
+        cashvm_replay_update_cases: Vec<LeanCashVmReplayUpdateCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -16332,12 +16571,59 @@ mod tests {
         payload_hash_matches: bool,
         receipt_message_hash_matches: bool,
         version_matches: bool,
+        source_app_family_matches: bool,
         destination_matches: bool,
         mint_nonce_matches: bool,
         recipient_commitment_nonzero: bool,
         amount_nonzero: bool,
         amount_within_bound: bool,
         asset_non_native: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCashVmMintBindingCase {
+        name: String,
+        version_matches: bool,
+        source_app_family_matches: bool,
+        destination_matches: bool,
+        mint_nonce_matches: bool,
+        recipient_commitment_nonzero: bool,
+        amount_nonzero: bool,
+        amount_within_bound: bool,
+        asset_non_native: bool,
+        destination_matches_bridge_policy: bool,
+        bridge_instance_matches_token_category: bool,
+        token_category_matches_payload_asset: bool,
+        recipient_hash_matches_payload_recipient: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCashVmProofAdmissionCase {
+        name: String,
+        proof_nonempty: bool,
+        statement_digest_matches: bool,
+        verifier_script_matches: bool,
+        pq_soundness_at_least_policy: bool,
+        verifier_available: bool,
+        verifier_accepts: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanCashVmReplayUpdateCase {
+        name: String,
+        witness_depth_valid: bool,
+        previous_root_matches: bool,
+        replay_leaf_absent: bool,
+        next_root_matches: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
     }
@@ -16361,6 +16647,7 @@ mod tests {
         payload_hash_matches: bool,
         receipt_message_hash_matches: bool,
         version_matches: bool,
+        source_app_family_matches: bool,
         destination_matches: bool,
         mint_nonce_matches: bool,
         recipient_commitment_nonzero: bool,
@@ -17523,6 +17810,9 @@ mod tests {
         sync_missing_request_cases: Vec<LeanSyncMissingRequestCase>,
         sync_response_count_cases: Vec<LeanSyncResponseCountCase>,
         sync_request_rate_cases: Vec<LeanSyncRequestRateCase>,
+        sync_request_rate_state_cases: Vec<LeanSyncRequestRateStateCase>,
+        mining_sync_evidence_cases: Vec<LeanMiningSyncEvidenceCase>,
+        mining_gate_cases: Vec<LeanMiningGateCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17589,6 +17879,40 @@ mod tests {
         window_elapsed_ms: u64,
         window_ms: u64,
         expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncRequestRateStateCase {
+        name: String,
+        current_entries: usize,
+        max_entries: usize,
+        expected_retained_before_insert: usize,
+        expected_entries_after_insert: usize,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMiningSyncEvidenceCase {
+        name: String,
+        verified_new_progress: bool,
+        verified_known_at_or_below_local_best: bool,
+        local_best_height: u64,
+        peer_best_height: u64,
+        stopped_on_error: bool,
+        expected_observed_height: Option<u64>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanMiningGateCase {
+        name: String,
+        has_seeds: bool,
+        dev: bool,
+        bootstrap_authoring: bool,
+        observed_gate_open: bool,
+        expected_allows_work: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17688,6 +18012,7 @@ mod tests {
             max_peers: 0,
             mine: false,
             mine_threads: 1,
+            bootstrap_mining_authoring: false,
             miner_address: None,
             pow_bits: test_pow_bits,
         };
@@ -17853,6 +18178,7 @@ mod tests {
             max_peers: 0,
             mine: false,
             mine_threads: 1,
+            bootstrap_mining_authoring: false,
             miner_address: None,
             pow_bits: test_pow_bits,
         };
@@ -18811,6 +19137,7 @@ mod tests {
             max_peers: 0,
             mine: false,
             mine_threads: 1,
+            bootstrap_mining_authoring: false,
             miner_address: None,
             pow_bits: test_pow_bits,
         };
@@ -19409,6 +19736,8 @@ mod tests {
     struct LeanCiphertextArchiveBoundaryVectorFile {
         schema_version: u32,
         ciphertext_archive_boundary_cases: Vec<LeanCiphertextArchiveBoundaryCase>,
+        wallet_page_admission_cases: Vec<LeanCiphertextArchiveWalletPageAdmissionCase>,
+        wallet_sync_snapshot_admission_cases: Vec<LeanWalletSyncSnapshotAdmissionCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -19416,6 +19745,30 @@ mod tests {
         name: String,
         leaf_count: u64,
         archive_indices: Vec<u64>,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanCiphertextArchiveWalletPageAdmissionCase {
+        name: String,
+        requested_limit: u64,
+        returned_entries: u64,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletSyncSnapshotAdmissionCase {
+        name: String,
+        expected_depth: u64,
+        depth: u64,
+        leaf_count: u64,
+        next_index: u64,
+        commitment_cursor: u64,
+        ciphertext_cursor: u64,
+        tree_capacity: u128,
+        max_snapshot_gap: u64,
         expected_valid: bool,
         expected_error: Option<String>,
     }
@@ -19437,6 +19790,62 @@ mod tests {
             vectors.ciphertext_archive_boundary_cases.len() >= 6,
             "expected archive gap and leaf-count boundary coverage"
         );
+        assert!(
+            vectors.wallet_page_admission_cases.len() >= 5,
+            "expected wallet page admission boundary coverage"
+        );
+        assert!(
+            vectors.wallet_sync_snapshot_admission_cases.len() >= 7,
+            "expected wallet sync snapshot admission boundary coverage"
+        );
+        for case in &vectors.wallet_page_admission_cases {
+            let expected_valid = case.returned_entries <= case.requested_limit;
+            assert_eq!(
+                expected_valid, case.expected_valid,
+                "Lean wallet page case {} validity should bind response length to request limit",
+                case.name
+            );
+            assert_eq!(
+                case.expected_error.as_deref(),
+                if expected_valid {
+                    None
+                } else {
+                    Some("page_too_large")
+                },
+                "Lean wallet page case {} rejection drifted",
+                case.name
+            );
+        }
+
+        for case in &vectors.wallet_sync_snapshot_admission_cases {
+            let actual_error = if case.depth != case.expected_depth {
+                Some("depth_mismatch")
+            } else if case.tree_capacity < u128::from(case.leaf_count) {
+                Some("leaf_count_exceeds_tree_capacity")
+            } else if case.tree_capacity < u128::from(case.next_index) {
+                Some("ciphertext_index_exceeds_tree_capacity")
+            } else if case.max_snapshot_gap < case.leaf_count.saturating_sub(case.commitment_cursor)
+            {
+                Some("commitment_snapshot_too_large")
+            } else if case.max_snapshot_gap < case.next_index.saturating_sub(case.ciphertext_cursor)
+            {
+                Some("ciphertext_snapshot_too_large")
+            } else {
+                None
+            };
+            assert_eq!(
+                actual_error.is_none(),
+                case.expected_valid,
+                "Lean wallet sync snapshot case {} validity drifted",
+                case.name
+            );
+            assert_eq!(
+                actual_error,
+                case.expected_error.as_deref(),
+                "Lean wallet sync snapshot case {} rejection drifted",
+                case.name
+            );
+        }
 
         for case in &vectors.ciphertext_archive_boundary_cases {
             let tmp = tempfile::tempdir().expect("tempdir");
@@ -20199,6 +20608,12 @@ mod tests {
         let err = dispatch_rpc_method(&safe_node, "hegemon_submitAction", json!({}))
             .expect_err("safe RPC should reject action staging");
         assert!(err.to_string().contains("unsafe RPC method"));
+        let err = dispatch_rpc_method(&safe_node, "hegemon_peerGraph", Value::Array(Vec::new()))
+            .expect_err("safe RPC should reject peer topology");
+        assert!(err.to_string().contains("unsafe RPC method"));
+        let err = dispatch_rpc_method(&safe_node, "system_peers", Value::Array(Vec::new()))
+            .expect_err("safe RPC should reject peer topology");
+        assert!(err.to_string().contains("unsafe RPC method"));
         assert_eq!(safe_node.state.read().pending_actions.len(), 0);
         assert_eq!(safe_node.action_tree.len(), 0);
 
@@ -20234,8 +20649,53 @@ mod tests {
         assert!(!methods.contains(&"da_submitCiphertexts"));
         assert!(!methods.contains(&"hegemon_startMining"));
         assert!(!methods.contains(&"hegemon_submitAction"));
+        assert!(!methods.contains(&"hegemon_peerGraph"));
+        assert!(!methods.contains(&"hegemon_peerList"));
+        assert!(!methods.contains(&"hegemon_exportBridgeWitness"));
+        assert!(!methods.contains(&"system_peers"));
         let unsafe_methods = native_rpc_methods(RpcMethodPolicy::Unsafe);
         assert!(unsafe_methods.contains(&"hegemon_submitAction"));
+        assert!(unsafe_methods.contains(&"hegemon_peerGraph"));
+        assert!(unsafe_methods.contains(&"hegemon_exportBridgeWitness"));
+    }
+
+    #[test]
+    fn safe_node_config_redacts_local_paths_and_topology() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("198.51.100.7:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+
+        let safe_snapshot =
+            dispatch_rpc_method(&node, "hegemon_nodeConfig", Value::Array(Vec::new()))
+                .expect("safe config snapshot");
+        assert_eq!(safe_snapshot.get("redacted"), Some(&json!(true)));
+        for sensitive_key in [
+            "nodeName",
+            "basePath",
+            "p2pListenAddr",
+            "rpcListenAddr",
+            "rpcExternal",
+            "bootstrapNodes",
+            "pqVerbose",
+            "maxPeers",
+        ] {
+            assert!(
+                safe_snapshot.get(sensitive_key).is_none(),
+                "safe config must not expose {sensitive_key}"
+            );
+        }
+
+        let unsafe_tmp = tempfile::tempdir().expect("tempdir");
+        let unsafe_node =
+            NativeNode::open(test_config(unsafe_tmp.path(), 0x207f_fffe, "unsafe", false))
+                .expect("unsafe node");
+        let unsafe_snapshot =
+            dispatch_rpc_method(&unsafe_node, "hegemon_nodeConfig", Value::Array(Vec::new()))
+                .expect("unsafe config snapshot");
+        assert_eq!(unsafe_snapshot.get("redacted"), Some(&json!(false)));
+        assert!(unsafe_snapshot.get("basePath").is_some());
+        assert!(unsafe_snapshot.get("p2pListenAddr").is_some());
     }
 
     #[test]
@@ -22277,6 +22737,7 @@ mod tests {
             best_height: case.best_height,
             message_height: case.message_height,
             max_explicit_history: case.max_explicit_history,
+            max_materialized_history: case.max_materialized_history,
         };
         let actual = evaluate_native_bridge_witness_export_admission(input);
         let actual_rejection = actual
@@ -25696,11 +26157,140 @@ mod tests {
             !vectors.bridge_mint_payload_admission_cases.is_empty(),
             "Lean bridge mint payload admission cases must not be empty"
         );
+        assert!(
+            !vectors.cashvm_mint_binding_cases.is_empty(),
+            "Lean CashVM mint binding cases must not be empty"
+        );
+        assert!(
+            !vectors.cashvm_proof_admission_cases.is_empty(),
+            "Lean CashVM proof admission cases must not be empty"
+        );
+        assert!(
+            !vectors.cashvm_replay_update_cases.is_empty(),
+            "Lean CashVM replay update cases must not be empty"
+        );
 
         let mut names = BTreeSet::new();
         for case in &vectors.bridge_mint_payload_admission_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_bridge_mint_payload_admission_case(case);
+        }
+        for case in &vectors.cashvm_mint_binding_cases {
+            assert!(names.insert(case.name.clone()));
+            let expected_valid = case.version_matches
+                && case.source_app_family_matches
+                && case.destination_matches
+                && case.mint_nonce_matches
+                && case.recipient_commitment_nonzero
+                && case.amount_nonzero
+                && case.amount_within_bound
+                && case.asset_non_native
+                && case.destination_matches_bridge_policy
+                && case.bridge_instance_matches_token_category
+                && case.token_category_matches_payload_asset
+                && case.recipient_hash_matches_payload_recipient;
+            assert_eq!(
+                expected_valid, case.expected_valid,
+                "{} CashVM mint binding validity drifted from Lean preconditions",
+                case.name
+            );
+            let expected_rejection = if !case.version_matches {
+                Some("version_mismatch")
+            } else if !case.source_app_family_matches {
+                Some("source_app_family_mismatch")
+            } else if !case.destination_matches {
+                Some("destination_mismatch")
+            } else if !case.mint_nonce_matches {
+                Some("mint_nonce_mismatch")
+            } else if !case.recipient_commitment_nonzero {
+                Some("recipient_commitment_zero")
+            } else if !case.amount_nonzero {
+                Some("amount_zero")
+            } else if !case.amount_within_bound {
+                Some("amount_out_of_bounds")
+            } else if !case.asset_non_native {
+                Some("native_asset_not_allowed")
+            } else if !case.destination_matches_bridge_policy {
+                Some("destination_policy_mismatch")
+            } else if !case.bridge_instance_matches_token_category {
+                Some("asset_binding_mismatch")
+            } else if !case.token_category_matches_payload_asset {
+                Some("asset_binding_mismatch")
+            } else if !case.recipient_hash_matches_payload_recipient {
+                Some("recipient_binding_mismatch")
+            } else {
+                None
+            };
+            assert_eq!(
+                case.expected_rejection.as_deref(),
+                expected_rejection,
+                "{} CashVM mint binding rejection drifted from Lean order",
+                case.name
+            );
+        }
+        for case in &vectors.cashvm_proof_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            let expected_valid = case.proof_nonempty
+                && case.statement_digest_matches
+                && case.verifier_script_matches
+                && case.pq_soundness_at_least_policy
+                && case.verifier_available
+                && case.verifier_accepts;
+            assert_eq!(
+                expected_valid, case.expected_valid,
+                "{} CashVM proof admission validity drifted from Lean preconditions",
+                case.name
+            );
+            let expected_rejection = if !case.proof_nonempty {
+                Some("empty_proof")
+            } else if !case.statement_digest_matches {
+                Some("proof_statement_mismatch")
+            } else if !case.verifier_script_matches {
+                Some("verifier_script_mismatch")
+            } else if !case.pq_soundness_at_least_policy {
+                Some("insufficient_pq_soundness")
+            } else if !case.verifier_available {
+                Some("proof_verification_unavailable")
+            } else if !case.verifier_accepts {
+                Some("proof_verification_failed")
+            } else {
+                None
+            };
+            assert_eq!(
+                case.expected_rejection.as_deref(),
+                expected_rejection,
+                "{} CashVM proof admission rejection drifted from Lean order",
+                case.name
+            );
+        }
+        for case in &vectors.cashvm_replay_update_cases {
+            assert!(names.insert(case.name.clone()));
+            let expected_valid = case.witness_depth_valid
+                && case.previous_root_matches
+                && case.replay_leaf_absent
+                && case.next_root_matches;
+            assert_eq!(
+                expected_valid, case.expected_valid,
+                "{} CashVM replay update validity drifted from Lean preconditions",
+                case.name
+            );
+            let expected_rejection = if !case.witness_depth_valid {
+                Some("replay_witness_depth_mismatch")
+            } else if !case.previous_root_matches {
+                Some("previous_replay_root_mismatch")
+            } else if !case.replay_leaf_absent {
+                Some("replay_already_spent")
+            } else if !case.next_root_matches {
+                Some("next_replay_root_mismatch")
+            } else {
+                None
+            };
+            assert_eq!(
+                case.expected_rejection.as_deref(),
+                expected_rejection,
+                "{} CashVM replay update rejection drifted from Lean order",
+                case.name
+            );
         }
     }
 
@@ -25710,6 +26300,7 @@ mod tests {
             payload_hash_matches: case.payload_hash_matches,
             receipt_message_hash_matches: case.receipt_message_hash_matches,
             version_matches: case.version_matches,
+            source_app_family_matches: case.source_app_family_matches,
             destination_matches: case.destination_matches,
             mint_nonce_matches: case.mint_nonce_matches,
             recipient_commitment_nonzero: case.recipient_commitment_nonzero,
@@ -25835,6 +26426,11 @@ mod tests {
             case.name
         );
         assert_eq!(
+            input.source_app_family_matches, case.source_app_family_matches,
+            "{} production source_app_family_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
             input.destination_matches, case.destination_matches,
             "{} production destination_matches fact drifted from Lean raw spec",
             case.name
@@ -25913,6 +26509,9 @@ mod tests {
             payload_hash: bridge_payload_hash(&payload),
             payload,
         };
+        if !case.source_app_family_matches {
+            message.app_family_id = BRIDGE_MINT_APP_FAMILY_ID_V1.saturating_add(1);
+        }
         let mut output = test_bridge_checkpoint_output_for_message(&message);
         if !case.payload_hash_matches {
             message.payload_hash = [0x5au8; 48];
@@ -25940,6 +26539,7 @@ mod tests {
             "valid_payload"
             | "payload_hash_mismatch"
             | "receipt_message_hash_mismatch"
+            | "source_app_family_mismatch"
             | "mint_nonce_mismatch" => {
                 assert_eq!(payload.version, BRIDGE_MINT_PAYLOAD_VERSION_V1);
                 assert_eq!(payload.destination_chain_id, HEGEMON_CHAIN_ID_V1);
@@ -29976,9 +30576,13 @@ mod tests {
         let unsafe_methods = [
             "da_submitCiphertexts",
             "da_submitProofs",
+            "hegemon_exportBridgeWitness",
+            "hegemon_peerGraph",
+            "hegemon_peerList",
             "hegemon_startMining",
             "hegemon_stopMining",
             "hegemon_submitAction",
+            "system_peers",
         ];
         for method in unsafe_methods {
             assert_eq!(
@@ -30165,6 +30769,7 @@ mod tests {
             "hegemon_startMining" => json!({ "threads": 1 }),
             "hegemon_stopMining" => Value::Array(Vec::new()),
             "hegemon_submitAction" => json!({}),
+            "hegemon_exportBridgeWitness" => json!({ "start_height": 0, "end_height": 0 }),
             _ => Value::Array(Vec::new()),
         }
     }
@@ -30667,6 +31272,18 @@ mod tests {
             !vectors.sync_request_rate_cases.is_empty(),
             "Lean sync request-rate cases must not be empty"
         );
+        assert!(
+            !vectors.sync_request_rate_state_cases.is_empty(),
+            "Lean sync request-rate state cases must not be empty"
+        );
+        assert!(
+            !vectors.mining_sync_evidence_cases.is_empty(),
+            "Lean mining sync evidence cases must not be empty"
+        );
+        assert!(
+            !vectors.mining_gate_cases.is_empty(),
+            "Lean mining gate cases must not be empty"
+        );
 
         let mut names = BTreeSet::new();
         for case in &vectors.sync_response_range_cases {
@@ -30684,6 +31301,18 @@ mod tests {
         for case in &vectors.sync_request_rate_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_sync_request_rate_case(case);
+        }
+        for case in &vectors.sync_request_rate_state_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_request_rate_state_case(case);
+        }
+        for case in &vectors.mining_sync_evidence_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mining_sync_evidence_case(case);
+        }
+        for case in &vectors.mining_gate_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_mining_gate_case(case);
         }
     }
 
@@ -30784,6 +31413,62 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    fn verify_lean_sync_request_rate_state_case(case: &LeanSyncRequestRateStateCase) {
+        let retained = NativeNode::sync_request_rate_limit_entries_before_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        let after_insert = NativeNode::sync_request_rate_limit_entries_after_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        assert_eq!(
+            retained, case.expected_retained_before_insert,
+            "{} native sync request-rate state pre-insert retention drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            after_insert, case.expected_entries_after_insert,
+            "{} native sync request-rate state post-insert count drifted from Lean spec",
+            case.name
+        );
+        assert_eq!(
+            after_insert <= case.max_entries,
+            case.expected_valid,
+            "{} native sync request-rate state validity drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_mining_sync_evidence_case(case: &LeanMiningSyncEvidenceCase) {
+        let actual = native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+            verified_new_progress: case.verified_new_progress,
+            verified_known_at_or_below_local_best: case.verified_known_at_or_below_local_best,
+            local_best_height: case.local_best_height,
+            peer_best_height: case.peer_best_height,
+            stopped_on_error: case.stopped_on_error,
+        });
+        assert_eq!(
+            actual, case.expected_observed_height,
+            "{} native mining sync evidence observation drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn verify_lean_mining_gate_case(case: &LeanMiningGateCase) {
+        let actual = native_mining_gate_allows_work(NativeMiningGateInput {
+            has_seeds: case.has_seeds,
+            dev: case.dev,
+            bootstrap_mining_authoring: case.bootstrap_authoring,
+            observed_gate_open: case.observed_gate_open,
+        });
+        assert_eq!(
+            actual, case.expected_allows_work,
+            "{} native mining gate policy drifted from Lean spec",
+            case.name
+        );
     }
 
     #[test]
@@ -31261,6 +31946,25 @@ mod tests {
     }
 
     #[test]
+    fn native_sync_request_rate_state_is_bounded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+
+        for i in 0..(MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS + 32) {
+            let mut peer = [0u8; 32];
+            peer[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            node.admit_sync_request_from_peer(peer)
+                .expect("first request for each peer admits");
+        }
+
+        assert!(
+            node.sync_request_rate_limits.lock().len() <= MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS,
+            "sync request rate-limit state must stay bounded"
+        );
+    }
+
+    #[test]
     fn native_sync_response_count_uses_bounded_request_item_gate() {
         let input = NativeSyncResponseCountAdmissionInput {
             block_count: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1,
@@ -31342,6 +32046,60 @@ mod tests {
     }
 
     #[test]
+    fn live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring() {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env test lock");
+        let saved_mine = std::env::var("HEGEMON_MINE").ok();
+        let saved_seeds = std::env::var("HEGEMON_SEEDS").ok();
+        let saved_bootstrap = std::env::var("HEGEMON_BOOTSTRAP_AUTHORING").ok();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cli = |base_path: PathBuf| NativeCli {
+            dev: false,
+            tmp: false,
+            base_path: Some(base_path),
+            rpc_port: 0,
+            rpc_external: false,
+            rpc_methods: "safe".to_string(),
+            rpc_cors: None,
+            port: 30333,
+            listen_addr: Some("127.0.0.1:0".to_string()),
+            name: Some("test-live-miner".to_string()),
+        };
+
+        std::env::set_var("HEGEMON_MINE", "1");
+        std::env::remove_var("HEGEMON_SEEDS");
+        std::env::remove_var("HEGEMON_BOOTSTRAP_AUTHORING");
+        let err = NativeConfig::from_cli(cli(tmp.path().join("no-seeds")))
+            .expect_err("live mining without seeds must fail closed");
+        assert!(err.to_string().contains("empty HEGEMON_SEEDS"));
+
+        std::env::set_var("HEGEMON_BOOTSTRAP_AUTHORING", "1");
+        let bootstrap = NativeConfig::from_cli(cli(tmp.path().join("bootstrap")))
+            .expect("explicit bootstrap authoring admits empty-seed mining");
+        assert!(bootstrap.bootstrap_mining_authoring);
+
+        std::env::remove_var("HEGEMON_BOOTSTRAP_AUTHORING");
+        std::env::set_var("HEGEMON_SEEDS", "hegemon.pauli.group:30333");
+        let seeded = NativeConfig::from_cli(cli(tmp.path().join("seeded")))
+            .expect("seeded live mining is admitted");
+        assert_eq!(seeded.seeds, vec!["hegemon.pauli.group:30333"]);
+
+        match saved_mine {
+            Some(value) => std::env::set_var("HEGEMON_MINE", value),
+            None => std::env::remove_var("HEGEMON_MINE"),
+        }
+        match saved_seeds {
+            Some(value) => std::env::set_var("HEGEMON_SEEDS", value),
+            None => std::env::remove_var("HEGEMON_SEEDS"),
+        }
+        match saved_bootstrap {
+            Some(value) => std::env::set_var("HEGEMON_BOOTSTRAP_AUTHORING", value),
+            None => std::env::remove_var("HEGEMON_BOOTSTRAP_AUTHORING"),
+        }
+    }
+
+    #[test]
     fn seeded_mining_waits_until_sync_target_is_reached() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
@@ -31358,6 +32116,80 @@ mod tests {
         }
         node.refresh_mining_sync_gate();
         assert!(node.mining_sync_gate_allows_work());
+    }
+
+    #[test]
+    fn empty_seed_live_mining_gate_ignores_observed_open_without_bootstrap_authoring() {
+        assert!(!native_mining_gate_allows_work(NativeMiningGateInput {
+            has_seeds: false,
+            dev: false,
+            bootstrap_mining_authoring: false,
+            observed_gate_open: true,
+        }));
+        assert!(native_mining_gate_allows_work(NativeMiningGateInput {
+            has_seeds: false,
+            dev: false,
+            bootstrap_mining_authoring: true,
+            observed_gate_open: false,
+        }));
+        assert!(!native_mining_gate_allows_work(NativeMiningGateInput {
+            has_seeds: true,
+            dev: true,
+            bootstrap_mining_authoring: true,
+            observed_gate_open: false,
+        }));
+    }
+
+    #[test]
+    fn seeded_mining_gate_opens_on_known_equal_height_sync_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+        let best = node.best_meta();
+        assert!(!node.mining_sync_gate_allows_work());
+        assert!(node
+            .has_verified_header_hash(&best.hash)
+            .expect("known header"));
+
+        let observed = native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+            verified_new_progress: false,
+            verified_known_at_or_below_local_best: true,
+            local_best_height: best.height,
+            peer_best_height: best.height,
+            stopped_on_error: false,
+        })
+        .expect("known equal-height announce should produce sync evidence");
+        node.observe_verified_sync_peer_height(observed);
+        assert_eq!(node.sync_target_height.load(Ordering::Relaxed), best.height);
+        assert!(node.mining_sync_gate_allows_work());
+    }
+
+    #[test]
+    fn seeded_mining_gate_rejects_unverified_or_ahead_known_sync_evidence() {
+        assert_eq!(
+            native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+                verified_new_progress: false,
+                verified_known_at_or_below_local_best: false,
+                local_best_height: 10,
+                peer_best_height: 10,
+                stopped_on_error: false,
+            }),
+            None
+        );
+        assert_eq!(
+            native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+                verified_new_progress: false,
+                verified_known_at_or_below_local_best: true,
+                local_best_height: 10,
+                peer_best_height: 11,
+                stopped_on_error: false,
+            }),
+            None
+        );
     }
 
     #[test]
@@ -36355,6 +37187,24 @@ mod tests {
     }
 
     #[test]
+    fn bridge_mint_payload_admission_rejects_wrong_source_app_family() {
+        let payload =
+            test_bridge_mint_payload(42, transaction_core::constants::NATIVE_ASSET_ID + 7, 0x42);
+        let payload_bytes = payload.encode();
+        let mut args = test_disabled_risc0_bridge_inbound_args(&payload_bytes);
+        args.message.app_family_id = BRIDGE_MINT_APP_FAMILY_ID_V1.saturating_add(1);
+        let output = test_bridge_checkpoint_output_for_message(&args.message);
+        let input = bridge_mint_payload_admission_input(&args, &output, Some(&payload));
+
+        let rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .expect_err("bridge mint payload must bind the source app family");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintPayloadAdmissionRejection::SourceAppFamilyMismatch
+        );
+    }
+
+    #[test]
     fn bridge_mint_policy_authorization_precedes_fresh_replay_import() {
         let replay_key = [0x4du8; 48];
         let replay_state = InboundReplayState::new(BTreeSet::new(), BTreeSet::from([replay_key]));
@@ -36823,6 +37673,7 @@ mod tests {
             best_height: 4_200,
             message_height: 1,
             max_explicit_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
+            max_materialized_history: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
         };
         let rejection = evaluate_native_bridge_witness_export_admission(input)
             .expect_err("explicit old witness must reject before full history export");
@@ -36837,8 +37688,19 @@ mod tests {
         };
         assert_eq!(
             evaluate_native_bridge_witness_export_admission(latest_backscan_input)
+                .expect_err("safe RPC must reject oversized materialized history"),
+            NativeBridgeWitnessExportAdmissionRejection::MaterializedHistoryTooLong
+        );
+
+        let bounded_tip_input = NativeBridgeWitnessExportAdmissionInput {
+            best_height: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
+            message_height: MAX_BRIDGE_WITNESS_BACKSCAN_BLOCKS,
+            ..latest_backscan_input
+        };
+        assert_eq!(
+            evaluate_native_bridge_witness_export_admission(bounded_tip_input)
                 .expect("bounded latest backscan admission"),
-            4_200
+            1
         );
     }
 
@@ -37148,6 +38010,7 @@ mod tests {
         BridgeCheckpointOutputV1 {
             source_chain_id: HEGEMON_CHAIN_ID_V1,
             rules_hash: HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+            trusted_checkpoint_digest: [0xaau8; 32],
             checkpoint_height: message.source_height,
             checkpoint_header_hash: [0x11u8; 32],
             checkpoint_cumulative_work: [0x22u8; 48],
@@ -37557,6 +38420,7 @@ mod tests {
             max_peers: 0,
             mine: false,
             mine_threads: 1,
+            bootstrap_mining_authoring: false,
             miner_address: None,
             pow_bits,
         }

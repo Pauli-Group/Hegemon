@@ -7,7 +7,7 @@ namespace CheckpointOutput
 def checkpointOutputDomain : List Byte :=
   asciiBytes "hegemon.bridge.checkpoint-output-v1"
 
-def wireLength : Nat := 404
+def wireLength : Nat := 436
 
 def canonicalPreimageLength : Nat :=
   checkpointOutputDomain.length + wireLength
@@ -15,6 +15,7 @@ def canonicalPreimageLength : Nat :=
 structure OutputInput where
   sourceChainId : List Byte
   rulesHash : List Byte
+  trustedCheckpointDigest : List Byte
   checkpointHeight : Nat
   checkpointHeaderHash : List Byte
   checkpointCumulativeWork : List Byte
@@ -31,6 +32,7 @@ deriving DecidableEq, Repr
 def wireBytes (output : OutputInput) : List Byte :=
   output.sourceChainId
     ++ output.rulesHash
+    ++ output.trustedCheckpointDigest
     ++ u64le output.checkpointHeight
     ++ output.checkpointHeaderHash
     ++ output.checkpointCumulativeWork
@@ -53,6 +55,7 @@ def sampleOutput : OutputInput :=
   {
     sourceChainId := patternedBytes 32 21,
     rulesHash := patternedBytes 32 22,
+    trustedCheckpointDigest := patternedBytes 32 30,
     checkpointHeight := 72623859790382856,
     checkpointHeaderHash := patternedBytes 32 23,
     checkpointCumulativeWork := patternedBytes 48 24,
@@ -70,6 +73,7 @@ def maxScalarOutput : OutputInput :=
   {
     sourceChainId := patternedBytes 32 41,
     rulesHash := patternedBytes 32 42,
+    trustedCheckpointDigest := patternedBytes 32 50,
     checkpointHeight := 18446744073709551615,
     checkpointHeaderHash := patternedBytes 32 43,
     checkpointCumulativeWork := patternedBytes 48 44,
@@ -110,7 +114,7 @@ theorem sample_canonical_length :
     checkpoint_output_domain_length]
 
 theorem sample_canonical_length_exact :
-    (canonicalPreimage sampleOutput).length = 439 := by
+    (canonicalPreimage sampleOutput).length = 471 := by
   simp [canonicalPreimage, sample_wire_length, checkpoint_output_domain_length, wireLength]
 
 theorem max_scalar_wire_length :
@@ -119,7 +123,7 @@ theorem max_scalar_wire_length :
     u128le_length, u32le_length]
 
 theorem max_scalar_canonical_length_exact :
-    (canonicalPreimage maxScalarOutput).length = 439 := by
+    (canonicalPreimage maxScalarOutput).length = 471 := by
   simp [canonicalPreimage, max_scalar_wire_length, checkpoint_output_domain_length, wireLength]
 
 theorem sample_wire_omits_domain :

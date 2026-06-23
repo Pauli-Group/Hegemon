@@ -209,7 +209,7 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 4. **Query the node via RPC**:
    ```bash
    curl -s -H "Content-Type: application/json" \
-     -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+     -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_consensusStatus"}' \
      http://127.0.0.1:9944
    ```
 
@@ -227,7 +227,7 @@ Key options:
 - `--base-path <PATH>` - Persistent database location
 - `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
 - `--port <PORT>` - P2P port (default: 30333)
-- `--bootnodes <MULTIADDR>` - Bootstrap peers
+- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333"`, to avoid forks.
 
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining
@@ -253,20 +253,21 @@ Use this when you want to run two nodes that peer with each other:
 
 3. **Start the second node (peering with first)**:
    ```bash
-   ./target/release/hegemon-node --dev \
+   HEGEMON_SEEDS="127.0.0.1:30333" ./target/release/hegemon-node --dev \
      --base-path /tmp/node2 \
      --port 30334 \
      --rpc-port 9945 \
-     --bootnodes /ip4/127.0.0.1/tcp/30333
+     --listen-addr 127.0.0.1:30334
    ```
 
 4. **Verify connectivity**:
    ```bash
-   # Check peer count via system_health (system_peers returns empty in PQ network)
+   # Check consensus sync state. system_peers, hegemon_peerList, and
+   # hegemon_peerGraph are unsafe-only topology RPCs.
    curl -s -H "Content-Type: application/json" \
-     -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+     -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_consensusStatus"}' \
      http://127.0.0.1:9944
-   # Expected: {"peers":1,"isSyncing":false,"shouldHavePeers":true}
+   # Expected: syncing=false and an advancing height after the second node joins.
    ```
 
 ### Developer Setup

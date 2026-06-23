@@ -102,9 +102,13 @@ Hegemon-specific RPC methods exposed on the native JSON-RPC server:
   - Read-only wallet precheck. Accepts a 48-byte commitment-tree root as hex, with or without `0x`, and returns whether the native commitment tree recognizes it.
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
-- `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, native genesis identity, listen addresses, PQ verbosity, peer limits)
+- `hegemon_nodeConfig() -> NodeConfigSnapshot`
+  - Safe RPC returns only chain identity and method-policy fields with `redacted=true`.
+  - Unsafe local/operator RPC returns base path, listen addresses, bootstrap nodes, PQ verbosity, and peer limits.
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
+  - Unsafe-only local/operator topology RPC.
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
+  - Unsafe-only local/operator topology RPC.
 
 Compact mining RPC notes:
 - `hegemon_compactJob` is the preferred compact-job miner surface. It exposes a stable `job_id`, `pre_hash`, `parent_hash`, and share/network targets without assuming an implicit `u64` nonce.

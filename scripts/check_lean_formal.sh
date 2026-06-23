@@ -10,7 +10,9 @@ fi
 
 if ! command -v lake >/dev/null 2>&1; then
   printf 'lake is not installed. Install Lean tooling with:\n' >&2
-  printf '  curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none\n' >&2
+  printf '  curl --proto '"'"'=https'"'"' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh\n' >&2
+  printf '  printf "a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53  elan-init.sh\\n" | sha256sum -c -\n' >&2
+  printf '  sh elan-init.sh -y --default-toolchain none\n' >&2
   exit 2
 fi
 

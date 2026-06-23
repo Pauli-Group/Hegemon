@@ -18,6 +18,8 @@ def rejectionJson : Option BridgeMintPayloadReject -> String
       "\"receipt_message_hash_mismatch\""
   | some BridgeMintPayloadReject.versionMismatch =>
       "\"version_mismatch\""
+  | some BridgeMintPayloadReject.sourceAppFamilyMismatch =>
+      "\"source_app_family_mismatch\""
   | some BridgeMintPayloadReject.destinationMismatch =>
       "\"destination_mismatch\""
   | some BridgeMintPayloadReject.mintNonceMismatch =>
@@ -151,6 +153,8 @@ def caseJson
     ++ boolJson input.receiptMessageHashMatches ++ ",\n"
     ++ "      \"version_matches\": "
     ++ boolJson input.versionMatches ++ ",\n"
+    ++ "      \"source_app_family_matches\": "
+    ++ boolJson input.sourceAppFamilyMatches ++ ",\n"
     ++ "      \"destination_matches\": "
     ++ boolJson input.destinationMatches ++ ",\n"
     ++ "      \"mint_nonce_matches\": "
@@ -190,6 +194,7 @@ def vectorJson : String :=
         consumedAllBytes := false,
         canonicalReencodeMatches := false,
         versionMatches := false,
+        sourceAppFamilyMatches := false,
         destinationMatches := false,
         mintNonceMatches := false,
         recipientCommitmentNonzero := false,
@@ -203,6 +208,7 @@ def vectorJson : String :=
         consumedAllBytes := false,
         canonicalReencodeMatches := false,
         versionMatches := false,
+        sourceAppFamilyMatches := false,
         destinationMatches := false,
         mintNonceMatches := false,
         recipientCommitmentNonzero := false,
@@ -226,6 +232,11 @@ def vectorJson : String :=
       { validRawBridgeMintPayload with
         versionMatches := false }
       versionMismatchPayloadBytes ++ ",\n"
+    ++ caseJson "source-app-family-mismatch-raw-rejected"
+      "source_app_family_mismatch"
+      { validRawBridgeMintPayload with
+        sourceAppFamilyMatches := false }
+      validBridgeMintPayloadBytes ++ ",\n"
     ++ caseJson "destination-mismatch-raw-rejected"
       "destination_mismatch"
       { validRawBridgeMintPayload with
@@ -265,6 +276,7 @@ def vectorJson : String :=
         payloadHashMatches := false,
         receiptMessageHashMatches := false,
         versionMatches := false,
+        sourceAppFamilyMatches := false,
         destinationMatches := false,
         mintNonceMatches := false,
         recipientCommitmentNonzero := false,

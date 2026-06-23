@@ -68,6 +68,8 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.releaseBuildNeedsSecurityAdversarial = true
   releaseBuildNeedsNativeBackendSecurity :
     surface.ciReleaseGate.releaseBuildNeedsNativeBackendSecurity = true
+  nonReleaseJobsNoContentsWrite :
+    surface.ciReleaseGate.nonReleaseJobsNoContentsWrite = true
   releaseBinaryAuditStep :
     surface.ciReleaseGate.releaseBinaryAuditStep = true
   tagReleaseNativeBackendReviewStep :
@@ -216,6 +218,13 @@ theorem accepted_release_posture_exposes_all_release_gates
   have ciFacts :=
     accepted_ci_release_gate_exposes_required_policy_facts
       accepted.ciReleaseGateAccepted
+  rcases ciFacts with
+    ⟨dependencyAuditJob, dependencyAuditWaiverGateStep, formalCoreJob,
+      securityAdversarialJob, nativeBackendSecurityJob, releaseBuildJob,
+      releaseBuildNeedsSecurityGates, releaseBuildNeedsSecurityAdversarial,
+      releaseBuildNeedsNativeBackendSecurity, nonReleaseJobsNoContentsWrite,
+      releaseBinaryAuditStep, tagReleaseNativeBackendReviewStep,
+      tagReleaseNativeBackendPostureStep, branchProtectionRulesetEvidence⟩
   have nativeBackendPostureFacts :=
     accepted_native_backend_release_posture_exposes_preconditions
       accepted.nativeBackendPostureAccepted
@@ -229,26 +238,20 @@ theorem accepted_release_posture_exposes_all_release_gates
     dependencyScanClean := pqFacts.right.left,
     binaryScanClean := pqFacts.right.right,
     ciReleaseGateAccepted := accepted.ciReleaseGateAccepted,
-    dependencyAuditJob := ciFacts.left,
-    dependencyAuditWaiverGateStep := ciFacts.right.left,
-    formalCoreJob := ciFacts.right.right.left,
-    securityAdversarialJob := ciFacts.right.right.right.left,
-    nativeBackendSecurityJob := ciFacts.right.right.right.right.left,
-    releaseBuildJob := ciFacts.right.right.right.right.right.left,
-    releaseBuildNeedsSecurityGates :=
-      ciFacts.right.right.right.right.right.right.left,
-    releaseBuildNeedsSecurityAdversarial :=
-      ciFacts.right.right.right.right.right.right.right.left,
-    releaseBuildNeedsNativeBackendSecurity :=
-      ciFacts.right.right.right.right.right.right.right.right.left,
-    releaseBinaryAuditStep :=
-      ciFacts.right.right.right.right.right.right.right.right.right.left,
-    tagReleaseNativeBackendReviewStep :=
-      ciFacts.right.right.right.right.right.right.right.right.right.right.left,
-    tagReleaseNativeBackendPostureStep :=
-      ciFacts.right.right.right.right.right.right.right.right.right.right.right.left,
-    branchProtectionRulesetEvidence :=
-      ciFacts.right.right.right.right.right.right.right.right.right.right.right.right,
+    dependencyAuditJob := dependencyAuditJob,
+    dependencyAuditWaiverGateStep := dependencyAuditWaiverGateStep,
+    formalCoreJob := formalCoreJob,
+    securityAdversarialJob := securityAdversarialJob,
+    nativeBackendSecurityJob := nativeBackendSecurityJob,
+    releaseBuildJob := releaseBuildJob,
+    releaseBuildNeedsSecurityGates := releaseBuildNeedsSecurityGates,
+    releaseBuildNeedsSecurityAdversarial := releaseBuildNeedsSecurityAdversarial,
+    releaseBuildNeedsNativeBackendSecurity := releaseBuildNeedsNativeBackendSecurity,
+    nonReleaseJobsNoContentsWrite := nonReleaseJobsNoContentsWrite,
+    releaseBinaryAuditStep := releaseBinaryAuditStep,
+    tagReleaseNativeBackendReviewStep := tagReleaseNativeBackendReviewStep,
+    tagReleaseNativeBackendPostureStep := tagReleaseNativeBackendPostureStep,
+    branchProtectionRulesetEvidence := branchProtectionRulesetEvidence,
     nativeBackendPostureAccepted :=
       accepted.nativeBackendPostureAccepted,
     nativeBackendPosturePreconditions :=

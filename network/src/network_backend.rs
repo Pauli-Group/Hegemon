@@ -1836,6 +1836,7 @@ mod tests {
         constants: Vec<LeanQueueResourceConstant>,
         reserve_cases: Vec<LeanQueueReserveCase>,
         send_cases: Vec<LeanQueueSendCase>,
+        rate_limit_state_cases: Vec<LeanRateLimitStateCase>,
     }
 
     #[derive(serde::Deserialize)]
@@ -1867,6 +1868,16 @@ mod tests {
         expected_valid: bool,
         expected_reject: serde_json::Value,
         expected_queued_after: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanRateLimitStateCase {
+        name: String,
+        current_entries: usize,
+        max_entries: usize,
+        expected_retained_before_insert: usize,
+        expected_entries_after_insert: usize,
+        expected_valid: bool,
     }
 
     fn lean_queue_kind_max(kind: &str) -> Option<usize> {
@@ -2016,6 +2027,33 @@ mod tests {
         );
     }
 
+    fn assert_lean_rate_limit_state_case_matches_production(case: &LeanRateLimitStateCase) {
+        let retained = crate::service::rate_limit_state_retained_before_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        let after_insert = crate::service::rate_limit_state_entries_after_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        assert_eq!(
+            retained, case.expected_retained_before_insert,
+            "{} rate-limit state retained count drifted from Lean",
+            case.name
+        );
+        assert_eq!(
+            after_insert, case.expected_entries_after_insert,
+            "{} rate-limit state post-insert count drifted from Lean",
+            case.name
+        );
+        assert_eq!(
+            after_insert <= case.max_entries,
+            case.expected_valid,
+            "{} rate-limit state bound validity drifted from Lean",
+            case.name
+        );
+    }
+
     #[test]
     fn lean_generated_queue_resource_admission_vectors_match_production() {
         let Ok(path) = std::env::var("HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS") else {
@@ -2043,6 +2081,10 @@ mod tests {
 
         for case in &vectors.send_cases {
             assert_lean_send_case_matches_production(case);
+        }
+
+        for case in &vectors.rate_limit_state_cases {
+            assert_lean_rate_limit_state_case_matches_production(case);
         }
 
         let (tx, mut rx) = mpsc::channel(1);

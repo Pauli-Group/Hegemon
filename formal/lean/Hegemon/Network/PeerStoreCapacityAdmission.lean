@@ -30,6 +30,12 @@ def droppedPeerStoreEntryIds
     (entriesByRecency : List PeerStoreEntry) : List Nat :=
   (droppedPeerStoreCapacity maxEntries entriesByRecency).map (fun entry => entry.id)
 
+def loadedPeerStoreEntries
+    (maxEntries : Nat)
+    (decodedFreshEntriesByRecency : List PeerStoreEntry) :
+      List PeerStoreEntry :=
+  enforcePeerStoreCapacity maxEntries decodedFreshEntriesByRecency
+
 structure AcceptedPeerStoreCapacityFacts
     (maxEntries : Nat)
     (entriesByRecency : List PeerStoreEntry) : Prop where
@@ -91,6 +97,21 @@ theorem peer_store_capacity_retained_and_dropped_partition_entries
         entriesByRecency := by
   unfold enforcePeerStoreCapacity droppedPeerStoreCapacity
   exact List.take_append_drop maxEntries entriesByRecency
+
+theorem loaded_peer_store_entries_within_capacity
+    (maxEntries : Nat)
+    (decodedFreshEntriesByRecency : List PeerStoreEntry) :
+    (loadedPeerStoreEntries maxEntries decodedFreshEntriesByRecency).length <=
+      maxEntries := by
+  unfold loadedPeerStoreEntries enforcePeerStoreCapacity
+  exact List.length_take_le maxEntries decodedFreshEntriesByRecency
+
+theorem loaded_peer_store_retains_recency_prefix
+    (maxEntries : Nat)
+    (decodedFreshEntriesByRecency : List PeerStoreEntry) :
+    loadedPeerStoreEntries maxEntries decodedFreshEntriesByRecency =
+      decodedFreshEntriesByRecency.take maxEntries := by
+  rfl
 
 def belowLimitEntries : List PeerStoreEntry :=
   [

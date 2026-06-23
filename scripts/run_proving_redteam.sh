@@ -6,12 +6,14 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
 MODE="${HEGEMON_REDTEAM_MODE:-full}"
+HEGEMON_FUZZ_TOOLCHAIN="${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}"
 if [[ "$MODE" != "ci" && "$MODE" != "full" ]]; then
   echo "Unsupported HEGEMON_REDTEAM_MODE: $MODE" >&2
   exit 2
 fi
 
 export PROPTEST_CASES="${PROPTEST_CASES:-${PROPTEST_MAX_CASES:-64}}"
+export HEGEMON_FUZZ_TOOLCHAIN
 unset PROPTEST_MAX_CASES
 
 TIMESTAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -78,7 +80,7 @@ cargo_test_filter hegemon-node submit_proofs_rejects_non_native_tx_leaf_artifact
 cargo_test_filter hegemon-node submit_proofs_rejects_repartitioned_tx_leaf_binding_alias -- --nocapture
 cargo_test_filter hegemon-node submit_proofs_rejects_binding_hash_mismatch_before_staging -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
-  cargo +nightly fuzz run native_tx_leaf_artifact -- -max_total_time=30
+  cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run native_tx_leaf_artifact -- -max_total_time=30
 fi
 EOF
       ;;
@@ -119,7 +121,7 @@ cargo_test_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reje
 cargo_test_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
 cargo_test_filter consensus receipt_root_ -- --ignored --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
-  cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=30
+  cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi
 EOF
       ;;

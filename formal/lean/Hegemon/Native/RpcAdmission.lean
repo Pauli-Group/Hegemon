@@ -81,9 +81,13 @@ inductive RpcMethod where
   | safeMethod
   | daSubmitCiphertexts
   | daSubmitProofs
+  | hegemonExportBridgeWitness
+  | hegemonPeerGraph
+  | hegemonPeerList
   | hegemonStartMining
   | hegemonStopMining
   | hegemonSubmitAction
+  | systemPeers
 deriving DecidableEq, Repr
 
 inductive RpcMethodReject where
@@ -94,9 +98,13 @@ def rpcMethodIsUnsafe : RpcMethod -> Bool
   | RpcMethod.safeMethod => false
   | RpcMethod.daSubmitCiphertexts => true
   | RpcMethod.daSubmitProofs => true
+  | RpcMethod.hegemonExportBridgeWitness => true
+  | RpcMethod.hegemonPeerGraph => true
+  | RpcMethod.hegemonPeerList => true
   | RpcMethod.hegemonStartMining => true
   | RpcMethod.hegemonStopMining => true
   | RpcMethod.hegemonSubmitAction => true
+  | RpcMethod.systemPeers => true
 
 def evaluateRpcMethodGate
     (policy : RpcPolicy)

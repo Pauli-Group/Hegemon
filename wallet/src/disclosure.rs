@@ -66,6 +66,12 @@ pub fn decode_hex_32(input: &str) -> Result<[u8; 32], WalletError> {
     let trimmed = input
         .strip_prefix("0x")
         .ok_or_else(|| WalletError::Serialization("hex string must start with 0x".into()))?;
+    if trimmed.len() != 64 {
+        return Err(WalletError::Serialization(format!(
+            "expected 64 hex chars for 32-byte hex, got {}",
+            trimmed.len()
+        )));
+    }
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("invalid hex: {e}")))?;
     if bytes.len() != 32 {
@@ -84,6 +90,12 @@ pub fn decode_hex_48(input: &str) -> Result<[u8; 48], WalletError> {
     let trimmed = input
         .strip_prefix("0x")
         .ok_or_else(|| WalletError::Serialization("hex string must start with 0x".into()))?;
+    if trimmed.len() != 96 {
+        return Err(WalletError::Serialization(format!(
+            "expected 96 hex chars for 48-byte hex, got {}",
+            trimmed.len()
+        )));
+    }
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("invalid hex: {e}")))?;
     if bytes.len() != 48 {

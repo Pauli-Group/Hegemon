@@ -34,7 +34,7 @@ pub enum HandshakeMessage {
 pub struct InitHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// Initiator's ML-KEM-1024 public key (1568 bytes)
+    /// Initiator's signed per-session ML-KEM-1024 public key (1568 bytes)
     pub mlkem_public_key: Vec<u8>,
     /// Initiator's identity public key (ML-DSA-65)
     pub identity_key: Vec<u8>,
@@ -49,7 +49,7 @@ pub struct InitHelloMessage {
 pub struct RespHelloMessage {
     /// Protocol version
     pub version: u8,
-    /// Responder's ML-KEM-1024 public key (1568 bytes)
+    /// Responder's signed per-session ML-KEM-1024 public key (1568 bytes)
     pub mlkem_public_key: Vec<u8>,
     /// ML-KEM ciphertext encapsulated to initiator's public key (1568 bytes)
     pub mlkem_ciphertext: Vec<u8>,
@@ -186,7 +186,8 @@ pub struct LocalIdentity {
     pub signing_key: MlDsaSecretKey,
     /// ML-DSA-65 verification key
     pub verify_key: MlDsaPublicKey,
-    /// ML-KEM-1024 key pair for encapsulation
+    /// Long-term ML-KEM-1024 key pair retained for identity material compatibility.
+    /// Transport handshakes use signed per-session KEM keys instead of this static key.
     pub kem_keypair: MlKemKeyPair,
 }
 
@@ -224,7 +225,7 @@ impl LocalIdentity {
 pub struct RemotePeer {
     /// Peer's identity public key
     pub identity_key: MlDsaPublicKey,
-    /// Peer's KEM public key
+    /// Peer's signed per-session KEM public key from the handshake
     pub kem_public_key: MlKemPublicKey,
     /// Derived peer ID
     pub peer_id: PeerId,

@@ -5,6 +5,7 @@ use scale_info::TypeInfo;
 use crate::types::{ActionId, FamilyId};
 
 pub const FAMILY_BRIDGE: FamilyId = 5;
+pub const BRIDGE_MINT_APP_FAMILY_ID_V1: FamilyId = FAMILY_BRIDGE;
 
 pub const ACTION_BRIDGE_OUTBOUND: ActionId = 1;
 pub const ACTION_BRIDGE_INBOUND: ActionId = 2;

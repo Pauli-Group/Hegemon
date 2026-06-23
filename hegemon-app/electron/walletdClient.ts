@@ -39,6 +39,12 @@ const WALLETD_ENV_DEFAULTS: Record<string, string> = {
   HEGEMON_WALLET_TRY_SIGNED_SUBMIT: '0'
 };
 
+function rejectLineDelimitedPassphrase(passphrase: string): void {
+  if (passphrase.includes('\n') || passphrase.includes('\r')) {
+    throw new Error('Wallet passphrase cannot contain line breaks.');
+  }
+}
+
 function walletdSpawnEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   for (const [key, value] of Object.entries(WALLETD_ENV_DEFAULTS)) {
@@ -137,6 +143,7 @@ export class WalletdClient {
   }
 
   private async ensureProcess(storePath: string, passphrase: string, mode: WalletdMode): Promise<void> {
+    rejectLineDelimitedPassphrase(passphrase);
     const resolvedPath = expandHomePath(storePath);
     if (this.process && this.storePath === resolvedPath && this.mode === mode) {
       return;

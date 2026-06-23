@@ -1,3 +1,5 @@
+set_option maxHeartbeats 800000
+
 namespace Hegemon
 namespace Release
 namespace CiReleaseGate
@@ -12,6 +14,7 @@ inductive CiReleaseGateReject where
   | releaseBuildDependencyMissing
   | releaseBuildSecurityAdversarialDependencyMissing
   | releaseBuildNativeBackendSecurityDependencyMissing
+  | nonReleaseJobContentsWrite
   | releaseBinaryAuditMissing
   | tagReleaseNativeBackendReviewMissing
   | tagReleaseNativeBackendPostureMissing
@@ -28,6 +31,7 @@ structure CiReleaseGateInput where
   releaseBuildNeedsSecurityGates : Bool
   releaseBuildNeedsSecurityAdversarial : Bool
   releaseBuildNeedsNativeBackendSecurity : Bool
+  nonReleaseJobsNoContentsWrite : Bool
   releaseBinaryAuditStep : Bool
   tagReleaseNativeBackendReviewStep : Bool
   tagReleaseNativeBackendPostureStep : Bool
@@ -56,6 +60,8 @@ def evaluateCiReleaseGate
   else if input.releaseBuildNeedsNativeBackendSecurity = false then
     Except.error
       CiReleaseGateReject.releaseBuildNativeBackendSecurityDependencyMissing
+  else if input.nonReleaseJobsNoContentsWrite = false then
+    Except.error CiReleaseGateReject.nonReleaseJobContentsWrite
   else if input.releaseBinaryAuditStep = false then
     Except.error CiReleaseGateReject.releaseBinaryAuditMissing
   else if input.tagReleaseNativeBackendReviewStep = false then
@@ -88,6 +94,7 @@ def ciReleaseGatePreconditions (input : CiReleaseGateInput) : Bool :=
     input.releaseBuildNeedsSecurityGates &&
     input.releaseBuildNeedsSecurityAdversarial &&
     input.releaseBuildNeedsNativeBackendSecurity &&
+    input.nonReleaseJobsNoContentsWrite &&
     input.releaseBinaryAuditStep &&
     input.tagReleaseNativeBackendReviewStep &&
     input.tagReleaseNativeBackendPostureStep &&
@@ -101,7 +108,8 @@ theorem accepts_iff_ci_release_gate_preconditions
       formalCoreJob securityAdversarialJob
       nativeBackendSecurityJob releaseBuildJob releaseBuildNeedsSecurityGates
       releaseBuildNeedsSecurityAdversarial
-      releaseBuildNeedsNativeBackendSecurity releaseBinaryAuditStep
+      releaseBuildNeedsNativeBackendSecurity nonReleaseJobsNoContentsWrite
+      releaseBinaryAuditStep
       tagReleaseNativeBackendReviewStep tagReleaseNativeBackendPostureStep
       branchProtectionRulesetEvidence =>
       unfold ciReleaseGateAccepts ciReleaseGatePreconditions
@@ -115,6 +123,7 @@ theorem accepts_iff_ci_release_gate_preconditions
         cases releaseBuildNeedsSecurityGates <;>
         cases releaseBuildNeedsSecurityAdversarial <;>
         cases releaseBuildNeedsNativeBackendSecurity <;>
+        cases nonReleaseJobsNoContentsWrite <;>
         cases releaseBinaryAuditStep <;>
         cases tagReleaseNativeBackendReviewStep <;>
         cases tagReleaseNativeBackendPostureStep <;>
@@ -133,6 +142,7 @@ theorem accepted_ci_release_gate_exposes_required_policy_facts
       ∧ input.releaseBuildNeedsSecurityGates = true
       ∧ input.releaseBuildNeedsSecurityAdversarial = true
       ∧ input.releaseBuildNeedsNativeBackendSecurity = true
+      ∧ input.nonReleaseJobsNoContentsWrite = true
       ∧ input.releaseBinaryAuditStep = true
       ∧ input.tagReleaseNativeBackendReviewStep = true
       ∧ input.tagReleaseNativeBackendPostureStep = true
@@ -153,11 +163,12 @@ theorem accepted_ci_release_gate_depends_on_dependency_audit_policy
       ∧ input.releaseBuildNeedsSecurityGates = true := by
   have facts :=
     accepted_ci_release_gate_exposes_required_policy_facts accepted
-  exact
-      ⟨facts.left,
-        facts.right.left,
-        facts.right.right.right.right.right.left,
-        facts.right.right.right.right.right.right.left⟩
+  rcases facts with
+    ⟨dependency, dependencyWaiverGate, _formalCore, _securityAdversarial,
+      _nativeBackendSecurity, releaseBuild, needsSecurity, _needsAdversarial,
+      _needsNativeBackend, _nonReleaseWrite, _binaryAudit, _review,
+      _posture, _ruleset⟩
+  exact ⟨dependency, dependencyWaiverGate, releaseBuild, needsSecurity⟩
 
 theorem accepted_ci_release_gate_binds_dependency_audit_to_release_build
     {input : CiReleaseGateInput}
@@ -186,6 +197,7 @@ def completeCiReleaseGate : CiReleaseGateInput :=
     releaseBuildNeedsSecurityGates := true,
     releaseBuildNeedsSecurityAdversarial := true,
     releaseBuildNeedsNativeBackendSecurity := true,
+    nonReleaseJobsNoContentsWrite := true,
     releaseBinaryAuditStep := true,
     tagReleaseNativeBackendReviewStep := true,
     tagReleaseNativeBackendPostureStep := true,
@@ -218,6 +230,9 @@ def missingReleaseBuildSecurityAdversarialDependency : CiReleaseGateInput :=
 
 def missingReleaseBuildNativeBackendSecurityDependency : CiReleaseGateInput :=
   { completeCiReleaseGate with releaseBuildNeedsNativeBackendSecurity := false }
+
+def nonReleaseJobContentsWrite : CiReleaseGateInput :=
+  { completeCiReleaseGate with nonReleaseJobsNoContentsWrite := false }
 
 def missingReleaseBinaryAuditStep : CiReleaseGateInput :=
   { completeCiReleaseGate with releaseBinaryAuditStep := false }
@@ -317,6 +332,7 @@ theorem release_binary_audit_missing_rejects_after_security_jobs
       input.releaseBuildNeedsSecurityAdversarial = true)
     (needsNativeBackend :
       input.releaseBuildNeedsNativeBackendSecurity = true)
+    (nonReleaseNoWrite : input.nonReleaseJobsNoContentsWrite = true)
     (binaryAudit : input.releaseBinaryAuditStep = false) :
     evaluateCiReleaseGate input =
       Except.error CiReleaseGateReject.releaseBinaryAuditMissing := by
@@ -331,6 +347,7 @@ theorem release_binary_audit_missing_rejects_after_security_jobs
     needsSecurity,
     needsAdversarial,
     needsNativeBackend,
+    nonReleaseNoWrite,
     binaryAudit
   ]
 
@@ -418,6 +435,36 @@ theorem release_build_native_backend_security_dependency_missing_rejects
     needsNativeBackend
   ]
 
+theorem non_release_job_contents_write_rejects_before_release_binary_audit
+    {input : CiReleaseGateInput}
+    (dependency : input.dependencyAuditJob = true)
+    (dependencyWaiverGate : input.dependencyAuditWaiverGateStep = true)
+    (formalCore : input.formalCoreJob = true)
+    (securityAdversarial : input.securityAdversarialJob = true)
+    (nativeBackendSecurity : input.nativeBackendSecurityJob = true)
+    (releaseBuild : input.releaseBuildJob = true)
+    (needsSecurity : input.releaseBuildNeedsSecurityGates = true)
+    (needsAdversarial :
+      input.releaseBuildNeedsSecurityAdversarial = true)
+    (needsNativeBackend :
+      input.releaseBuildNeedsNativeBackendSecurity = true)
+    (nonReleaseNoWrite : input.nonReleaseJobsNoContentsWrite = false) :
+    evaluateCiReleaseGate input =
+      Except.error CiReleaseGateReject.nonReleaseJobContentsWrite := by
+  unfold evaluateCiReleaseGate
+  simp [
+    dependency,
+    dependencyWaiverGate,
+    formalCore,
+    securityAdversarial,
+    nativeBackendSecurity,
+    releaseBuild,
+    needsSecurity,
+    needsAdversarial,
+    needsNativeBackend,
+    nonReleaseNoWrite
+  ]
+
 theorem tag_release_native_backend_review_missing_rejects
     {input : CiReleaseGateInput}
     (dependency : input.dependencyAuditJob = true)
@@ -431,6 +478,7 @@ theorem tag_release_native_backend_review_missing_rejects
       input.releaseBuildNeedsSecurityAdversarial = true)
     (needsNativeBackend :
       input.releaseBuildNeedsNativeBackendSecurity = true)
+    (nonReleaseNoWrite : input.nonReleaseJobsNoContentsWrite = true)
     (binaryAudit : input.releaseBinaryAuditStep = true)
     (review : input.tagReleaseNativeBackendReviewStep = false) :
     evaluateCiReleaseGate input =
@@ -447,6 +495,7 @@ theorem tag_release_native_backend_review_missing_rejects
     needsSecurity,
     needsAdversarial,
     needsNativeBackend,
+    nonReleaseNoWrite,
     binaryAudit,
     review
   ]
@@ -464,6 +513,7 @@ theorem tag_release_native_backend_posture_missing_rejects
       input.releaseBuildNeedsSecurityAdversarial = true)
     (needsNativeBackend :
       input.releaseBuildNeedsNativeBackendSecurity = true)
+    (nonReleaseNoWrite : input.nonReleaseJobsNoContentsWrite = true)
     (binaryAudit : input.releaseBinaryAuditStep = true)
     (review : input.tagReleaseNativeBackendReviewStep = true)
     (posture : input.tagReleaseNativeBackendPostureStep = false) :
@@ -481,6 +531,7 @@ theorem tag_release_native_backend_posture_missing_rejects
     needsSecurity,
     needsAdversarial,
     needsNativeBackend,
+    nonReleaseNoWrite,
     binaryAudit,
     review,
     posture
@@ -499,6 +550,7 @@ theorem branch_protection_ruleset_missing_rejects
       input.releaseBuildNeedsSecurityAdversarial = true)
     (needsNativeBackend :
       input.releaseBuildNeedsNativeBackendSecurity = true)
+    (nonReleaseNoWrite : input.nonReleaseJobsNoContentsWrite = true)
     (binaryAudit : input.releaseBinaryAuditStep = true)
     (review : input.tagReleaseNativeBackendReviewStep = true)
     (posture : input.tagReleaseNativeBackendPostureStep = true)
@@ -517,6 +569,7 @@ theorem branch_protection_ruleset_missing_rejects
     needsSecurity,
     needsAdversarial,
     needsNativeBackend,
+    nonReleaseNoWrite,
     binaryAudit,
     review,
     posture,
@@ -534,6 +587,7 @@ theorem dependency_audit_precedes_all_missing :
       releaseBuildNeedsSecurityGates := false,
       releaseBuildNeedsSecurityAdversarial := false,
       releaseBuildNeedsNativeBackendSecurity := false,
+      nonReleaseJobsNoContentsWrite := false,
       releaseBinaryAuditStep := false,
       tagReleaseNativeBackendReviewStep := false,
       tagReleaseNativeBackendPostureStep := false,

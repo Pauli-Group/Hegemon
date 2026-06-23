@@ -30,9 +30,13 @@ def methodJson : RpcMethod -> String
   | RpcMethod.safeMethod => "\"system_health\""
   | RpcMethod.daSubmitCiphertexts => "\"da_submitCiphertexts\""
   | RpcMethod.daSubmitProofs => "\"da_submitProofs\""
+  | RpcMethod.hegemonExportBridgeWitness => "\"hegemon_exportBridgeWitness\""
+  | RpcMethod.hegemonPeerGraph => "\"hegemon_peerGraph\""
+  | RpcMethod.hegemonPeerList => "\"hegemon_peerList\""
   | RpcMethod.hegemonStartMining => "\"hegemon_startMining\""
   | RpcMethod.hegemonStopMining => "\"hegemon_stopMining\""
   | RpcMethod.hegemonSubmitAction => "\"hegemon_submitAction\""
+  | RpcMethod.systemPeers => "\"system_peers\""
 
 def methodRejectionJson : Option RpcMethodReject -> String
   | none => "null"
@@ -207,12 +211,20 @@ def vectorJson : String :=
       RpcMethod.daSubmitCiphertexts ++ ",\n"
     ++ methodGateCaseJson "proof-upload-unsafe-under-safe-policy" RpcPolicy.safeOnly
       RpcMethod.daSubmitProofs ++ ",\n"
+    ++ methodGateCaseJson "bridge-witness-export-unsafe-under-safe-policy" RpcPolicy.safeOnly
+      RpcMethod.hegemonExportBridgeWitness ++ ",\n"
+    ++ methodGateCaseJson "peer-graph-unsafe-under-safe-policy" RpcPolicy.safeOnly
+      RpcMethod.hegemonPeerGraph ++ ",\n"
+    ++ methodGateCaseJson "peer-list-unsafe-under-safe-policy" RpcPolicy.safeOnly
+      RpcMethod.hegemonPeerList ++ ",\n"
     ++ methodGateCaseJson "start-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
       RpcMethod.hegemonStartMining ++ ",\n"
     ++ methodGateCaseJson "stop-mining-unsafe-under-safe-policy" RpcPolicy.safeOnly
       RpcMethod.hegemonStopMining ++ ",\n"
     ++ methodGateCaseJson "submit-action-unsafe-under-safe-policy" RpcPolicy.safeOnly
-      RpcMethod.hegemonSubmitAction ++ "\n"
+      RpcMethod.hegemonSubmitAction ++ ",\n"
+    ++ methodGateCaseJson "system-peers-unsafe-under-safe-policy" RpcPolicy.safeOnly
+      RpcMethod.systemPeers ++ "\n"
     ++ "  ],\n"
     ++ "  \"method_list_cases\": [\n"
     ++ methodListCaseJson "safe-list-hides-unsafe-methods" RpcPolicy.safeOnly ++ ",\n"

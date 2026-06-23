@@ -1,7 +1,8 @@
 use crate::nat::{NatTraversal, NatTraversalConfig, NatTraversalResult};
 use crate::p2p::{CompactAddress, Connection, CoordinationMessage, WireMessage};
-use crate::peer_manager::{AddPeerResult, PeerManager, PeerSessionId};
+use crate::peer_manager::{AddPeerResult, PeerManager, PeerSessionId, QueuedWireMessage};
 use crate::peer_store::PeerStore;
+use crate::queue_budget::{ByteBudget, BytePermit};
 use crate::{
     GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
     wire,
@@ -10,6 +11,7 @@ use crypto::hashes::sha256;
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -22,8 +24,8 @@ use tracing::{error, info, warn};
 
 pub struct ProtocolHandle {
     protocol_id: ProtocolId,
-    outbound: mpsc::Sender<DirectedProtocolMessage>,
-    inbound: mpsc::Receiver<(PeerId, ProtocolMessage)>,
+    outbound: ProtocolSender,
+    inbound: mpsc::Receiver<QueuedInboundProtocolMessage>,
 }
 
 impl ProtocolHandle {
@@ -31,18 +33,11 @@ impl ProtocolHandle {
         self.protocol_id
     }
 
-    pub fn sender(&self) -> mpsc::Sender<DirectedProtocolMessage> {
+    pub fn sender(&self) -> ProtocolSender {
         self.outbound.clone()
     }
 
-    pub fn receiver(&mut self) -> &mut mpsc::Receiver<(PeerId, ProtocolMessage)> {
-        &mut self.inbound
-    }
-
-    pub async fn send(
-        &self,
-        payload: Vec<u8>,
-    ) -> Result<(), mpsc::error::SendError<DirectedProtocolMessage>> {
+    pub async fn send(&self, payload: Vec<u8>) -> Result<(), ProtocolQueueError> {
         self.outbound
             .send(DirectedProtocolMessage {
                 target: None,
@@ -58,7 +53,7 @@ impl ProtocolHandle {
         &self,
         peer_id: PeerId,
         payload: Vec<u8>,
-    ) -> Result<(), mpsc::error::SendError<DirectedProtocolMessage>> {
+    ) -> Result<(), ProtocolQueueError> {
         self.outbound
             .send(DirectedProtocolMessage {
                 target: Some(peer_id),
@@ -71,7 +66,7 @@ impl ProtocolHandle {
     }
 
     pub async fn recv(&mut self) -> Option<(PeerId, ProtocolMessage)> {
-        self.inbound.recv().await
+        self.inbound.recv().await.map(|queued| queued.message)
     }
 }
 
@@ -81,16 +76,89 @@ pub struct DirectedProtocolMessage {
     pub message: ProtocolMessage,
 }
 
+#[derive(Clone)]
+pub struct ProtocolSender {
+    outbound: mpsc::Sender<QueuedDirectedProtocolMessage>,
+    budget: ByteBudget,
+}
+
+#[derive(Debug)]
+pub enum ProtocolQueueError {
+    Full,
+    Closed,
+}
+
+impl fmt::Display for ProtocolQueueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full => f.write_str("protocol queue full"),
+            Self::Closed => f.write_str("protocol queue closed"),
+        }
+    }
+}
+
+impl std::error::Error for ProtocolQueueError {}
+
+impl ProtocolSender {
+    pub async fn send(&self, message: DirectedProtocolMessage) -> Result<(), ProtocolQueueError> {
+        let queued = self.queue_message(message)?;
+        self.outbound
+            .send(queued)
+            .await
+            .map_err(|_| ProtocolQueueError::Closed)
+    }
+
+    pub fn try_send(&self, message: DirectedProtocolMessage) -> Result<(), ProtocolQueueError> {
+        let queued = self.queue_message(message)?;
+        self.outbound.try_send(queued).map_err(|err| match err {
+            mpsc::error::TrySendError::Full(_) => ProtocolQueueError::Full,
+            mpsc::error::TrySendError::Closed(_) => ProtocolQueueError::Closed,
+        })
+    }
+
+    fn queue_message(
+        &self,
+        message: DirectedProtocolMessage,
+    ) -> Result<QueuedDirectedProtocolMessage, ProtocolQueueError> {
+        let permit = self
+            .budget
+            .try_acquire(directed_protocol_message_queue_bytes(&message))
+            .ok_or(ProtocolQueueError::Full)?;
+        Ok(QueuedDirectedProtocolMessage {
+            message,
+            _permit: permit,
+        })
+    }
+}
+
+struct QueuedDirectedProtocolMessage {
+    message: DirectedProtocolMessage,
+    _permit: BytePermit,
+}
+
+struct QueuedInboundProtocolMessage {
+    message: (PeerId, ProtocolMessage),
+    _permit: BytePermit,
+}
+
+struct QueuedP2PMessage {
+    peer_id: PeerId,
+    session_id: PeerSessionId,
+    msg: WireMessage,
+    _permit: BytePermit,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct RelayConfig {
     pub allow_relay: bool,
     pub relays: Vec<String>,
 }
 
-#[derive(Default)]
 struct ProtocolMultiplexer {
-    handlers: HashMap<ProtocolId, mpsc::Sender<(PeerId, ProtocolMessage)>>,
-    outbound: SelectAll<BoxStream<'static, DirectedProtocolMessage>>,
+    handlers: HashMap<ProtocolId, mpsc::Sender<QueuedInboundProtocolMessage>>,
+    outbound: SelectAll<BoxStream<'static, QueuedDirectedProtocolMessage>>,
+    outbound_budget: ByteBudget,
+    inbound_budget: ByteBudget,
 }
 
 impl ProtocolMultiplexer {
@@ -98,12 +166,14 @@ impl ProtocolMultiplexer {
         Self {
             handlers: HashMap::new(),
             outbound: SelectAll::new(),
+            outbound_budget: ByteBudget::new(MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES),
+            inbound_budget: ByteBudget::new(MAX_PROTOCOL_INBOUND_QUEUE_BYTES),
         }
     }
 
     fn register(&mut self, protocol_id: ProtocolId) -> ProtocolHandle {
-        let (outbound_tx, outbound_rx) = mpsc::channel(1024);
-        let (inbound_tx, inbound_rx) = mpsc::channel(1024);
+        let (outbound_tx, outbound_rx) = mpsc::channel(PROTOCOL_CHANNEL_CAPACITY);
+        let (inbound_tx, inbound_rx) = mpsc::channel(PROTOCOL_CHANNEL_CAPACITY);
 
         let stream = ReceiverStream::new(outbound_rx).boxed();
 
@@ -112,7 +182,10 @@ impl ProtocolMultiplexer {
 
         ProtocolHandle {
             protocol_id,
-            outbound: outbound_tx,
+            outbound: ProtocolSender {
+                outbound: outbound_tx,
+                budget: self.outbound_budget.clone(),
+            },
             inbound: inbound_rx,
         }
     }
@@ -121,13 +194,30 @@ impl ProtocolMultiplexer {
         !self.handlers.is_empty()
     }
 
-    async fn next_outbound(&mut self) -> Option<DirectedProtocolMessage> {
+    async fn next_outbound(&mut self) -> Option<QueuedDirectedProtocolMessage> {
         FuturesStreamExt::next(&mut self.outbound).await
     }
 
     async fn dispatch_inbound(&mut self, peer_id: PeerId, msg: ProtocolMessage) {
         if let Some(handler) = self.handlers.get(&msg.protocol) {
-            let _ = handler.send((peer_id, msg)).await;
+            let bytes = protocol_message_queue_bytes(&msg);
+            let Some(permit) = self.inbound_budget.try_acquire(bytes) else {
+                warn!(
+                    protocol = msg.protocol,
+                    payload_bytes = msg.payload.len(),
+                    "dropping protocol message over inbound byte queue budget"
+                );
+                return;
+            };
+            if handler
+                .try_send(QueuedInboundProtocolMessage {
+                    message: (peer_id, msg),
+                    _permit: permit,
+                })
+                .is_err()
+            {
+                warn!("dropping protocol message because handler queue is full or closed");
+            }
         } else {
             warn!(
                 protocol = msg.protocol,
@@ -141,15 +231,13 @@ enum P2PCommand {
     NewPeer {
         peer_id: PeerId,
         addr: SocketAddr,
-        tx: mpsc::Sender<WireMessage>,
+        tx: mpsc::Sender<QueuedWireMessage>,
         session_id: PeerSessionId,
         inbound: bool,
         admit: oneshot::Sender<bool>,
     },
     Message {
-        peer_id: PeerId,
-        session_id: PeerSessionId,
-        msg: WireMessage,
+        queued: QueuedP2PMessage,
     },
     PeerDisconnected {
         peer_id: PeerId,
@@ -169,9 +257,39 @@ const MAX_INBOUND_HANDSHAKES: usize = 32;
 const ADDRESS_EXCHANGE_LIMIT: usize = 16;
 const ADDRESS_RATE_LIMIT: Duration = Duration::from_secs(5);
 const PUNCH_RATE_LIMIT: Duration = Duration::from_secs(5);
+const RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
+const MAX_RATE_LIMIT_STATE_PEERS: usize = 4096;
+const RATE_LIMIT_STATE_PEER_MULTIPLIER: usize = 4;
 const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
+const MAX_LEARNED_ADDRESSES: usize = 1024;
+const PROTOCOL_CHANNEL_CAPACITY: usize = 128;
+const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROTOCOL_INBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_P2P_COMMAND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+
+pub(crate) fn rate_limit_state_retained_before_insert(
+    current_entries: usize,
+    max_entries: usize,
+) -> usize {
+    if max_entries == 0 {
+        0
+    } else {
+        current_entries.min(max_entries.saturating_sub(1))
+    }
+}
+
+pub(crate) fn rate_limit_state_entries_after_insert(
+    current_entries: usize,
+    max_entries: usize,
+) -> usize {
+    if max_entries == 0 {
+        0
+    } else {
+        rate_limit_state_retained_before_insert(current_entries, max_entries).saturating_add(1)
+    }
+}
 
 static NEXT_PEER_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -215,6 +333,7 @@ pub struct P2PService {
     last_addr_announcement: HashMap<PeerId, Instant>,
     last_punch_request: HashMap<PeerId, Instant>,
     seen_gossip: SeenGossipCache,
+    inbound_message_budget: ByteBudget,
 }
 
 impl P2PService {
@@ -248,6 +367,7 @@ impl P2PService {
             last_addr_announcement: HashMap::new(),
             last_punch_request: HashMap::new(),
             seen_gossip: SeenGossipCache::default(),
+            inbound_message_budget: ByteBudget::new(MAX_P2P_COMMAND_QUEUE_BYTES),
         }
     }
 
@@ -281,6 +401,14 @@ impl P2PService {
         self.peer_store.load()?;
         self.learned_addresses
             .extend(self.peer_store.addresses().into_iter());
+        if self.learned_addresses.len() > MAX_LEARNED_ADDRESSES {
+            self.learned_addresses = self
+                .learned_addresses
+                .iter()
+                .take(MAX_LEARNED_ADDRESSES)
+                .copied()
+                .collect();
+        }
         let local_addrs: HashSet<_> = self.advertised_addrs.iter().copied().collect();
         self.peer_store
             .remove_addresses(local_addrs.iter().copied())?;
@@ -290,8 +418,7 @@ impl P2PService {
         if !imported_peers.is_empty() {
             self.peer_store
                 .record_learned(imported_peers.iter().copied())?;
-            self.learned_addresses
-                .extend(imported_peers.iter().copied());
+            self.admit_learned_addresses(imported_peers.iter().copied());
             self.peer_manager
                 .record_static_addresses(imported_peers.iter().copied());
         }
@@ -434,6 +561,7 @@ impl P2PService {
                             inbound,
                         } => {
                             info!("peer disconnected: {} ({:?})", addr, peer_id);
+                            self.prune_rate_limit_maps_for_peer(&peer_id);
                             if let Some(active_addr) =
                                 self.peer_manager.remove_peer_session(&peer_id, session_id)
                             {
@@ -449,10 +577,14 @@ impl P2PService {
                             }
                         }
                         P2PCommand::Message {
-                            peer_id,
-                            session_id,
-                            msg,
+                            queued,
                         } => {
+                            let QueuedP2PMessage {
+                                peer_id,
+                                session_id,
+                                msg,
+                                _permit,
+                            } = queued;
                             if !self.peer_manager.is_active_session(&peer_id, session_id) {
                                 warn!(
                                     ?peer_id,
@@ -471,6 +603,14 @@ impl P2PService {
                                 }
                                 WireMessage::Pong => {}
                                 WireMessage::AddrExchange(addrs) => {
+                                    if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
+                                        warn!(
+                                            count = addrs.len(),
+                                            limit = ADDRESS_EXCHANGE_LIMIT,
+                                            "rejected legacy addr-exchange list before conversion"
+                                        );
+                                        continue;
+                                    }
                                     let addrs: Vec<_> = addrs
                                         .into_iter()
                                         .map(|addr| addr.to_socket_addr())
@@ -485,7 +625,7 @@ impl P2PService {
                                     self.handle_coordination(peer_id, msg, cmd_tx.clone())
                                         .await;
                                 }
-                WireMessage::Proto(proto_msg) => {
+                                WireMessage::Proto(proto_msg) => {
                                     self.protocol_mux
                                         .dispatch_inbound(peer_id, proto_msg)
                                         .await;
@@ -506,6 +646,7 @@ impl P2PService {
 
                 // Handle protocol messages from registered components
                 Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
+                    let outbound = outbound.message;
                     match outbound.target {
                         Some(peer_id) => {
                             self
@@ -557,6 +698,7 @@ impl P2PService {
         identity: PeerIdentity,
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
+        let inbound_message_budget = self.inbound_message_budget.clone();
         tokio::spawn(async move {
             let mut backoff = RECONNECT_BASE;
             loop {
@@ -575,6 +717,7 @@ impl P2PService {
                                     session_id,
                                     cmd_tx.clone(),
                                     false,
+                                    inbound_message_budget.clone(),
                                 )
                                 .await;
                                 backoff = RECONNECT_BASE;
@@ -605,13 +748,23 @@ impl P2PService {
         cmd_tx: mpsc::Sender<P2PCommand>,
         permit: OwnedSemaphorePermit,
     ) {
+        let inbound_message_budget = self.inbound_message_budget.clone();
         tokio::spawn(async move {
             let mut connection = Connection::new(socket);
             match timeout(HANDSHAKE_TIMEOUT, connection.handshake_responder(&identity)).await {
                 Ok(Ok(peer_id)) => {
                     drop(permit);
                     let session_id = next_peer_session_id();
-                    Self::run_peer_loop(connection, addr, peer_id, session_id, cmd_tx, true).await;
+                    Self::run_peer_loop(
+                        connection,
+                        addr,
+                        peer_id,
+                        session_id,
+                        cmd_tx,
+                        true,
+                        inbound_message_budget,
+                    )
+                    .await;
                 }
                 Ok(Err(e)) => {
                     drop(permit);
@@ -634,8 +787,9 @@ impl P2PService {
         session_id: PeerSessionId,
         cmd_tx: mpsc::Sender<P2PCommand>,
         inbound: bool,
+        inbound_message_budget: ByteBudget,
     ) {
-        let (tx, mut rx) = mpsc::channel::<WireMessage>(100);
+        let (tx, mut rx) = mpsc::channel::<QueuedWireMessage>(100);
         let (admit, admitted) = oneshot::channel();
         if cmd_tx
             .send(P2PCommand::NewPeer {
@@ -661,7 +815,7 @@ impl P2PService {
                 outbound = rx.recv() => {
                     match outbound {
                         Some(msg) => {
-                            if let Err(e) = connection.send(msg).await {
+                            if let Err(e) = connection.send(msg.msg).await {
                                 error!("failed to send to {}: {}", addr, e);
                                 break;
                             }
@@ -672,11 +826,23 @@ impl P2PService {
                 result = connection.recv() => {
                     match result {
                         Ok(Some(msg)) => {
-                            if cmd_tx
-                                .send(P2PCommand::Message { peer_id, session_id, msg })
-                                .await
-                                .is_err()
-                            {
+                            let bytes = wire_message_queue_bytes(&msg);
+                            let Some(permit) = inbound_message_budget.try_acquire(bytes) else {
+                                warn!(
+                                    %addr,
+                                    ?peer_id,
+                                    bytes,
+                                    "dropping inbound p2p message over command byte budget"
+                                );
+                                continue;
+                            };
+                            let queued = QueuedP2PMessage {
+                                peer_id,
+                                session_id,
+                                msg,
+                                _permit: permit,
+                            };
+                            if cmd_tx.send(P2PCommand::Message { queued }).await.is_err() {
                                 break;
                             }
                         }
@@ -898,6 +1064,14 @@ impl P2PService {
                 }
             }
             CoordinationMessage::Addr { addrs } => {
+                if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
+                    warn!(
+                        count = addrs.len(),
+                        limit = ADDRESS_EXCHANGE_LIMIT,
+                        "rejected coordinate addr list before conversion"
+                    );
+                    return;
+                }
                 let addrs: Vec<_> = addrs
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
@@ -909,6 +1083,14 @@ impl P2PService {
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
+                if reachable.len() > ADDRESS_EXCHANGE_LIMIT {
+                    warn!(
+                        count = reachable.len(),
+                        limit = ADDRESS_EXCHANGE_LIMIT,
+                        "rejected relay registration list before conversion"
+                    );
+                    return;
+                }
                 let addrs: Vec<_> = reachable
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
@@ -998,6 +1180,8 @@ impl P2PService {
 
     fn rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
+        let cap = self.rate_limit_state_cap();
+        Self::prune_rate_limit_map(&mut self.last_addr_request, now, cap);
         if let Some(last) = self.last_addr_request.get(peer_id)
             && now.duration_since(*last) < ADDRESS_RATE_LIMIT
         {
@@ -1009,6 +1193,8 @@ impl P2PService {
 
     fn address_announcement_rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
+        let cap = self.rate_limit_state_cap();
+        Self::prune_rate_limit_map(&mut self.last_addr_announcement, now, cap);
         if let Some(last) = self.last_addr_announcement.get(peer_id)
             && now.duration_since(*last) < ADDRESS_RATE_LIMIT
         {
@@ -1020,6 +1206,8 @@ impl P2PService {
 
     fn punch_rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
+        let cap = self.rate_limit_state_cap();
+        Self::prune_rate_limit_map(&mut self.last_punch_request, now, cap);
         if let Some(last) = self.last_punch_request.get(peer_id)
             && now.duration_since(*last) < PUNCH_RATE_LIMIT
         {
@@ -1027,6 +1215,42 @@ impl P2PService {
         }
         self.last_punch_request.insert(*peer_id, now);
         false
+    }
+
+    fn rate_limit_state_cap(&self) -> usize {
+        let peer_cap = self.peer_manager.max_peers();
+        if peer_cap == 0 {
+            return MAX_RATE_LIMIT_STATE_PEERS;
+        }
+        peer_cap
+            .saturating_mul(RATE_LIMIT_STATE_PEER_MULTIPLIER)
+            .max(64)
+            .min(MAX_RATE_LIMIT_STATE_PEERS)
+    }
+
+    fn prune_rate_limit_maps_for_peer(&mut self, peer_id: &PeerId) {
+        self.last_addr_request.remove(peer_id);
+        self.last_addr_announcement.remove(peer_id);
+        self.last_punch_request.remove(peer_id);
+    }
+
+    fn prune_rate_limit_map(map: &mut HashMap<PeerId, Instant>, now: Instant, cap: usize) {
+        map.retain(|_, last| now.duration_since(*last) <= RATE_LIMIT_STATE_TTL);
+        let retained_before_insert = rate_limit_state_retained_before_insert(map.len(), cap);
+        if map.len() <= retained_before_insert {
+            return;
+        }
+
+        let evict_count = map.len().saturating_sub(retained_before_insert);
+        let mut oldest: Vec<_> = map
+            .iter()
+            .map(|(peer_id, last)| (*peer_id, *last))
+            .collect();
+        oldest.sort_by_key(|(_, last)| *last);
+        for (peer_id, _) in oldest.into_iter().take(evict_count) {
+            map.remove(&peer_id);
+        }
+        debug_assert!(rate_limit_state_entries_after_insert(map.len(), cap) <= cap);
     }
 
     async fn broadcast_addresses(&mut self, origin: PeerId, addrs: Vec<SocketAddr>) {
@@ -1180,8 +1404,30 @@ impl P2PService {
             return Ok(());
         }
 
-        self.learned_addresses.extend(filtered.iter().copied());
-        self.peer_store.record_learned(filtered)
+        let admitted = self.admit_learned_addresses(filtered);
+        if admitted.is_empty() {
+            return Ok(());
+        }
+        self.peer_store.record_learned(admitted)
+    }
+
+    fn admit_learned_addresses(
+        &mut self,
+        addrs: impl IntoIterator<Item = SocketAddr>,
+    ) -> Vec<SocketAddr> {
+        let mut admitted = Vec::new();
+        for addr in addrs {
+            if self.learned_addresses.contains(&addr) {
+                admitted.push(addr);
+                continue;
+            }
+            if self.learned_addresses.len() >= MAX_LEARNED_ADDRESSES {
+                break;
+            }
+            self.learned_addresses.insert(addr);
+            admitted.push(addr);
+        }
+        admitted
     }
 
     async fn resolve_seeds(seeds: Vec<String>, default_port: u16) -> Vec<SocketAddr> {
@@ -1226,6 +1472,7 @@ impl P2PService {
         identity: PeerIdentity,
         cmd_tx: mpsc::Sender<P2PCommand>,
     ) {
+        let inbound_message_budget = self.inbound_message_budget.clone();
         tokio::spawn(async move {
             match TcpStream::connect(addr).await {
                 Ok(socket) => {
@@ -1236,7 +1483,13 @@ impl P2PService {
                         Ok(Ok(peer_id)) => {
                             let session_id = next_peer_session_id();
                             Self::run_peer_loop(
-                                connection, addr, peer_id, session_id, cmd_tx, false,
+                                connection,
+                                addr,
+                                peer_id,
+                                session_id,
+                                cmd_tx,
+                                false,
+                                inbound_message_budget,
                             )
                             .await;
                         }
@@ -1252,6 +1505,49 @@ impl P2PService {
 
 fn next_peer_session_id() -> PeerSessionId {
     NEXT_PEER_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn directed_protocol_message_queue_bytes(msg: &DirectedProtocolMessage) -> usize {
+    protocol_message_queue_bytes(&msg.message)
+}
+
+fn protocol_message_queue_bytes(msg: &ProtocolMessage) -> usize {
+    128usize.saturating_add(msg.payload.len())
+}
+
+fn wire_message_queue_bytes(msg: &WireMessage) -> usize {
+    const OVERHEAD: usize = 128;
+    match msg {
+        WireMessage::Ping | WireMessage::Pong => OVERHEAD,
+        WireMessage::Gossip(msg) => OVERHEAD + gossip_message_bytes(msg),
+        WireMessage::Proto(msg) => OVERHEAD + protocol_message_queue_bytes(msg),
+        WireMessage::AddrExchange(addrs) => OVERHEAD + compact_address_list_bytes(addrs.len()),
+        WireMessage::Coordinate(msg) => OVERHEAD + coordination_message_bytes(msg),
+    }
+}
+
+fn gossip_message_bytes(msg: &GossipMessage) -> usize {
+    match msg {
+        GossipMessage::Transaction(payload)
+        | GossipMessage::Block(payload)
+        | GossipMessage::Evidence(payload) => payload.len(),
+        GossipMessage::Addresses(addrs) => compact_address_list_bytes(addrs.len()),
+    }
+}
+
+fn coordination_message_bytes(msg: &CoordinationMessage) -> usize {
+    match msg {
+        CoordinationMessage::GetAddr { .. } => 8,
+        CoordinationMessage::Addr { addrs } => compact_address_list_bytes(addrs.len()),
+        CoordinationMessage::PunchRequest { .. } | CoordinationMessage::PunchResponse { .. } => 64,
+        CoordinationMessage::RelayRegistration { reachable } => {
+            compact_address_list_bytes(reachable.len())
+        }
+    }
+}
+
+fn compact_address_list_bytes(count: usize) -> usize {
+    count.saturating_mul(24).saturating_add(8)
 }
 
 fn gossip_message_key(msg: &GossipMessage) -> Option<[u8; 32]> {
@@ -1491,6 +1787,7 @@ mod tests {
             .await
             .expect("relay to non-origin peer")
             .expect("other peer channel open")
+            .msg
         {
             WireMessage::Gossip(GossipMessage::Block(block)) => assert_eq!(block, payload),
             other => panic!("unexpected relay: {other:?}"),
@@ -1566,6 +1863,7 @@ mod tests {
             .await
             .expect("sanitized address gossip relayed")
             .expect("other peer channel open")
+            .msg
         {
             WireMessage::Gossip(GossipMessage::Addresses(addrs)) => {
                 assert_eq!(addrs, vec![public_addr]);
@@ -1599,6 +1897,7 @@ mod tests {
             .await
             .expect("peer receives public address")
             .expect("peer channel open")
+            .msg
         {
             WireMessage::Gossip(GossipMessage::Addresses(addrs)) => {
                 assert_eq!(addrs, vec![public_self]);
@@ -1616,6 +1915,33 @@ mod tests {
                 .is_err(),
             "duplicate local address gossip must not be relayed again"
         );
+    }
+
+    #[test]
+    fn rate_limit_metadata_is_purged_on_disconnect_and_bounded() {
+        let mut service = test_service("rate-limit-state", 2);
+        let peer: PeerId = [77u8; 32];
+        let now = Instant::now();
+
+        service.last_addr_request.insert(peer, now);
+        service.last_addr_announcement.insert(peer, now);
+        service.last_punch_request.insert(peer, now);
+        service.prune_rate_limit_maps_for_peer(&peer);
+
+        assert!(!service.last_addr_request.contains_key(&peer));
+        assert!(!service.last_addr_announcement.contains_key(&peer));
+        assert!(!service.last_punch_request.contains_key(&peer));
+
+        let cap = service.rate_limit_state_cap();
+        for i in 0..(cap + 8) {
+            let mut peer_id = [0u8; 32];
+            peer_id[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            let age = StdDuration::from_secs((cap + 8 - i) as u64);
+            service.last_addr_request.insert(peer_id, now - age);
+        }
+
+        P2PService::prune_rate_limit_map(&mut service.last_addr_request, now, cap);
+        assert!(service.last_addr_request.len() < cap);
     }
 
     #[tokio::test]

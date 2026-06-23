@@ -73,6 +73,7 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
     let mut responder_channel = responder
         .complete_handshake(
             &offer_rx,
+            &_acceptance,
             &confirmation_parsed,
             &offer_bytes,
             &acceptance_bytes,
@@ -132,6 +133,7 @@ async fn duplex_stream_handshake_succeeds_and_rejects_tampering() {
             .expect("tampered confirmation bytes");
     let err = responder.complete_handshake(
         &offer,
+        &acceptance,
         &tampered_confirmation,
         &offer_bytes,
         &acceptance_bytes,
