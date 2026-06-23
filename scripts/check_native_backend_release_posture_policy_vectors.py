@@ -15,6 +15,21 @@ CASE_KEY = "native_backend_release_posture_cases"
 PACKAGE_ROOT = "native-backend-128b-review-package"
 CLAIM_MEMBER = f"{PACKAGE_ROOT}/current_claim.json"
 MANIFEST_MEMBER = f"{PACKAGE_ROOT}/review_manifest.json"
+CASE_BOOL_FIELDS = (
+    "require_accepted",
+    "review_state_candidate_under_review",
+    "review_state_accepted",
+    "maturity_structural_candidate",
+    "external_review_known",
+    "external_review_completed",
+    "acceptance_artifact_present",
+    "acceptance_artifact_structured",
+    "acceptance_artifact_review_accepted",
+    "acceptance_artifact_external_completed",
+    "acceptance_artifact_claim_hash_bound",
+    "acceptance_artifact_manifest_hash_bound",
+    "expected_valid",
+)
 
 
 def external_review_allowed_for_candidate(case: dict[str, Any]) -> bool:
@@ -26,8 +41,8 @@ def external_review_allowed_for_candidate(case: dict[str, Any]) -> bool:
 
 def external_review_allowed_for_accepted(case: dict[str, Any]) -> bool:
     return (
-        not bool(case.get("external_review_known"))
-        or bool(case.get("external_review_completed"))
+        bool(case.get("external_review_known"))
+        and bool(case.get("external_review_completed"))
     )
 
 
@@ -40,8 +55,11 @@ def evaluate_case(case: dict[str, Any]) -> tuple[bool, str | None]:
         if not bool(case.get("acceptance_artifact_present")):
             return False, "accepted_missing_artifact"
         if not (
-            bool(case.get("acceptance_artifact_mentions_accepted"))
-            and bool(case.get("acceptance_artifact_mentions_external"))
+            bool(case.get("acceptance_artifact_structured"))
+            and bool(case.get("acceptance_artifact_review_accepted"))
+            and bool(case.get("acceptance_artifact_external_completed"))
+            and bool(case.get("acceptance_artifact_claim_hash_bound"))
+            and bool(case.get("acceptance_artifact_manifest_hash_bound"))
         ):
             return False, "accepted_malformed_artifact"
         return True, None
@@ -70,6 +88,9 @@ def check_vectors(vectors: dict[str, Any]) -> int:
         if name in names:
             raise SystemExit(f"duplicate release-posture case name: {name}")
         names.add(name)
+        for field in CASE_BOOL_FIELDS:
+            if not isinstance(case.get(field), bool):
+                raise SystemExit(f"{name}: {field} must be a bool")
 
         actual_valid, actual_rejection = evaluate_case(case)
         if actual_valid != bool(case.get("expected_valid")):
@@ -115,11 +136,27 @@ def load_claim(path: Path | None, package_path: Path | None) -> dict[str, Any] |
     return None
 
 
-def acceptance_artifact_flags(path: Path | None) -> tuple[bool, bool, bool]:
+def acceptance_artifact_flags(path: Path | None) -> tuple[bool, bool, bool, bool, bool, bool]:
     if path is None or not path.is_file():
-        return False, False, False
-    text = path.read_text(encoding="utf-8").lower()
-    return True, "accepted" in text, "external" in text
+        return False, False, False, False, False, False
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return True, False, False, False, False, False
+    if not isinstance(artifact, dict):
+        return True, False, False, False, False, False
+    return (
+        True,
+        artifact.get("schema_version") == 1
+        and artifact.get("artifact_type")
+        == "hegemon_native_backend_external_acceptance",
+        artifact.get("review_state") == "accepted",
+        artifact.get("external_review_completed") is True,
+        isinstance(artifact.get("current_claim_sha256"), str)
+        and len(artifact.get("current_claim_sha256")) == 64,
+        isinstance(artifact.get("review_manifest_sha256"), str)
+        and len(artifact.get("review_manifest_sha256")) == 64,
+    )
 
 
 def live_case_from_inputs(
@@ -139,9 +176,14 @@ def live_case_from_inputs(
         guarantees = manifest.get("guarantee_summary") or {}
         external_done = guarantees.get("external_cryptanalysis_completed")
 
-    artifact_present, artifact_accepted, artifact_external = acceptance_artifact_flags(
-        acceptance_artifact
-    )
+    (
+        artifact_present,
+        artifact_structured,
+        artifact_accepted,
+        artifact_external_completed,
+        artifact_claim_hash,
+        artifact_manifest_hash,
+    ) = acceptance_artifact_flags(acceptance_artifact)
     return {
         "name": "checked-in-native-backend-release-posture",
         "require_accepted": require_accepted,
@@ -151,8 +193,11 @@ def live_case_from_inputs(
         "external_review_known": external_done is not None,
         "external_review_completed": external_done is True,
         "acceptance_artifact_present": artifact_present,
-        "acceptance_artifact_mentions_accepted": artifact_accepted,
-        "acceptance_artifact_mentions_external": artifact_external,
+        "acceptance_artifact_structured": artifact_structured,
+        "acceptance_artifact_review_accepted": artifact_accepted,
+        "acceptance_artifact_external_completed": artifact_external_completed,
+        "acceptance_artifact_claim_hash_bound": artifact_claim_hash,
+        "acceptance_artifact_manifest_hash_bound": artifact_manifest_hash,
     }
 
 

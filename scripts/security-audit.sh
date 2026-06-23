@@ -12,7 +12,7 @@
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
-#   ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node
+#   ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -34,10 +34,11 @@ QUICK=false
 FIX=false
 REQUIRE_BINARY=false
 NODE_BIN=""
+BINARY_BINS=()
 
 usage() {
     cat <<'USAGE'
-usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--node-bin PATH]
+usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--node-bin PATH] [--binary PATH ...]
 USAGE
 }
 
@@ -71,6 +72,23 @@ while [ "$#" -gt 0 ]; do
             fi
             shift
             ;;
+        --binary)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage >&2
+                exit 2
+            fi
+            BINARY_BINS+=("$2")
+            shift 2
+            ;;
+        --binary=*)
+            BINARY_PATH="${1#*=}"
+            if [ -z "$BINARY_PATH" ]; then
+                usage >&2
+                exit 2
+            fi
+            BINARY_BINS+=("$BINARY_PATH")
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -88,6 +106,13 @@ if [ -z "$NODE_BIN" ]; then
 elif [[ "$NODE_BIN" != /* ]]; then
     NODE_BIN="$PROJECT_ROOT/$NODE_BIN"
 fi
+RELEASE_BINS=("$NODE_BIN")
+for binary_path in "${BINARY_BINS[@]}"; do
+    if [[ "$binary_path" != /* ]]; then
+        binary_path="$PROJECT_ROOT/$binary_path"
+    fi
+    RELEASE_BINS+=("$binary_path")
+done
 
 cd "$PROJECT_ROOT"
 
@@ -258,18 +283,19 @@ fi
 echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
-if [ -f "$NODE_BIN" ]; then
-    echo "Checking: $NODE_BIN"
+for release_bin in "${RELEASE_BINS[@]}"; do
+if [ -f "$release_bin" ]; then
+    echo "Checking: $release_bin"
     if ! command -v strings >/dev/null 2>&1; then
         echo -e "${RED}❌ CANNOT SCAN${NC}"
         echo "  Required tool not found: strings"
         VIOLATIONS=$((VIOLATIONS + 1))
     else
         symbol_matches=$(
-            strings "$NODE_BIN" 2>/dev/null \
+            strings "$release_bin" 2>/dev/null \
                 | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|groth16|halo2|trusted[[:space:]_-]*setup|powers[[:space:]_-]*of[[:space:]_-]*tau" \
                 || true
-            strings "$NODE_BIN" 2>/dev/null \
+            strings "$release_bin" 2>/dev/null \
                 | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])rsa([^[:alnum:]]|$)|(^|[^[:alnum:]])rsa_|(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)|(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" \
                 || true
         )
@@ -284,13 +310,14 @@ if [ -f "$NODE_BIN" ]; then
 else
     if [ "$REQUIRE_BINARY" = true ]; then
         echo -e "${RED}❌ FOUND${NC}"
-        echo "  Required release node binary not found: $NODE_BIN"
+        echo "  Required release binary not found: $release_bin"
         VIOLATIONS=$((VIOLATIONS + 1))
     else
-        echo -e "${YELLOW}⚠️  WARNING: release node binary not found; run 'make node' for binary scan${NC}"
+        echo -e "${YELLOW}⚠️  WARNING: release binary not found; run the release build before binary scan: $release_bin${NC}"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
+done
 
 echo ""
 

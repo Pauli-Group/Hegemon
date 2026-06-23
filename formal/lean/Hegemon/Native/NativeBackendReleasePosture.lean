@@ -20,20 +20,26 @@ structure ReleasePostureInput where
   externalReviewKnown : Bool
   externalReviewCompleted : Bool
   acceptanceArtifactPresent : Bool
-  acceptanceArtifactMentionsAccepted : Bool
-  acceptanceArtifactMentionsExternal : Bool
+  acceptanceArtifactStructured : Bool
+  acceptanceArtifactReviewAccepted : Bool
+  acceptanceArtifactExternalCompleted : Bool
+  acceptanceArtifactClaimHashBound : Bool
+  acceptanceArtifactManifestHashBound : Bool
 deriving DecidableEq, Repr
 
 def candidateExternalReviewAllowed (input : ReleasePostureInput) : Bool :=
   input.externalReviewKnown = false || input.externalReviewCompleted = false
 
 def acceptedExternalReviewAllowed (input : ReleasePostureInput) : Bool :=
-  input.externalReviewKnown = false || input.externalReviewCompleted = true
+  input.externalReviewKnown && input.externalReviewCompleted
 
 def acceptedArtifactValid (input : ReleasePostureInput) : Bool :=
   input.acceptanceArtifactPresent
-    && input.acceptanceArtifactMentionsAccepted
-    && input.acceptanceArtifactMentionsExternal
+    && input.acceptanceArtifactStructured
+    && input.acceptanceArtifactReviewAccepted
+    && input.acceptanceArtifactExternalCompleted
+    && input.acceptanceArtifactClaimHashBound
+    && input.acceptanceArtifactManifestHashBound
 
 def candidatePreconditions (input : ReleasePostureInput) : Bool :=
   input.reviewStateCandidateUnderReview
@@ -60,8 +66,11 @@ def evaluateReleasePosture
       Except.error ReleasePostureReject.acceptedExternalReviewIncomplete
     else if input.acceptanceArtifactPresent = false then
       Except.error ReleasePostureReject.acceptedMissingArtifact
-    else if (input.acceptanceArtifactMentionsAccepted
-        && input.acceptanceArtifactMentionsExternal) = false then
+    else if (input.acceptanceArtifactStructured
+        && input.acceptanceArtifactReviewAccepted
+        && input.acceptanceArtifactExternalCompleted
+        && input.acceptanceArtifactClaimHashBound
+        && input.acceptanceArtifactManifestHashBound) = false then
       Except.error ReleasePostureReject.acceptedMalformedArtifact
     else
       Except.ok ()
@@ -89,20 +98,29 @@ def releasePostureRejection
 theorem accepts_iff_release_posture_preconditions
     (input : ReleasePostureInput) :
     releasePostureAccepts input = releasePosturePreconditions input := by
-  unfold releasePostureAccepts
-    releasePosturePreconditions evaluateReleasePosture
-    candidatePreconditions acceptedPreconditions
-    acceptedArtifactValid
-  cases hRequire : input.requireAccepted <;>
-    cases hCandidate : input.reviewStateCandidateUnderReview <;>
-    cases hAccepted : input.reviewStateAccepted <;>
-    cases hMaturity : input.maturityStructuralCandidate <;>
-    cases hCandidateExternal : candidateExternalReviewAllowed input <;>
-    cases hAcceptedExternal : acceptedExternalReviewAllowed input <;>
-    cases hArtifactPresent : input.acceptanceArtifactPresent <;>
-    cases hArtifactAccepted : input.acceptanceArtifactMentionsAccepted <;>
-    cases hArtifactExternal : input.acceptanceArtifactMentionsExternal <;>
-    simp_all
+  cases input with
+  | mk requireAccepted reviewStateCandidateUnderReview reviewStateAccepted
+      maturityStructuralCandidate externalReviewKnown externalReviewCompleted
+      acceptanceArtifactPresent acceptanceArtifactStructured
+      acceptanceArtifactReviewAccepted acceptanceArtifactExternalCompleted
+      acceptanceArtifactClaimHashBound acceptanceArtifactManifestHashBound =>
+      unfold releasePostureAccepts releasePosturePreconditions
+        evaluateReleasePosture candidatePreconditions acceptedPreconditions
+        candidateExternalReviewAllowed acceptedExternalReviewAllowed
+        acceptedArtifactValid
+      cases requireAccepted <;>
+        cases reviewStateCandidateUnderReview <;>
+        cases reviewStateAccepted <;>
+        cases maturityStructuralCandidate <;>
+        cases externalReviewKnown <;>
+        cases externalReviewCompleted <;>
+        cases acceptanceArtifactPresent <;>
+        cases acceptanceArtifactStructured <;>
+        cases acceptanceArtifactReviewAccepted <;>
+        cases acceptanceArtifactExternalCompleted <;>
+        cases acceptanceArtifactClaimHashBound <;>
+        cases acceptanceArtifactManifestHashBound <;>
+        rfl
 
 def candidatePackageInput : ReleasePostureInput :=
   {
@@ -113,8 +131,11 @@ def candidatePackageInput : ReleasePostureInput :=
     externalReviewKnown := true,
     externalReviewCompleted := false,
     acceptanceArtifactPresent := false,
-    acceptanceArtifactMentionsAccepted := false,
-    acceptanceArtifactMentionsExternal := false
+    acceptanceArtifactStructured := false,
+    acceptanceArtifactReviewAccepted := false,
+    acceptanceArtifactExternalCompleted := false,
+    acceptanceArtifactClaimHashBound := false,
+    acceptanceArtifactManifestHashBound := false
   }
 
 def candidateWithoutManifestInput : ReleasePostureInput :=
@@ -138,8 +159,11 @@ def acceptedPackageInput : ReleasePostureInput :=
     externalReviewKnown := true,
     externalReviewCompleted := true,
     acceptanceArtifactPresent := true,
-    acceptanceArtifactMentionsAccepted := true,
-    acceptanceArtifactMentionsExternal := true
+    acceptanceArtifactStructured := true,
+    acceptanceArtifactReviewAccepted := true,
+    acceptanceArtifactExternalCompleted := true,
+    acceptanceArtifactClaimHashBound := true,
+    acceptanceArtifactManifestHashBound := true
   }
 
 def acceptedWrongReviewStateInput : ReleasePostureInput :=
@@ -152,7 +176,7 @@ def acceptedMissingArtifactInput : ReleasePostureInput :=
   { acceptedPackageInput with acceptanceArtifactPresent := false }
 
 def acceptedMalformedArtifactInput : ReleasePostureInput :=
-  { acceptedPackageInput with acceptanceArtifactMentionsExternal := false }
+  { acceptedPackageInput with acceptanceArtifactManifestHashBound := false }
 
 theorem candidate_package_accepts :
     evaluateReleasePosture candidatePackageInput = Except.ok () := by

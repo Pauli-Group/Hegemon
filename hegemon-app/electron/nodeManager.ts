@@ -114,6 +114,10 @@ export class NodeManager extends EventEmitter {
     };
   }
 
+  private managedRpcEndpoint(): string {
+    return `http://127.0.0.1:${this.rpcPort}`;
+  }
+
   async startNode(options: NodeStartOptions): Promise<void> {
     if (this.process) {
       return;
@@ -146,7 +150,7 @@ export class NodeManager extends EventEmitter {
     // Guard rail: if something is already answering JSON-RPC on this port, starting a node will
     // either fail to bind (and the UI will misleadingly keep showing the existing node), or worse,
     // connect to a forwarded/remote node that the app cannot stop.
-    const preflightUrl = `http://127.0.0.1:${this.rpcPort}`;
+    const preflightUrl = this.managedRpcEndpoint();
     const alreadyServing = await this.ping(preflightUrl);
     if (alreadyServing) {
       const version = await this.safeRpcCall('system_version', [], preflightUrl);
@@ -389,16 +393,31 @@ export class NodeManager extends EventEmitter {
 
   async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
     const authToken = process.env.HEGEMON_MINING_RPC_TOKEN?.trim();
+    const endpoint = this.resolveMiningRpcEndpoint(httpUrl, Boolean(authToken));
     if (enabled) {
       const params: Record<string, unknown> = threads ? { threads } : {};
       if (authToken) {
         params.auth_token = authToken;
       }
-      await this.rpcCall('hegemon_startMining', [params], httpUrl);
+      await this.rpcCall('hegemon_startMining', [params], endpoint);
     } else {
       const params = authToken ? [{ auth_token: authToken }] : [];
-      await this.rpcCall('hegemon_stopMining', params, httpUrl);
+      await this.rpcCall('hegemon_stopMining', params, endpoint);
     }
+  }
+
+  private resolveMiningRpcEndpoint(httpUrl: string | undefined, hasAuthToken: boolean): string | undefined {
+    if (!hasAuthToken) {
+      return httpUrl;
+    }
+    if (!this.process) {
+      throw new Error('Mining RPC token can only be used with the managed local node.');
+    }
+    const trustedEndpoint = this.managedRpcEndpoint();
+    if (httpUrl && normalizeRpcEndpoint(httpUrl) !== normalizeRpcEndpoint(trustedEndpoint)) {
+      throw new Error('Refusing to send mining RPC token to a renderer-selected RPC URL.');
+    }
+    return trustedEndpoint;
   }
 
   private async safeRpcCall(method: string, params: unknown[], httpUrl: string): Promise<any | null> {
@@ -468,4 +487,13 @@ const expandHomePath = (value?: string) => {
     return join(homedir(), value.slice(2));
   }
   return value;
+};
+
+const normalizeRpcEndpoint = (value: string) => {
+  const parsed = new URL(value);
+  const hostname = parsed.hostname === 'localhost' ? '127.0.0.1' : parsed.hostname;
+  const port =
+    parsed.port ||
+    (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return `${parsed.protocol}//${hostname}${port ? `:${port}` : ''}`;
 };

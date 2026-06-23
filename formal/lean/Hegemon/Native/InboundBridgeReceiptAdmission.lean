@@ -11,6 +11,7 @@ inductive InboundBridgeReceiptReject where
   | confirmationsOverflow
   | confirmationsOverstated
   | underconfirmed
+  | workPolicyMismatch
 deriving DecidableEq, Repr
 
 def maxNativeConfirmations : Nat := 4294967295
@@ -22,8 +23,11 @@ structure InboundBridgeReceiptInput where
   messageHashMatches : Bool
   checkpointHeight : Nat
   canonicalTipHeight : Nat
+  canonicalTipWork : Nat
   confirmationsChecked : Nat
   minConfirmations : Nat
+  minWorkChecked : Nat
+  minTipWork : Nat
 deriving DecidableEq, Repr
 
 def heightConfirmations
@@ -54,6 +58,10 @@ def evaluateInboundBridgeReceipt
           Except.error InboundBridgeReceiptReject.confirmationsOverstated
         else if input.confirmationsChecked < input.minConfirmations then
           Except.error InboundBridgeReceiptReject.underconfirmed
+        else if input.canonicalTipWork < input.minTipWork then
+          Except.error InboundBridgeReceiptReject.workPolicyMismatch
+        else if input.minWorkChecked < input.minTipWork then
+          Except.error InboundBridgeReceiptReject.workPolicyMismatch
         else
           Except.ok heightConfirmations
 
@@ -88,6 +96,8 @@ def inboundBridgeReceiptPreconditions
            !(maxNativeConfirmations < heightConfirmations)
              && !(heightConfirmations < input.confirmationsChecked)
              && !(input.confirmationsChecked < input.minConfirmations)
+             && !(input.canonicalTipWork < input.minTipWork)
+             && !(input.minWorkChecked < input.minTipWork)
 
 theorem accepts_iff_inbound_bridge_receipt_preconditions
     {input : InboundBridgeReceiptInput} :
@@ -96,7 +106,8 @@ theorem accepts_iff_inbound_bridge_receipt_preconditions
   cases input with
   | mk sourceChainMatches rulesHashMatches messageNonceMatches
       messageHashMatches checkpointHeight canonicalTipHeight
-      confirmationsChecked minConfirmations =>
+      canonicalTipWork confirmationsChecked minConfirmations
+      minWorkChecked minTipWork =>
       simp [
         inboundBridgeReceiptAccepts,
         inboundBridgeReceiptPreconditions,
@@ -118,7 +129,11 @@ theorem accepts_iff_inbound_bridge_receipt_preconditions
             · simp [htip, hoverflow, hover]
             · by_cases hunder : confirmationsChecked < minConfirmations
               · simp [htip, hoverflow, hover, hunder]
-              · simp [htip, hoverflow, hover, hunder]
+              · by_cases htipwork : canonicalTipWork < minTipWork
+                · simp [htip, hoverflow, hover, hunder, htipwork]
+                · by_cases hcheckedwork : minWorkChecked < minTipWork
+                  · simp [htip, hoverflow, hover, hunder, htipwork, hcheckedwork]
+                  · simp [htip, hoverflow, hover, hunder, htipwork, hcheckedwork]
 
 def valid : InboundBridgeReceiptInput :=
   {
@@ -128,8 +143,11 @@ def valid : InboundBridgeReceiptInput :=
     messageHashMatches := true,
     checkpointHeight := 40,
     canonicalTipHeight := 44,
+    canonicalTipWork := 1000,
     confirmationsChecked := 5,
-    minConfirmations := 3
+    minConfirmations := 3,
+    minWorkChecked := 1000,
+    minTipWork := 900
   }
 
 theorem valid_accepts :
@@ -228,6 +246,22 @@ def underconfirmed : InboundBridgeReceiptInput :=
 theorem underconfirmed_rejects :
     evaluateInboundBridgeReceipt underconfirmed =
       Except.error InboundBridgeReceiptReject.underconfirmed := by
+  rfl
+
+def tipWorkUnderPolicy : InboundBridgeReceiptInput :=
+  { valid with canonicalTipWork := 899 }
+
+theorem tip_work_under_policy_rejects :
+    evaluateInboundBridgeReceipt tipWorkUnderPolicy =
+      Except.error InboundBridgeReceiptReject.workPolicyMismatch := by
+  rfl
+
+def checkedWorkUnderPolicy : InboundBridgeReceiptInput :=
+  { valid with minWorkChecked := 899 }
+
+theorem checked_work_under_policy_rejects :
+    evaluateInboundBridgeReceipt checkedWorkUnderPolicy =
+      Except.error InboundBridgeReceiptReject.workPolicyMismatch := by
   rfl
 
 def source_chain_precedes_rules_input :

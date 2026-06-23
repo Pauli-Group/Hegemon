@@ -17,6 +17,8 @@ def rejectionJson : Option BridgeMintPayloadReject -> String
       "\"version_mismatch\""
   | some BridgeMintPayloadReject.destinationMismatch =>
       "\"destination_mismatch\""
+  | some BridgeMintPayloadReject.mintNonceMismatch =>
+      "\"mint_nonce_mismatch\""
   | some BridgeMintPayloadReject.recipientCommitmentZero =>
       "\"recipient_commitment_zero\""
   | some BridgeMintPayloadReject.amountZero =>
@@ -37,6 +39,8 @@ def caseJson (name : String) (input : BridgeMintPayloadInput) : String :=
     ++ "      \"version_matches\": " ++ boolJson input.versionMatches ++ ",\n"
     ++ "      \"destination_matches\": "
       ++ boolJson input.destinationMatches ++ ",\n"
+    ++ "      \"mint_nonce_matches\": "
+      ++ boolJson input.mintNonceMatches ++ ",\n"
     ++ "      \"recipient_commitment_nonzero\": "
       ++ boolJson input.recipientCommitmentNonzero ++ ",\n"
     ++ "      \"amount_nonzero\": " ++ boolJson input.amountNonzero ++ ",\n"
@@ -65,6 +69,8 @@ def vectorJson : String :=
       { validBridgeMintPayload with versionMatches := false } ++ ",\n"
     ++ caseJson "destination-mismatch-rejected"
       { validBridgeMintPayload with destinationMatches := false } ++ ",\n"
+    ++ caseJson "mint-nonce-mismatch-rejected"
+      { validBridgeMintPayload with mintNonceMatches := false } ++ ",\n"
     ++ caseJson "recipient-commitment-zero-rejected"
       { validBridgeMintPayload with recipientCommitmentNonzero := false } ++ ",\n"
     ++ caseJson "amount-zero-rejected"

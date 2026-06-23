@@ -23,14 +23,19 @@ deriving DecidableEq, Repr
 
 inductive RpcPolicyReject where
   | invalidPolicy
+  | externalUnsafePolicy
 deriving DecidableEq, Repr
 
 def resolveRpcPolicy
     (raw : RawRpcPolicy)
-    (_rpcExternal : Bool) : Except RpcPolicyReject RpcPolicy :=
+    (rpcExternal : Bool) : Except RpcPolicyReject RpcPolicy :=
   match raw with
   | RawRpcPolicy.safeToken => Except.ok RpcPolicy.safeOnly
-  | RawRpcPolicy.unsafeToken => Except.ok RpcPolicy.unsafeAllowed
+  | RawRpcPolicy.unsafeToken =>
+      if rpcExternal then
+        Except.error RpcPolicyReject.externalUnsafePolicy
+      else
+        Except.ok RpcPolicy.unsafeAllowed
   | RawRpcPolicy.autoToken =>
       Except.ok RpcPolicy.safeOnly
   | RawRpcPolicy.emptyToken =>
@@ -45,7 +50,9 @@ def rpcPolicyAccepts (raw : RawRpcPolicy) (rpcExternal : Bool) : Bool :=
 theorem rpc_policy_accepts_valid_tokens
     {raw : RawRpcPolicy}
     {rpcExternal : Bool}
-    (valid : raw ≠ RawRpcPolicy.invalidToken) :
+    (valid : raw ≠ RawRpcPolicy.invalidToken)
+    (notExternalUnsafe :
+      raw = RawRpcPolicy.unsafeToken -> rpcExternal = false) :
     rpcPolicyAccepts raw rpcExternal = true := by
   cases raw <;> cases rpcExternal <;> simp [rpcPolicyAccepts, resolveRpcPolicy] at *
 
@@ -54,6 +61,11 @@ theorem rpc_policy_rejects_invalid
     resolveRpcPolicy RawRpcPolicy.invalidToken rpcExternal =
       Except.error RpcPolicyReject.invalidPolicy := by
   cases rpcExternal <;> rfl
+
+theorem rpc_policy_rejects_external_unsafe :
+    resolveRpcPolicy RawRpcPolicy.unsafeToken true =
+      Except.error RpcPolicyReject.externalUnsafePolicy := by
+  rfl
 
 theorem rpc_policy_auto_external_safe :
     resolveRpcPolicy RawRpcPolicy.autoToken true =

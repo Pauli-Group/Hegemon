@@ -49,6 +49,16 @@ def responseCountCaseJson (name : String) (input : SyncResponseCountInput) : Str
     ++ "      \"expected_valid\": " ++ boolJson (responseCountAccepts input) ++ "\n"
     ++ "    }"
 
+def requestRateCaseJson (name : String) (input : SyncRequestRateInput) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"requests_in_window\": " ++ natJson input.requestsInWindow ++ ",\n"
+    ++ "      \"max_requests\": " ++ natJson input.maxRequests ++ ",\n"
+    ++ "      \"window_elapsed_ms\": " ++ natJson input.windowElapsedMs ++ ",\n"
+    ++ "      \"window_ms\": " ++ natJson input.windowMs ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (requestRateAccepts input) ++ "\n"
+    ++ "    }"
+
 def responseRangeToBeforeFrom : SyncResponseRangeInput :=
   {
     fromHeight := 100,
@@ -116,6 +126,12 @@ def vectorJson : String :=
     ++ responseCountCaseJson "response-count-under-limit" responseCountUnderLimit ++ ",\n"
     ++ responseCountCaseJson "response-count-exact-limit" responseCountExactLimit ++ ",\n"
     ++ responseCountCaseJson "response-count-over-limit" responseCountOverLimit ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"sync_request_rate_cases\": [\n"
+    ++ requestRateCaseJson "request-rate-under-limit" requestRateUnderLimit ++ ",\n"
+    ++ requestRateCaseJson "request-rate-full-window-rejected" requestRateFullWindow ++ ",\n"
+    ++ requestRateCaseJson "request-rate-elapsed-window-accepted" requestRateElapsedWindow ++ ",\n"
+    ++ requestRateCaseJson "request-rate-zero-cap-rejected" requestRateZeroCap ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

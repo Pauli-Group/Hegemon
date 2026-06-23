@@ -21,6 +21,8 @@ pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGES_V1: usize = 4096;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1: usize = 65_536;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_MMR_HASHES_V1: usize = 64;
 pub const HEGEMON_LONG_RANGE_PROOF_MAX_SAMPLE_HEADERS_V1: usize = 64;
+pub const HEGEMON_BRIDGE_LONG_RANGE_MIN_CONFIRMATIONS_V1: u32 = 2;
+pub const HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1: Work48 = [0u8; 48];
 
 pub const HEGEMON_CHAIN_ID_V1: Hash32 = [
     0xa3, 0x8e, 0xff, 0x6b, 0x93, 0xae, 0xae, 0xf8, 0x8d, 0xe8, 0x8d, 0x5f, 0x59, 0x67, 0xcf, 0x62,
@@ -143,6 +145,7 @@ pub struct HeaderMmrOpeningV1 {
 pub struct HeaderMmrLeafWitnessV1 {
     pub header: PowHeaderV1,
     pub opening: HeaderMmrOpeningV1,
+    pub parent_opening: HeaderMmrOpeningV1,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode)]
@@ -160,8 +163,10 @@ pub struct HegemonLongRangeProofV1 {
     pub verifier_hash: Hash32,
     pub trusted_checkpoint: TrustedCheckpointV1,
     pub tip_header: PowHeaderV1,
+    pub tip_parent_opening: HeaderMmrOpeningV1,
     pub message_header: PowHeaderV1,
     pub message_header_opening: HeaderMmrOpeningV1,
+    pub message_parent_opening: HeaderMmrOpeningV1,
     pub messages: Vec<BridgeMessageV1>,
     pub message_index: u32,
     pub sample_headers: Vec<HeaderMmrLeafWitnessV1>,
@@ -177,15 +182,18 @@ pub struct LongRangeProofShapeInput<'a> {
     pub trusted_height: u64,
     pub tip_height: u64,
     pub tip_header_mmr_len: u64,
+    pub tip_parent_opening_leaf_index: u64,
     pub message_height: u64,
     pub message_header_mmr_len: u64,
     pub message_opening_leaf_index: u64,
+    pub message_parent_opening_leaf_index: u64,
     pub message_index: u32,
     pub message_source_chain_matches: bool,
     pub message_source_height: u64,
     pub expected_sample_indices: &'a [u64],
     pub sample_header_heights: &'a [u64],
     pub sample_opening_leaf_indices: &'a [u64],
+    pub sample_parent_opening_leaf_indices: &'a [u64],
     pub min_confirmations: u32,
     pub tip_work: &'a Work48,
     pub min_tip_work: &'a Work48,
@@ -400,6 +408,18 @@ pub fn decode_hegemon_long_range_proof_wire_v1(
 pub fn decode_hegemon_long_range_proof_guest_wire_v1(
     bytes: &[u8],
 ) -> Result<(HegemonLongRangeProofV1, u32, Work48), LightClientError> {
+    decode_hegemon_long_range_proof_guest_wire_with_policy_v1(
+        bytes,
+        HEGEMON_BRIDGE_LONG_RANGE_MIN_CONFIRMATIONS_V1,
+        HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
+    )
+}
+
+pub fn decode_hegemon_long_range_proof_guest_wire_with_policy_v1(
+    bytes: &[u8],
+    min_confirmations: u32,
+    min_tip_work: Work48,
+) -> Result<(HegemonLongRangeProofV1, u32, Work48), LightClientError> {
     let mut cursor = 0usize;
     let mut proof = read_hegemon_long_range_proof_without_output(bytes, &mut cursor)?;
     let output_start = cursor;
@@ -410,8 +430,6 @@ pub fn decode_hegemon_long_range_proof_guest_wire_v1(
         return Err(LightClientError::ProofInputMismatch);
     }
     let output = decode_bridge_checkpoint_output_wire_v1(&bytes[output_start..output_end])?;
-    let min_confirmations = output.confirmations_checked;
-    let min_tip_work = output.min_work_checked;
     proof.output = output.clone();
     if expected_long_range_output_from_wire_fields(&proof, min_tip_work)? != output {
         return Err(LightClientError::ReceiptOutputMismatch);
@@ -645,6 +663,7 @@ fn read_header_mmr_leaf_witness(
     Ok(HeaderMmrLeafWitnessV1 {
         header: read_pow_header(bytes, cursor)?,
         opening: read_header_mmr_opening(bytes, cursor)?,
+        parent_opening: read_header_mmr_opening(bytes, cursor)?,
     })
 }
 
@@ -692,8 +711,10 @@ fn read_hegemon_long_range_proof(
     let verifier_hash = read_hash32(bytes, cursor)?;
     let trusted_checkpoint = read_trusted_checkpoint(bytes, cursor)?;
     let tip_header = read_pow_header(bytes, cursor)?;
+    let tip_parent_opening = read_header_mmr_opening(bytes, cursor)?;
     let message_header = read_pow_header(bytes, cursor)?;
     let message_header_opening = read_header_mmr_opening(bytes, cursor)?;
+    let message_parent_opening = read_header_mmr_opening(bytes, cursor)?;
     let messages = read_bridge_messages(bytes, cursor)?;
     let message_index = read_u32_le(bytes, cursor)?;
     let sample_headers = read_header_mmr_leaf_witnesses(bytes, cursor)?;
@@ -705,8 +726,10 @@ fn read_hegemon_long_range_proof(
         verifier_hash,
         trusted_checkpoint,
         tip_header,
+        tip_parent_opening,
         message_header,
         message_header_opening,
+        message_parent_opening,
         messages,
         message_index,
         sample_headers,
@@ -722,8 +745,10 @@ fn read_hegemon_long_range_proof_without_output(
     let verifier_hash = read_hash32(bytes, cursor)?;
     let trusted_checkpoint = read_trusted_checkpoint(bytes, cursor)?;
     let tip_header = read_pow_header(bytes, cursor)?;
+    let tip_parent_opening = read_header_mmr_opening(bytes, cursor)?;
     let message_header = read_pow_header(bytes, cursor)?;
     let message_header_opening = read_header_mmr_opening(bytes, cursor)?;
+    let message_parent_opening = read_header_mmr_opening(bytes, cursor)?;
     let messages = read_bridge_messages(bytes, cursor)?;
     let message_index = read_u32_le(bytes, cursor)?;
     let sample_headers = read_header_mmr_leaf_witnesses(bytes, cursor)?;
@@ -735,8 +760,10 @@ fn read_hegemon_long_range_proof_without_output(
         verifier_hash,
         trusted_checkpoint,
         tip_header,
+        tip_parent_opening,
         message_header,
         message_header_opening,
+        message_parent_opening,
         messages,
         message_index,
         sample_headers,
@@ -1421,8 +1448,14 @@ pub fn evaluate_long_range_proof_shape(
     if input.tip_height <= input.message_height || input.message_height <= input.trusted_height {
         return Err(LightClientError::LongRangeProofMismatch);
     }
+    if input.tip_parent_opening_leaf_index.checked_add(1) != Some(input.tip_height) {
+        return Err(LightClientError::ParentHashMismatch);
+    }
     if input.message_opening_leaf_index != input.message_height {
         return Err(LightClientError::HeaderMmrOpeningMismatch);
+    }
+    if input.message_parent_opening_leaf_index.checked_add(1) != Some(input.message_height) {
+        return Err(LightClientError::ParentHashMismatch);
     }
     let message_index = usize::try_from(input.message_index)
         .map_err(|_| LightClientError::MessageIndexOutOfBounds)?;
@@ -1437,14 +1470,21 @@ pub fn evaluate_long_range_proof_shape(
     {
         return Err(LightClientError::FlyClientSampleMismatch);
     }
-    for ((expected_index, header_height), opening_leaf_index) in input
+    if input.sample_header_heights.len() != input.sample_parent_opening_leaf_indices.len() {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    for (((expected_index, header_height), opening_leaf_index), parent_opening_leaf_index) in input
         .expected_sample_indices
         .iter()
         .zip(input.sample_header_heights.iter())
         .zip(input.sample_opening_leaf_indices.iter())
+        .zip(input.sample_parent_opening_leaf_indices.iter())
     {
         if header_height != expected_index || opening_leaf_index != expected_index {
             return Err(LightClientError::FlyClientSampleMismatch);
+        }
+        if parent_opening_leaf_index.checked_add(1) != Some(*header_height) {
+            return Err(LightClientError::ParentHashMismatch);
         }
     }
 
@@ -1567,6 +1607,11 @@ fn verify_hegemon_long_range_proof_inner(
         .iter()
         .map(|sample| sample.opening.leaf_index)
         .collect::<Vec<_>>();
+    let sample_parent_opening_leaf_indices = proof
+        .sample_headers
+        .iter()
+        .map(|sample| sample.parent_opening.leaf_index)
+        .collect::<Vec<_>>();
     let confirmations_checked =
         long_range_confirmations_checked(proof.tip_header.height, proof.message_header.height);
     let output = maybe_message.map(|message| {
@@ -1588,9 +1633,11 @@ fn verify_hegemon_long_range_proof_inner(
         trusted_height: proof.trusted_checkpoint.height,
         tip_height: proof.tip_header.height,
         tip_header_mmr_len: proof.tip_header.header_mmr_len,
+        tip_parent_opening_leaf_index: proof.tip_parent_opening.leaf_index,
         message_height: proof.message_header.height,
         message_header_mmr_len: proof.message_header.header_mmr_len,
         message_opening_leaf_index: proof.message_header_opening.leaf_index,
+        message_parent_opening_leaf_index: proof.message_parent_opening.leaf_index,
         message_index: proof.message_index,
         message_source_chain_matches: maybe_message
             .is_some_and(|message| message.source_chain_id == proof.trusted_checkpoint.chain_id),
@@ -1600,6 +1647,7 @@ fn verify_hegemon_long_range_proof_inner(
         expected_sample_indices: &expected_indices,
         sample_header_heights: &sample_header_heights,
         sample_opening_leaf_indices: &sample_opening_leaf_indices,
+        sample_parent_opening_leaf_indices: &sample_parent_opening_leaf_indices,
         min_confirmations,
         tip_work: &tip_checkpoint.cumulative_work,
         min_tip_work: &min_tip_work,
@@ -1611,10 +1659,22 @@ fn verify_hegemon_long_range_proof_inner(
         proof.tip_header.header_mmr_root,
         &proof.message_header_opening,
     )?;
+    verify_header_parent_link_in_context(
+        &mmr_context,
+        &proof.trusted_checkpoint,
+        &proof.tip_header,
+        &proof.tip_parent_opening,
+    )?;
     verify_header_mmr_opening_in_context(
         &mmr_context,
         message_header_hash,
         &proof.message_header_opening,
+    )?;
+    verify_header_parent_link_in_context(
+        &mmr_context,
+        &proof.trusted_checkpoint,
+        &proof.message_header,
+        &proof.message_parent_opening,
     )?;
     verify_message_inclusion(
         proof.message_header.message_root,
@@ -1629,9 +1689,35 @@ fn verify_hegemon_long_range_proof_inner(
             &target,
         )?;
         verify_header_mmr_opening_in_context(&mmr_context, sample_hash, &sample.opening)?;
+        verify_header_parent_link_in_context(
+            &mmr_context,
+            &proof.trusted_checkpoint,
+            &sample.header,
+            &sample.parent_opening,
+        )?;
     }
 
     Ok(output)
+}
+
+fn verify_header_parent_link_in_context(
+    context: &HeaderMmrContext<'_>,
+    checkpoint: &TrustedCheckpointV1,
+    header: &PowHeaderV1,
+    parent_opening: &HeaderMmrOpeningV1,
+) -> Result<(), LightClientError> {
+    let parent_height = header
+        .height
+        .checked_sub(1)
+        .ok_or(LightClientError::ParentHashMismatch)?;
+    if parent_height < checkpoint.height || parent_opening.leaf_index != parent_height {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    if parent_height == checkpoint.height && header.parent_hash != checkpoint.header_hash {
+        return Err(LightClientError::ParentHashMismatch);
+    }
+    verify_header_mmr_opening_in_context(context, header.parent_hash, parent_opening)
+        .map_err(|_| LightClientError::ParentHashMismatch)
 }
 
 fn expected_long_range_output_from_wire_fields(
@@ -1983,15 +2069,18 @@ mod tests {
         trusted_height: u64,
         tip_height: u64,
         tip_header_mmr_len: u64,
+        tip_parent_opening_leaf_index: u64,
         message_height: u64,
         message_header_mmr_len: u64,
         message_opening_leaf_index: u64,
+        message_parent_opening_leaf_index: u64,
         message_index: u32,
         message_source_chain_matches: bool,
         message_source_height: u64,
         expected_sample_indices: Vec<u64>,
         sample_header_heights: Vec<u64>,
         sample_opening_leaf_indices: Vec<u64>,
+        sample_parent_opening_leaf_indices: Vec<u64>,
         min_confirmations: u32,
         tip_work: String,
         min_tip_work: String,
@@ -2321,15 +2410,18 @@ mod tests {
             trusted_height: case.trusted_height,
             tip_height: case.tip_height,
             tip_header_mmr_len: case.tip_header_mmr_len,
+            tip_parent_opening_leaf_index: case.tip_parent_opening_leaf_index,
             message_height: case.message_height,
             message_header_mmr_len: case.message_header_mmr_len,
             message_opening_leaf_index: case.message_opening_leaf_index,
+            message_parent_opening_leaf_index: case.message_parent_opening_leaf_index,
             message_index: case.message_index,
             message_source_chain_matches: case.message_source_chain_matches,
             message_source_height: case.message_source_height,
             expected_sample_indices: &case.expected_sample_indices,
             sample_header_heights: &case.sample_header_heights,
             sample_opening_leaf_indices: &case.sample_opening_leaf_indices,
+            sample_parent_opening_leaf_indices: &case.sample_parent_opening_leaf_indices,
             min_confirmations: case.min_confirmations,
             tip_work: &tip_work,
             min_tip_work: &min_tip_work,
@@ -2364,15 +2456,18 @@ mod tests {
             trusted_height: u64::MAX,
             tip_height: u64::MAX,
             tip_header_mmr_len: u64::MAX,
+            tip_parent_opening_leaf_index: u64::MAX,
             message_height: u64::MAX,
             message_header_mmr_len: u64::MAX,
             message_opening_leaf_index: u64::MAX,
+            message_parent_opening_leaf_index: u64::MAX,
             message_index: 0,
             message_source_chain_matches: true,
             message_source_height: u64::MAX,
             expected_sample_indices: &[],
             sample_header_heights: &[],
             sample_opening_leaf_indices: &[],
+            sample_parent_opening_leaf_indices: &[],
             min_confirmations: 0,
             tip_work: &zero_work(),
             min_tip_work: &zero_work(),
@@ -2821,6 +2916,7 @@ mod tests {
             "header_mmr_mismatch" => LightClientError::HeaderMmrMismatch,
             "header_mmr_leaf_out_of_range" => LightClientError::HeaderMmrLeafOutOfRange,
             "long_range_proof_mismatch" => LightClientError::LongRangeProofMismatch,
+            "parent_hash_mismatch" => LightClientError::ParentHashMismatch,
             "header_mmr_opening_mismatch" => LightClientError::HeaderMmrOpeningMismatch,
             "header_mmr_peak_mismatch" => LightClientError::HeaderMmrPeakMismatch,
             "message_index_out_of_bounds" => LightClientError::MessageIndexOutOfBounds,
@@ -3058,6 +3154,7 @@ mod tests {
             .map(|index| HeaderMmrLeafWitnessV1 {
                 header: headers[(index - 1) as usize].clone(),
                 opening: header_mmr_opening_from_hashes(&history, *index).unwrap(),
+                parent_opening: header_mmr_opening_from_hashes(&history, index - 1).unwrap(),
             })
             .collect::<Vec<_>>();
         let output = bridge_checkpoint_output_with_tip(
@@ -3072,8 +3169,10 @@ mod tests {
             verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
             trusted_checkpoint: genesis,
             tip_header: h4,
+            tip_parent_opening: header_mmr_opening_from_hashes(&history, 3).unwrap(),
             message_header: h2,
             message_header_opening: header_mmr_opening_from_hashes(&history, 2).unwrap(),
+            message_parent_opening: header_mmr_opening_from_hashes(&history, 1).unwrap(),
             messages,
             message_index: 0,
             sample_headers,
@@ -3096,8 +3195,11 @@ mod tests {
         let (guest_proof, min_confirmations, min_tip_work) =
             decode_hegemon_long_range_proof_guest_wire_v1(&proof.encode()).unwrap();
         assert_eq!(guest_proof.output, proof.output);
-        assert_eq!(min_confirmations, proof.output.confirmations_checked);
-        assert_eq!(min_tip_work, proof.output.min_work_checked);
+        assert_eq!(
+            min_confirmations,
+            HEGEMON_BRIDGE_LONG_RANGE_MIN_CONFIRMATIONS_V1
+        );
+        assert_eq!(min_tip_work, HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1);
         assert_eq!(
             verify_hegemon_long_range_proof_without_claimed_output(
                 &guest_proof,
@@ -3106,6 +3208,66 @@ mod tests {
             )
             .unwrap(),
             proof.output
+        );
+    }
+
+    #[test]
+    fn long_range_proof_rejects_parent_link_tampering() {
+        let mut proof = long_range_test_proof();
+        proof.tip_parent_opening.leaf_index = proof.tip_parent_opening.leaf_index.saturating_sub(1);
+
+        assert_eq!(
+            verify_hegemon_long_range_proof(&proof, 2, zero_work()),
+            Err(LightClientError::ParentHashMismatch)
+        );
+
+        let mut proof = long_range_test_proof();
+        proof.message_parent_opening.leaf_index =
+            proof.message_parent_opening.leaf_index.saturating_sub(1);
+        assert_eq!(
+            verify_hegemon_long_range_proof(&proof, 2, zero_work()),
+            Err(LightClientError::ParentHashMismatch)
+        );
+
+        let mut proof = long_range_test_proof();
+        proof.sample_headers[0].parent_opening.leaf_index = proof.sample_headers[0]
+            .parent_opening
+            .leaf_index
+            .saturating_add(1);
+        assert_eq!(
+            verify_hegemon_long_range_proof(&proof, 2, zero_work()),
+            Err(LightClientError::ParentHashMismatch)
+        );
+    }
+
+    #[test]
+    fn long_range_guest_decoder_uses_verifier_policy_not_claimed_output_policy() {
+        let mut proof = long_range_test_proof();
+        let verifier_min_work = proof.tip_header.cumulative_work;
+        assert_ne!(proof.output.min_work_checked, verifier_min_work);
+        assert_eq!(
+            decode_hegemon_long_range_proof_guest_wire_with_policy_v1(
+                &proof.encode(),
+                2,
+                verifier_min_work
+            )
+            .map(|_| ()),
+            Err(LightClientError::ReceiptOutputMismatch)
+        );
+
+        proof.output.min_work_checked = verifier_min_work;
+        let (_, min_confirmations, min_tip_work) =
+            decode_hegemon_long_range_proof_guest_wire_with_policy_v1(
+                &proof.encode(),
+                4,
+                verifier_min_work,
+            )
+            .expect("configured policy decode");
+        assert_eq!(min_confirmations, 4);
+        assert_eq!(min_tip_work, verifier_min_work);
+        assert_eq!(
+            verify_hegemon_long_range_proof(&proof, 4, verifier_min_work),
+            Err(LightClientError::ConfirmationPolicyMismatch)
         );
     }
 
@@ -3390,6 +3552,18 @@ mod tests {
     fn oracle_decode_long_range_guest(
         wire: &[u8],
     ) -> Result<(HegemonLongRangeProofV1, u32, Work48), LightClientError> {
+        oracle_decode_long_range_guest_with_policy(
+            wire,
+            HEGEMON_BRIDGE_LONG_RANGE_MIN_CONFIRMATIONS_V1,
+            HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
+        )
+    }
+
+    fn oracle_decode_long_range_guest_with_policy(
+        wire: &[u8],
+        min_confirmations: u32,
+        min_tip_work: Work48,
+    ) -> Result<(HegemonLongRangeProofV1, u32, Work48), LightClientError> {
         let mut cursor = 0usize;
         let mut proof = oracle_read_long_range_proof_without_output(wire, &mut cursor)?;
         let output_end = cursor
@@ -3403,8 +3577,6 @@ mod tests {
         if output_cursor != output_end {
             return Err(LightClientError::ProofInputMismatch);
         }
-        let min_confirmations = output.confirmations_checked;
-        let min_tip_work = output.min_work_checked;
         proof.output = output.clone();
         if oracle_expected_long_range_output(&proof, min_tip_work)? != output {
             return Err(LightClientError::ReceiptOutputMismatch);
@@ -3417,7 +3589,9 @@ mod tests {
         oracle_skip(wire, &mut cursor, 32)?;
         oracle_skip_trusted_checkpoint(wire, &mut cursor)?;
         oracle_skip_pow_header(wire, &mut cursor)?;
+        oracle_skip_header_mmr_opening(wire, &mut cursor)?;
         oracle_skip_pow_header(wire, &mut cursor)?;
+        oracle_skip_header_mmr_opening(wire, &mut cursor)?;
         oracle_skip_header_mmr_opening(wire, &mut cursor)?;
 
         let messages_len = cursor;
@@ -3465,8 +3639,10 @@ mod tests {
         let verifier_hash = oracle_read_array::<32>(wire, cursor)?;
         let trusted_checkpoint = oracle_read_trusted_checkpoint(wire, cursor)?;
         let tip_header = oracle_read_pow_header(wire, cursor)?;
+        let tip_parent_opening = oracle_read_header_mmr_opening(wire, cursor)?;
         let message_header = oracle_read_pow_header(wire, cursor)?;
         let message_header_opening = oracle_read_header_mmr_opening(wire, cursor)?;
+        let message_parent_opening = oracle_read_header_mmr_opening(wire, cursor)?;
         let messages = oracle_read_bridge_messages(wire, cursor)?;
         let message_index = oracle_read_u32(wire, cursor)?;
         let sample_headers = oracle_read_header_mmr_leaf_witnesses(wire, cursor)?;
@@ -3478,8 +3654,10 @@ mod tests {
             verifier_hash,
             trusted_checkpoint,
             tip_header,
+            tip_parent_opening,
             message_header,
             message_header_opening,
+            message_parent_opening,
             messages,
             message_index,
             sample_headers,
@@ -3605,6 +3783,7 @@ mod tests {
             samples.push(HeaderMmrLeafWitnessV1 {
                 header: oracle_read_pow_header(wire, cursor)?,
                 opening: oracle_read_header_mmr_opening(wire, cursor)?,
+                parent_opening: oracle_read_header_mmr_opening(wire, cursor)?,
             });
         }
         Ok(samples)

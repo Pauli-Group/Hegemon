@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,7 +37,10 @@ use wallet::{
     node_rpc::NodeRpcClient,
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     parse_recipients, precheck_nullifiers_with_binding, provisional_pending_tx_id,
-    store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
+    store::{
+        open_private_append_file, write_private_file, OutgoingDisclosureRecord, PendingStatus,
+        TransferRecipient, WalletMode, WalletStore,
+    },
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
@@ -476,7 +478,8 @@ fn cmd_generate(count: u32, out: Option<PathBuf>) -> Result<()> {
     let export = WalletExport::from_keys(&root, &keys, count)?;
     let json = serde_json::to_string_pretty(&export)?;
     if let Some(path) = out {
-        fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(&path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -563,7 +566,8 @@ fn cmd_scan(ivk_path: &Path, ledger_path: &Path, out: Option<&Path>) -> Result<(
     let report = BalanceReport { totals, recovered };
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(path) = out {
-        fs::write(path, &json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -809,7 +813,8 @@ fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
     let ivk = store.incoming_key()?;
     let json = serde_json::to_string_pretty(&ivk)?;
     if let Some(path) = args.out {
-        fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(&path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -926,7 +931,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
         };
 
         let json = package.to_pretty_json()?;
-        fs::write(&args.out, json)
+        write_private_file(&args.out, json.as_bytes())
             .with_context(|| format!("failed to write {}", args.out.display()))?;
         println!("Wrote disclosure package to {}", args.out.display());
         Ok(())
@@ -941,10 +946,8 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         anyhow::bail!("unsupported disclosure package version {}", package.version);
     }
 
-    let recipient = ShieldedAddress::decode(&package.claim.recipient_address)?;
-    if recipient.pk_recipient != package.claim.pk_recipient {
-        anyhow::bail!("recipient address does not match pk_recipient");
-    }
+    let bound_recipient = decode_bound_recipient_address(&package.claim)?;
+    ensure_canonical_asset_id(package.claim.asset_id)?;
 
     ensure_canonical_bytes48("commitment", &package.claim.commitment)?;
     ensure_canonical_bytes48("anchor", &package.confirmation.anchor)?;
@@ -1020,22 +1023,30 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
     };
 
     verify_payment_disclosure(&bundle).map_err(|e| anyhow!(e.to_string()))?;
+    let verified_claim = bundle.claim.clone();
+    let recipient_address = map_wallet(bound_recipient.encode())?;
 
-    let commitment_hex = format!("0x{}", hex::encode(package.claim.commitment));
+    let commitment_hex = format!("0x{}", hex::encode(verified_claim.commitment));
     let anchor_hex = format!("0x{}", hex::encode(package.confirmation.anchor));
     let chain_hex = format!("0x{}", hex::encode(package.chain.genesis_hash));
     println!(
         "VERIFIED paid value={} asset_id={} to={} commitment={} anchor={} chain={}",
-        package.claim.value,
-        package.claim.asset_id,
-        package.claim.recipient_address,
+        verified_claim.value,
+        verified_claim.asset_id,
+        recipient_address,
         commitment_hex,
         anchor_hex,
         chain_hex
     );
 
     if let Some(path) = args.credit_ledger {
-        append_credit_record(&path, &package, args.case_id.as_deref())?;
+        append_credit_record(
+            &path,
+            &package,
+            &verified_claim,
+            &recipient_address,
+            args.case_id.as_deref(),
+        )?;
     }
 
     Ok(())
@@ -1087,6 +1098,24 @@ fn ensure_canonical_bytes48(label: &str, bytes: &[u8; 48]) -> Result<()> {
     Ok(())
 }
 
+fn ensure_canonical_asset_id(asset_id: u64) -> Result<()> {
+    if !transaction_circuit::constants::is_canonical_asset_id(asset_id) {
+        anyhow::bail!("asset_id is not a canonical circuit asset identifier");
+    }
+    Ok(())
+}
+
+fn decode_bound_recipient_address(claim: &DisclosureClaim) -> Result<ShieldedAddress> {
+    let recipient = ShieldedAddress::decode(&claim.recipient_address)?;
+    if recipient.pk_recipient != claim.pk_recipient {
+        anyhow::bail!("recipient address does not match pk_recipient");
+    }
+    if recipient.pk_auth != claim.pk_auth {
+        anyhow::bail!("recipient address does not match pk_auth");
+    }
+    Ok(recipient)
+}
+
 fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
     let bytes = hex::decode(trimmed).map_err(|e| anyhow!("invalid hex: {e}"))?;
@@ -1133,9 +1162,12 @@ fn parse_merkle_root(input: &str) -> Result<[u8; 48]> {
 fn append_credit_record(
     path: &Path,
     package: &DisclosurePackage,
+    verified_claim: &PaymentDisclosureClaim,
+    recipient_address: &str,
     case_id: Option<&str>,
 ) -> Result<()> {
-    let idempotence_key = format!("0x{}", hex::encode(package.claim.commitment));
+    let idempotence_key = format!("0x{}", hex::encode(verified_claim.commitment));
+    let deposit_account_id = proof_bound_recipient_id(verified_claim);
 
     if path.exists() {
         let file = fs::File::open(path)?;
@@ -1155,19 +1187,28 @@ fn append_credit_record(
 
     let record = json!({
         "idempotence_key": idempotence_key,
-        "deposit_account_id": package.claim.recipient_address.as_str(),
-        "value": package.claim.value,
-        "asset_id": package.claim.asset_id,
-        "commitment": format!("0x{}", hex::encode(package.claim.commitment)),
+        "deposit_account_id": deposit_account_id,
+        "recipient_address": recipient_address,
+        "value": verified_claim.value,
+        "asset_id": verified_claim.asset_id,
+        "commitment": format!("0x{}", hex::encode(verified_claim.commitment)),
         "anchor": format!("0x{}", hex::encode(package.confirmation.anchor)),
         "chain_genesis_hash": format!("0x{}", hex::encode(package.chain.genesis_hash)),
         "verified_at": Utc::now().to_rfc3339(),
         "case_id": case_id,
     });
 
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = open_private_append_file(path)?;
     writeln!(file, "{}", record)?;
     Ok(())
+}
+
+fn proof_bound_recipient_id(claim: &PaymentDisclosureClaim) -> String {
+    format!(
+        "disclosure-v1:{}:{}",
+        hex::encode(claim.pk_recipient),
+        hex::encode(claim.pk_auth)
+    )
 }
 
 fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
@@ -2138,7 +2179,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let data = serde_json::to_vec_pretty(value)?;
-    fs::write(path, data).with_context(|| format!("failed to write {}", path.display()))
+    write_private_file(path, &data).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn map_wallet<T>(value: std::result::Result<T, wallet::WalletError>) -> Result<T> {

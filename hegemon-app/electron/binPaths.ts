@@ -5,6 +5,9 @@ import { join, resolve } from 'node:path';
 const binaryNames = (binary: string) => (process.platform === 'win32' ? [`${binary}.exe`, binary] : [binary]);
 
 const resolveEnvBinary = (binary: string) => {
+  if (app.isPackaged) {
+    return null;
+  }
   if (!process.env.HEGEMON_BIN_DIR) {
     return null;
   }
@@ -43,17 +46,17 @@ const resolvePackagedBinary = (binary: string) => {
 };
 
 export const resolveBinaryPath = (binary: string) => {
-  const envBinary = resolveEnvBinary(binary);
-  if (envBinary) {
-    return envBinary;
-  }
-
   if (app.isPackaged) {
     const packagedBinary = resolvePackagedBinary(binary);
     if (packagedBinary) {
       return packagedBinary;
     }
     throw new Error(`Missing packaged binary: ${binary}`);
+  }
+
+  const envBinary = resolveEnvBinary(binary);
+  if (envBinary) {
+    return envBinary;
   }
 
   const devBinary = resolveDevBinary(binary);

@@ -115,6 +115,12 @@ pub fn verify_payment_disclosure(
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
 ) -> Result<DisclosurePublicInputsP3, DisclosureVerifyError> {
+    if !is_canonical_asset_id(claim.asset_id) {
+        return Err(DisclosureVerifyError::InvalidPublicInputs(
+            "asset identifier is not a canonical circuit field element".into(),
+        ));
+    }
+
     let commitment = bytes48_to_felts(&claim.commitment).ok_or(
         DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
     )?;

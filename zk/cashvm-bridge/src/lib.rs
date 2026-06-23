@@ -1,5 +1,9 @@
+use codec::Decode;
 use consensus_light_client::{BridgeCheckpointOutputV1, Hash32, Work48};
-use protocol_kernel::{bridge_payload_hash, BridgeMessageV1, ChainId, MessageHash, MessageRoot};
+use protocol_kernel::{
+    bridge_payload_hash, BridgeMessageV1, BridgeMintPayloadV1, ChainId, MessageHash, MessageRoot,
+    BRIDGE_MINT_PAYLOAD_VERSION_V1,
+};
 use sha2::{Digest, Sha256};
 
 pub const CASHVM_MAX_STANDARD_TX_BYTES: usize = 100_000;
@@ -16,6 +20,11 @@ const CASHVM_BRIDGE_STATE_MAGIC_V1: [u8; 4] = *b"HBC1";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CashVmBridgeError {
     AmountOverflow,
+    MintPayloadDecodeFailed,
+    MintPayloadVersionMismatch,
+    MintPayloadNonceMismatch,
+    MintPayloadAmountMismatch,
+    SequenceOverflow,
     PayloadHashMismatch,
     MessageHashMismatch,
     CashVmMessageHashMismatch,
@@ -192,7 +201,6 @@ pub fn cashvm_output_from_hegemon(
     message: &BridgeMessageV1,
     destination_token_category: Hash32,
     recipient_locking_bytecode_hash: Hash32,
-    amount: u128,
 ) -> Result<CashVmBridgeOutputV1, CashVmBridgeError> {
     let hegemon_message_hash = message.message_hash();
     if message.payload_hash != bridge_payload_hash(&message.payload) {
@@ -201,6 +209,8 @@ pub fn cashvm_output_from_hegemon(
     if hegemon_message_hash != hegemon.message_hash {
         return Err(CashVmBridgeError::MessageHashMismatch);
     }
+    let mint_payload = decode_bridge_mint_payload(&message.payload)?;
+    validate_bridge_mint_payload_binding(&mint_payload, message.message_nonce)?;
     Ok(CashVmBridgeOutputV1 {
         source_chain_id: hegemon.source_chain_id,
         rules_hash: hegemon.rules_hash,
@@ -216,10 +226,33 @@ pub fn cashvm_output_from_hegemon(
         message_nonce: hegemon.message_nonce,
         destination_token_category,
         recipient_locking_bytecode_hash,
-        amount,
+        amount: u128::from(mint_payload.amount),
         confirmations_checked: hegemon.confirmations_checked,
         min_work_checked: hegemon.min_work_checked,
     })
+}
+
+fn decode_bridge_mint_payload(payload: &[u8]) -> Result<BridgeMintPayloadV1, CashVmBridgeError> {
+    let mut input = payload;
+    let mint_payload = BridgeMintPayloadV1::decode(&mut input)
+        .map_err(|_| CashVmBridgeError::MintPayloadDecodeFailed)?;
+    if !input.is_empty() {
+        return Err(CashVmBridgeError::MintPayloadDecodeFailed);
+    }
+    Ok(mint_payload)
+}
+
+fn validate_bridge_mint_payload_binding(
+    payload: &BridgeMintPayloadV1,
+    message_nonce: u128,
+) -> Result<(), CashVmBridgeError> {
+    if payload.version != BRIDGE_MINT_PAYLOAD_VERSION_V1 {
+        return Err(CashVmBridgeError::MintPayloadVersionMismatch);
+    }
+    if payload.mint_nonce != message_nonce {
+        return Err(CashVmBridgeError::MintPayloadNonceMismatch);
+    }
+    Ok(())
 }
 
 pub fn cashvm_message_digest(message: &BridgeMessageV1) -> Hash32 {
@@ -268,6 +301,14 @@ pub fn verify_cashvm_bridge_spend_model(
     if spend.bridge_output.cashvm_message_hash != cashvm_message_digest(&spend.source_message) {
         return Err(CashVmBridgeError::CashVmMessageHashMismatch);
     }
+    let mint_payload = decode_bridge_mint_payload(&spend.source_message.payload)?;
+    validate_bridge_mint_payload_binding(&mint_payload, spend.source_message.message_nonce)?;
+    if spend.bridge_output.message_nonce != mint_payload.mint_nonce {
+        return Err(CashVmBridgeError::MintPayloadNonceMismatch);
+    }
+    if spend.bridge_output.amount != u128::from(mint_payload.amount) {
+        return Err(CashVmBridgeError::MintPayloadAmountMismatch);
+    }
     if spend.proof.proof_bytes.is_empty() {
         return Err(CashVmBridgeError::EmptyProof);
     }
@@ -280,7 +321,12 @@ pub fn verify_cashvm_bridge_spend_model(
     if spend.proof.pq_soundness_bits < spend.previous_state.min_pq_soundness_bits {
         return Err(CashVmBridgeError::InsufficientPqSoundness);
     }
-    if spend.next_state.sequence != spend.previous_state.sequence.saturating_add(1) {
+    let expected_sequence = spend
+        .previous_state
+        .sequence
+        .checked_add(1)
+        .ok_or(CashVmBridgeError::SequenceOverflow)?;
+    if spend.next_state.sequence != expected_sequence {
         return Err(CashVmBridgeError::NextSequenceMismatch);
     }
     if spend.next_state.verifier_script_hash != spend.previous_state.verifier_script_hash
@@ -294,10 +340,7 @@ pub fn verify_cashvm_bridge_spend_model(
     }
     let expected_replay_root = append_replay_root(
         spend.previous_state.replay_root,
-        replay_leaf(
-            spend.bridge_output.source_chain_id,
-            spend.bridge_output.message_nonce,
-        ),
+        replay_leaf(spend.bridge_output.source_chain_id, mint_payload.mint_nonce),
     );
     if spend.next_state.replay_root != expected_replay_root {
         return Err(CashVmBridgeError::NextReplayRootMismatch);
@@ -393,6 +436,7 @@ pub fn hash256(domain: &[u8], chunks: &[&[u8]]) -> Hash32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codec::Encode;
     use consensus_light_client::{
         BridgeCheckpointOutputV1, HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
     };
@@ -407,7 +451,15 @@ mod tests {
     }
 
     fn message() -> BridgeMessageV1 {
-        let payload = b"cashvm bridge payload".to_vec();
+        let payload = BridgeMintPayloadV1 {
+            version: BRIDGE_MINT_PAYLOAD_VERSION_V1,
+            destination_chain_id: hash32(0x42),
+            recipient_commitment: [0x23; 48],
+            asset_id: 7,
+            amount: 1_000,
+            mint_nonce: 42,
+        }
+        .encode();
         BridgeMessageV1 {
             source_chain_id: HEGEMON_CHAIN_ID_V1,
             destination_chain_id: hash32(0x42),
@@ -444,7 +496,6 @@ mod tests {
             &message,
             hash32(0x21),
             hash32(0x22),
-            1_000,
         )
         .expect("cashvm output")
     }
@@ -534,7 +585,6 @@ mod tests {
             &message,
             hash32(0x21),
             hash32(0x22),
-            1_000,
         )
         .expect("output");
         let previous_state = state(&output);
@@ -573,7 +623,6 @@ mod tests {
             &message,
             hash32(0x21),
             hash32(0x22),
-            1_000,
         )
         .expect("output");
         let previous_state = state(&output);
@@ -679,6 +728,111 @@ mod tests {
         assert_eq!(
             verify_cashvm_bridge_spend_model(&wrong_cashvm_digest),
             Err(CashVmBridgeError::CashVmMessageHashMismatch)
+        );
+    }
+
+    #[test]
+    fn output_helper_binds_amount_and_nonce_to_hegemon_mint_payload() {
+        let mut message = message();
+        let mut payload =
+            BridgeMintPayloadV1::decode(&mut &message.payload[..]).expect("mint payload");
+        payload.amount = 7_500;
+        message.payload = payload.encode();
+        message.payload_hash = bridge_payload_hash(&message.payload);
+        let output = cashvm_output_from_hegemon(
+            &hegemon_output(&message),
+            &message,
+            hash32(0x21),
+            hash32(0x22),
+        )
+        .expect("output");
+        assert_eq!(output.amount, 7_500);
+
+        let mut bad_nonce = message;
+        let mut payload =
+            BridgeMintPayloadV1::decode(&mut &bad_nonce.payload[..]).expect("mint payload");
+        payload.mint_nonce = bad_nonce.message_nonce + 1;
+        bad_nonce.payload = payload.encode();
+        bad_nonce.payload_hash = bridge_payload_hash(&bad_nonce.payload);
+        assert_eq!(
+            cashvm_output_from_hegemon(
+                &hegemon_output(&bad_nonce),
+                &bad_nonce,
+                hash32(0x21),
+                hash32(0x22),
+            ),
+            Err(CashVmBridgeError::MintPayloadNonceMismatch)
+        );
+    }
+
+    #[test]
+    fn spend_model_rejects_amount_replay_and_sequence_tampering() {
+        let message = message();
+        let output = cashvm_output_from_hegemon(
+            &hegemon_output(&message),
+            &message,
+            hash32(0x21),
+            hash32(0x22),
+        )
+        .expect("output");
+        let previous_state = state(&output);
+        let next_state = CashVmBridgeStateV1 {
+            accepted_checkpoint_digest: output.checkpoint_digest(),
+            replay_root: append_replay_root(
+                previous_state.replay_root,
+                replay_leaf(output.source_chain_id, output.message_nonce),
+            ),
+            minted_supply: previous_state.minted_supply + output.amount,
+            sequence: previous_state.sequence + 1,
+            ..previous_state.clone()
+        };
+        let proof = CashVmProofEnvelopeV1 {
+            proof_system_id: hash32(0x55),
+            verifier_script_hash: previous_state.verifier_script_hash,
+            pq_soundness_bits: 128,
+            statement_digest: output.statement_digest(),
+            proof_bytes: vec![0x99; 128],
+        };
+        let base = CashVmBridgeSpendV1 {
+            previous_state,
+            next_state,
+            bridge_output: output,
+            source_message: message,
+            proof,
+        };
+
+        let mut wrong_amount = base.clone();
+        wrong_amount.bridge_output.amount += 1;
+        wrong_amount.proof.statement_digest = wrong_amount.bridge_output.statement_digest();
+        assert_eq!(
+            verify_cashvm_bridge_spend_model(&wrong_amount),
+            Err(CashVmBridgeError::MintPayloadAmountMismatch)
+        );
+
+        let mut wrong_replay = base.clone();
+        let mut payload =
+            BridgeMintPayloadV1::decode(&mut &wrong_replay.source_message.payload[..])
+                .expect("mint payload");
+        payload.mint_nonce += 1;
+        wrong_replay.source_message.payload = payload.encode();
+        wrong_replay.source_message.payload_hash =
+            bridge_payload_hash(&wrong_replay.source_message.payload);
+        wrong_replay.bridge_output.hegemon_message_hash =
+            wrong_replay.source_message.message_hash();
+        wrong_replay.bridge_output.cashvm_message_hash =
+            cashvm_message_digest(&wrong_replay.source_message);
+        wrong_replay.proof.statement_digest = wrong_replay.bridge_output.statement_digest();
+        assert_eq!(
+            verify_cashvm_bridge_spend_model(&wrong_replay),
+            Err(CashVmBridgeError::MintPayloadNonceMismatch)
+        );
+
+        let mut sequence_overflow = base;
+        sequence_overflow.previous_state.sequence = u64::MAX;
+        sequence_overflow.next_state.sequence = u64::MAX;
+        assert_eq!(
+            verify_cashvm_bridge_spend_model(&sequence_overflow),
+            Err(CashVmBridgeError::SequenceOverflow)
         );
     }
 }

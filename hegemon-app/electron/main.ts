@@ -27,7 +27,9 @@ import type {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeManager = new NodeManager();
 const walletdClient = new WalletdClient();
-const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+const rendererUrlOverride = app.isPackaged
+  ? undefined
+  : process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const contactsFileName = 'contacts.json';
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 let shutdownInProgress = false;
@@ -202,9 +204,9 @@ const createWindow = () => {
     app.dock?.setIcon(windowIcon);
   }
 
-  if (process.env.VITE_DEV_SERVER_URL) {
+  if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else if (process.env.ELECTRON_RENDERER_URL) {
+  } else if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
@@ -261,7 +263,7 @@ app.whenReady().then(() => {
 
   configureAppMenu();
 
-  const csp = buildContentSecurityPolicy(devServerUrl);
+  const csp = buildContentSecurityPolicy(rendererUrlOverride);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {

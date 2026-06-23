@@ -30,6 +30,10 @@ fn peer_store_at(path: PathBuf) -> PeerStore {
     PeerStore::new(PeerStoreConfig::with_path(path))
 }
 
+fn public_advertised_addr(octet: u8, port: u16) -> SocketAddr {
+    SocketAddr::from(([8, 8, 8, octet], port))
+}
+
 async fn recv_matching<F>(
     rx: &mut broadcast::Receiver<GossipMessage>,
     per_attempt_timeout: Duration,
@@ -138,6 +142,9 @@ async fn address_exchange_teaches_new_peers() {
     let identity_a = PeerIdentity::generate(b"addr-exchange-a");
     let identity_b = PeerIdentity::generate(b"addr-exchange-b");
     let identity_c = PeerIdentity::generate(b"addr-exchange-c");
+    let public_a = public_advertised_addr(1, addr_a.port());
+    let public_b = public_advertised_addr(2, addr_b.port());
+    let public_c = public_advertised_addr(3, addr_c.port());
 
     let path_a = std::env::temp_dir().join(format!("p2p_integration_addr_a_{suffix}.bin"));
     let path_b = std::env::temp_dir().join(format!("p2p_integration_addr_b_{suffix}.bin"));
@@ -152,7 +159,7 @@ async fn address_exchange_teaches_new_peers() {
         8,
         peer_store_at(path_a.clone()),
         RelayConfig::default(),
-        NatTraversalConfig::disabled(addr_a),
+        NatTraversalConfig::disabled(public_a),
     );
     let service_b = P2PService::new(
         identity_b,
@@ -163,18 +170,18 @@ async fn address_exchange_teaches_new_peers() {
         8,
         peer_store_at(path_b.clone()),
         RelayConfig::default(),
-        NatTraversalConfig::disabled(addr_b),
+        NatTraversalConfig::disabled(public_b),
     );
     let service_c = P2PService::new(
         identity_c,
         addr_c,
-        vec![addr_a.to_string()],
+        vec![addr_a.to_string(), addr_b.to_string()],
         Vec::new(),
         GossipRouter::new(8).handle(),
         8,
         peer_store_at(path_c.clone()),
         RelayConfig::default(),
-        NatTraversalConfig::disabled(addr_c),
+        NatTraversalConfig::disabled(public_c),
     );
 
     let task_a = tokio::spawn(service_a.run());
@@ -196,25 +203,28 @@ async fn address_exchange_teaches_new_peers() {
     let addrs_c = store_c.addresses();
 
     assert!(
-        addrs_b.contains(&addr_c),
+        addrs_b.contains(&public_c),
         "node B should learn about node C via address exchange"
     );
     assert!(
-        addrs_c.contains(&addr_b),
+        addrs_c.contains(&public_b),
         "node C should learn about node B via address exchange"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn block_gossip_is_imported_and_regossiped() {
+async fn block_gossip_is_imported_and_relayed_to_non_origin() {
     let router_a = GossipRouter::new(32);
     let router_b = GossipRouter::new(32);
+    let router_c = GossipRouter::new(32);
 
     let addr_a = local_addr();
     let addr_b = local_addr();
+    let addr_c = local_addr();
 
     let identity_a = PeerIdentity::generate(b"block-gossip-a");
     let identity_b = PeerIdentity::generate(b"block-gossip-b");
+    let identity_c = PeerIdentity::generate(b"block-gossip-c");
 
     let service_a = P2PService::new(
         identity_a,
@@ -238,14 +248,26 @@ async fn block_gossip_is_imported_and_regossiped() {
         RelayConfig::default(),
         NatTraversalConfig::disabled(addr_b),
     );
+    let service_c = P2PService::new(
+        identity_c,
+        addr_c,
+        vec![addr_b.to_string()],
+        Vec::new(),
+        router_c.handle(),
+        64,
+        peer_store("block-c"),
+        RelayConfig::default(),
+        NatTraversalConfig::disabled(addr_c),
+    );
 
     let task_a = tokio::spawn(service_a.run());
     let task_b = tokio::spawn(service_b.run());
+    let task_c = tokio::spawn(service_c.run());
 
     let payload = b"block-gossip-regossip".to_vec();
     let handle_a = router_a.handle();
-    let mut rx_a = handle_a.subscribe();
     let mut rx_b = router_b.handle().subscribe();
+    let mut rx_c = router_c.handle().subscribe();
 
     retry_broadcast_until(
         || handle_a.broadcast_block(payload.clone()).is_ok(),
@@ -255,26 +277,15 @@ async fn block_gossip_is_imported_and_regossiped() {
     )
     .await;
 
-    // After importing, node B should re-gossip the block back to peers (including A).
-    timeout(TCP_GOSSIP_DEADLINE, async move {
-        let mut saw_local = false;
-        loop {
-            match rx_a.recv().await {
-                Ok(GossipMessage::Block(block)) if block == payload => {
-                    if !saw_local {
-                        saw_local = true;
-                        continue;
-                    }
-                    break;
-                }
-                Ok(_) => continue,
-                Err(_) => continue,
-            }
-        }
-    })
-    .await
-    .expect("node A to observe re-gossip");
+    retry_broadcast_until(
+        || handle_a.broadcast_block(payload.clone()).is_ok(),
+        &mut rx_c,
+        |message| matches!(message, GossipMessage::Block(block) if block == &payload),
+        "node C to receive block relayed by node B",
+    )
+    .await;
 
     task_a.abort();
     task_b.abort();
+    task_c.abort();
 }

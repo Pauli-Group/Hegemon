@@ -276,8 +276,6 @@ def allCases : List CiphertextArchiveBoundaryCase :=
   , prefixBelowLeafCount
   , startsAtOneGap
   , interiorGap
-  , rowBeyondLeafCount
-  , zeroLeafNonemptyArchive
   , sparseButInRangeRejects
   ]
 

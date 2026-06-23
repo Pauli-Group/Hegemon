@@ -518,6 +518,7 @@ name = "cashvm-bridge"
 version = "0.1.0"
 dependencies = [
  "consensus-light-client",
+ "parity-scale-codec",
  "protocol-kernel",
  "sha2 0.10.9",
 ]

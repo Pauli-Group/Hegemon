@@ -20,6 +20,7 @@ def rejectJson : Option Reject -> String
   | some Reject.headerMessageCountMismatch => "\"header_message_count_mismatch\""
   | some Reject.headerMmrMismatch => "\"header_mmr_mismatch\""
   | some Reject.longRangeProofMismatch => "\"long_range_proof_mismatch\""
+  | some Reject.parentHashMismatch => "\"parent_hash_mismatch\""
   | some Reject.headerMmrOpeningMismatch => "\"header_mmr_opening_mismatch\""
   | some Reject.messageIndexOutOfBounds => "\"message_index_out_of_bounds\""
   | some Reject.receiptOutputMismatch => "\"receipt_output_mismatch\""
@@ -37,15 +38,21 @@ def shapeCaseJson (name : String) (input : ShapeInput) : String :=
     ++ "      \"trusted_height\": " ++ toString input.trustedHeight ++ ",\n"
     ++ "      \"tip_height\": " ++ toString input.tipHeight ++ ",\n"
     ++ "      \"tip_header_mmr_len\": " ++ toString input.tipHeaderMmrLen ++ ",\n"
+    ++ "      \"tip_parent_opening_leaf_index\": "
+    ++ toString input.tipParentOpeningLeafIndex ++ ",\n"
     ++ "      \"message_height\": " ++ toString input.messageHeight ++ ",\n"
     ++ "      \"message_header_mmr_len\": " ++ toString input.messageHeaderMmrLen ++ ",\n"
     ++ "      \"message_opening_leaf_index\": " ++ toString input.messageOpeningLeafIndex ++ ",\n"
+    ++ "      \"message_parent_opening_leaf_index\": "
+    ++ toString input.messageParentOpeningLeafIndex ++ ",\n"
     ++ "      \"message_index\": " ++ toString input.messageIndex ++ ",\n"
     ++ "      \"message_source_chain_matches\": " ++ boolJson input.messageSourceChainMatches ++ ",\n"
     ++ "      \"message_source_height\": " ++ toString input.messageSourceHeight ++ ",\n"
     ++ "      \"expected_sample_indices\": " ++ natArrayJson input.expectedSampleIndices ++ ",\n"
     ++ "      \"sample_header_heights\": " ++ natArrayJson input.sampleHeaderHeights ++ ",\n"
     ++ "      \"sample_opening_leaf_indices\": " ++ natArrayJson input.sampleOpeningLeafIndices ++ ",\n"
+    ++ "      \"sample_parent_opening_leaf_indices\": "
+    ++ natArrayJson input.sampleParentOpeningLeafIndices ++ ",\n"
     ++ "      \"min_confirmations\": " ++ toString input.minConfirmations ++ ",\n"
     ++ "      \"tip_work\": \"" ++ toString input.tipWork ++ "\",\n"
     ++ "      \"min_tip_work\": \"" ++ toString input.minTipWork ++ "\",\n"
@@ -70,20 +77,33 @@ def vectorJson : String :=
     ++ shapeCaseJson "message-mmr-len-mismatch-rejected"
       { validShape with messageHeaderMmrLen := 11 } ++ ",\n"
     ++ shapeCaseJson "tip-not-after-message-rejected"
-      { validShape with tipHeight := 12, tipHeaderMmrLen := 12 } ++ ",\n"
+      { validShape with
+        tipHeight := 12,
+        tipHeaderMmrLen := 12,
+        tipParentOpeningLeafIndex := 11 } ++ ",\n"
     ++ shapeCaseJson "message-not-after-trusted-rejected"
-      { validShape with trustedHeight := 12, tipHeight := 13, tipHeaderMmrLen := 13 } ++ ",\n"
+      { validShape with
+        trustedHeight := 12,
+        tipHeight := 13,
+        tipHeaderMmrLen := 13,
+        tipParentOpeningLeafIndex := 12 } ++ ",\n"
     ++ shapeCaseJson "trusted-height-overflow-rejected"
       { validShape with
         trustedHeight := u64Max,
         tipHeight := u64Max,
         tipHeaderMmrLen := u64Max,
+        tipParentOpeningLeafIndex := u64Max,
         messageHeight := u64Max,
         messageHeaderMmrLen := u64Max,
         messageOpeningLeafIndex := u64Max,
+        messageParentOpeningLeafIndex := u64Max,
         messageSourceHeight := u64Max } ++ ",\n"
+    ++ shapeCaseJson "tip-parent-opening-leaf-mismatch-rejected"
+      { validShape with tipParentOpeningLeafIndex := 12 } ++ ",\n"
     ++ shapeCaseJson "message-opening-leaf-mismatch-rejected"
       { validShape with messageOpeningLeafIndex := 11 } ++ ",\n"
+    ++ shapeCaseJson "message-parent-opening-leaf-mismatch-rejected"
+      { validShape with messageParentOpeningLeafIndex := 10 } ++ ",\n"
     ++ shapeCaseJson "message-index-oob-rejected"
       { validShape with messageIndex := 2 } ++ ",\n"
     ++ shapeCaseJson "message-source-chain-mismatch-rejected"
@@ -96,6 +116,8 @@ def vectorJson : String :=
       { validShape with sampleHeaderHeights := [11, 13, 13] } ++ ",\n"
     ++ shapeCaseJson "sample-opening-leaf-mismatch-rejected"
       { validShape with sampleOpeningLeafIndices := [11, 12, 12] } ++ ",\n"
+    ++ shapeCaseJson "sample-parent-opening-leaf-mismatch-rejected"
+      { validShape with sampleParentOpeningLeafIndices := [10, 11, 11] } ++ ",\n"
     ++ shapeCaseJson "under-confirmed-rejected"
       { validShape with minConfirmations := 4 } ++ ",\n"
     ++ shapeCaseJson "insufficient-tip-work-rejected"

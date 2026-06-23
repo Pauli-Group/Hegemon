@@ -26,8 +26,9 @@ use consensus_light_client::{
     header_mmr_root_from_peaks, pow_hash_from_pre_hash, verify_pow_header,
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
-    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_CHAIN_ID_V1,
-    HEGEMON_LIGHT_CLIENT_RULES_HASH_V1, HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
+    RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
+    HEGEMON_CHAIN_ID_V1, HEGEMON_LIGHT_CLIENT_RULES_HASH_V1,
+    HEGEMON_LONG_RANGE_PROOF_MAX_MESSAGE_PAYLOAD_BYTES_V1,
     HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1, HEGEMON_RISC0_BRIDGE_IMAGE_ID_V1,
 };
 use crypto::ml_dsa::{
@@ -40,7 +41,9 @@ use network::{
     RelayConfig,
 };
 use parking_lot::{Mutex, RwLock};
-use protocol_kernel::manifest::{protocol_manifest, StablecoinPolicyManifestEntry};
+use protocol_kernel::manifest::{
+    kernel_manifest, protocol_manifest, StablecoinPolicyManifestEntry,
+};
 use protocol_kernel::types::KernelVersionBinding;
 use protocol_kernel::{
     bridge_message_root, bridge_payload_hash, empty_bridge_message_root, inbound_replay_key,
@@ -110,12 +113,15 @@ const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 2048;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
+const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
+const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
 const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
 const MAX_NATIVE_RPC_ACTION_BYTES: usize = 2 * 1024 * 1024;
+const MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES: usize = 2 * 1024 * 1024;
 const MAX_NATIVE_DA_CIPHERTEXT_UPLOADS: usize = 1024;
 const MAX_NATIVE_DA_PROOF_UPLOADS: usize = 256;
 const MAX_NATIVE_STAGED_CIPHERTEXTS: usize = 100_000;
@@ -455,6 +461,14 @@ struct NativeSyncResponseCountAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeSyncRequestRateAdmissionInput {
+    requests_in_window: u32,
+    max_requests: u32,
+    window_elapsed_ms: u64,
+    window_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeSyncBlockRangePublicationAdmissionInput {
     range_admitted: bool,
     served_count_matches_range: bool,
@@ -470,14 +484,22 @@ struct NativeSyncBlockRangePublicationAdmissionInput {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeSyncAdmissionRejection {
     ResponseBlockCountTooLarge,
+    RequestRateLimited,
 }
 
 impl NativeSyncAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
             Self::ResponseBlockCountTooLarge => "response_block_count_too_large",
+            Self::RequestRateLimited => "request_rate_limited",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeSyncRequestRateState {
+    window_start: Instant,
+    requests: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1116,6 +1138,7 @@ struct NativeBridgeMintPayloadAdmissionInput {
     receipt_message_hash_matches: bool,
     version_matches: bool,
     destination_matches: bool,
+    mint_nonce_matches: bool,
     recipient_commitment_nonzero: bool,
     amount_nonzero: bool,
     amount_within_bound: bool,
@@ -1163,8 +1186,11 @@ struct NativeInboundBridgeReceiptAdmissionInput {
     message_hash_matches: bool,
     checkpoint_height: u64,
     canonical_tip_height: u64,
+    canonical_tip_work: [u8; 48],
     confirmations_checked: u32,
     min_confirmations: u32,
+    min_work_checked: [u8; 48],
+    min_tip_work: [u8; 48],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1232,6 +1258,7 @@ enum NativeBridgeMintPayloadAdmissionRejection {
     ReceiptMessageHashMismatch,
     VersionMismatch,
     DestinationMismatch,
+    MintNonceMismatch,
     RecipientCommitmentZero,
     AmountZero,
     AmountOutOfBounds,
@@ -1253,6 +1280,7 @@ impl NativeBridgeMintPayloadAdmissionRejection {
             Self::ReceiptMessageHashMismatch => "receipt_message_hash_mismatch",
             Self::VersionMismatch => "version_mismatch",
             Self::DestinationMismatch => "destination_mismatch",
+            Self::MintNonceMismatch => "mint_nonce_mismatch",
             Self::RecipientCommitmentZero => "recipient_commitment_zero",
             Self::AmountZero => "amount_zero",
             Self::AmountOutOfBounds => "amount_out_of_bounds",
@@ -1310,6 +1338,7 @@ enum NativeInboundBridgeReceiptAdmissionRejection {
     ConfirmationsOverflow,
     ConfirmationsOverstated,
     Underconfirmed,
+    WorkPolicyMismatch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1346,6 +1375,7 @@ impl NativeInboundBridgeReceiptAdmissionRejection {
             Self::ConfirmationsOverflow => "confirmations_overflow",
             Self::ConfirmationsOverstated => "confirmations_overstated",
             Self::Underconfirmed => "underconfirmed",
+            Self::WorkPolicyMismatch => "work_policy_mismatch",
         }
     }
 }
@@ -2863,6 +2893,7 @@ pub struct NativeNode {
     last_announce_height: AtomicU64,
     sync_target_height: AtomicU64,
     mining_sync_gate_open: AtomicBool,
+    sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
     mining_task: Mutex<Option<JoinHandle<()>>>,
     sync_tx: Mutex<Option<mpsc::Sender<DirectedProtocolMessage>>>,
     miner_identity: NativeMinerIdentity,
@@ -2961,6 +2992,7 @@ impl NativeNode {
             last_announce_height: AtomicU64::new(0),
             sync_target_height: AtomicU64::new(0),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
+            sync_request_rate_limits: Mutex::new(BTreeMap::new()),
             mining_task: Mutex::new(None),
             sync_tx: Mutex::new(None),
             miner_identity,
@@ -2975,10 +3007,37 @@ impl NativeNode {
         *self.sync_tx.lock() = Some(sync_tx);
     }
 
-    fn observe_sync_peer_height(&self, peer_best_height: u64) {
+    fn observe_verified_sync_peer_height(&self, peer_best_height: u64) {
         self.sync_target_height
             .fetch_max(peer_best_height, Ordering::Relaxed);
         self.refresh_mining_sync_gate();
+    }
+
+    fn admit_sync_request_from_peer(
+        &self,
+        peer_id: PeerId,
+    ) -> Result<(), NativeSyncAdmissionRejection> {
+        let now = Instant::now();
+        let window_ms = duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW);
+        let mut limits = self.sync_request_rate_limits.lock();
+        let state = limits.entry(peer_id).or_insert(NativeSyncRequestRateState {
+            window_start: now,
+            requests: 0,
+        });
+        let elapsed_ms = duration_millis_u64(now.saturating_duration_since(state.window_start));
+        evaluate_native_sync_request_rate_admission(NativeSyncRequestRateAdmissionInput {
+            requests_in_window: state.requests,
+            max_requests: MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW,
+            window_elapsed_ms: elapsed_ms,
+            window_ms,
+        })?;
+        if elapsed_ms >= window_ms {
+            state.window_start = now;
+            state.requests = 1;
+        } else {
+            state.requests = state.requests.saturating_add(1);
+        }
+        Ok(())
     }
 
     fn refresh_mining_sync_gate(&self) {
@@ -3624,6 +3683,7 @@ impl NativeNode {
         let Some(parent) = self.header_by_hash(&meta.parent_hash)? else {
             return Ok(false);
         };
+        self.validate_stored_block_meta_parent_chain(&parent)?;
         validate_announced_block(&parent, &meta)?;
         let (expected_header_mmr_root, expected_header_mmr_len) = if parent.hash == state.best.hash
         {
@@ -3724,6 +3784,27 @@ impl NativeNode {
             NativeStorageDurabilityOperation::NoncanonicalBlockRecord,
         )?;
         Ok(())
+    }
+
+    fn validate_stored_block_meta_parent_chain(&self, meta: &NativeBlockMeta) -> Result<()> {
+        if meta.height == 0 {
+            return verify_native_block_meta_projection(None, meta).with_context(|| {
+                format!(
+                    "validate stored native parent metadata at genesis ({})",
+                    hex32(&meta.hash)
+                )
+            });
+        }
+        let parent = self
+            .header_by_hash(&meta.parent_hash)?
+            .ok_or_else(|| anyhow!("missing stored native parent for {}", hex32(&meta.hash)))?;
+        verify_native_block_meta_projection(Some(&parent), meta).with_context(|| {
+            format!(
+                "validate stored native parent metadata at height {} ({})",
+                meta.height,
+                hex32(&meta.hash)
+            )
+        })
     }
 
     fn flush_native_durability_barrier(
@@ -4647,13 +4728,13 @@ impl NativeNode {
     }
 
     fn storage_footprint(&self) -> Value {
-        let total_bytes = dir_size(&self.config.db_path).unwrap_or(0);
         json!({
-            "total_bytes": total_bytes,
-            "blocks_bytes": tree_size_hint(&self.block_tree),
-            "state_bytes": tree_size_hint(&self.meta_tree),
-            "transactions_bytes": tree_size_hint(&self.action_tree),
-            "nullifiers_bytes": tree_size_hint(&self.nullifier_tree),
+            "total_bytes": Value::Null,
+            "exact_bytes_available": false,
+            "blocks_entries": self.block_tree.len() as u64,
+            "state_entries": self.meta_tree.len() as u64,
+            "transactions_entries": self.action_tree.len() as u64,
+            "nullifiers_entries": self.nullifier_tree.len() as u64,
         })
     }
 
@@ -4716,32 +4797,21 @@ impl NativeNode {
     fn wallet_commitments(&self, params: Value) -> Result<Value> {
         let page = pagination_from_params(params)?;
         let mut entries = Vec::new();
-        let mut expected_index = 0u64;
-        for item in self.commitment_tree.iter() {
-            let (index, commitment) = decode_wallet_commitment_row(item)?;
-            if index != expected_index {
-                return Err(anyhow!(
-                    "native commitment archive index gap: expected {}, got {}",
-                    expected_index,
-                    index
-                ));
-            }
-            if index >= page.start && entries.len() < page.limit as usize {
-                let commitment_hex = hex48(&commitment);
-                entries.push(json!({
-                    "index": index,
-                    "value": commitment_hex,
-                    "commitment": commitment_hex,
-                }));
-            }
-            expected_index = expected_index
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("native commitment archive index overflow"))?;
+        let total = self.state.read().commitment_tree.leaf_count();
+        let end = wallet_page_end(page, total)?;
+        for index in page.start..end {
+            let commitment = self.load_wallet_commitment_at(index)?;
+            let commitment_hex = hex48(&commitment);
+            entries.push(json!({
+                "index": index,
+                "value": commitment_hex,
+                "commitment": commitment_hex,
+            }));
         }
         Ok(json!({
             "entries": entries,
-            "total": expected_index,
-            "has_more": page.start.saturating_add(page.limit) < expected_index,
+            "total": total,
+            "has_more": end < total,
         }))
     }
 
@@ -4760,38 +4830,40 @@ impl NativeNode {
 
         let leaf_count = self.state.read().commitment_tree.leaf_count();
         let mut entries = Vec::new();
-        let mut expected_index = 0u64;
-        let mut total = 0u64;
-        for item in self.ciphertext_archive_tree.iter() {
-            let (index, value) = decode_wallet_ciphertext_row(item)?;
-            if index != expected_index {
-                return Err(anyhow!(
-                    "native ciphertext archive index gap: expected {}, got {}",
-                    expected_index,
-                    index
-                ));
-            }
-            if index >= leaf_count {
-                return Err(anyhow!(
-                    "native ciphertext archive index {} exceeds commitment leaf_count {}",
-                    index,
-                    leaf_count
-                ));
-            }
-            if index >= page.start && entries.len() < page.limit as usize {
-                entries.push(json!({
-                    "index": index,
-                    "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_slice()),
-                }));
-            }
-            expected_index = expected_index
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("native ciphertext archive index overflow"))?;
-            total = total
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("native ciphertext archive count overflow"))?;
+        let end = wallet_page_end(page, leaf_count)?;
+        for index in page.start..end {
+            let value = self.load_wallet_ciphertext_at(index)?;
+            entries.push(json!({
+                "index": index,
+                "ciphertext": base64::engine::general_purpose::STANDARD.encode(value.as_slice()),
+            }));
         }
-        Ok((entries, total))
+        Ok((entries, leaf_count))
+    }
+
+    fn load_wallet_commitment_at(&self, index: u64) -> Result<[u8; 48]> {
+        let value = self
+            .commitment_tree
+            .get(height_key(index))?
+            .ok_or_else(|| anyhow!("native commitment archive index gap: missing {index}"))?;
+        if value.len() != 48 {
+            return Err(anyhow!(
+                "native commitment archive value has invalid length: expected 48, got {}",
+                value.len()
+            ));
+        }
+        let mut commitment = [0u8; 48];
+        commitment.copy_from_slice(value.as_ref());
+        Ok(commitment)
+    }
+
+    fn load_wallet_ciphertext_at(&self, index: u64) -> Result<Vec<u8>> {
+        let value = self
+            .ciphertext_archive_tree
+            .get(height_key(index))?
+            .ok_or_else(|| anyhow!("native ciphertext archive index gap: missing {index}"))?;
+        validate_wallet_ciphertext_archive_value(value.as_ref())?;
+        Ok(value.to_vec())
     }
 
     fn wallet_nullifiers(&self, params: Value) -> Result<Value> {
@@ -4848,6 +4920,15 @@ impl NativeNode {
             circuit: request.binding_circuit,
             crypto: request.binding_crypto,
         };
+        let current_height = self.best_meta().height;
+        if !kernel_manifest().binding_allowed(binding, current_height) {
+            return Err(anyhow!(
+                "native action version binding circuit={} crypto={} is not active at height {}",
+                binding.circuit,
+                binding.crypto,
+                current_height
+            ));
+        }
         let mut consumed_staged_proof: Option<([u8; 64], Vec<u8>)> = None;
         let nullifiers = if transfer_route {
             request
@@ -5326,6 +5407,13 @@ fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> 
     Ok(())
 }
 
+fn admit_native_sync_request_from_peer(
+    node: &NativeNode,
+    peer_id: PeerId,
+) -> Result<(), NativeSyncAdmissionRejection> {
+    node.admit_sync_request_from_peer(peer_id)
+}
+
 async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
     let sync_tx = handle.sender();
     let mut best_announce = interval(NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL);
@@ -5356,9 +5444,9 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             NativeSyncMessage::Announce(meta) => {
                 let meta = *meta;
                 let announced_height = meta.height;
-                node.observe_sync_peer_height(announced_height);
                 match node.import_announced_block(meta.clone()) {
                     Ok(true) => {
+                        node.observe_verified_sync_peer_height(announced_height);
                         info!(
                             height = meta.height,
                             hash = %hex32(&meta.hash),
@@ -5383,6 +5471,17 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 to_height,
             } => {
                 if to_height < from_height {
+                    continue;
+                }
+                if let Err(rejection) = admit_native_sync_request_from_peer(node.as_ref(), peer_id)
+                {
+                    warn!(
+                        from_height,
+                        to_height,
+                        peer = %hex32(&peer_id),
+                        rejection = rejection.label(),
+                        "rejecting rate-limited native sync request"
+                    );
                     continue;
                 }
                 let best_height = node.best_meta().height;
@@ -5418,7 +5517,6 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 best_height,
                 mut blocks,
             } => {
-                node.observe_sync_peer_height(best_height);
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
                     &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
@@ -5455,6 +5553,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     );
                 }
                 if progress.imported_blocks > 0 {
+                    node.observe_verified_sync_peer_height(node.best_meta().height);
                     info!(
                         imported = progress.imported_blocks,
                         best_height = node.best_meta().height,
@@ -5924,6 +6023,7 @@ fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value> {
     let Some(meta) = node.header_by_hash(&hash)? else {
         return Ok(Value::Null);
     };
+    admit_chain_get_block_response(&meta)?;
     Ok(json!({
         "block": {
             "header": header_json(&meta),
@@ -5935,6 +6035,22 @@ fn chain_get_block(node: &NativeNode, params: Value) -> Result<Value> {
         },
         "justifications": null,
     }))
+}
+
+fn admit_chain_get_block_response(meta: &NativeBlockMeta) -> Result<()> {
+    let total = meta
+        .action_bytes
+        .iter()
+        .try_fold(0usize, |total, bytes| total.checked_add(bytes.len()))
+        .ok_or_else(|| anyhow!("chain_getBlock action bytes overflow"))?;
+    if total > MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES {
+        return Err(anyhow!(
+            "chain_getBlock action bytes exceed safe RPC cap: {} > {}",
+            total,
+            MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES
+        ));
+    }
+    Ok(())
 }
 
 fn block_timestamps(node: &NativeNode, params: Value, mined_only: bool) -> Result<Value> {
@@ -5998,45 +6114,6 @@ fn timestamp_meta_by_height(node: &NativeNode, height: u64) -> Result<Option<Nat
         return Ok(None);
     };
     node.load_canonical_sync_block_at_height(height).map(Some)
-}
-
-fn decode_wallet_commitment_row(
-    item: sled::Result<(sled::IVec, sled::IVec)>,
-) -> Result<(u64, [u8; 48])> {
-    let (key, value) = item.context("read native commitment archive row")?;
-    if key.len() != 8 {
-        return Err(anyhow!(
-            "native commitment archive key has invalid length: expected 8, got {}",
-            key.len()
-        ));
-    }
-    if value.len() != 48 {
-        return Err(anyhow!(
-            "native commitment archive value has invalid length: expected 48, got {}",
-            value.len()
-        ));
-    }
-    let mut index = [0u8; 8];
-    index.copy_from_slice(key.as_ref());
-    let mut commitment = [0u8; 48];
-    commitment.copy_from_slice(value.as_ref());
-    Ok((u64::from_be_bytes(index), commitment))
-}
-
-fn decode_wallet_ciphertext_row(
-    item: sled::Result<(sled::IVec, sled::IVec)>,
-) -> Result<(u64, Vec<u8>)> {
-    let (key, value) = item.context("read native ciphertext archive row")?;
-    if key.len() != 8 {
-        return Err(anyhow!(
-            "native ciphertext archive key has invalid length: expected 8, got {}",
-            key.len()
-        ));
-    }
-    validate_wallet_ciphertext_archive_value(value.as_ref())?;
-    let mut index = [0u8; 8];
-    index.copy_from_slice(key.as_ref());
-    Ok((u64::from_be_bytes(index), value.to_vec()))
 }
 
 fn validate_wallet_ciphertext_archive_value(bytes: &[u8]) -> Result<()> {
@@ -6140,7 +6217,7 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         meta.message_root,
         &message,
         confirmations_checked,
-        [0u8; 48],
+        HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
     );
     let direct_output = bridge_checkpoint_output(
         &checkpoint_from_meta(&meta),
@@ -6291,8 +6368,24 @@ fn build_long_range_bridge_proof(
     let tip_history = node.header_hashes_to_hash(tip_meta.parent_hash)?;
     let message_header = pow_header_from_meta(message_meta);
     let tip_header = pow_header_from_meta(tip_meta);
+    let tip_parent_opening = header_mmr_opening_from_hashes(
+        &tip_history,
+        tip_meta
+            .height
+            .checked_sub(1)
+            .ok_or_else(|| anyhow!("bridge witness tip has no parent"))?,
+    )
+    .map_err(|err| anyhow!("build tip parent MMR opening failed: {err:?}"))?;
     let message_header_opening = header_mmr_opening_from_hashes(&tip_history, message_meta.height)
         .map_err(|err| anyhow!("build message header MMR opening failed: {err:?}"))?;
+    let message_parent_opening = header_mmr_opening_from_hashes(
+        &tip_history,
+        message_meta
+            .height
+            .checked_sub(1)
+            .ok_or_else(|| anyhow!("bridge witness message header has no parent"))?,
+    )
+    .map_err(|err| anyhow!("build message parent MMR opening failed: {err:?}"))?;
     let sample_indices = flyclient_sample_indices(
         tip_meta.header_mmr_root,
         tip_meta.hash,
@@ -6311,17 +6404,27 @@ fn build_long_range_bridge_proof(
             .ok_or_else(|| anyhow!("missing sampled header {}", hex32(&sample_hash)))?;
         let opening = header_mmr_opening_from_hashes(&tip_history, sample_height)
             .map_err(|err| anyhow!("build sampled header MMR opening failed: {err:?}"))?;
+        let parent_opening = header_mmr_opening_from_hashes(
+            &tip_history,
+            sample_height
+                .checked_sub(1)
+                .ok_or_else(|| anyhow!("sampled bridge header has no parent"))?,
+        )
+        .map_err(|err| anyhow!("build sampled parent MMR opening failed: {err:?}"))?;
         sample_headers.push(HeaderMmrLeafWitnessV1 {
             header: pow_header_from_meta(&sample_meta),
             opening,
+            parent_opening,
         });
     }
     Ok(Some(HegemonLongRangeProofV1 {
         verifier_hash: HEGEMON_NATIVE_LIGHT_CLIENT_VERIFIER_HASH_V1,
         trusted_checkpoint: checkpoint_from_meta(&genesis),
         tip_header,
+        tip_parent_opening,
         message_header,
         message_header_opening,
+        message_parent_opening,
         messages: messages.to_vec(),
         message_index: message_index
             .try_into()
@@ -9623,6 +9726,22 @@ fn native_sync_response_range(input: NativeSyncResponseRangeInput) -> Option<Nat
     })
 }
 
+fn evaluate_native_sync_request_rate_admission(
+    input: NativeSyncRequestRateAdmissionInput,
+) -> Result<(), NativeSyncAdmissionRejection> {
+    if input.max_requests == 0 {
+        return Err(NativeSyncAdmissionRejection::RequestRateLimited);
+    }
+    if input.window_elapsed_ms >= input.window_ms {
+        return Ok(());
+    }
+    if input.requests_in_window < input.max_requests {
+        Ok(())
+    } else {
+        Err(NativeSyncAdmissionRejection::RequestRateLimited)
+    }
+}
+
 fn native_sync_missing_request_range(
     input: NativeSyncMissingRequestInput,
 ) -> Option<NativeSyncRange> {
@@ -10482,6 +10601,8 @@ fn evaluate_native_bridge_mint_payload_admission(
         Err(NativeBridgeMintPayloadAdmissionRejection::VersionMismatch)
     } else if !input.destination_matches {
         Err(NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch)
+    } else if !input.mint_nonce_matches {
+        Err(NativeBridgeMintPayloadAdmissionRejection::MintNonceMismatch)
     } else if !input.recipient_commitment_nonzero {
         Err(NativeBridgeMintPayloadAdmissionRejection::RecipientCommitmentZero)
     } else if !input.amount_nonzero {
@@ -10556,6 +10677,7 @@ fn bridge_mint_payload_admission_input(
             receipt_message_hash_matches,
             version_matches: payload.version == BRIDGE_MINT_PAYLOAD_VERSION_V1,
             destination_matches: payload.destination_chain_id == HEGEMON_CHAIN_ID_V1,
+            mint_nonce_matches: payload.mint_nonce == args.source_message_nonce,
             recipient_commitment_nonzero: payload.recipient_commitment != [0u8; 48],
             amount_nonzero: payload.amount != 0,
             amount_within_bound: payload.amount <= MAX_NATIVE_BRIDGE_MINT_AMOUNT,
@@ -10568,6 +10690,7 @@ fn bridge_mint_payload_admission_input(
             receipt_message_hash_matches,
             version_matches: false,
             destination_matches: false,
+            mint_nonce_matches: false,
             recipient_commitment_nonzero: false,
             amount_nonzero: false,
             amount_within_bound: false,
@@ -10598,6 +10721,10 @@ fn native_bridge_mint_payload_admission_error(
         ),
         NativeBridgeMintPayloadAdmissionRejection::DestinationMismatch => anyhow!(
             "inbound bridge mint payload is not addressed to Hegemon ({})",
+            rejection.label()
+        ),
+        NativeBridgeMintPayloadAdmissionRejection::MintNonceMismatch => anyhow!(
+            "inbound bridge mint payload nonce does not match receipt replay nonce ({})",
             rejection.label()
         ),
         NativeBridgeMintPayloadAdmissionRejection::RecipientCommitmentZero => anyhow!(
@@ -10776,6 +10903,10 @@ fn evaluate_native_inbound_bridge_receipt_admission(
             Err(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverstated)
         } else if input.confirmations_checked < input.min_confirmations {
             Err(NativeInboundBridgeReceiptAdmissionRejection::Underconfirmed)
+        } else if compare_work(&input.canonical_tip_work, &input.min_tip_work).is_lt()
+            || compare_work(&input.min_work_checked, &input.min_tip_work).is_lt()
+        {
+            Err(NativeInboundBridgeReceiptAdmissionRejection::WorkPolicyMismatch)
         } else {
             Ok(height_confirmations)
         }
@@ -10868,6 +10999,9 @@ fn native_inbound_bridge_receipt_admission_error(
             input.confirmations_checked,
             input.min_confirmations
         ),
+        NativeInboundBridgeReceiptAdmissionRejection::WorkPolicyMismatch => {
+            anyhow!("Hegemon light-client bridge receipt does not meet native work policy")
+        }
     }
 }
 
@@ -10924,8 +11058,11 @@ fn verify_inbound_bridge_receipt(
         message_hash_matches: output.message_hash == args.message.message_hash(),
         checkpoint_height: output.checkpoint_height,
         canonical_tip_height: output.canonical_tip_height,
+        canonical_tip_work: output.canonical_tip_cumulative_work,
         confirmations_checked: output.confirmations_checked,
         min_confirmations: MIN_INBOUND_BRIDGE_CONFIRMATIONS,
+        min_work_checked: output.min_work_checked,
+        min_tip_work: HEGEMON_BRIDGE_LONG_RANGE_MIN_TIP_WORK_V1,
     };
     evaluate_native_inbound_bridge_receipt_admission(admission_input).map_err(|rejection| {
         native_inbound_bridge_receipt_admission_error(admission_input, rejection)
@@ -14454,7 +14591,15 @@ fn effective_rpc_methods_label(raw: &str, rpc_external: bool) -> Result<&'static
 fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "safe" => Ok(RpcMethodPolicy::Safe),
-        "unsafe" => Ok(RpcMethodPolicy::Unsafe),
+        "unsafe" => {
+            if rpc_external {
+                Err(anyhow!(
+                    "--rpc-methods=unsafe cannot be combined with --rpc-external; use a loopback listener behind an authenticated tunnel"
+                ))
+            } else {
+                Ok(RpcMethodPolicy::Unsafe)
+            }
+        }
         "auto" | "" => {
             if rpc_external {
                 Ok(RpcMethodPolicy::Safe)
@@ -14489,6 +14634,16 @@ fn pagination_from_params(params: Value) -> Result<NativePagination> {
     Ok(page)
 }
 
+fn wallet_page_end(page: NativePagination, total: u64) -> Result<u64> {
+    if page.start >= total {
+        return Ok(page.start);
+    }
+    page.start
+        .checked_add(page.limit)
+        .map(|end| end.min(total))
+        .ok_or_else(|| anyhow!("native wallet page range overflow"))
+}
+
 fn is_unsafe_rpc_method(method: &str) -> bool {
     matches!(
         method,
@@ -14505,6 +14660,10 @@ fn current_time_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+fn duration_millis_u64(duration: Duration) -> u64 {
+    duration.as_millis().min(u128::from(u64::MAX)) as u64
 }
 
 fn height_key(height: u64) -> [u8; 8] {
@@ -14973,28 +15132,6 @@ fn hex48(bytes: &[u8; 48]) -> String {
 
 fn hex64(bytes: &[u8; 64]) -> String {
     format!("0x{}", hex::encode(bytes))
-}
-
-fn dir_size(path: &Path) -> Result<u64> {
-    if path.is_file() {
-        return Ok(path.metadata()?.len());
-    }
-    if !path.exists() {
-        return Ok(0);
-    }
-    let mut total = 0u64;
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        total = total.saturating_add(dir_size(&entry.path())?);
-    }
-    Ok(total)
-}
-
-fn tree_size_hint(tree: &sled::Tree) -> u64 {
-    tree.iter()
-        .filter_map(|item| item.ok())
-        .map(|(key, value)| (key.len() + value.len()) as u64)
-        .sum()
 }
 
 fn json_response(node: &NativeNode, status: StatusCode, body: Value) -> Response {
@@ -15537,8 +15674,11 @@ mod tests {
         message_hash_matches: bool,
         checkpoint_height: u64,
         canonical_tip_height: u64,
+        canonical_tip_work: String,
         confirmations_checked: u32,
         min_confirmations: u32,
+        min_work_checked: String,
+        min_tip_work: String,
         expected_valid: bool,
         expected_height_confirmations: Option<u32>,
         expected_rejection: Option<String>,
@@ -16193,6 +16333,7 @@ mod tests {
         receipt_message_hash_matches: bool,
         version_matches: bool,
         destination_matches: bool,
+        mint_nonce_matches: bool,
         recipient_commitment_nonzero: bool,
         amount_nonzero: bool,
         amount_within_bound: bool,
@@ -16221,6 +16362,7 @@ mod tests {
         receipt_message_hash_matches: bool,
         version_matches: bool,
         destination_matches: bool,
+        mint_nonce_matches: bool,
         recipient_commitment_nonzero: bool,
         amount_nonzero: bool,
         amount_within_bound: bool,
@@ -17380,6 +17522,7 @@ mod tests {
         sync_response_range_cases: Vec<LeanSyncResponseRangeCase>,
         sync_missing_request_cases: Vec<LeanSyncMissingRequestCase>,
         sync_response_count_cases: Vec<LeanSyncResponseCountCase>,
+        sync_request_rate_cases: Vec<LeanSyncRequestRateCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17434,6 +17577,17 @@ mod tests {
         name: String,
         block_count: usize,
         max_blocks: usize,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanSyncRequestRateCase {
+        name: String,
+        requests_in_window: u32,
+        max_requests: u32,
+        window_elapsed_ms: u64,
+        window_ms: u64,
         expected_valid: bool,
     }
 
@@ -18613,7 +18767,8 @@ mod tests {
         };
         let err_text = err.to_string();
         assert!(
-            err_text.contains("missing canonical DA ciphertext"),
+            err_text.contains("missing canonical DA ciphertext")
+                || err_text.contains("canonical DA ciphertext hash mismatch"),
             "unexpected reorg error: {err_text}"
         );
         assert_eq!(node.best_meta().hash, old_best);
@@ -19172,10 +19327,15 @@ mod tests {
         assert_eq!(nullifiers["total"], json!(2));
         assert_eq!(nullifiers["has_more"], json!(false));
         assert_eq!(nullifiers["nullifiers"].as_array().expect("array").len(), 1);
+
+        let footprint = node.storage_footprint();
+        assert_eq!(footprint["exact_bytes_available"], json!(false));
+        assert_eq!(footprint["total_bytes"], Value::Null);
+        assert!(footprint["blocks_entries"].as_u64().is_some());
     }
 
     #[test]
-    fn wallet_commitments_rejects_malformed_commitment_key() {
+    fn wallet_commitments_ignore_unrequested_malformed_commitment_key() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
@@ -19183,12 +19343,11 @@ mod tests {
             .insert(b"bad-key", [1u8; 48].as_slice())
             .expect("insert malformed commitment key");
 
-        let err = node
+        let commitments = node
             .wallet_commitments(json!({"start": 0, "limit": 1024}))
-            .expect_err("malformed commitment key must reject wallet RPC");
-        assert!(err
-            .to_string()
-            .contains("native commitment archive key has invalid length"));
+            .expect("unrequested malformed key must not force a full archive scan");
+        assert_eq!(commitments["total"], json!(0));
+        assert_eq!(commitments["entries"], json!([]));
     }
 
     #[test]
@@ -19196,6 +19355,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        seed_native_commitment_leaf_count(&node, 1);
         node.commitment_tree
             .insert(0u64.to_be_bytes(), vec![2u8; 47])
             .expect("insert malformed commitment value");
@@ -19213,6 +19373,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        seed_native_commitment_leaf_count(&node, 2);
         node.commitment_tree
             .insert(1u64.to_be_bytes(), [3u8; 48].as_slice())
             .expect("insert gapped commitment value");
@@ -19220,9 +19381,7 @@ mod tests {
         let err = node
             .wallet_commitments(json!({"start": 0, "limit": 1024}))
             .expect_err("commitment index gap must reject wallet RPC");
-        assert!(err
-            .to_string()
-            .contains("native commitment archive index gap"));
+        assert!(err.to_string().contains("missing 0"));
     }
 
     fn seed_native_commitment_leaf_count(node: &NativeNode, leaf_count: u64) {
@@ -19286,7 +19445,10 @@ mod tests {
             seed_native_commitment_leaf_count(&node, case.leaf_count);
             insert_test_ciphertext_archive_indices(&node, &case.archive_indices);
 
-            let result = node.wallet_ciphertexts(json!({"start": 0, "limit": 1024}));
+            let page_limit = u64::try_from(case.archive_indices.len())
+                .unwrap_or(u64::MAX)
+                .max(1);
+            let result = node.wallet_ciphertexts(json!({"start": 0, "limit": page_limit}));
             if case.expected_valid {
                 let response = result.unwrap_or_else(|err| {
                     panic!(
@@ -19296,7 +19458,7 @@ mod tests {
                 });
                 assert_eq!(
                     response["total"],
-                    json!(case.archive_indices.len() as u64),
+                    json!(case.leaf_count),
                     "native ciphertext archive total drifted from Lean case {}",
                     case.name
                 );
@@ -19326,7 +19488,7 @@ mod tests {
     }
 
     #[test]
-    fn wallet_ciphertexts_rejects_malformed_archive_key() {
+    fn wallet_ciphertexts_ignore_unrequested_malformed_archive_key() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
@@ -19334,12 +19496,11 @@ mod tests {
             .insert(b"bad-key", vec![4u8; MIN_NATIVE_WALLET_CIPHERTEXT_BYTES])
             .expect("insert malformed ciphertext key");
 
-        let err = node
+        let ciphertexts = node
             .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
-            .expect_err("malformed ciphertext key must reject wallet RPC");
-        assert!(err
-            .to_string()
-            .contains("native ciphertext archive key has invalid length"));
+            .expect("unrequested malformed key must not force a full archive scan");
+        assert_eq!(ciphertexts["total"], json!(0));
+        assert_eq!(ciphertexts["entries"], json!([]));
     }
 
     #[test]
@@ -19347,6 +19508,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        seed_native_commitment_leaf_count(&node, 1);
         node.ciphertext_archive_tree
             .insert(
                 0u64.to_be_bytes(),
@@ -19389,17 +19551,18 @@ mod tests {
     }
 
     #[test]
-    fn wallet_ciphertexts_rejects_archive_index_beyond_leaf_count() {
+    fn wallet_ciphertexts_ignore_unrequested_archive_index_beyond_leaf_count() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
         seed_native_commitment_leaf_count(&node, 1);
         insert_test_ciphertext_archive_indices(&node, &[0, 1]);
 
-        let err = node
+        let ciphertexts = node
             .wallet_ciphertexts(json!({"start": 0, "limit": 1024}))
-            .expect_err("ciphertext archive beyond leaf_count must reject wallet RPC");
-        assert!(err.to_string().contains("exceeds commitment leaf_count"));
+            .expect("unrequested extra ciphertext row must not force a full archive scan");
+        assert_eq!(ciphertexts["total"], json!(1));
+        assert_eq!(ciphertexts["entries"].as_array().expect("entries").len(), 1);
     }
 
     #[test]
@@ -20047,6 +20210,14 @@ mod tests {
             rpc_method_policy("auto", false).expect("local auto"),
             RpcMethodPolicy::Safe
         );
+        let external_unsafe = rpc_method_policy("unsafe", true)
+            .expect_err("external unsafe RPC policy must be rejected");
+        assert!(
+            external_unsafe
+                .to_string()
+                .contains("cannot be combined with --rpc-external"),
+            "{external_unsafe}"
+        );
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let unsafe_node = NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false))
@@ -20131,6 +20302,26 @@ mod tests {
     }
 
     #[test]
+    fn chain_get_block_rejects_oversized_action_body_before_hex_encoding() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let mut small = node.best_meta();
+        small.action_bytes = vec![vec![0u8; MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES]];
+        admit_chain_get_block_response(&small).expect("cap-sized block should be admitted");
+
+        let mut oversized = node.best_meta();
+        oversized.action_bytes = vec![vec![0u8; MAX_NATIVE_CHAIN_GET_BLOCK_ACTION_BYTES + 1]];
+        let err = admit_chain_get_block_response(&oversized)
+            .expect_err("oversized block must reject before hex encoding");
+        assert!(
+            err.to_string()
+                .contains("chain_getBlock action bytes exceed"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn submit_action_rejects_non_transfer_or_excess_nullifiers_before_parsing() {
         use base64::Engine;
 
@@ -20166,6 +20357,36 @@ mod tests {
             }))
             .expect_err("oversized nullifier list must reject before public_args decode");
         assert!(err.to_string().contains("exceeds MAX_INPUTS"));
+        assert_eq!(node.state.read().pending_actions.len(), 0);
+    }
+
+    #[test]
+    fn submit_action_rejects_inactive_legacy_binding_before_staging() {
+        use base64::Engine;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let args = OutboundBridgeArgsV1 {
+            destination_chain_id: [7u8; 32],
+            app_family_id: 9,
+            payload: b"legacy binding".to_vec(),
+        };
+        let legacy = protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": legacy.circuit,
+                "binding_crypto": legacy.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect_err("inactive legacy binding must reject before staging");
+        assert!(
+            err.to_string().contains("is not active"),
+            "unexpected inactive-binding error: {err}"
+        );
         assert_eq!(node.state.read().pending_actions.len(), 0);
     }
 
@@ -22117,8 +22338,11 @@ mod tests {
             message_hash_matches: case.message_hash_matches,
             checkpoint_height: case.checkpoint_height,
             canonical_tip_height: case.canonical_tip_height,
+            canonical_tip_work: parse_lean_work48(&case.canonical_tip_work),
             confirmations_checked: case.confirmations_checked,
             min_confirmations: case.min_confirmations,
+            min_work_checked: parse_lean_work48(&case.min_work_checked),
+            min_tip_work: parse_lean_work48(&case.min_tip_work),
         };
         let actual = evaluate_native_inbound_bridge_receipt_admission(input);
         let actual_rejection = actual
@@ -22153,13 +22377,42 @@ mod tests {
             message_hash_matches: true,
             checkpoint_height: 0,
             canonical_tip_height: u32::MAX as u64,
+            canonical_tip_work: [0u8; 48],
             confirmations_checked: u32::MAX,
             min_confirmations: 1,
+            min_work_checked: [0u8; 48],
+            min_tip_work: [0u8; 48],
         };
 
         assert_eq!(
             evaluate_native_inbound_bridge_receipt_admission(input),
             Err(NativeInboundBridgeReceiptAdmissionRejection::ConfirmationsOverflow)
+        );
+    }
+
+    #[test]
+    fn inbound_bridge_receipt_work_policy_fails_closed() {
+        let mut min_work = [0u8; 48];
+        min_work[47] = 2;
+        let mut checked_work = [0u8; 48];
+        checked_work[47] = 1;
+        let input = NativeInboundBridgeReceiptAdmissionInput {
+            source_chain_matches: true,
+            rules_hash_matches: true,
+            message_nonce_matches: true,
+            message_hash_matches: true,
+            checkpoint_height: 40,
+            canonical_tip_height: 44,
+            canonical_tip_work: min_work,
+            confirmations_checked: 5,
+            min_confirmations: 2,
+            min_work_checked: checked_work,
+            min_tip_work: min_work,
+        };
+
+        assert_eq!(
+            evaluate_native_inbound_bridge_receipt_admission(input),
+            Err(NativeInboundBridgeReceiptAdmissionRejection::WorkPolicyMismatch)
         );
     }
 
@@ -25458,6 +25711,7 @@ mod tests {
             receipt_message_hash_matches: case.receipt_message_hash_matches,
             version_matches: case.version_matches,
             destination_matches: case.destination_matches,
+            mint_nonce_matches: case.mint_nonce_matches,
             recipient_commitment_nonzero: case.recipient_commitment_nonzero,
             amount_nonzero: case.amount_nonzero,
             amount_within_bound: case.amount_within_bound,
@@ -25586,6 +25840,11 @@ mod tests {
             case.name
         );
         assert_eq!(
+            input.mint_nonce_matches, case.mint_nonce_matches,
+            "{} production mint_nonce_matches fact drifted from Lean raw spec",
+            case.name
+        );
+        assert_eq!(
             input.recipient_commitment_nonzero, case.recipient_commitment_nonzero,
             "{} production recipient_commitment_nonzero fact drifted from Lean raw spec",
             case.name
@@ -25678,13 +25937,21 @@ mod tests {
         payload: &BridgeMintPayloadV1,
     ) {
         match case.fixture.as_str() {
-            "valid_payload" | "payload_hash_mismatch" | "receipt_message_hash_mismatch" => {
+            "valid_payload"
+            | "payload_hash_mismatch"
+            | "receipt_message_hash_mismatch"
+            | "mint_nonce_mismatch" => {
                 assert_eq!(payload.version, BRIDGE_MINT_PAYLOAD_VERSION_V1);
                 assert_eq!(payload.destination_chain_id, HEGEMON_CHAIN_ID_V1);
                 assert_eq!(payload.recipient_commitment, [0x42u8; 48]);
                 assert_eq!(payload.asset_id, 7);
                 assert_eq!(payload.amount, 42);
-                assert_eq!(payload.mint_nonce, 99);
+                let expected_nonce = if case.fixture == "mint_nonce_mismatch" {
+                    99
+                } else {
+                    42
+                };
+                assert_eq!(payload.mint_nonce, expected_nonce);
             }
             "version_mismatch" => assert_eq!(payload.version, 2),
             "destination_mismatch" => assert_eq!(payload.destination_chain_id, [0x9au8; 32]),
@@ -29646,7 +29913,16 @@ mod tests {
         );
         let actual = rpc_method_policy(&case.raw, case.rpc_external);
         let actual_policy = actual.as_ref().ok().map(|policy| policy.label().to_owned());
-        let actual_rejection = actual.as_ref().err().map(|_| "invalid_policy".to_string());
+        let actual_rejection = actual.as_ref().err().map(|err| {
+            if err
+                .to_string()
+                .contains("cannot be combined with --rpc-external")
+            {
+                "external_unsafe_policy".to_string()
+            } else {
+                "invalid_policy".to_string()
+            }
+        });
         assert_eq!(
             actual.is_ok(),
             case.expected_valid,
@@ -30387,6 +30663,10 @@ mod tests {
             !vectors.sync_response_count_cases.is_empty(),
             "Lean sync response-count cases must not be empty"
         );
+        assert!(
+            !vectors.sync_request_rate_cases.is_empty(),
+            "Lean sync request-rate cases must not be empty"
+        );
 
         let mut names = BTreeSet::new();
         for case in &vectors.sync_response_range_cases {
@@ -30400,6 +30680,10 @@ mod tests {
         for case in &vectors.sync_response_count_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_sync_response_count_case(case);
+        }
+        for case in &vectors.sync_request_rate_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_sync_request_rate_case(case);
         }
     }
 
@@ -30473,6 +30757,30 @@ mod tests {
                 actual.err(),
                 Some(NativeSyncAdmissionRejection::ResponseBlockCountTooLarge),
                 "{} native sync response-count rejection drifted from expected cap rejection",
+                case.name
+            );
+        }
+    }
+
+    fn verify_lean_sync_request_rate_case(case: &LeanSyncRequestRateCase) {
+        let actual =
+            evaluate_native_sync_request_rate_admission(NativeSyncRequestRateAdmissionInput {
+                requests_in_window: case.requests_in_window,
+                max_requests: case.max_requests,
+                window_elapsed_ms: case.window_elapsed_ms,
+                window_ms: case.window_ms,
+            });
+        assert_eq!(
+            actual.is_ok(),
+            case.expected_valid,
+            "{} native sync request-rate validity drifted from Lean spec",
+            case.name
+        );
+        if !case.expected_valid {
+            assert_eq!(
+                actual.err(),
+                Some(NativeSyncAdmissionRejection::RequestRateLimited),
+                "{} native sync request-rate rejection drifted from expected rate-limit rejection",
                 case.name
             );
         }
@@ -30918,6 +31226,41 @@ mod tests {
     }
 
     #[test]
+    fn native_sync_request_rate_admission_limits_peer_requests_per_window() {
+        assert_eq!(
+            evaluate_native_sync_request_rate_admission(NativeSyncRequestRateAdmissionInput {
+                requests_in_window: MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW,
+                max_requests: MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW,
+                window_elapsed_ms: 0,
+                window_ms: duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW),
+            }),
+            Err(NativeSyncAdmissionRejection::RequestRateLimited)
+        );
+        assert_eq!(
+            evaluate_native_sync_request_rate_admission(NativeSyncRequestRateAdmissionInput {
+                requests_in_window: MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW,
+                max_requests: MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW,
+                window_elapsed_ms: duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW),
+                window_ms: duration_millis_u64(NATIVE_SYNC_REQUEST_RATE_WINDOW),
+            }),
+            Ok(())
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let peer = [42u8; 32];
+        for _ in 0..MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW {
+            node.admit_sync_request_from_peer(peer)
+                .expect("request inside peer window must admit");
+        }
+        assert_eq!(
+            node.admit_sync_request_from_peer(peer),
+            Err(NativeSyncAdmissionRejection::RequestRateLimited)
+        );
+    }
+
+    #[test]
     fn native_sync_response_count_uses_bounded_request_item_gate() {
         let input = NativeSyncResponseCountAdmissionInput {
             block_count: MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE + 1,
@@ -31006,7 +31349,7 @@ mod tests {
         let node = NativeNode::open(config).expect("node");
 
         assert!(!node.mining_sync_gate_allows_work());
-        node.observe_sync_peer_height(3);
+        node.observe_verified_sync_peer_height(3);
         assert!(!node.mining_sync_gate_allows_work());
         assert_eq!(node.sync_target_height.load(Ordering::Relaxed), 3);
 
@@ -35999,6 +36342,16 @@ mod tests {
             rejection,
             NativeBridgeMintPayloadAdmissionRejection::NativeAssetNotAllowed
         );
+
+        let mut wrong_nonce = base;
+        wrong_nonce.mint_nonce = 43;
+        let input = bridge_mint_payload_admission_input_from_payload(&wrong_nonce);
+        let rejection = evaluate_native_bridge_mint_payload_admission(input)
+            .expect_err("mint nonce must bind the inbound replay key");
+        assert_eq!(
+            rejection,
+            NativeBridgeMintPayloadAdmissionRejection::MintNonceMismatch
+        );
     }
 
     #[test]
@@ -36771,7 +37124,7 @@ mod tests {
             recipient_commitment: [recipient_tag.max(1); 48],
             asset_id,
             amount,
-            mint_nonce: 99,
+            mint_nonce: 42,
         }
     }
 

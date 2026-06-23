@@ -10,6 +10,7 @@ inductive Reject where
   | headerMessageCountMismatch
   | headerMmrMismatch
   | longRangeProofMismatch
+  | parentHashMismatch
   | headerMmrOpeningMismatch
   | messageIndexOutOfBounds
   | receiptOutputMismatch
@@ -25,15 +26,18 @@ structure ShapeInput where
   trustedHeight : Nat
   tipHeight : Nat
   tipHeaderMmrLen : Nat
+  tipParentOpeningLeafIndex : Nat
   messageHeight : Nat
   messageHeaderMmrLen : Nat
   messageOpeningLeafIndex : Nat
+  messageParentOpeningLeafIndex : Nat
   messageIndex : Nat
   messageSourceChainMatches : Bool
   messageSourceHeight : Nat
   expectedSampleIndices : List Nat
   sampleHeaderHeights : List Nat
   sampleOpeningLeafIndices : List Nat
+  sampleParentOpeningLeafIndices : List Nat
   minConfirmations : Nat
   tipWork : Nat
   minTipWork : Nat
@@ -50,6 +54,13 @@ def samplesMatch : List Nat -> List Nat -> List Nat -> Bool
         && expected == opening
         && samplesMatch expectedRest heightRest openingRest
   | _, _, _ => false
+
+def sampleParentsMatch : List Nat -> List Nat -> Bool
+  | [], [] => true
+  | height :: heightRest, parentOpening :: parentOpeningRest =>
+      parentOpening + 1 == height
+        && sampleParentsMatch heightRest parentOpeningRest
+  | _, _ => false
 
 def outputMismatch : Option Bool -> Bool
   | some false => true
@@ -72,8 +83,12 @@ def evaluateShape (input : ShapeInput) : Option Reject :=
     some Reject.longRangeProofMismatch
   else if input.messageHeight ≤ input.trustedHeight then
     some Reject.longRangeProofMismatch
+  else if input.tipParentOpeningLeafIndex + 1 ≠ input.tipHeight then
+    some Reject.parentHashMismatch
   else if input.messageOpeningLeafIndex ≠ input.messageHeight then
     some Reject.headerMmrOpeningMismatch
+  else if input.messageParentOpeningLeafIndex + 1 ≠ input.messageHeight then
+    some Reject.parentHashMismatch
   else if input.messageIndex ≥ input.messagesLen then
     some Reject.messageIndexOutOfBounds
   else if input.messageSourceChainMatches = false then
@@ -85,6 +100,10 @@ def evaluateShape (input : ShapeInput) : Option Reject :=
       input.sampleHeaderHeights
       input.sampleOpeningLeafIndices = false then
     some Reject.flyClientSampleMismatch
+  else if sampleParentsMatch
+      input.sampleHeaderHeights
+      input.sampleParentOpeningLeafIndices = false then
+    some Reject.parentHashMismatch
   else if confirmationsChecked input < input.minConfirmations then
     some Reject.confirmationPolicyMismatch
   else if input.tipWork < input.minTipWork then
@@ -102,15 +121,18 @@ def validShape : ShapeInput :=
     trustedHeight := 10,
     tipHeight := 14,
     tipHeaderMmrLen := 14,
+    tipParentOpeningLeafIndex := 13,
     messageHeight := 12,
     messageHeaderMmrLen := 12,
     messageOpeningLeafIndex := 12,
+    messageParentOpeningLeafIndex := 11,
     messageIndex := 1,
     messageSourceChainMatches := true,
     messageSourceHeight := 12,
     expectedSampleIndices := [11, 12, 13],
     sampleHeaderHeights := [11, 12, 13],
     sampleOpeningLeafIndices := [11, 12, 13],
+    sampleParentOpeningLeafIndices := [10, 11, 12],
     minConfirmations := 3,
     tipWork := 1000,
     minTipWork := 900,
@@ -141,7 +163,11 @@ theorem rejects_tip_mmr_len_mismatch :
   decide
 
 theorem rejects_tip_not_after_message :
-    evaluateShape { validShape with tipHeight := 12, tipHeaderMmrLen := 12 } =
+    evaluateShape
+      { validShape with
+        tipHeight := 12,
+        tipHeaderMmrLen := 12,
+        tipParentOpeningLeafIndex := 11 } =
       some Reject.longRangeProofMismatch := by
   decide
 
@@ -150,7 +176,8 @@ theorem rejects_message_not_after_trusted :
       { validShape with
         trustedHeight := 12,
         tipHeight := 13,
-        tipHeaderMmrLen := 13 } =
+        tipHeaderMmrLen := 13,
+        tipParentOpeningLeafIndex := 12 } =
       some Reject.longRangeProofMismatch := by
   decide
 
@@ -160,16 +187,28 @@ theorem rejects_trusted_height_overflow :
         trustedHeight := u64Max,
         tipHeight := u64Max,
         tipHeaderMmrLen := u64Max,
+        tipParentOpeningLeafIndex := u64Max,
         messageHeight := u64Max,
         messageHeaderMmrLen := u64Max,
         messageOpeningLeafIndex := u64Max,
+        messageParentOpeningLeafIndex := u64Max,
         messageSourceHeight := u64Max } =
       some Reject.longRangeProofMismatch := by
+  decide
+
+theorem rejects_tip_parent_opening_leaf_mismatch :
+    evaluateShape { validShape with tipParentOpeningLeafIndex := 12 } =
+      some Reject.parentHashMismatch := by
   decide
 
 theorem rejects_message_opening_leaf_mismatch :
     evaluateShape { validShape with messageOpeningLeafIndex := 11 } =
       some Reject.headerMmrOpeningMismatch := by
+  decide
+
+theorem rejects_message_parent_opening_leaf_mismatch :
+    evaluateShape { validShape with messageParentOpeningLeafIndex := 10 } =
+      some Reject.parentHashMismatch := by
   decide
 
 theorem rejects_message_index_oob :
@@ -200,6 +239,11 @@ theorem rejects_sample_height_mismatch :
 theorem rejects_sample_opening_leaf_mismatch :
     evaluateShape { validShape with sampleOpeningLeafIndices := [11, 12, 12] } =
       some Reject.flyClientSampleMismatch := by
+  decide
+
+theorem rejects_sample_parent_opening_leaf_mismatch :
+    evaluateShape { validShape with sampleParentOpeningLeafIndices := [10, 11, 11] } =
+      some Reject.parentHashMismatch := by
   decide
 
 theorem rejects_under_confirmed :

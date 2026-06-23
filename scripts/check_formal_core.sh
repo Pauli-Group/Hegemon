@@ -14,6 +14,44 @@ run_formal_core() {
   cargo run --quiet --manifest-path "$FORMAL_MANIFEST" -- "$@"
 }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+require_pinned_model_checker() {
+  local label="$1"
+  local bin_var="$2"
+  local sha_var="$3"
+  local bin_path="${!bin_var:-}"
+  local expected_sha="${!sha_var:-}"
+
+  if [ -z "$bin_path" ]; then
+    printf '%s requested but %s is unset; refusing to claim model-checker evidence\n' "$label" "$bin_var" >&2
+    exit 2
+  fi
+  if [ -z "$expected_sha" ]; then
+    printf '%s requested but %s is unset; refusing to claim unpinned model-checker evidence\n' "$label" "$sha_var" >&2
+    exit 2
+  fi
+  if [ ! -x "$bin_path" ]; then
+    printf '%s binary is not executable: %s\n' "$label" "$bin_path" >&2
+    exit 2
+  fi
+
+  local actual_sha
+  actual_sha="$(sha256_file "$bin_path")"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    printf '%s binary sha256 mismatch for %s\nexpected: %s\nactual:   %s\n' \
+      "$label" "$bin_path" "$expected_sha" "$actual_sha" >&2
+    exit 2
+  fi
+  printf '%s\n' "$bin_path"
+}
+
 printf '=== Hegemon formal-core gate ===\n'
 
 printf '\n[1/14] Checking formal-core checker formatting\n'
@@ -813,35 +851,28 @@ printf '\n[13/14] Checking native backend release posture\n'
 bash "$ROOT/scripts/check_native_backend_release_posture.sh" \
   --package "$ROOT/audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
 
-printf '\n[14/14] Optional model checker pass\n'
+printf '\n[14/14] Model checker pass\n'
 if [ "${HEGEMON_FORMAL_RUN_MODEL_CHECKERS:-0}" = "1" ]; then
-  if command -v tlc >/dev/null 2>&1; then
-    (
-      cd "$ROOT/circuits/formal"
-      tlc -deadlock transaction_balance.tla -config transaction_balance.cfg
-    )
-    (
-      cd "$ROOT/consensus/spec/formal"
-      tlc -deadlock pow_longest_chain.tla -config pow_longest_chain.cfg
-    )
-  else
-    printf 'tlc not found; skipping TLC because no pinned local binary is available\n'
-  fi
-
-  if command -v apalache-mc >/dev/null 2>&1; then
-    (
-      cd "$ROOT/circuits/formal"
-      apalache-mc check --max-steps=20 --inv=BalanceInvariant transaction_balance.tla
-    )
-    (
-      cd "$ROOT/consensus/spec/formal"
-      apalache-mc check --max-steps=20 --inv=ForkChoiceInvariant pow_longest_chain.tla
-    )
-  else
-    printf 'apalache-mc not found; skipping Apalache because no pinned local binary is available\n'
-  fi
+  TLC_BIN="$(require_pinned_model_checker "TLC" HEGEMON_TLC_BIN HEGEMON_TLC_SHA256)"
+  APALACHE_BIN="$(require_pinned_model_checker "Apalache" HEGEMON_APALACHE_BIN HEGEMON_APALACHE_SHA256)"
+  (
+    cd "$ROOT/circuits/formal"
+    "$TLC_BIN" -deadlock transaction_balance.tla -config transaction_balance.cfg
+  )
+  (
+    cd "$ROOT/consensus/spec/formal"
+    "$TLC_BIN" -deadlock pow_longest_chain.tla -config pow_longest_chain.cfg
+  )
+  (
+    cd "$ROOT/circuits/formal"
+    "$APALACHE_BIN" check --max-steps=20 --inv=BalanceInvariant transaction_balance.tla
+  )
+  (
+    cd "$ROOT/consensus/spec/formal"
+    "$APALACHE_BIN" check --max-steps=20 --inv=ForkChoiceInvariant pow_longest_chain.tla
+  )
 else
-  printf 'set HEGEMON_FORMAL_RUN_MODEL_CHECKERS=1 to run installed TLC/Apalache binaries\n'
+  printf 'model-checker execution not requested; this gate is not claiming TLC/Apalache evidence\n'
 fi
 
 rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS"

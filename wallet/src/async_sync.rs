@@ -35,7 +35,7 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
-use crate::node_rpc::NodeRpcClient;
+use crate::node_rpc::{CiphertextEntry, NodeRpcClient};
 use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
 use crate::sync::SyncOutcome;
@@ -251,55 +251,31 @@ impl AsyncWalletSyncEngine {
                     .client
                     .ciphertexts(ciphertext_cursor, self.page_limit)
                     .await?;
+                cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 if entries.is_empty() {
-                    if let Ok(archive_entries) = self
+                    entries = self
                         .client
                         .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                        .await
-                    {
-                        entries = archive_entries;
-                    }
-                }
-                if entries.is_empty() {
-                    break;
-                }
-                let mut expected = ciphertext_cursor;
-                let mut gap_at = None;
-                for entry in &entries {
-                    if entry.index != expected {
-                        gap_at = Some(expected);
-                        break;
-                    }
-                    expected = expected
-                        .checked_add(1)
-                        .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
-                }
-                if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor)
-                    || gap_at.is_some()
-                {
-                    if let Ok(archive_entries) = self
-                        .client
-                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                        .await
-                    {
-                        if !archive_entries.is_empty() {
-                            entries = archive_entries;
-                        }
-                    }
-                }
-                if entries.is_empty() {
-                    break;
+                        .await?;
+                    cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 }
 
-                let first_index = entries.first().map(|entry| entry.index).unwrap_or(expected);
-                if first_index > ciphertext_cursor {
-                    eprintln!(
-                        "Ciphertext gap detected at index {} (skipping to {}).",
-                        ciphertext_cursor, first_index
-                    );
-                    self.store.advance_ciphertext_cursor(first_index)?;
-                    ciphertext_cursor = first_index;
+                if !ciphertext_page_is_contiguous(
+                    ciphertext_cursor,
+                    note_status.next_index,
+                    &entries,
+                )? {
+                    entries = self
+                        .client
+                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                        .await?;
+                    cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 }
+                require_ciphertext_page_contiguous(
+                    ciphertext_cursor,
+                    note_status.next_index,
+                    &entries,
+                )?;
 
                 let start_index = ciphertext_cursor;
                 let mut expected = start_index;
@@ -309,8 +285,7 @@ impl AsyncWalletSyncEngine {
 
                 for entry in entries {
                     if entry.index != expected {
-                        eprintln!("Ciphertext gap detected at index {} (skipping).", expected);
-                        break;
+                        return Err(WalletError::InvalidState("ciphertext page gap"));
                     }
                     outcome.ciphertexts += 1;
 
@@ -492,6 +467,56 @@ fn parse_hash_48(input: &str) -> Result<[u8; 48], WalletError> {
     Ok(out)
 }
 
+fn ciphertext_page_is_contiguous(
+    start: u64,
+    next_index: u64,
+    entries: &[CiphertextEntry],
+) -> Result<bool, WalletError> {
+    match require_ciphertext_page_contiguous(start, next_index, entries) {
+        Ok(()) => Ok(true),
+        Err(WalletError::InvalidState("ciphertext page missing"))
+        | Err(WalletError::InvalidState("ciphertext page gap")) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn cap_ciphertext_page_to_snapshot(entries: &mut Vec<CiphertextEntry>, next_index: u64) {
+    let Some(end) = entries.iter().position(|entry| entry.index >= next_index) else {
+        return;
+    };
+    entries.truncate(end);
+}
+
+fn require_ciphertext_page_contiguous(
+    start: u64,
+    next_index: u64,
+    entries: &[CiphertextEntry],
+) -> Result<(), WalletError> {
+    if start >= next_index {
+        return Ok(());
+    }
+    if entries.is_empty() {
+        return Err(WalletError::InvalidState("ciphertext page missing"));
+    }
+
+    let mut expected = start;
+    for entry in entries {
+        if entry.index != expected {
+            return Err(WalletError::InvalidState("ciphertext page gap"));
+        }
+        expected = expected
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+        if expected > next_index {
+            return Err(WalletError::InvalidState(
+                "ciphertext page beyond chain tip",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn decrypt_recovered_note(
     full_viewing_key: Option<&FullViewingKey>,
     incoming_key: &IncomingViewingKey,
@@ -535,6 +560,16 @@ mod tests {
     };
     use rand::{rngs::StdRng, SeedableRng};
 
+    fn sample_ciphertext_entry(index: u64) -> CiphertextEntry {
+        let root = RootSecret::from_bytes([index as u8; 32]);
+        let keys = root.derive();
+        let address = keys.address(0).unwrap().shielded_address();
+        let mut rng = StdRng::seed_from_u64(index + 100);
+        let note = NotePlaintext::random(1 + index, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        CiphertextEntry { index, ciphertext }
+    }
+
     #[test]
     fn test_sync_outcome_default() {
         let outcome = SyncOutcome::default();
@@ -565,5 +600,67 @@ mod tests {
         let recovered_incoming =
             decrypt_recovered_note(None, &ivk, &ciphertext).expect("incoming key decrypt");
         assert_eq!(recovered_incoming.note_data.pk_auth, [0u8; 32]);
+    }
+
+    #[test]
+    fn ciphertext_page_validation_accepts_contiguous_pages() {
+        let entries = vec![sample_ciphertext_entry(0), sample_ciphertext_entry(1)];
+        require_ciphertext_page_contiguous(0, 4, &entries).expect("contiguous prefix");
+        assert!(ciphertext_page_is_contiguous(0, 4, &entries).expect("classification succeeds"));
+
+        let final_page = vec![sample_ciphertext_entry(3)];
+        require_ciphertext_page_contiguous(3, 4, &final_page).expect("contiguous final page");
+        require_ciphertext_page_contiguous(4, 4, &[]).expect("empty page past tip");
+    }
+
+    #[test]
+    fn ciphertext_page_validation_rejects_missing_substituted_and_overrun_pages() {
+        let missing = require_ciphertext_page_contiguous(0, 2, &[]).unwrap_err();
+        assert!(matches!(
+            missing,
+            WalletError::InvalidState("ciphertext page missing")
+        ));
+        assert!(!ciphertext_page_is_contiguous(0, 2, &[]).unwrap());
+
+        let substituted = vec![sample_ciphertext_entry(1)];
+        let err = require_ciphertext_page_contiguous(0, 2, &substituted).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page gap")
+        ));
+        assert!(!ciphertext_page_is_contiguous(0, 2, &substituted).unwrap());
+
+        let gapped = vec![sample_ciphertext_entry(0), sample_ciphertext_entry(2)];
+        let err = require_ciphertext_page_contiguous(0, 3, &gapped).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page gap")
+        ));
+
+        let overrun = vec![
+            sample_ciphertext_entry(0),
+            sample_ciphertext_entry(1),
+            sample_ciphertext_entry(2),
+        ];
+        let err = require_ciphertext_page_contiguous(0, 2, &overrun).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page beyond chain tip")
+        ));
+    }
+
+    #[test]
+    fn ciphertext_page_cap_ignores_rows_beyond_sync_snapshot() {
+        let mut entries = vec![
+            sample_ciphertext_entry(0),
+            sample_ciphertext_entry(1),
+            sample_ciphertext_entry(2),
+        ];
+
+        cap_ciphertext_page_to_snapshot(&mut entries, 2);
+
+        assert_eq!(entries.len(), 2);
+        require_ciphertext_page_contiguous(0, 2, &entries).expect("snapshot prefix is complete");
+        assert!(ciphertext_page_is_contiguous(0, 2, &entries).expect("classification succeeds"));
     }
 }

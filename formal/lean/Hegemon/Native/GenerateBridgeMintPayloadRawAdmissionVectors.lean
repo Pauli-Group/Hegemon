@@ -20,6 +20,8 @@ def rejectionJson : Option BridgeMintPayloadReject -> String
       "\"version_mismatch\""
   | some BridgeMintPayloadReject.destinationMismatch =>
       "\"destination_mismatch\""
+  | some BridgeMintPayloadReject.mintNonceMismatch =>
+      "\"mint_nonce_mismatch\""
   | some BridgeMintPayloadReject.recipientCommitmentZero =>
       "\"recipient_commitment_zero\""
   | some BridgeMintPayloadReject.amountZero =>
@@ -58,7 +60,7 @@ def validBridgeMintPayloadBytes : List Byte :=
     (repeated 48 0x42)
     7
     42
-    99
+    42
 
 def malformedShortPayloadBytes : List Byte :=
   (List.range 31).map (fun _ => byte 0xaa)
@@ -73,7 +75,7 @@ def versionMismatchPayloadBytes : List Byte :=
     (repeated 48 0x42)
     7
     42
-    99
+    42
 
 def destinationMismatchPayloadBytes : List Byte :=
   bridgeMintPayloadBytes
@@ -82,7 +84,7 @@ def destinationMismatchPayloadBytes : List Byte :=
     (repeated 48 0x42)
     7
     42
-    99
+    42
 
 def zeroRecipientPayloadBytes : List Byte :=
   bridgeMintPayloadBytes
@@ -91,7 +93,7 @@ def zeroRecipientPayloadBytes : List Byte :=
     (repeated 48 0)
     7
     42
-    99
+    42
 
 def zeroAmountPayloadBytes : List Byte :=
   bridgeMintPayloadBytes
@@ -100,7 +102,7 @@ def zeroAmountPayloadBytes : List Byte :=
     (repeated 48 0x42)
     7
     0
-    99
+    42
 
 def overBoundAmountPayloadBytes : List Byte :=
   bridgeMintPayloadBytes
@@ -109,7 +111,7 @@ def overBoundAmountPayloadBytes : List Byte :=
     (repeated 48 0x42)
     7
     (maxNativeBridgeMintAmount + 1)
-    99
+    42
 
 def nativeAssetPayloadBytes : List Byte :=
   bridgeMintPayloadBytes
@@ -117,6 +119,15 @@ def nativeAssetPayloadBytes : List Byte :=
     hegemonChainIdBytes
     (repeated 48 0x42)
     0
+    42
+    42
+
+def mintNonceMismatchPayloadBytes : List Byte :=
+  bridgeMintPayloadBytes
+    1
+    hegemonChainIdBytes
+    (repeated 48 0x42)
+    7
     42
     99
 
@@ -142,6 +153,8 @@ def caseJson
     ++ boolJson input.versionMatches ++ ",\n"
     ++ "      \"destination_matches\": "
     ++ boolJson input.destinationMatches ++ ",\n"
+    ++ "      \"mint_nonce_matches\": "
+    ++ boolJson input.mintNonceMatches ++ ",\n"
     ++ "      \"recipient_commitment_nonzero\": "
     ++ boolJson input.recipientCommitmentNonzero ++ ",\n"
     ++ "      \"amount_nonzero\": "
@@ -178,6 +191,7 @@ def vectorJson : String :=
         canonicalReencodeMatches := false,
         versionMatches := false,
         destinationMatches := false,
+        mintNonceMatches := false,
         recipientCommitmentNonzero := false,
         amountNonzero := false,
         amountWithinBound := false,
@@ -190,6 +204,7 @@ def vectorJson : String :=
         canonicalReencodeMatches := false,
         versionMatches := false,
         destinationMatches := false,
+        mintNonceMatches := false,
         recipientCommitmentNonzero := false,
         amountNonzero := false,
         amountWithinBound := false,
@@ -216,6 +231,11 @@ def vectorJson : String :=
       { validRawBridgeMintPayload with
         destinationMatches := false }
       destinationMismatchPayloadBytes ++ ",\n"
+    ++ caseJson "mint-nonce-mismatch-raw-rejected"
+      "mint_nonce_mismatch"
+      { validRawBridgeMintPayload with
+        mintNonceMatches := false }
+      mintNonceMismatchPayloadBytes ++ ",\n"
     ++ caseJson "zero-recipient-raw-rejected"
       "zero_recipient"
       { validRawBridgeMintPayload with
@@ -246,6 +266,7 @@ def vectorJson : String :=
         receiptMessageHashMatches := false,
         versionMatches := false,
         destinationMatches := false,
+        mintNonceMatches := false,
         recipientCommitmentNonzero := false,
         amountNonzero := false,
         amountWithinBound := false,

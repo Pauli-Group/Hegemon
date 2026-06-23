@@ -1,18 +1,21 @@
 use crate::nat::{NatTraversal, NatTraversalConfig, NatTraversalResult};
 use crate::p2p::{CompactAddress, Connection, CoordinationMessage, WireMessage};
-use crate::peer_manager::PeerManager;
+use crate::peer_manager::{AddPeerResult, PeerManager, PeerSessionId};
 use crate::peer_store::PeerStore;
 use crate::{
     GossipHandle, GossipMessage, NetworkError, PeerId, PeerIdentity, ProtocolId, ProtocolMessage,
+    wire,
 };
+use crypto::hashes::sha256;
 use futures::stream::{BoxStream, SelectAll, StreamExt as FuturesStreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, warn};
@@ -139,17 +142,22 @@ enum P2PCommand {
         peer_id: PeerId,
         addr: SocketAddr,
         tx: mpsc::Sender<WireMessage>,
+        session_id: PeerSessionId,
         inbound: bool,
+        admit: oneshot::Sender<bool>,
     },
     Message {
         peer_id: PeerId,
+        session_id: PeerSessionId,
         msg: WireMessage,
     },
     PeerDisconnected {
         peer_id: PeerId,
         addr: SocketAddr,
+        session_id: PeerSessionId,
         inbound: bool,
     },
+    InboundHandshakeFailed,
 }
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -163,6 +171,31 @@ const ADDRESS_RATE_LIMIT: Duration = Duration::from_secs(5);
 const PUNCH_RATE_LIMIT: Duration = Duration::from_secs(5);
 const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
+const SEEN_GOSSIP_LIMIT: usize = 4096;
+
+static NEXT_PEER_SESSION_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Default)]
+struct SeenGossipCache {
+    order: VecDeque<[u8; 32]>,
+    set: HashSet<[u8; 32]>,
+}
+
+impl SeenGossipCache {
+    fn insert(&mut self, key: [u8; 32]) -> bool {
+        if self.set.contains(&key) {
+            return false;
+        }
+        if self.order.len() >= SEEN_GOSSIP_LIMIT
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.set.remove(&oldest);
+        }
+        self.order.push_back(key);
+        self.set.insert(key);
+        true
+    }
+}
 
 pub struct P2PService {
     identity: PeerIdentity,
@@ -179,7 +212,9 @@ pub struct P2PService {
     advertised_addrs: Vec<SocketAddr>,
     learned_addresses: HashSet<SocketAddr>,
     last_addr_request: HashMap<PeerId, Instant>,
+    last_addr_announcement: HashMap<PeerId, Instant>,
     last_punch_request: HashMap<PeerId, Instant>,
+    seen_gossip: SeenGossipCache,
 }
 
 impl P2PService {
@@ -210,7 +245,9 @@ impl P2PService {
             advertised_addrs: Vec::new(),
             learned_addresses: HashSet::new(),
             last_addr_request: HashMap::new(),
+            last_addr_announcement: HashMap::new(),
             last_punch_request: HashMap::new(),
+            seen_gossip: SeenGossipCache::default(),
         }
     }
 
@@ -277,15 +314,28 @@ impl P2PService {
         let mut gossip_rx = self.gossip.subscribe();
         let mut heartbeat = interval(HEARTBEAT_INTERVAL);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let inbound_handshakes = Arc::new(Semaphore::new(MAX_INBOUND_HANDSHAKES));
+        let inbound_handshakes = Arc::new(Semaphore::new(self.inbound_handshake_backlog_limit()));
+        let mut pending_inbound_handshakes = 0usize;
 
         loop {
             tokio::select! {
                 // Accept incoming connections
                 Ok((socket, addr)) = listener.accept() => {
                     info!("incoming connection from {}", addr);
+                    if !self.can_start_inbound_handshake(pending_inbound_handshakes) {
+                        warn!(
+                            addr = %addr,
+                            live_peers = self.peer_manager.peer_count(),
+                            pending = pending_inbound_handshakes,
+                            max_peers = self.peer_manager.max_peers(),
+                            "dropping inbound connection over peer admission capacity"
+                        );
+                        continue;
+                    }
                     match inbound_handshakes.clone().try_acquire_owned() {
                         Ok(permit) => {
+                            pending_inbound_handshakes =
+                                pending_inbound_handshakes.saturating_add(1);
                             self.spawn_accept(
                                 socket,
                                 addr,
@@ -297,7 +347,7 @@ impl P2PService {
                         Err(_) => {
                             warn!(
                                 addr = %addr,
-                                limit = MAX_INBOUND_HANDSHAKES,
+                                limit = self.inbound_handshake_backlog_limit(),
                                 "dropping inbound connection over handshake backlog cap"
                             );
                         }
@@ -307,9 +357,50 @@ impl P2PService {
                 // Handle commands (NewPeer, Message, Disconnect)
                 Some(cmd) = cmd_rx.recv() => {
                     match cmd {
-                        P2PCommand::NewPeer { peer_id, addr, tx, inbound } => {
+                        P2PCommand::NewPeer {
+                            peer_id,
+                            addr,
+                            tx,
+                            session_id,
+                            inbound,
+                            admit,
+                        } => {
+                            if inbound {
+                                pending_inbound_handshakes =
+                                    pending_inbound_handshakes.saturating_sub(1);
+                            }
                             info!("peer connected: {} ({:?})", addr, peer_id);
-                            self.peer_manager.add_peer(peer_id, addr, tx, !inbound);
+                            let admission = self.peer_manager.try_add_peer(
+                                peer_id,
+                                addr,
+                                tx,
+                                session_id,
+                                !inbound,
+                            );
+                            match admission {
+                                AddPeerResult::Accepted => {
+                                    let _ = admit.send(true);
+                                }
+                                AddPeerResult::Replaced(old_session) => {
+                                    warn!(
+                                        ?peer_id,
+                                        old_session,
+                                        new_session = session_id,
+                                        "replaced existing peer session"
+                                    );
+                                    let _ = admit.send(true);
+                                }
+                                AddPeerResult::RejectedAtCapacity => {
+                                    warn!(
+                                        ?peer_id,
+                                        %addr,
+                                        max_peers = self.peer_manager.max_peers(),
+                                        "rejecting peer over live-session cap"
+                                    );
+                                    let _ = admit.send(false);
+                                    continue;
+                                }
+                            }
                             if !inbound && is_dialable_addr(addr) {
                                 self.peer_store.record_connected(addr)?;
                                 self.learned_addresses.insert(addr);
@@ -339,30 +430,41 @@ impl P2PService {
                         P2PCommand::PeerDisconnected {
                             peer_id,
                             addr,
+                            session_id,
                             inbound,
                         } => {
                             info!("peer disconnected: {} ({:?})", addr, peer_id);
-                            self.peer_manager.remove_peer(&peer_id);
-                            if !inbound && is_dialable_addr(addr) {
-                                self.peer_store.record_disconnected(addr)?;
+                            if let Some(active_addr) =
+                                self.peer_manager.remove_peer_session(&peer_id, session_id)
+                            {
+                                if !inbound && is_dialable_addr(active_addr) {
+                                    self.peer_store.record_disconnected(active_addr)?;
+                                }
+                            } else {
+                                warn!(
+                                    ?peer_id,
+                                    session_id,
+                                    "ignored disconnect from inactive peer session"
+                                );
                             }
                         }
-                        P2PCommand::Message { peer_id, msg } => {
+                        P2PCommand::Message {
+                            peer_id,
+                            session_id,
+                            msg,
+                        } => {
+                            if !self.peer_manager.is_active_session(&peer_id, session_id) {
+                                warn!(
+                                    ?peer_id,
+                                    session_id,
+                                    "ignored message from inactive peer session"
+                                );
+                                continue;
+                            }
                             self.peer_manager.mark_heartbeat(&peer_id);
                             match msg {
                                 WireMessage::Gossip(gossip_msg) => {
-                                    // Forward to local node
-                                    // We ignore errors here (e.g. if channel is full)
-                                    match gossip_msg {
-                                        GossipMessage::Transaction(tx) => { let _ = self.gossip.broadcast_transaction(tx); }
-                                        GossipMessage::Block(block) => { let _ = self.gossip.broadcast_block(block); }
-                                        GossipMessage::Evidence(ev) => { let _ = self.gossip.broadcast_evidence(ev); }
-                                        GossipMessage::Addresses(addrs) => {
-                                            self.peer_manager.record_addresses(peer_id, addrs.clone());
-                                            self.persist_learned_addresses(addrs.clone())?;
-                                            let _ = self.gossip.broadcast_addresses(addrs);
-                                        }
-                                    }
+                                    self.handle_inbound_gossip(peer_id, gossip_msg).await?;
                                 }
                                 WireMessage::Ping => {
                                     self.peer_manager.send_to(&peer_id, WireMessage::Pong).await;
@@ -373,8 +475,11 @@ impl P2PService {
                                         .into_iter()
                                         .map(|addr| addr.to_socket_addr())
                                         .collect();
-                                    self.peer_manager.record_addresses(peer_id, addrs.clone());
-                                    self.persist_learned_addresses(addrs)?;
+                                    if let Some(addrs) =
+                                        self.accept_peer_addresses(peer_id, addrs, "legacy addr-exchange")
+                                    {
+                                        self.remember_peer_addresses(peer_id, addrs)?;
+                                    }
                                 }
                                 WireMessage::Coordinate(msg) => {
                                     self.handle_coordination(peer_id, msg, cmd_tx.clone())
@@ -387,17 +492,16 @@ impl P2PService {
                                 }
                             }
                         }
+                        P2PCommand::InboundHandshakeFailed => {
+                            pending_inbound_handshakes =
+                                pending_inbound_handshakes.saturating_sub(1);
+                        }
                     }
                 }
 
                 // Handle messages from local node (GossipRouter)
                 Ok(msg) = gossip_rx.recv() => {
-                    if let GossipMessage::Addresses(addrs) = &msg {
-                        self.peer_manager
-                            .record_addresses(self.identity.peer_id(), addrs.clone());
-                        self.persist_learned_addresses(addrs.clone())?;
-                    }
-                    self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
+                    self.handle_local_gossip(msg).await?;
                 }
 
                 // Handle protocol messages from registered components
@@ -463,10 +567,12 @@ impl P2PService {
                             .await
                         {
                             Ok(Ok(peer_id)) => {
+                                let session_id = next_peer_session_id();
                                 Self::run_peer_loop(
                                     connection,
                                     addr,
                                     peer_id,
+                                    session_id,
                                     cmd_tx.clone(),
                                     false,
                                 )
@@ -504,13 +610,18 @@ impl P2PService {
             match timeout(HANDSHAKE_TIMEOUT, connection.handshake_responder(&identity)).await {
                 Ok(Ok(peer_id)) => {
                     drop(permit);
-                    Self::run_peer_loop(connection, addr, peer_id, cmd_tx, true).await;
+                    let session_id = next_peer_session_id();
+                    Self::run_peer_loop(connection, addr, peer_id, session_id, cmd_tx, true).await;
                 }
                 Ok(Err(e)) => {
+                    drop(permit);
                     warn!("handshake failed with {}: {}", addr, e);
+                    let _ = cmd_tx.send(P2PCommand::InboundHandshakeFailed).await;
                 }
                 Err(_) => {
+                    drop(permit);
                     warn!("handshake timed out with {}", addr);
+                    let _ = cmd_tx.send(P2PCommand::InboundHandshakeFailed).await;
                 }
             }
         });
@@ -520,16 +631,20 @@ impl P2PService {
         mut connection: Connection<TcpStream>,
         addr: SocketAddr,
         peer_id: PeerId,
+        session_id: PeerSessionId,
         cmd_tx: mpsc::Sender<P2PCommand>,
         inbound: bool,
     ) {
         let (tx, mut rx) = mpsc::channel::<WireMessage>(100);
+        let (admit, admitted) = oneshot::channel();
         if cmd_tx
             .send(P2PCommand::NewPeer {
                 peer_id,
                 addr,
                 tx,
+                session_id,
                 inbound,
+                admit,
             })
             .await
             .is_err()
@@ -537,19 +652,28 @@ impl P2PService {
             return;
         }
 
+        if !matches!(admitted.await, Ok(true)) {
+            return;
+        }
+
         loop {
             tokio::select! {
-                Some(msg) = rx.recv() => {
-                    if let Err(e) = connection.send(msg).await {
-                        error!("failed to send to {}: {}", addr, e);
-                        break;
+                outbound = rx.recv() => {
+                    match outbound {
+                        Some(msg) => {
+                            if let Err(e) = connection.send(msg).await {
+                                error!("failed to send to {}: {}", addr, e);
+                                break;
+                            }
+                        }
+                        None => break,
                     }
                 }
                 result = connection.recv() => {
                     match result {
                         Ok(Some(msg)) => {
                             if cmd_tx
-                                .send(P2PCommand::Message { peer_id, msg })
+                                .send(P2PCommand::Message { peer_id, session_id, msg })
                                 .await
                                 .is_err()
                             {
@@ -570,9 +694,191 @@ impl P2PService {
             .send(P2PCommand::PeerDisconnected {
                 peer_id,
                 addr,
+                session_id,
                 inbound,
             })
             .await;
+    }
+
+    fn inbound_handshake_backlog_limit(&self) -> usize {
+        match self.peer_manager.max_peers() {
+            0 => MAX_INBOUND_HANDSHAKES,
+            max_peers => max_peers.min(MAX_INBOUND_HANDSHAKES),
+        }
+    }
+
+    fn can_start_inbound_handshake(&self, pending_inbound_handshakes: usize) -> bool {
+        if pending_inbound_handshakes >= self.inbound_handshake_backlog_limit() {
+            return false;
+        }
+        match self.peer_manager.max_peers() {
+            0 => true,
+            max_peers => {
+                self.peer_manager
+                    .peer_count()
+                    .saturating_add(pending_inbound_handshakes)
+                    < max_peers
+            }
+        }
+    }
+
+    async fn handle_inbound_gossip(
+        &mut self,
+        origin: PeerId,
+        msg: GossipMessage,
+    ) -> Result<(), NetworkError> {
+        let msg = match msg {
+            GossipMessage::Addresses(addrs) => {
+                let Some(addrs) =
+                    self.accept_peer_addresses(origin, addrs, "legacy address gossip")
+                else {
+                    return Ok(());
+                };
+                GossipMessage::Addresses(addrs)
+            }
+            msg => msg,
+        };
+
+        let Some(key) = gossip_message_key(&msg) else {
+            return Ok(());
+        };
+        if !self.seen_gossip.insert(key) {
+            return Ok(());
+        }
+
+        if let GossipMessage::Addresses(addrs) = &msg {
+            self.remember_peer_addresses(origin, addrs.clone())?;
+        }
+        self.publish_gossip_locally(msg.clone());
+        self.peer_manager
+            .broadcast_except(Some(&origin), WireMessage::Gossip(msg))
+            .await;
+        Ok(())
+    }
+
+    async fn handle_local_gossip(&mut self, msg: GossipMessage) -> Result<(), NetworkError> {
+        let msg = match msg {
+            GossipMessage::Addresses(addrs) => {
+                let Some(addrs) = self.accept_local_addresses(addrs, "local address gossip") else {
+                    return Ok(());
+                };
+                GossipMessage::Addresses(addrs)
+            }
+            msg => msg,
+        };
+
+        if self.peer_manager.peer_count() == 0 {
+            return Ok(());
+        }
+
+        let Some(key) = gossip_message_key(&msg) else {
+            return Ok(());
+        };
+        if !self.seen_gossip.insert(key) {
+            return Ok(());
+        }
+
+        if let GossipMessage::Addresses(addrs) = &msg {
+            self.remember_peer_addresses(self.identity.peer_id(), addrs.clone())?;
+        }
+        self.peer_manager.broadcast(WireMessage::Gossip(msg)).await;
+        Ok(())
+    }
+
+    fn publish_gossip_locally(&self, msg: GossipMessage) {
+        let _ = match msg {
+            GossipMessage::Transaction(tx) => self.gossip.broadcast_transaction(tx),
+            GossipMessage::Block(block) => self.gossip.broadcast_block(block),
+            GossipMessage::Evidence(ev) => self.gossip.broadcast_evidence(ev),
+            GossipMessage::Addresses(addrs) => self.gossip.broadcast_addresses(addrs),
+        };
+    }
+
+    fn accept_peer_addresses(
+        &mut self,
+        peer_id: PeerId,
+        addrs: Vec<SocketAddr>,
+        source: &'static str,
+    ) -> Option<Vec<SocketAddr>> {
+        if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
+            warn!(
+                source,
+                count = addrs.len(),
+                limit = ADDRESS_EXCHANGE_LIMIT,
+                "rejected peer address list beyond allowed limit"
+            );
+            return None;
+        }
+        if self.address_announcement_rate_limited(&peer_id) {
+            warn!(source, ?peer_id, "rate-limited peer address announcement");
+            return None;
+        }
+
+        let filtered = self.sanitize_peer_addresses(addrs);
+        if filtered.is_empty() {
+            warn!(
+                source,
+                ?peer_id,
+                "peer address announcement had no public addresses"
+            );
+            return None;
+        }
+        Some(filtered)
+    }
+
+    fn accept_local_addresses(
+        &self,
+        addrs: Vec<SocketAddr>,
+        source: &'static str,
+    ) -> Option<Vec<SocketAddr>> {
+        if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
+            warn!(
+                source,
+                count = addrs.len(),
+                limit = ADDRESS_EXCHANGE_LIMIT,
+                "rejected local address list beyond allowed limit"
+            );
+            return None;
+        }
+        let filtered = self.sanitize_local_addresses(addrs);
+        if filtered.is_empty() {
+            return None;
+        }
+        Some(filtered)
+    }
+
+    fn sanitize_peer_addresses(&self, addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+        self.sanitize_addresses(addrs, true)
+    }
+
+    fn sanitize_local_addresses(&self, addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+        self.sanitize_addresses(addrs, false)
+    }
+
+    fn sanitize_addresses(&self, addrs: Vec<SocketAddr>, exclude_local: bool) -> Vec<SocketAddr> {
+        let mut local = self
+            .advertised_addrs
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        local.insert(self.addr);
+        let mut seen = HashSet::new();
+        addrs
+            .into_iter()
+            .filter(|addr| is_dialable_addr(*addr))
+            .filter(|addr| !exclude_local || !local.contains(addr))
+            .filter(|addr| seen.insert(*addr))
+            .collect()
+    }
+
+    fn remember_peer_addresses(
+        &mut self,
+        peer_id: PeerId,
+        addrs: Vec<SocketAddr>,
+    ) -> Result<(), NetworkError> {
+        self.peer_manager
+            .record_addresses(peer_id, addrs.iter().copied());
+        self.persist_learned_addresses(addrs)
     }
 
     async fn handle_coordination(
@@ -592,39 +898,26 @@ impl P2PService {
                 }
             }
             CoordinationMessage::Addr { addrs } => {
-                if addrs.len() > ADDRESS_EXCHANGE_LIMIT {
-                    warn!(
-                        count = addrs.len(),
-                        "received address list beyond allowed limit"
-                    );
-                    return;
-                }
                 let addrs: Vec<_> = addrs
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
-                    .filter(|addr| is_dialable_addr(*addr))
                     .collect();
-                self.peer_manager.record_addresses(sender, addrs.clone());
-                if self.persist_learned_addresses(addrs.clone()).is_ok() {
-                    self.broadcast_addresses(sender, addrs).await;
+                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "coordinate addr") {
+                    if self.remember_peer_addresses(sender, addrs.clone()).is_ok() {
+                        self.broadcast_addresses(sender, addrs).await;
+                    }
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
-                if reachable.len() > ADDRESS_EXCHANGE_LIMIT {
-                    warn!(
-                        count = reachable.len(),
-                        "received relay registration beyond allowed limit"
-                    );
-                    return;
-                }
                 let addrs: Vec<_> = reachable
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
-                    .filter(|addr| is_dialable_addr(*addr))
                     .collect();
-                self.peer_manager.record_addresses(sender, addrs.clone());
-                if let Err(err) = self.persist_learned_addresses(addrs) {
-                    warn!(?err, "failed to persist relay registration addresses");
+                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "relay registration")
+                {
+                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
+                        warn!(?err, "failed to persist relay registration addresses");
+                    }
                 }
             }
             CoordinationMessage::PunchRequest {
@@ -640,8 +933,11 @@ impl P2PService {
                     return;
                 }
                 if target == self.identity.peer_id() {
-                    self.peer_manager.record_addresses(sender, [addr]);
-                    if let Err(err) = self.persist_learned_addresses([addr]) {
+                    let addrs = self.sanitize_peer_addresses(vec![addr]);
+                    let Some(addr) = addrs.first().copied() else {
+                        return;
+                    };
+                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
                         warn!(?err, "failed to persist punch-request address");
                     }
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
@@ -677,8 +973,11 @@ impl P2PService {
                     return;
                 }
                 if target == self.identity.peer_id() {
-                    self.peer_manager.record_addresses(sender, [addr]);
-                    if let Err(err) = self.persist_learned_addresses([addr]) {
+                    let addrs = self.sanitize_peer_addresses(vec![addr]);
+                    let Some(addr) = addrs.first().copied() else {
+                        return;
+                    };
+                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
                         warn!(?err, "failed to persist punch-response address");
                     }
                     self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
@@ -708,6 +1007,17 @@ impl P2PService {
         false
     }
 
+    fn address_announcement_rate_limited(&mut self, peer_id: &PeerId) -> bool {
+        let now = Instant::now();
+        if let Some(last) = self.last_addr_announcement.get(peer_id)
+            && now.duration_since(*last) < ADDRESS_RATE_LIMIT
+        {
+            return true;
+        }
+        self.last_addr_announcement.insert(*peer_id, now);
+        false
+    }
+
     fn punch_rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
         if let Some(last) = self.last_punch_request.get(peer_id)
@@ -720,6 +1030,10 @@ impl P2PService {
     }
 
     async fn broadcast_addresses(&mut self, origin: PeerId, addrs: Vec<SocketAddr>) {
+        let addrs = self.sanitize_peer_addresses(addrs);
+        if addrs.is_empty() {
+            return;
+        }
         let compact: Vec<_> = addrs.iter().copied().map(CompactAddress::from).collect();
         for (peer_id, _) in self
             .peer_manager
@@ -756,7 +1070,7 @@ impl P2PService {
         let advertised = self.peer_manager.advertised_to(&peer_id);
         let mut set = HashSet::new();
         let mut push_candidate = |addr: SocketAddr| {
-            if addr != peer_addr && !advertised.contains(&addr) {
+            if addr != peer_addr && is_dialable_addr(addr) && !advertised.contains(&addr) {
                 set.insert(addr);
             }
         };
@@ -920,7 +1234,11 @@ impl P2PService {
                         .await
                     {
                         Ok(Ok(peer_id)) => {
-                            Self::run_peer_loop(connection, addr, peer_id, cmd_tx, false).await;
+                            let session_id = next_peer_session_id();
+                            Self::run_peer_loop(
+                                connection, addr, peer_id, session_id, cmd_tx, false,
+                            )
+                            .await;
                         }
                         Ok(Err(e)) => warn!("handshake failed with {}: {}", addr, e),
                         Err(_) => warn!("handshake timed out with {}", addr),
@@ -929,6 +1247,20 @@ impl P2PService {
                 Err(e) => warn!("opportunistic dial to {} failed: {}", addr, e),
             }
         });
+    }
+}
+
+fn next_peer_session_id() -> PeerSessionId {
+    NEXT_PEER_SESSION_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+fn gossip_message_key(msg: &GossipMessage) -> Option<[u8; 32]> {
+    match wire::encode(msg, wire::MAX_WIRE_FRAME_LEN) {
+        Ok(bytes) => Some(sha256(&bytes)),
+        Err(err) => {
+            warn!(?err, "failed to fingerprint gossip message");
+            None
+        }
     }
 }
 
@@ -992,6 +1324,21 @@ mod tests {
         PeerStore::new(PeerStoreConfig::with_path(path))
     }
 
+    fn test_service(tag: &str, max_peers: usize) -> P2PService {
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        P2PService::new(
+            PeerIdentity::generate(tag.as_bytes()),
+            addr,
+            vec![],
+            Vec::new(),
+            GossipRouter::new(32).handle(),
+            max_peers,
+            temp_store(tag),
+            RelayConfig::default(),
+            NatTraversalConfig::disabled(addr),
+        )
+    }
+
     #[test]
     fn unspecified_listen_addr_is_not_advertised_as_loopback() {
         let addr: SocketAddr = "0.0.0.0:30333".parse().unwrap();
@@ -1027,6 +1374,248 @@ mod tests {
 
         let zero_port: SocketAddr = "8.8.8.8:0".parse().unwrap();
         assert!(!is_dialable_addr(zero_port));
+    }
+
+    #[test]
+    fn peer_address_admission_filters_caps_and_rate_limits_before_recording() {
+        let mut service = test_service("address-admission", 8);
+        let peer: PeerId = [21u8; 32];
+        let public_addr: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        let private_addr: SocketAddr = "10.0.0.1:30333".parse().unwrap();
+
+        let accepted = service
+            .accept_peer_addresses(
+                peer,
+                vec![private_addr, public_addr, public_addr],
+                "test addresses",
+            )
+            .expect("one public address is accepted");
+        assert_eq!(accepted, vec![public_addr]);
+        service
+            .remember_peer_addresses(peer, accepted)
+            .expect("record accepted address");
+
+        assert!(service.learned_addresses.contains(&public_addr));
+        assert!(!service.learned_addresses.contains(&private_addr));
+        let sampled = service
+            .peer_manager
+            .sample_addresses(ADDRESS_EXCHANGE_LIMIT, &HashSet::new());
+        assert!(sampled.contains(&public_addr));
+        assert!(!sampled.contains(&private_addr));
+
+        let second_public: SocketAddr = "1.1.1.1:30333".parse().unwrap();
+        assert!(
+            service
+                .accept_peer_addresses(peer, vec![second_public], "test rate")
+                .is_none(),
+            "same peer cannot feed a second address list inside the rate window"
+        );
+
+        let over_limit_peer: PeerId = [22u8; 32];
+        let over_limit = (0..=ADDRESS_EXCHANGE_LIMIT)
+            .map(|i| format!("8.8.4.4:{}", 30_000 + i).parse().unwrap())
+            .collect();
+        assert!(
+            service
+                .accept_peer_addresses(over_limit_peer, over_limit, "test cap")
+                .is_none(),
+            "over-limit address lists are rejected before filtering or recording"
+        );
+    }
+
+    #[test]
+    fn inbound_handshake_capacity_counts_pending_against_live_peer_cap() {
+        let mut service = test_service("handshake-capacity", 2);
+        assert_eq!(service.inbound_handshake_backlog_limit(), 2);
+        assert!(service.can_start_inbound_handshake(0));
+        assert!(!service.can_start_inbound_handshake(2));
+
+        let peer: PeerId = [23u8; 32];
+        let addr: SocketAddr = "127.0.0.1:30333".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(4);
+        assert_eq!(
+            service.peer_manager.try_add_peer(peer, addr, tx, 1, false),
+            AddPeerResult::Accepted
+        );
+
+        assert!(service.can_start_inbound_handshake(0));
+        assert!(
+            !service.can_start_inbound_handshake(1),
+            "one live peer plus one pending unauthenticated handshake fills max_peers=2"
+        );
+
+        let large_service = test_service("handshake-backlog", 128);
+        assert_eq!(
+            large_service.inbound_handshake_backlog_limit(),
+            MAX_INBOUND_HANDSHAKES
+        );
+    }
+
+    #[tokio::test]
+    async fn inbound_gossip_excludes_origin_and_suppresses_duplicate_relay() {
+        let mut service = test_service("gossip-origin", 4);
+        let origin: PeerId = [31u8; 32];
+        let other: PeerId = [32u8; 32];
+        let origin_addr: SocketAddr = "127.0.0.1:31001".parse().unwrap();
+        let other_addr: SocketAddr = "127.0.0.1:31002".parse().unwrap();
+        let (origin_tx, mut origin_rx) = mpsc::channel(4);
+        let (other_tx, mut other_rx) = mpsc::channel(4);
+
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(origin, origin_addr, origin_tx, 101, false),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(other, other_addr, other_tx, 202, false),
+            AddPeerResult::Accepted
+        );
+
+        let mut local_rx = service.gossip.subscribe();
+        let payload = b"block-with-origin-suppression".to_vec();
+        service
+            .handle_inbound_gossip(origin, GossipMessage::Block(payload.clone()))
+            .await
+            .expect("inbound gossip accepted");
+
+        assert!(
+            tokio::time::timeout(StdDuration::from_millis(50), origin_rx.recv())
+                .await
+                .is_err(),
+            "origin peer must not receive its own inbound gossip back"
+        );
+        match tokio::time::timeout(StdDuration::from_secs(1), other_rx.recv())
+            .await
+            .expect("relay to non-origin peer")
+            .expect("other peer channel open")
+        {
+            WireMessage::Gossip(GossipMessage::Block(block)) => assert_eq!(block, payload),
+            other => panic!("unexpected relay: {other:?}"),
+        }
+        match tokio::time::timeout(StdDuration::from_secs(1), local_rx.recv())
+            .await
+            .expect("local gossip import")
+            .expect("local gossip channel open")
+        {
+            GossipMessage::Block(block) => assert_eq!(block, payload),
+            other => panic!("unexpected local gossip: {other:?}"),
+        }
+
+        service
+            .handle_inbound_gossip(origin, GossipMessage::Block(payload))
+            .await
+            .expect("duplicate inbound gossip handled");
+        assert!(
+            tokio::time::timeout(StdDuration::from_millis(50), other_rx.recv())
+                .await
+                .is_err(),
+            "duplicate gossip must not be relayed again"
+        );
+        assert!(
+            tokio::time::timeout(StdDuration::from_millis(50), local_rx.recv())
+                .await
+                .is_err(),
+            "duplicate gossip must not be re-injected locally"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_address_gossip_is_sanitized_before_record_persist_or_relay() {
+        let mut service = test_service("legacy-address-gossip", 4);
+        let origin: PeerId = [51u8; 32];
+        let other: PeerId = [52u8; 32];
+        let origin_addr: SocketAddr = "127.0.0.1:51001".parse().unwrap();
+        let other_addr: SocketAddr = "127.0.0.1:51002".parse().unwrap();
+        let (origin_tx, _origin_rx) = mpsc::channel(4);
+        let (other_tx, mut other_rx) = mpsc::channel(4);
+        let private_addr: SocketAddr = "10.10.10.10:30333".parse().unwrap();
+        let public_addr: SocketAddr = "8.8.8.8:30334".parse().unwrap();
+
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(origin, origin_addr, origin_tx, 501, false),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(other, other_addr, other_tx, 502, false),
+            AddPeerResult::Accepted
+        );
+
+        service
+            .handle_inbound_gossip(
+                origin,
+                GossipMessage::Addresses(vec![private_addr, public_addr, public_addr]),
+            )
+            .await
+            .expect("legacy address gossip handled");
+
+        assert!(service.learned_addresses.contains(&public_addr));
+        assert!(!service.learned_addresses.contains(&private_addr));
+        let sampled = service
+            .peer_manager
+            .sample_addresses(ADDRESS_EXCHANGE_LIMIT, &HashSet::new());
+        assert!(sampled.contains(&public_addr));
+        assert!(!sampled.contains(&private_addr));
+        match tokio::time::timeout(StdDuration::from_secs(1), other_rx.recv())
+            .await
+            .expect("sanitized address gossip relayed")
+            .expect("other peer channel open")
+        {
+            WireMessage::Gossip(GossipMessage::Addresses(addrs)) => {
+                assert_eq!(addrs, vec![public_addr]);
+            }
+            other => panic!("unexpected address relay: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn local_address_gossip_relays_public_self_address_only_once() {
+        let mut service = test_service("local-address-gossip", 2);
+        let public_self: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        let private_self: SocketAddr = "127.0.0.1:30333".parse().unwrap();
+        service.advertised_addrs = vec![public_self, private_self];
+
+        let peer: PeerId = [41u8; 32];
+        let peer_addr: SocketAddr = "127.0.0.1:41001".parse().unwrap();
+        let (tx, mut rx) = mpsc::channel(4);
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(peer, peer_addr, tx, 303, false),
+            AddPeerResult::Accepted
+        );
+
+        service
+            .handle_local_gossip(GossipMessage::Addresses(vec![public_self, private_self]))
+            .await
+            .expect("local address gossip handled");
+        match tokio::time::timeout(StdDuration::from_secs(1), rx.recv())
+            .await
+            .expect("peer receives public address")
+            .expect("peer channel open")
+        {
+            WireMessage::Gossip(GossipMessage::Addresses(addrs)) => {
+                assert_eq!(addrs, vec![public_self]);
+            }
+            other => panic!("unexpected local address relay: {other:?}"),
+        }
+
+        service
+            .handle_local_gossip(GossipMessage::Addresses(vec![public_self]))
+            .await
+            .expect("duplicate local address gossip handled");
+        assert!(
+            tokio::time::timeout(StdDuration::from_millis(50), rx.recv())
+                .await
+                .is_err(),
+            "duplicate local address gossip must not be relayed again"
+        );
     }
 
     #[tokio::test]

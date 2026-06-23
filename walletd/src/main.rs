@@ -14,10 +14,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
+    constants::is_canonical_asset_id,
     hashing_pq::{bytes48_to_felts, note_commitment_bytes},
     note::MerklePath,
 };
 use wallet::{
+    address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
     build_transaction,
     disclosure::{
@@ -1608,6 +1610,13 @@ fn disclosure_verify(
     params: DisclosureVerifyParams,
 ) -> WalletdResult<DisclosureVerifyResponse> {
     let package = params.package;
+    let bound_recipient = decode_bound_recipient_address(&package.claim)?;
+    if !is_canonical_asset_id(package.claim.asset_id) {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "asset_id is not a canonical circuit asset identifier",
+        ));
+    }
 
     let commitment_felt = bytes48_to_felts(&package.claim.commitment).ok_or_else(|| {
         WalletdError::new(
@@ -1695,16 +1704,40 @@ fn disclosure_verify(
 
     verify_payment_disclosure(&bundle)
         .map_err(|e| WalletdError::new(WalletdErrorCode::ProofInvalid, e.to_string()))?;
+    let verified_claim = bundle.claim.clone();
+    let recipient_address = bound_recipient
+        .encode()
+        .map_err(|e| WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string()))?;
 
     Ok(DisclosureVerifyResponse {
         verified: true,
-        recipient_address: package.claim.recipient_address.clone(),
-        value: package.claim.value,
-        asset_id: package.claim.asset_id,
-        commitment: format!("0x{}", hex::encode(package.claim.commitment)),
+        recipient_address,
+        value: verified_claim.value,
+        asset_id: verified_claim.asset_id,
+        commitment: format!("0x{}", hex::encode(verified_claim.commitment)),
         anchor: format!("0x{}", hex::encode(package.confirmation.anchor)),
         chain: format!("0x{}", hex::encode(package.chain.genesis_hash)),
     })
+}
+
+fn decode_bound_recipient_address(
+    package_claim: &DisclosureClaim,
+) -> WalletdResult<ShieldedAddress> {
+    let recipient = ShieldedAddress::decode(&package_claim.recipient_address)
+        .map_err(|e| WalletdError::new(WalletdErrorCode::InvalidParams, e.to_string()))?;
+    if recipient.pk_recipient != package_claim.pk_recipient {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "recipient address does not match pk_recipient",
+        ));
+    }
+    if recipient.pk_auth != package_claim.pk_auth {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "recipient address does not match pk_auth",
+        ));
+    }
+    Ok(recipient)
 }
 
 fn parse_hex_32(input: &str) -> WalletdResult<[u8; 32]> {

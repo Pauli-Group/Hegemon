@@ -1,6 +1,6 @@
 use disclosure_circuit::{
     prove_payment_disclosure, verify_payment_disclosure, DisclosureCircuitError,
-    PaymentDisclosureClaim, PaymentDisclosureWitness,
+    DisclosureVerifyError, PaymentDisclosureClaim, PaymentDisclosureWitness,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -108,6 +108,21 @@ fn reject_padding_field_alias_asset_id() {
     let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
     match err {
         DisclosureCircuitError::InvalidAssetId => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn verifier_rejects_padding_field_alias_asset_id() {
+    let (claim, witness) = sample_claim_and_witness();
+    let mut bundle = prove_payment_disclosure(&claim, &witness).expect("proof");
+    bundle.claim.asset_id = BALANCE_SLOT_PADDING_FIELD_ID;
+
+    let err = verify_payment_disclosure(&bundle).unwrap_err();
+    match err {
+        DisclosureVerifyError::InvalidPublicInputs(message) => {
+            assert!(message.contains("asset identifier"));
+        }
         other => panic!("unexpected error: {other:?}"),
     }
 }

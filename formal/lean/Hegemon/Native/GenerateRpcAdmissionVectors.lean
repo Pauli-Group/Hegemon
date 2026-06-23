@@ -24,6 +24,7 @@ def rawPolicyTagJson : RawRpcPolicy -> String
 def policyRejectionJson : Except RpcPolicyReject RpcPolicy -> String
   | Except.ok _ => "null"
   | Except.error RpcPolicyReject.invalidPolicy => "\"invalid_policy\""
+  | Except.error RpcPolicyReject.externalUnsafePolicy => "\"external_unsafe_policy\""
 
 def methodJson : RpcMethod -> String
   | RpcMethod.safeMethod => "\"system_health\""
@@ -189,6 +190,7 @@ def vectorJson : String :=
     ++ "  \"policy_cases\": [\n"
     ++ policyCaseJson "safe-token" "safe" RawRpcPolicy.safeToken false ++ ",\n"
     ++ policyCaseJson "unsafe-token" "unsafe" RawRpcPolicy.unsafeToken false ++ ",\n"
+    ++ policyCaseJson "external-unsafe-rejected" "unsafe" RawRpcPolicy.unsafeToken true ++ ",\n"
     ++ policyCaseJson "external-auto-resolves-safe" "auto" RawRpcPolicy.autoToken true ++ ",\n"
     ++ policyCaseJson "local-auto-resolves-safe" "auto" RawRpcPolicy.autoToken false ++ ",\n"
     ++ policyCaseJson "external-empty-resolves-safe" "" RawRpcPolicy.emptyToken true ++ ",\n"

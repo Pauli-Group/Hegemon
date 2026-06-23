@@ -8,6 +8,7 @@ inductive BridgeMintPayloadReject where
   | receiptMessageHashMismatch
   | versionMismatch
   | destinationMismatch
+  | mintNonceMismatch
   | recipientCommitmentZero
   | amountZero
   | amountOutOfBounds
@@ -20,6 +21,7 @@ structure BridgeMintPayloadInput where
   receiptMessageHashMatches : Bool
   versionMatches : Bool
   destinationMatches : Bool
+  mintNonceMatches : Bool
   recipientCommitmentNonzero : Bool
   amountNonzero : Bool
   amountWithinBound : Bool
@@ -39,6 +41,8 @@ def evaluateBridgeMintPayload
     Except.error BridgeMintPayloadReject.versionMismatch
   else if input.destinationMatches = false then
     Except.error BridgeMintPayloadReject.destinationMismatch
+  else if input.mintNonceMatches = false then
+    Except.error BridgeMintPayloadReject.mintNonceMismatch
   else if input.recipientCommitmentNonzero = false then
     Except.error BridgeMintPayloadReject.recipientCommitmentZero
   else if input.amountNonzero = false then
@@ -70,6 +74,7 @@ def bridgeMintPayloadPreconditions
     && input.receiptMessageHashMatches
     && input.versionMatches
     && input.destinationMatches
+    && input.mintNonceMatches
     && input.recipientCommitmentNonzero
     && input.amountNonzero
     && input.amountWithinBound
@@ -82,6 +87,7 @@ def BridgeMintPayloadFacts
     ∧ input.receiptMessageHashMatches = true
     ∧ input.versionMatches = true
     ∧ input.destinationMatches = true
+    ∧ input.mintNonceMatches = true
     ∧ input.recipientCommitmentNonzero = true
     ∧ input.amountNonzero = true
     ∧ input.amountWithinBound = true
@@ -93,7 +99,7 @@ theorem accepts_iff_bridge_mint_payload_preconditions
       bridgeMintPayloadPreconditions input := by
   cases input with
   | mk payloadDecoded payloadHashMatches receiptMessageHashMatches
-      versionMatches destinationMatches recipientCommitmentNonzero
+      versionMatches destinationMatches mintNonceMatches recipientCommitmentNonzero
       amountNonzero amountWithinBound assetNonNative =>
       unfold bridgeMintPayloadAccepts
         bridgeMintPayloadPreconditions
@@ -103,6 +109,7 @@ theorem accepts_iff_bridge_mint_payload_preconditions
         cases receiptMessageHashMatches <;>
         cases versionMatches <;>
         cases destinationMatches <;>
+        cases mintNonceMatches <;>
         cases recipientCommitmentNonzero <;>
         cases amountNonzero <;>
         cases amountWithinBound <;>
@@ -115,13 +122,14 @@ theorem accepted_bridge_mint_payload_exposes_facts
     BridgeMintPayloadFacts input := by
   cases input with
   | mk payloadDecoded payloadHashMatches receiptMessageHashMatches
-      versionMatches destinationMatches recipientCommitmentNonzero
+      versionMatches destinationMatches mintNonceMatches recipientCommitmentNonzero
       amountNonzero amountWithinBound assetNonNative =>
       cases payloadDecoded <;>
         cases payloadHashMatches <;>
         cases receiptMessageHashMatches <;>
         cases versionMatches <;>
         cases destinationMatches <;>
+        cases mintNonceMatches <;>
         cases recipientCommitmentNonzero <;>
         cases amountNonzero <;>
         cases amountWithinBound <;>
@@ -139,6 +147,7 @@ def validBridgeMintPayload : BridgeMintPayloadInput :=
     receiptMessageHashMatches := true,
     versionMatches := true,
     destinationMatches := true,
+    mintNonceMatches := true,
     recipientCommitmentNonzero := true,
     amountNonzero := true,
     amountWithinBound := true,
@@ -183,6 +192,7 @@ theorem amount_zero_precedes_amount_bound
     (receiptHash : input.receiptMessageHashMatches = true)
     (version : input.versionMatches = true)
     (destination : input.destinationMatches = true)
+    (mintNonce : input.mintNonceMatches = true)
     (recipient : input.recipientCommitmentNonzero = true)
     (amountZero : input.amountNonzero = false) :
     evaluateBridgeMintPayload input =
@@ -194,6 +204,7 @@ theorem amount_zero_precedes_amount_bound
     receiptHash,
     version,
     destination,
+    mintNonce,
     recipient,
     amountZero
   ]
@@ -205,6 +216,7 @@ theorem native_asset_rejected_after_amount_bound
     (receiptHash : input.receiptMessageHashMatches = true)
     (version : input.versionMatches = true)
     (destination : input.destinationMatches = true)
+    (mintNonce : input.mintNonceMatches = true)
     (recipient : input.recipientCommitmentNonzero = true)
     (amount : input.amountNonzero = true)
     (bound : input.amountWithinBound = true)
@@ -218,6 +230,7 @@ theorem native_asset_rejected_after_amount_bound
     receiptHash,
     version,
     destination,
+    mintNonce,
     recipient,
     amount,
     bound,

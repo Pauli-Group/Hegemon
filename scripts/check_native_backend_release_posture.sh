@@ -17,7 +17,8 @@ Options:
   --review-manifest path      Optional review_manifest.json for external-review checks.
   --package path              Extract current_claim.json and review_manifest.json from a review package tarball.
   --require-accepted          Fail unless the native backend is externally accepted.
-  --acceptance-artifact path  Required with --require-accepted; must be a checked-in external acceptance note.
+  --acceptance-artifact path  Required with --require-accepted; must be structured JSON
+                              binding the accepted review to claim/manifest hashes.
 
 Default mode is the CI posture gate: the active native backend must remain
 candidate_under_review / structural_candidate and must not look externally
@@ -86,7 +87,8 @@ if [[ "$REQUIRE_ACCEPTED" == true && -z "$ACCEPTANCE_ARTIFACT" ]]; then
   exit 2
 fi
 
-python3 - "$CLAIM_JSON" "$REVIEW_MANIFEST" "$REQUIRE_ACCEPTED" "$ACCEPTANCE_ARTIFACT" <<'PY'
+python3 - "$CLAIM_JSON" "$REVIEW_MANIFEST" "$REQUIRE_ACCEPTED" "$ACCEPTANCE_ARTIFACT" "$PACKAGE_TAR" <<'PY'
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -95,6 +97,57 @@ claim_path = Path(sys.argv[1])
 manifest_path = Path(sys.argv[2]) if sys.argv[2] else None
 require_accepted = sys.argv[3] == "true"
 acceptance_artifact = Path(sys.argv[4]) if sys.argv[4] else None
+package_path = Path(sys.argv[5]) if sys.argv[5] else None
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def require_nonempty_string(artifact, field):
+    value = artifact.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise SystemExit(
+            f"native backend release blocked: acceptance artifact missing {field}"
+        )
+    return value.strip()
+
+def load_acceptance_artifact(path):
+    if path is None or not path.is_file():
+        raise SystemExit("native backend release blocked: missing checked-in external acceptance artifact")
+    try:
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"native backend release blocked: acceptance artifact is not JSON: {exc}"
+        ) from exc
+    if not isinstance(artifact, dict):
+        raise SystemExit("native backend release blocked: acceptance artifact must be a JSON object")
+    if artifact.get("schema_version") != 1:
+        raise SystemExit("native backend release blocked: unsupported acceptance artifact schema")
+    if artifact.get("artifact_type") != "hegemon_native_backend_external_acceptance":
+        raise SystemExit("native backend release blocked: malformed acceptance artifact type")
+    if artifact.get("review_state") != "accepted":
+        raise SystemExit("native backend release blocked: acceptance artifact does not mark review_state accepted")
+    if artifact.get("external_review_completed") is not True:
+        raise SystemExit("native backend release blocked: acceptance artifact does not mark external review completed")
+    require_nonempty_string(artifact, "reviewer")
+    require_nonempty_string(artifact, "reviewed_at")
+    claim_hash = require_nonempty_string(artifact, "current_claim_sha256")
+    if claim_hash != sha256_file(claim_path):
+        raise SystemExit("native backend release blocked: acceptance artifact current_claim_sha256 mismatch")
+    if manifest_path is None or not manifest_path.is_file():
+        raise SystemExit("native backend release blocked: accepted mode requires review_manifest.json")
+    manifest_hash = require_nonempty_string(artifact, "review_manifest_sha256")
+    if manifest_hash != sha256_file(manifest_path):
+        raise SystemExit("native backend release blocked: acceptance artifact review_manifest_sha256 mismatch")
+    if package_path is not None:
+        package_hash = require_nonempty_string(artifact, "package_sha256")
+        if package_hash != sha256_file(package_path):
+            raise SystemExit("native backend release blocked: acceptance artifact package_sha256 mismatch")
+    return artifact
 
 claim = json.loads(claim_path.read_text(encoding="utf-8"))
 claim_body = claim.get("native_security_claim") or {}
@@ -116,13 +169,9 @@ if require_accepted:
         raise SystemExit(
             f"native backend release blocked: review_state={review_state!r}, expected 'accepted'"
         )
-    if external_done is False:
-        raise SystemExit("native backend release blocked: review manifest says external cryptanalysis is incomplete")
-    if acceptance_artifact is None or not acceptance_artifact.is_file():
-        raise SystemExit("native backend release blocked: missing checked-in external acceptance artifact")
-    acceptance_text = acceptance_artifact.read_text(encoding="utf-8").lower()
-    if "accepted" not in acceptance_text or "external" not in acceptance_text:
-        raise SystemExit("native backend release blocked: acceptance artifact does not state external acceptance")
+    if external_done is not True:
+        raise SystemExit("native backend release blocked: review manifest must mark external cryptanalysis complete")
+    load_acceptance_artifact(acceptance_artifact)
     print("native backend release posture: externally accepted")
 else:
     if review_state != "candidate_under_review":

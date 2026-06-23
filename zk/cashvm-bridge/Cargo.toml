@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 consensus-light-client = { path = "../../consensus-light-client" }
+codec = { workspace = true }
 protocol-kernel = { path = "../../protocol/kernel" }
 sha2 = "0.10"
 

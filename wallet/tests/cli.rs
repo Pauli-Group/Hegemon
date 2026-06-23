@@ -1,4 +1,4 @@
-use std::{fs, io::Write};
+use std::{fs, io::Write, path::Path};
 
 use assert_cmd::cargo::cargo_bin_cmd;
 use predicates::prelude::*;
@@ -7,6 +7,14 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use wallet::{keys::RootSecret, viewing::IncomingViewingKey};
+
+#[cfg(unix)]
+fn assert_private_file(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "{} should be private", path.display());
+}
 
 #[test]
 fn generate_and_address_round_trip() {
@@ -95,6 +103,11 @@ fn tx_craft_and_scan_flow() {
         witness_json.get("sk_spend").is_none(),
         "tx-craft witness output must not serialize sk_spend"
     );
+    #[cfg(unix)]
+    {
+        assert_private_file(&witness_out);
+        assert_private_file(&ledger_out);
+    }
 
     let report_out = temp.path().join("report.json");
     cargo_bin_cmd!("wallet")
@@ -112,6 +125,58 @@ fn tx_craft_and_scan_flow() {
 
     let report: Value = serde_json::from_slice(&fs::read(&report_out).unwrap()).unwrap();
     assert_eq!(report["totals"]["7"].as_u64(), Some(42));
+    #[cfg(unix)]
+    assert_private_file(&report_out);
+}
+
+#[cfg(unix)]
+#[test]
+fn secret_export_files_are_private() {
+    let temp = tempdir().expect("tempdir");
+    let export_out = temp.path().join("root-export.json");
+
+    cargo_bin_cmd!("wallet")
+        .args([
+            "generate",
+            "--count",
+            "1",
+            "--out",
+            export_out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_private_file(&export_out);
+
+    let root = RootSecret::from_bytes([5u8; 32]);
+    let root_hex = hex::encode(root.to_bytes());
+    let store_path = temp.path().join("wallet.dat");
+    cargo_bin_cmd!("wallet")
+        .args([
+            "init",
+            "--store",
+            store_path.to_str().unwrap(),
+            "--passphrase",
+            "passphrase",
+            "--root-hex",
+            &root_hex,
+        ])
+        .assert()
+        .success();
+
+    let viewing_out = temp.path().join("viewing-key.json");
+    cargo_bin_cmd!("wallet")
+        .args([
+            "export-viewing-key",
+            "--store",
+            store_path.to_str().unwrap(),
+            "--passphrase",
+            "passphrase",
+            "--out",
+            viewing_out.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_private_file(&viewing_out);
 }
 
 #[derive(Serialize, Deserialize)]

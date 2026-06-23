@@ -27,6 +27,8 @@ def rejectionJson : Option InboundBridgeReceiptReject -> String
       "\"confirmations_overstated\""
   | some InboundBridgeReceiptReject.underconfirmed =>
       "\"underconfirmed\""
+  | some InboundBridgeReceiptReject.workPolicyMismatch =>
+      "\"work_policy_mismatch\""
 
 def inboundBridgeReceiptCaseJson
     (name : String)
@@ -47,10 +49,16 @@ def inboundBridgeReceiptCaseJson
       ++ toString input.checkpointHeight ++ ",\n"
     ++ "      \"canonical_tip_height\": "
       ++ toString input.canonicalTipHeight ++ ",\n"
+    ++ "      \"canonical_tip_work\": "
+      ++ "\"" ++ toString input.canonicalTipWork ++ "\",\n"
     ++ "      \"confirmations_checked\": "
       ++ toString input.confirmationsChecked ++ ",\n"
     ++ "      \"min_confirmations\": "
       ++ toString input.minConfirmations ++ ",\n"
+    ++ "      \"min_work_checked\": "
+      ++ "\"" ++ toString input.minWorkChecked ++ "\",\n"
+    ++ "      \"min_tip_work\": "
+      ++ "\"" ++ toString input.minTipWork ++ "\",\n"
     ++ "      \"expected_valid\": " ++ boolJson result.isOk ++ ",\n"
     ++ "      \"expected_height_confirmations\": "
       ++ natOptionJson confirmations ++ ",\n"
@@ -85,6 +93,10 @@ def vectorJson : String :=
       "confirmations-overstated-rejected" confirmationsOverstated ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "underconfirmed-rejected" underconfirmed ++ ",\n"
+    ++ inboundBridgeReceiptCaseJson
+      "tip-work-under-policy-rejected" tipWorkUnderPolicy ++ ",\n"
+    ++ inboundBridgeReceiptCaseJson
+      "checked-work-under-policy-rejected" checkedWorkUnderPolicy ++ ",\n"
     ++ inboundBridgeReceiptCaseJson
       "source-chain-precedes-rules" source_chain_precedes_rules_input ++ ",\n"
     ++ inboundBridgeReceiptCaseJson

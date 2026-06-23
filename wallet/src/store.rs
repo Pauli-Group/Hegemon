@@ -319,17 +319,6 @@ impl WalletStore {
         })
     }
 
-    /// Advance the ciphertext cursor to a later index (used to skip pruned gaps).
-    pub fn advance_ciphertext_cursor(&self, new_index: u64) -> Result<(), WalletError> {
-        self.with_mut(|state| {
-            if new_index < state.next_ciphertext_index {
-                return Err(WalletError::InvalidState("ciphertext index rewind"));
-            }
-            state.next_ciphertext_index = new_index;
-            Ok(())
-        })
-    }
-
     /// Repair note positions by re-mapping commitments to indices.
     /// Returns the number of notes whose position was updated.
     pub fn repair_note_positions(&self) -> Result<usize, WalletError> {
@@ -397,9 +386,9 @@ impl WalletStore {
     ///
     /// Returns the number of newly-added notes (deduped by position).
     ///
-    /// If a ciphertext decrypts successfully but its note commitment cannot be found in the local
-    /// commitment list, the note is skipped. This can occur when the ciphertext stream contains
-    /// non-canonical (forked) ciphertexts or when ciphertext retention policies introduce gaps.
+    /// If a ciphertext decrypts successfully, its note commitment must match the local commitment
+    /// at the same index. A mismatch means the node/archive served substituted ciphertext bytes for
+    /// a commitment that is already bound by the verified chain root, so sync fails closed.
     pub fn apply_ciphertext_batch(
         &self,
         start_index: u64,
@@ -428,42 +417,32 @@ impl WalletStore {
                     let expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
                         &note.note_data.commitment(),
                     );
-                    let position = match state
-                        .commitments
-                        .iter()
-                        .position(|value| *value == expected_commitment)
-                    {
-                        Some(position) => Some(position as u64),
-                        None => {
-                            if std::env::var("WALLET_DEBUG_DECRYPT").is_ok() {
-                                eprintln!(
-                                    "[DEBUG sync] Decrypted note at ciphertext index {} but commitment not found; skipping (commitment={})",
-                                    index,
-                                    hex::encode(expected_commitment),
-                                );
-                            }
-                            None
-                        }
+                    let commitment_index = usize::try_from(index)
+                        .map_err(|_| WalletError::InvalidState("ciphertext index overflow"))?;
+                    let Some(chain_commitment) = state.commitments.get(commitment_index) else {
+                        return Err(WalletError::InvalidState("ciphertext commitment missing"));
                     };
+                    if *chain_commitment != expected_commitment {
+                        return Err(WalletError::InvalidState("ciphertext commitment mismatch"));
+                    }
 
-                    if let Some(position) = position {
-                        if !state.notes.iter().any(|n| n.position == position) {
-                            let nullifier = state
-                                .full_viewing_key
-                                .as_ref()
-                                .map(|fvk| fvk.compute_nullifier(&note.note.rho, position));
-                            state.notes.push(TrackedNote {
-                                note,
-                                position,
-                                ciphertext_index: index,
-                                nullifier,
-                                spent: false,
-                                pending_spend: false,
-                            });
-                            added = added
-                                .checked_add(1)
-                                .ok_or(WalletError::InvalidState("note count overflow"))?;
-                        }
+                    let position = index;
+                    if !state.notes.iter().any(|n| n.position == position) {
+                        let nullifier = state
+                            .full_viewing_key
+                            .as_ref()
+                            .map(|fvk| fvk.compute_nullifier(&note.note.rho, position));
+                        state.notes.push(TrackedNote {
+                            note,
+                            position,
+                            ciphertext_index: index,
+                            nullifier,
+                            spent: false,
+                            pending_spend: false,
+                        });
+                        added = added
+                            .checked_add(1)
+                            .ok_or(WalletError::InvalidState("note count overflow"))?;
                     }
                 }
 
@@ -1058,21 +1037,67 @@ impl WalletStore {
             ciphertext,
         };
         let bytes = bincode::serialize(&file)?;
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut tmp_suffix = [0u8; 8];
-        OsRng.fill_bytes(&mut tmp_suffix);
-        let tmp_id = u64::from_le_bytes(tmp_suffix);
-        let tmp = self.path.with_extension(format!("tmp-{tmp_id:x}"));
-        write_wallet_file_private(&tmp, &bytes)?;
-        fs::rename(&tmp, &self.path)?;
-        set_wallet_file_private_permissions(&self.path)?;
+        write_private_file(&self.path, &bytes)?;
         Ok(())
     }
 }
 
-fn write_wallet_file_private(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
+/// Write a plaintext or encrypted wallet artifact with private permissions.
+///
+/// The write is staged through a fresh 0600 temporary file in the same directory
+/// and then atomically renamed into place, so replacing an existing permissive
+/// file does not leave newly-written secret material world-readable.
+pub fn write_private_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mut tmp_suffix = [0u8; 8];
+    OsRng.fill_bytes(&mut tmp_suffix);
+    let tmp_id = u64::from_le_bytes(tmp_suffix);
+    let tmp = path.with_extension(format!("tmp-{tmp_id:x}"));
+    write_private_new_file(&tmp, bytes)?;
+    if let Err(err) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err.into());
+    }
+    set_private_file_permissions(path)?;
+    Ok(())
+}
+
+/// Open a ledger/export append target with private permissions.
+pub fn open_private_append_file(path: &Path) -> Result<fs::File, WalletError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(path)?;
+        set_private_file_permissions(path)?;
+        Ok(file)
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?)
+    }
+}
+
+fn write_private_new_file(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -1084,7 +1109,7 @@ fn write_wallet_file_private(path: &Path, bytes: &[u8]) -> Result<(), WalletErro
             .open(path)?;
         file.write_all(bytes)?;
         file.sync_all()?;
-        set_wallet_file_private_permissions(path)?;
+        set_private_file_permissions(path)?;
         Ok(())
     }
     #[cfg(not(unix))]
@@ -1094,7 +1119,7 @@ fn write_wallet_file_private(path: &Path, bytes: &[u8]) -> Result<(), WalletErro
     }
 }
 
-fn set_wallet_file_private_permissions(path: &Path) -> Result<(), WalletError> {
+fn set_private_file_permissions(path: &Path) -> Result<(), WalletError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -1571,6 +1596,40 @@ mod tests {
         assert_eq!(mode, 0o600);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn private_file_writer_replaces_permissive_files_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("secret-export.json");
+        fs::write(&path, b"old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_private_file(&path, b"new secret").unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new secret");
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_append_file_is_created_private_on_unix() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("credits.jsonl");
+        {
+            let mut file = open_private_append_file(&path).unwrap();
+            writeln!(file, "{{\"ok\":true}}").unwrap();
+        }
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
     #[test]
     fn wallet_file_rejects_trailing_bytes() {
         let dir = tempdir().unwrap();
@@ -1781,7 +1840,10 @@ mod tests {
                 .unwrap(),
             1
         );
-        store.advance_ciphertext_cursor(3).unwrap();
+        assert_eq!(
+            store.apply_ciphertext_batch(1, vec![None, None]).unwrap(),
+            0
+        );
         let note_index = store.spendable_notes(0).unwrap()[0].index;
         let nullifier = store.tracked_notes().unwrap()[0]
             .nullifier
@@ -1823,8 +1885,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            pre_bookkeeping_bundle.ciphertexts,
-            post_bookkeeping_bundle.ciphertexts,
+            pre_bookkeeping_bundle.ciphertexts, post_bookkeeping_bundle.ciphertexts,
             "wallet-local scan cursors, sync metadata, and pending bookkeeping must not enter chain ciphertext bytes"
         );
 
@@ -1934,7 +1995,7 @@ mod tests {
     }
 
     #[test]
-    fn recovered_note_uses_commitment_index_as_position() {
+    fn recovered_note_uses_ciphertext_index_as_position() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wallet.dat");
         let store = WalletStore::create_full(&path, "passphrase").unwrap();
@@ -1953,7 +2014,7 @@ mod tests {
         let cm_b = felts_to_bytes48(&rec_b.note_data.commitment());
         store.append_commitments(&[(0, cm_a), (1, cm_b)]).unwrap();
 
-        let recovered = vec![Some(rec_b), None];
+        let recovered = vec![None, Some(rec_b)];
         let added = store.apply_ciphertext_batch(0, recovered).unwrap();
         assert_eq!(added, 1);
 
@@ -1963,7 +2024,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_ciphertext_batch_skips_notes_missing_commitment() {
+    fn apply_ciphertext_batch_rejects_decrypted_note_missing_commitment() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wallet.dat");
         let store = WalletStore::create_full(&path, "passphrase").unwrap();
@@ -1975,13 +2036,50 @@ mod tests {
         let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
         let recovered = ivk.decrypt_note(&ciphertext).unwrap();
 
-        // No commitments have been synced yet, so the decrypted note should be ignored
-        // rather than causing the sync engine to fail.
-        let added = store
+        // No commitment exists at the ciphertext index, so accepting this note would advance past
+        // an unverifiable archive row.
+        let err = store
             .apply_ciphertext_batch(0, vec![Some(recovered)])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext commitment missing")
+        ));
+        assert_eq!(store.next_ciphertext_index().unwrap(), 0);
+        assert!(store.spendable_notes(0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_ciphertext_batch_rejects_substituted_decrypted_note() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = ivk.shielded_address(0).unwrap();
+        let mut rng = StdRng::seed_from_u64(124);
+
+        let note_a = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext_a = NoteCiphertext::encrypt(&address, &note_a, &mut rng).unwrap();
+        let recovered_a = ivk.decrypt_note(&ciphertext_a).unwrap();
+        let commitment_a = felts_to_bytes48(&recovered_a.note_data.commitment());
+
+        let note_b = NotePlaintext::random(20, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext_b = NoteCiphertext::encrypt(&address, &note_b, &mut rng).unwrap();
+        let recovered_b = ivk.decrypt_note(&ciphertext_b).unwrap();
+        let commitment_b = felts_to_bytes48(&recovered_b.note_data.commitment());
+
+        store
+            .append_commitments(&[(0, commitment_a), (1, commitment_b)])
             .unwrap();
-        assert_eq!(added, 0);
-        assert_eq!(store.next_ciphertext_index().unwrap(), 1);
+
+        let err = store
+            .apply_ciphertext_batch(0, vec![Some(recovered_b)])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext commitment mismatch")
+        ));
+        assert_eq!(store.next_ciphertext_index().unwrap(), 0);
         assert!(store.spendable_notes(0).unwrap().is_empty());
     }
 

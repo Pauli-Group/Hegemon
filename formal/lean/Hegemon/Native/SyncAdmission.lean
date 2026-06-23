@@ -29,6 +29,13 @@ structure SyncResponseCountInput where
   maxBlocks : Nat
 deriving DecidableEq, Repr
 
+structure SyncRequestRateInput where
+  requestsInWindow : Nat
+  maxRequests : Nat
+  windowElapsedMs : Nat
+  windowMs : Nat
+deriving DecidableEq, Repr
+
 def responseCapEnd (input : SyncResponseRangeInput) : Nat :=
   let maxEnd := saturatingAddU64 input.fromHeight (input.maxBlocks - 1)
   min input.toHeight (min input.bestHeight maxEnd)
@@ -64,6 +71,17 @@ def responseCountRejects (input : SyncResponseCountInput) : Bool :=
 
 def responseCountAccepts (input : SyncResponseCountInput) : Bool :=
   responseCountRejects input = false
+
+def requestRateRejects (input : SyncRequestRateInput) : Bool :=
+  if input.maxRequests = 0 then
+    true
+  else if input.windowElapsedMs ≥ input.windowMs then
+    false
+  else
+    input.requestsInWindow ≥ input.maxRequests
+
+def requestRateAccepts (input : SyncRequestRateInput) : Bool :=
+  requestRateRejects input = false
 
 def responseRangeBlockCount (range : Nat × Nat) : Nat :=
   range.snd + 1 - range.fst
@@ -243,6 +261,25 @@ theorem response_count_accepts_iff_within_limit
   · have le : input.blockCount ≤ input.maxBlocks := Nat.le_of_not_gt over
     simp [over, le]
 
+theorem request_rate_accepts_when_window_elapsed
+    {input : SyncRequestRateInput}
+    (elapsed : input.windowMs ≤ input.windowElapsedMs)
+    (maxNonzero : input.maxRequests ≠ 0) :
+    requestRateAccepts input = true := by
+  unfold requestRateAccepts requestRateRejects
+  simp [maxNonzero, elapsed]
+
+theorem request_rate_rejects_full_unelapsed_window
+    {input : SyncRequestRateInput}
+    (full : input.maxRequests ≤ input.requestsInWindow)
+    (notElapsed : input.windowElapsedMs < input.windowMs)
+    (maxNonzero : input.maxRequests ≠ 0) :
+    requestRateRejects input = true := by
+  unfold requestRateRejects
+  have notElapsedLe : ¬ input.windowMs ≤ input.windowElapsedMs :=
+    Nat.not_le_of_gt notElapsed
+  simp [maxNonzero, notElapsedLe, full]
+
 def responseRangeValid : SyncResponseRangeInput :=
   {
     fromHeight := 10,
@@ -376,6 +413,54 @@ def responseCountOverLimit : SyncResponseCountInput :=
 
 theorem response_count_over_limit_rejects :
     responseCountRejects responseCountOverLimit = true := by
+  decide
+
+def requestRateUnderLimit : SyncRequestRateInput :=
+  {
+    requestsInWindow := 3,
+    maxRequests := 4,
+    windowElapsedMs := 0,
+    windowMs := 10000
+  }
+
+theorem request_rate_under_limit_accepts :
+    requestRateAccepts requestRateUnderLimit = true := by
+  decide
+
+def requestRateFullWindow : SyncRequestRateInput :=
+  {
+    requestsInWindow := 4,
+    maxRequests := 4,
+    windowElapsedMs := 0,
+    windowMs := 10000
+  }
+
+theorem request_rate_full_window_rejects :
+    requestRateRejects requestRateFullWindow = true := by
+  decide
+
+def requestRateElapsedWindow : SyncRequestRateInput :=
+  {
+    requestsInWindow := 4,
+    maxRequests := 4,
+    windowElapsedMs := 10000,
+    windowMs := 10000
+  }
+
+theorem request_rate_elapsed_window_accepts :
+    requestRateAccepts requestRateElapsedWindow = true := by
+  decide
+
+def requestRateZeroCap : SyncRequestRateInput :=
+  {
+    requestsInWindow := 0,
+    maxRequests := 0,
+    windowElapsedMs := 0,
+    windowMs := 10000
+  }
+
+theorem request_rate_zero_cap_rejects :
+    requestRateRejects requestRateZeroCap = true := by
   decide
 
 end SyncAdmission

@@ -64,11 +64,11 @@ jobs:
       - name: Build node binary
         run: cargo build -p hegemon-node --release
 
-      - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
 
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
       - name: Package binary
         run: |
@@ -103,11 +103,11 @@ jobs:
       - name: Build node binary (cross-compile for Intel)
         run: cargo build -p hegemon-node --release --target x86_64-apple-darwin
 
-      - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/x86_64-apple-darwin/release/hegemon-node
+      - name: Build wallet binaries (cross-compile for Intel)
+        run: cargo build -p wallet -p walletd --release --target x86_64-apple-darwin
 
-      - name: Build wallet binary (cross-compile for Intel)
-        run: cargo build -p wallet --release --target x86_64-apple-darwin
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
       
       - name: Package binary
         run: |
@@ -141,11 +141,11 @@ jobs:
       - name: Build node binary
         run: cargo build -p hegemon-node --release
 
-      - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
 
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
       - name: Package binary
         run: |
@@ -181,12 +181,12 @@ jobs:
       - name: Build node binary
         run: cargo build -p hegemon-node --release
 
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
+
       - name: Release PQ binary audit
         shell: bash
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node.exe
-
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe
       
       - name: Package binary
         shell: pwsh
