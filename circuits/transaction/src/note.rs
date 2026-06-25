@@ -44,6 +44,84 @@ impl NoteData {
     }
 }
 
+pub const PREDICATE_THRESHOLD_POLICY_COMMITMENT_DOMAIN: &[u8] =
+    b"hegemon-predicate-threshold-policy-v1";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PredicateThresholdPolicyOpening {
+    #[serde(with = "crate::public_inputs::serde_bytes48")]
+    pub policy_root: [u8; 48],
+    pub threshold: u16,
+    #[serde(with = "crate::note::serde_bytes32")]
+    pub policy_commitment_randomness: [u8; 32],
+}
+
+impl PredicateThresholdPolicyOpening {
+    pub fn validate(&self) -> Result<(), TransactionCircuitError> {
+        if self.threshold == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "predicate threshold must be nonzero",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn policy_commitment_key(&self) -> Result<[u8; 32], TransactionCircuitError> {
+        self.validate()?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(PREDICATE_THRESHOLD_POLICY_COMMITMENT_DOMAIN);
+        hasher.update(&self.policy_root);
+        hasher.update(&self.threshold.to_le_bytes());
+        hasher.update(&self.policy_commitment_randomness);
+        Ok(*hasher.finalize().as_bytes())
+    }
+
+    pub fn to_note_data(
+        &self,
+        value: u64,
+        asset_id: u64,
+        pk_recipient: [u8; 32],
+        rho: [u8; 32],
+        r: [u8; 32],
+    ) -> Result<NoteData, TransactionCircuitError> {
+        let note = NoteData {
+            value,
+            asset_id,
+            pk_recipient,
+            pk_auth: self.policy_commitment_key()?,
+            rho,
+            r,
+        };
+        note.validate()?;
+        Ok(note)
+    }
+
+    pub fn validate_bound_to_note(&self, note: &NoteData) -> Result<(), TransactionCircuitError> {
+        note.validate()?;
+        let committed_key = self.policy_commitment_key()?;
+        if committed_key != note.pk_auth {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "predicate policy opening is not bound to consumed note commitment",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PredicateThresholdSpendWitness {
+    pub policy: PredicateThresholdPolicyOpening,
+}
+
+impl PredicateThresholdSpendWitness {
+    pub fn validate_bound_to_note_opening(
+        &self,
+        note: &NoteData,
+    ) -> Result<(), TransactionCircuitError> {
+        self.policy.validate_bound_to_note(note)
+    }
+}
+
 /// Merkle tree depth for the note commitment tree.
 pub const MERKLE_TREE_DEPTH: usize = 32;
 
@@ -230,7 +308,9 @@ pub(crate) mod serde_bytes32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{note_commitment_inputs, nullifier_inputs, Felt, HashFelt};
+    use crate::hashing_pq::{
+        note_commitment, note_commitment_inputs, nullifier_inputs, Felt, HashFelt,
+    };
     use p3_field::{PrimeCharacteristicRing, PrimeField64};
     use std::collections::BTreeSet;
 
@@ -447,6 +527,157 @@ mod tests {
         }
     }
 
+    #[test]
+    fn predicate_note_commitment_changes_when_policy_opening_changes() {
+        let policy = predicate_policy(0x20, 2);
+        let note = predicate_note(&policy);
+
+        let changed_root = PredicateThresholdPolicyOpening {
+            policy_root: [0x21u8; 48],
+            ..policy.clone()
+        };
+        let changed_threshold = PredicateThresholdPolicyOpening {
+            threshold: 3,
+            ..policy.clone()
+        };
+        let changed_randomness = PredicateThresholdPolicyOpening {
+            policy_commitment_randomness: [0x22u8; 32],
+            ..policy.clone()
+        };
+
+        for changed in [changed_root, changed_threshold, changed_randomness] {
+            assert_ne!(
+                policy.policy_commitment_key().expect("policy key"),
+                changed.policy_commitment_key().expect("changed policy key")
+            );
+            assert_ne!(
+                note.commitment(),
+                predicate_note(&changed).commitment(),
+                "policy_root, threshold, and policy commitment randomness must all bind the note commitment"
+            );
+        }
+    }
+
+    #[test]
+    fn single_key_note_commitment_shape_remains_legacy() {
+        let note = NoteData {
+            value: 42,
+            asset_id: 7,
+            pk_recipient: [1u8; 32],
+            pk_auth: [2u8; 32],
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+
+        let legacy_inputs = note_commitment_inputs(
+            note.value,
+            note.asset_id,
+            &note.pk_recipient,
+            &note.rho,
+            &note.r,
+            &note.pk_auth,
+        );
+        assert_eq!(
+            legacy_inputs.len(),
+            18,
+            "single-key note commitment preimage must stay value/asset/recipient/rho/r/auth"
+        );
+        assert_eq!(legacy_inputs[0], Felt::from_u64(note.value));
+        assert_eq!(legacy_inputs[1], Felt::from_u64(note.asset_id));
+
+        assert_eq!(
+            note.commitment(),
+            note_commitment(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.pk_auth,
+                &note.rho,
+                &note.r,
+            ),
+            "single-key NoteData commitment must remain the legacy helper result"
+        );
+    }
+
+    #[test]
+    fn predicate_spend_witness_rejects_uncommitted_policy_opening() {
+        let policy = predicate_policy(0x30, 2);
+        let note = predicate_note(&policy);
+        let witness = PredicateThresholdSpendWitness {
+            policy: policy.clone(),
+        };
+        witness
+            .validate_bound_to_note_opening(&note)
+            .expect("committed predicate policy opening accepts");
+
+        let wrong_root = PredicateThresholdSpendWitness {
+            policy: PredicateThresholdPolicyOpening {
+                policy_root: [0x31u8; 48],
+                ..policy.clone()
+            },
+        };
+        assert!(matches!(
+            wrong_root.validate_bound_to_note_opening(&note),
+            Err(TransactionCircuitError::ConstraintViolation(
+                "predicate policy opening is not bound to consumed note commitment"
+            ))
+        ));
+
+        let wrong_threshold = PredicateThresholdSpendWitness {
+            policy: PredicateThresholdPolicyOpening {
+                threshold: 3,
+                ..policy.clone()
+            },
+        };
+        assert!(matches!(
+            wrong_threshold.validate_bound_to_note_opening(&note),
+            Err(TransactionCircuitError::ConstraintViolation(
+                "predicate policy opening is not bound to consumed note commitment"
+            ))
+        ));
+
+        let wrong_randomness = PredicateThresholdSpendWitness {
+            policy: PredicateThresholdPolicyOpening {
+                policy_commitment_randomness: [0x32u8; 32],
+                ..policy.clone()
+            },
+        };
+        assert!(matches!(
+            wrong_randomness.validate_bound_to_note_opening(&note),
+            Err(TransactionCircuitError::ConstraintViolation(
+                "predicate policy opening is not bound to consumed note commitment"
+            ))
+        ));
+
+        let zero_threshold = PredicateThresholdSpendWitness {
+            policy: PredicateThresholdPolicyOpening {
+                threshold: 0,
+                ..policy.clone()
+            },
+        };
+        assert!(matches!(
+            zero_threshold.validate_bound_to_note_opening(&note),
+            Err(TransactionCircuitError::ConstraintViolation(
+                "predicate threshold must be nonzero"
+            ))
+        ));
+
+        let legacy_single_key_note = NoteData {
+            value: note.value,
+            asset_id: note.asset_id,
+            pk_recipient: note.pk_recipient,
+            pk_auth: [0x33u8; 32],
+            rho: note.rho,
+            r: note.r,
+        };
+        assert!(matches!(
+            witness.validate_bound_to_note_opening(&legacy_single_key_note),
+            Err(TransactionCircuitError::ConstraintViolation(
+                "predicate policy opening is not bound to consumed note commitment"
+            ))
+        ));
+    }
+
     fn verify_lean_merkle_case(case: &LeanMerkleCase) {
         let path = MerklePath {
             siblings: case.siblings.iter().copied().map(digest_from_u64).collect(),
@@ -550,5 +781,19 @@ mod tests {
             "mock Lean Merkle digest uses only limb zero"
         );
         digest[0].as_canonical_u64()
+    }
+
+    fn predicate_policy(seed: u8, threshold: u16) -> PredicateThresholdPolicyOpening {
+        PredicateThresholdPolicyOpening {
+            policy_root: [seed; 48],
+            threshold,
+            policy_commitment_randomness: [seed.wrapping_add(1); 32],
+        }
+    }
+
+    fn predicate_note(policy: &PredicateThresholdPolicyOpening) -> NoteData {
+        policy
+            .to_note_data(17, 9, [0x40u8; 32], [0x41u8; 32], [0x42u8; 32])
+            .expect("predicate note data")
     }
 }

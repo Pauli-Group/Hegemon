@@ -47,7 +47,10 @@ pub mod p3_verifier;
 
 pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
-pub use note::{InputNoteWitness, OutputNoteWitness};
+pub use note::{
+    InputNoteWitness, OutputNoteWitness, PredicateThresholdPolicyOpening,
+    PredicateThresholdSpendWitness,
+};
 pub use proof::{TransactionProof, VerificationReport};
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};

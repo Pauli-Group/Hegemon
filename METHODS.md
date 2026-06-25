@@ -38,7 +38,7 @@ cm = Com_note(value, asset_id, pk_recipient, pk_auth, rho, r)
 * `Hc` is a commitment‑strength hash (could be domain‑separated Poseidon or Blake3; binding+hiding rely on hash + randomness).
 * `enc(value)` is some fixed‑width encoding for `value`.
 
-Private multisig uses a stateful accumulator authorization layer rather than signatures or MPC. An approval consumes a private accumulator note and a private signer capability note, rejects if the signer's approval nullifier already appears in the accumulator, and produces a new accumulator note for the same exact `(account, policy_root, spend_intent)` with one additional private approval leaf. The final spender receives only the value note plus the accumulator note. The final spend witness contains no signer long-term secret; it accepts only when the private accumulator matches the exact account, policy, and intent and its private approval count reaches the private threshold. The normal public transaction shape stays unchanged: public signer sets, thresholds, approval counts, approval leaves, policy roots, and approval nullifiers are not transaction fields.
+Private multisig uses a stateful accumulator authorization layer rather than signatures or MPC. An approval consumes a private accumulator note and a private signer capability note, rejects if the signer's approval nullifier already appears in the accumulator, and produces a new accumulator note for the same exact `(account, policy_root, spend_intent)` with one additional private approval leaf. The final spender receives only the value note plus the accumulator note. The final spend witness contains no signer long-term secret; it accepts only when the private accumulator matches the exact account, policy, and intent and its private approval count reaches the private threshold. The hidden `pk_auth` slot is the policy/accumulator commitment key, so the proof cannot select a different private policy, threshold, or accumulator opening after the note is created. The normal public transaction shape stays unchanged: public signer sets, thresholds, approval counts, approval leaves, policy roots, and approval nullifiers are not transaction fields.
 
 On‑chain, the **global state** for the pool is:
 
@@ -71,6 +71,7 @@ The core statement the STARK proves:
 >
 >   * `(value_i, asset_i, pk_recipient_i, pk_auth_i, rho_i, r_i, pos_i)`
 >   * `sk_spend`
+>   * for predicate threshold notes only: the private policy opening `(policy_root_i, threshold_i, policy_commitment_randomness_i)` whose derived policy commitment key equals `pk_auth_i`
 > * for each output `j` in `[0..N-1]`:
 >
 >   * `(value'_j, asset'_j, pk'_j, pk'_auth_j, rho'_j, r'_j)`
