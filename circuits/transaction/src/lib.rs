@@ -95,12 +95,15 @@ pub use smallwood_frontend::{
     projected_smallwood_candidate_proof_bytes_for_arithmetization,
     projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profile,
     prove_smallwood_candidate, prove_smallwood_candidate_with_arithmetization,
-    report_smallwood_candidate_proof_size, smallwood_public_statement_values_for_p3,
-    verify_smallwood_candidate_proof_bytes, SmallwoodCandidateBackendOpeningSurfaceReport,
+    prove_smallwood_candidate_with_arithmetization_and_auth, prove_smallwood_candidate_with_auth,
+    report_smallwood_candidate_proof_size, smallwood_accumulator_auth_key_bytes,
+    smallwood_public_statement_values_for_p3, verify_smallwood_candidate_proof_bytes,
+    SmallwoodAccumulatorAuthOpening, SmallwoodCandidateBackendOpeningSurfaceReport,
     SmallwoodCandidateExactProfileReport, SmallwoodCandidateLvcsPlannerProjectionEntry,
     SmallwoodCandidateLvcsPlannerProjectionReport, SmallwoodCandidateProfileAnalysisReport,
     SmallwoodCandidateProfileSurface, SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport,
-    SmallwoodFrontendShape, SmallwoodPoseidonLayout, SmallwoodPublicBindingMode,
+    SmallwoodFrontendShape, SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode,
+    SmallwoodPrivateAuthWitness, SmallwoodPublicBindingMode,
 };
 pub use smallwood_lppc_frontend::{
     analyze_smallwood_semantic_bridge_lower_bound_from_witness,

@@ -1,12 +1,15 @@
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use rand::{rngs::OsRng, RngCore};
-use superneo_hegemon::{build_native_tx_leaf_artifact_bytes, decode_native_tx_leaf_artifact_bytes};
+use superneo_hegemon::{
+    build_native_tx_leaf_artifact_bytes_with_auth, decode_native_tx_leaf_artifact_bytes,
+};
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, merkle_node,
 };
 use transaction_circuit::note::OutputNoteWitness;
 use transaction_circuit::witness::TransactionWitness;
+use transaction_circuit::SmallwoodPrivateAuthWitness;
 use transaction_circuit::StablecoinPolicyBinding;
 
 use crate::address::ShieldedAddress;
@@ -45,10 +48,20 @@ struct SubmissionProofMaterial {
 fn submission_proof_material_from_witness(
     witness: &TransactionWitness,
 ) -> Result<SubmissionProofMaterial, WalletError> {
+    submission_proof_material_from_witness_with_auth(
+        witness,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+fn submission_proof_material_from_witness_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<SubmissionProofMaterial, WalletError> {
     witness
         .validate()
         .map_err(|err| WalletError::InvalidArgument(Box::leak(err.to_string().into_boxed_str())))?;
-    let built = build_native_tx_leaf_artifact_bytes(witness).map_err(|err| {
+    let built = build_native_tx_leaf_artifact_bytes_with_auth(witness, auth).map_err(|err| {
         WalletError::Serialization(format!("native tx-leaf artifact generation failed: {err}"))
     })?;
     let decoded = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).map_err(|err| {

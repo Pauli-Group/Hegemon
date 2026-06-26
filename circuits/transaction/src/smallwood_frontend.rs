@@ -837,9 +837,17 @@ struct SmallwoodWitnessContext {
 pub fn prove_smallwood_candidate(
     witness: &TransactionWitness,
 ) -> Result<TransactionProof, TransactionCircuitError> {
-    prove_smallwood_candidate_with_arithmetization(
+    prove_smallwood_candidate_with_auth(witness, &SmallwoodPrivateAuthWitness::default())
+}
+
+pub fn prove_smallwood_candidate_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_arithmetization_and_auth(
         witness,
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        auth,
     )
 }
 
@@ -847,13 +855,25 @@ pub fn prove_smallwood_candidate_with_arithmetization(
     witness: &TransactionWitness,
     arithmetization: SmallwoodArithmetization,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_arithmetization_and_auth(
+        witness,
+        arithmetization,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
     if tx_proof_backend_for_version(witness.version) != Some(TxProofBackend::SmallwoodCandidate) {
         return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
             "version {:?} is not bound to the smallwood_candidate backend",
             witness.version
         )));
     }
-    let context = build_smallwood_witness_context(witness)?;
+    let context = build_smallwood_witness_context_with_auth(witness, auth)?;
     let profile = smallwood_no_grinding_profile_for_arithmetization(arithmetization);
     match arithmetization {
         SmallwoodArithmetization::Bridge64V1 => {

@@ -11,9 +11,9 @@ use std::io::Cursor;
 use synthetic_crypto::hashes::blake3_384;
 
 use crate::smallwood_frontend::{
-    decode_smallwood_candidate_proof, prove_smallwood_candidate,
+    decode_smallwood_candidate_proof, prove_smallwood_candidate_with_auth,
     smallwood_candidate_verifier_profile_material, verify_smallwood_candidate_proof_bytes,
-    verify_smallwood_candidate_transaction_proof,
+    verify_smallwood_candidate_transaction_proof, SmallwoodPrivateAuthWitness,
 };
 use crate::{
     constants::{
@@ -706,9 +706,28 @@ pub fn prove_with_params(
     _proving_key: &ProvingKey,
     params: TransactionProofParams,
 ) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_with_params_and_smallwood_auth(
+        witness,
+        _proving_key,
+        params,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+pub fn prove_with_params_and_smallwood_auth(
+    witness: &TransactionWitness,
+    _proving_key: &ProvingKey,
+    params: TransactionProofParams,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
     let backend = tx_proof_backend_for_version(witness.version).unwrap_or(DEFAULT_TX_PROOF_BACKEND);
     if matches!(backend, TxProofBackend::SmallwoodCandidate) {
-        return prove_smallwood_candidate(witness);
+        return prove_smallwood_candidate_with_auth(witness, auth);
+    }
+    if *auth != SmallwoodPrivateAuthWitness::default() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "private SmallWood authorization witness supplied for non-SmallWood backend",
+        ));
     }
     witness.validate()?;
 

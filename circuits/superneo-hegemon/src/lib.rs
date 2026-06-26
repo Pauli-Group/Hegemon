@@ -28,6 +28,7 @@ use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE
 use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
     prove_with_params as prove_transaction_with_params,
+    prove_with_params_and_smallwood_auth as prove_transaction_with_params_and_smallwood_auth,
     smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest,
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash_checked,
@@ -36,9 +37,9 @@ use transaction_circuit::proof::{
     verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
-use transaction_circuit::SmallwoodArithmetization;
 use transaction_circuit::TransactionPublicInputsP3;
 use transaction_circuit::TransactionWitness;
+use transaction_circuit::{SmallwoodArithmetization, SmallwoodPrivateAuthWitness};
 
 pub const MAX_RECEIPT_BYTES: usize = 96;
 pub const MAX_TRACE_BITS: usize = 256;
@@ -2905,6 +2906,17 @@ pub fn build_native_tx_leaf_artifact_bytes(
     build_native_tx_leaf_artifact_bytes_with_params(&native_backend_params(), witness)
 }
 
+pub fn build_native_tx_leaf_artifact_bytes_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<BuiltNativeTxLeafArtifact> {
+    build_native_tx_leaf_artifact_bytes_with_params_and_auth(
+        &native_backend_params(),
+        witness,
+        auth,
+    )
+}
+
 pub fn build_native_tx_leaf_artifact_bytes_with_params(
     params: &NativeBackendParams,
     witness: &TransactionWitness,
@@ -2913,6 +2925,21 @@ pub fn build_native_tx_leaf_artifact_bytes_with_params(
         witness,
         transaction_proving_key(),
         TransactionProofParams::release_for_version(witness.version),
+    )
+    .map_err(|err| anyhow::anyhow!("native tx proof generation failed: {err}"))?;
+    build_native_tx_leaf_artifact_from_transaction_proof_with_params(params, &proof)
+}
+
+pub fn build_native_tx_leaf_artifact_bytes_with_params_and_auth(
+    params: &NativeBackendParams,
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<BuiltNativeTxLeafArtifact> {
+    let proof = prove_transaction_with_params_and_smallwood_auth(
+        witness,
+        transaction_proving_key(),
+        TransactionProofParams::release_for_version(witness.version),
+        auth,
     )
     .map_err(|err| anyhow::anyhow!("native tx proof generation failed: {err}"))?;
     build_native_tx_leaf_artifact_from_transaction_proof_with_params(params, &proof)
