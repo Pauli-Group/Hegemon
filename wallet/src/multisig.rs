@@ -12,8 +12,8 @@ use transaction_circuit::{
 use crate::error::WalletError;
 
 pub const MULTISIG_FLOW_VERSION: u8 = 2;
-pub const REAL_APPROVAL_PROOF_HOOK: &str = "hegemon_multisig_approval_step_circuit_v1";
-pub const REAL_FINAL_SPEND_PROOF_HOOK: &str = "hegemon_multisig_final_spend_circuit_v1";
+pub const REAL_APPROVAL_PROOF_HOOK: &str = "hegemon_multisig_approval_step_circuit";
+pub const REAL_FINAL_SPEND_PROOF_HOOK: &str = "hegemon_multisig_final_spend_circuit";
 
 const DOMAIN_POLICY_COMMITMENT: &[u8] = b"hegemon-wallet-smallwood-multisig-policy-commitment-v1";
 const DOMAIN_ACCOUNT_ID: &[u8] = b"hegemon-wallet-smallwood-multisig-account-id-v1";
