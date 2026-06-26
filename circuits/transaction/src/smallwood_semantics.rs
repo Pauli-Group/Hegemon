@@ -44,6 +44,7 @@ const AUTH_NEXT_COUNT_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS + 1;
 const AUTH_POLICY_SIGNER_ROWS: usize = MULTISIG_MAX_SIGNERS * SIGNER_TAG_WORDS;
 const AUTH_MEMBERSHIP_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS;
 const AUTH_POLICY_DISTINCT_INVERSE_ROWS: usize = MULTISIG_PAIR_COUNT;
+const OUTPUT_AUTH_KEY_ROWS: usize = 4;
 const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_INPUT_PRF_ROWS
     + AUTH_INPUT_KEY_ROWS
@@ -75,7 +76,7 @@ const AUTH_POSEIDON_PERMUTATIONS: usize = AUTH_INTENT_PERMUTATIONS
     + AUTH_POLICY_PERMUTATIONS
     + AUTH_ACCUMULATOR_PERMUTATIONS * 2
     + AUTH_VALUE_LOCK_PERMUTATIONS;
-const AUTH_CONSTRAINTS: usize = 365;
+const AUTH_CONSTRAINTS: usize = 374;
 const POSEIDON_PERMUTATION_COUNT: usize = 1
     + MAX_INPUTS * INPUT_PERMUTATIONS
     + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
@@ -114,7 +115,7 @@ impl PackedRowLayout {
             SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => {
                 Self {
                     input_rows: INPUT_ROWS,
-                    output_rows: 2 + HASH_LIMBS,
+                    output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 1 + (HASH_LIMBS * 3),
                     inline_merkle_aggregates: false,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
@@ -126,7 +127,7 @@ impl PackedRowLayout {
             | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
             | SmallwoodArithmetization::DirectPacked32CompactBindingsV1 => Self {
                 input_rows: INPUT_ROWS,
-                output_rows: 2,
+                output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 inline_merkle_aggregates: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
@@ -134,7 +135,7 @@ impl PackedRowLayout {
             },
             SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => Self {
                 input_rows: INPUT_ROWS,
-                output_rows: 2,
+                output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 inline_merkle_aggregates: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
@@ -144,7 +145,7 @@ impl PackedRowLayout {
             | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
                 Self {
                     input_rows: BASE_INPUT_ROWS,
-                    output_rows: 2 + HASH_LIMBS,
+                    output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 0,
                     inline_merkle_aggregates: true,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
@@ -717,6 +718,12 @@ fn row_output_value(statement: &PackedStatement<'_>, output: usize) -> usize {
 #[inline]
 fn row_output_asset(statement: &PackedStatement<'_>, output: usize) -> usize {
     row_output_base(statement, output) + 1
+}
+
+#[inline]
+fn row_output_auth_key(statement: &PackedStatement<'_>, output: usize, limb: usize) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    row_output_base(statement, output) + layout.output_rows - OUTPUT_AUTH_KEY_ROWS + limb
 }
 
 #[inline]
@@ -1446,6 +1453,9 @@ fn compute_constraints(
     let mode_single = rows[row_auth_mode(statement, 0)];
     let mode_approval = rows[row_auth_mode(statement, 1)];
     let mode_final = rows[row_auth_mode(statement, 2)];
+    let input0_flag = public_value(statement, PUB_INPUT_FLAG0);
+    let input1_flag = public_value(statement, PUB_INPUT_FLAG0 + 1);
+    let output0_flag = public_value(statement, PUB_OUTPUT_FLAG0);
     let non_single = mode_approval + mode_final;
     for mode in [mode_single, mode_approval, mode_final] {
         out[c] = felt_bool_v(mode);
@@ -1639,6 +1649,22 @@ fn compute_constraints(
             out[c] = rows[row_auth_input_key(statement, input, limb)] - expected_key;
             c += 1;
         }
+    }
+    out[c] = mode_approval * (input0_flag - Felt::ONE);
+    c += 1;
+    out[c] = mode_approval * (input1_flag - Felt::ONE);
+    c += 1;
+    out[c] = mode_approval * (output0_flag - Felt::ONE);
+    c += 1;
+    out[c] = mode_final * (input0_flag - Felt::ONE);
+    c += 1;
+    out[c] = mode_final * (input1_flag - Felt::ONE);
+    c += 1;
+    for limb in 0..4 {
+        out[c] = mode_approval
+            * (rows[row_output_auth_key(statement, 0, limb)]
+                - rows[row_auth_next_digest(statement, limb)]);
+        c += 1;
     }
 
     for bit in threshold_flags {

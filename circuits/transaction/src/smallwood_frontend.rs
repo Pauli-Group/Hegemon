@@ -98,6 +98,7 @@ const SMALLWOOD_AUTH_POLICY_SIGNER_ROWS: usize =
     SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_SIGNER_TAG_WORDS;
 const SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS;
 const SMALLWOOD_AUTH_POLICY_DISTINCT_INVERSE_ROWS: usize = SMALLWOOD_MULTISIG_PAIR_COUNT;
+const SMALLWOOD_OUTPUT_AUTH_KEY_ROWS: usize = 4;
 const SMALLWOOD_AUTH_ROWS: usize = SMALLWOOD_AUTH_MODE_ROWS
     + SMALLWOOD_AUTH_INPUT_PRF_ROWS
     + SMALLWOOD_AUTH_INPUT_KEY_ROWS
@@ -277,6 +278,16 @@ fn bridge_row_input_right_agg(
     bridge_input_base(layout, input)
         + layout.input_right_offset().expect("merkle rows present")
         + level
+}
+
+#[inline]
+fn bridge_row_output_auth_key(
+    layout: SmallwoodBridgeRowLayout,
+    output: usize,
+    limb: usize,
+) -> usize {
+    bridge_output_base(layout, output) + layout.output_secret_rows - SMALLWOOD_OUTPUT_AUTH_KEY_ROWS
+        + limb
 }
 
 #[inline]
@@ -589,7 +600,7 @@ pub struct SmallwoodCandidateProof {
     #[serde(default = "default_smallwood_candidate_arithmetization")]
     pub arithmetization: SmallwoodArithmetization,
     pub ark_proof: Vec<u8>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub auxiliary_witness_words: Vec<u64>,
 }
 
@@ -711,7 +722,10 @@ impl SmallwoodBridgeRowLayout {
                 SmallwoodMerkleAggregationMode::WitnessRowsV1,
             ) => Self {
                 input_rows: SMALLWOOD_BASE_INPUT_ROWS + (MERKLE_TREE_DEPTH * 3),
-                output_secret_rows: 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES,
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
                 poseidon_layout: shape.poseidon_layout,
@@ -721,7 +735,7 @@ impl SmallwoodBridgeRowLayout {
                 SmallwoodMerkleAggregationMode::WitnessRowsV1,
             ) => Self {
                 input_rows: SMALLWOOD_BASE_INPUT_ROWS + (MERKLE_TREE_DEPTH * 3),
-                output_secret_rows: 1 + 1,
+                output_secret_rows: 1 + 1 + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
                 poseidon_layout: shape.poseidon_layout,
@@ -731,7 +745,10 @@ impl SmallwoodBridgeRowLayout {
                 SmallwoodMerkleAggregationMode::InlinePoseidonV1,
             ) => Self {
                 input_rows: SMALLWOOD_BASE_INPUT_ROWS,
-                output_secret_rows: 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES,
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
                 poseidon_layout: shape.poseidon_layout,
@@ -741,7 +758,10 @@ impl SmallwoodBridgeRowLayout {
                 SmallwoodMerkleAggregationMode::InlinePoseidonV1,
             ) => Self {
                 input_rows: SMALLWOOD_BASE_INPUT_ROWS,
-                output_secret_rows: 1 + 1 + SMALLWOOD_WORDS_PER_48_BYTES,
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
                 merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
                 poseidon_layout: shape.poseidon_layout,
@@ -2583,6 +2603,7 @@ fn build_smallwood_witness_context_with_auth(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
 ) -> Result<SmallwoodWitnessContext, TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
     witness.validate()?;
     validate_native_merkle_membership(witness)?;
     let public_inputs = smallwood_public_inputs_with_auth(witness, auth)?;
@@ -2607,6 +2628,7 @@ fn smallwood_public_inputs_with_auth(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
 ) -> Result<TransactionPublicInputs, TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
     let (inputs, input_flags) = padded_inputs(&witness.inputs);
     let resolved = resolve_smallwood_private_auth(witness, auth, input_flags, [Felt::ZERO; 6])?;
     let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
@@ -2647,10 +2669,36 @@ fn smallwood_public_inputs_with_auth(
     )
 }
 
+fn validate_smallwood_private_auth_shape(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<(), TransactionCircuitError> {
+    match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => Ok(()),
+        SmallwoodPrivateAuthMode::ApprovalStep => {
+            if witness.inputs.len() != MAX_INPUTS || witness.outputs.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "private multisig approval requires current accumulator input, signer input, and next accumulator output",
+                ));
+            }
+            Ok(())
+        }
+        SmallwoodPrivateAuthMode::FinalThresholdSpend => {
+            if witness.inputs.len() != MAX_INPUTS {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "private multisig final spend requires value-lock input and threshold accumulator input",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
 pub fn smallwood_private_auth_intent_digest_bytes(
     witness: &TransactionWitness,
     auth: &SmallwoodPrivateAuthWitness,
 ) -> Result<[u8; 48], TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
     witness.validate()?;
     let public_inputs = smallwood_public_inputs_with_auth(witness, auth)?;
     let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
@@ -3693,6 +3741,28 @@ fn build_packed_bridge_linear_constraints(
         push_poseidon_fresh_frame(&mut constraints, commitment0);
         push_poseidon_continuation(&mut constraints, commitment0, commitment1);
         push_poseidon_continuation(&mut constraints, commitment1, commitment2);
+        let lane1 = permutation_lane(commitment1);
+        let lane2 = permutation_lane(commitment2);
+        for limb in 0..SMALLWOOD_OUTPUT_AUTH_KEY_ROWS {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(commitment2, 0, 2 + limb), lane2, 1),
+                    (
+                        poseidon_row(commitment1, layout.poseidon_last_row(), 2 + limb),
+                        lane1,
+                        neg_one,
+                    ),
+                    (
+                        bridge_row_output_auth_key(layout, output, limb),
+                        lane2,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
         let out_lane = permutation_lane(commitment2);
         for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
             push_bridge_constant(
@@ -4444,6 +4514,7 @@ fn semantic_secret_witness_rows_with_shape_and_auth(
     auth: &SmallwoodPrivateAuthWitness,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    validate_smallwood_private_auth_shape(witness, auth)?;
     let (inputs, input_flags) = padded_inputs(&witness.inputs);
     let (outputs, _output_flags) = padded_outputs(&witness.outputs);
     let public_values: Vec<u64> = public_inputs
@@ -4513,6 +4584,9 @@ fn semantic_secret_witness_rows_with_shape_and_auth(
                     .map(|felt| felt.as_canonical_u64()),
             );
         }
+        let auth_key_words = bytes_to_felts(&output.note.pk_auth);
+        debug_assert_eq!(auth_key_words.len(), SMALLWOOD_OUTPUT_AUTH_KEY_ROWS);
+        values.extend(auth_key_words.iter().map(|felt| felt.as_canonical_u64()));
     }
 
     if matches!(
@@ -4667,6 +4741,7 @@ fn poseidon_subtrace_rows_with_auth(
     Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
     TransactionCircuitError,
 > {
+    validate_smallwood_private_auth_shape(witness, auth)?;
     let (inputs, _input_flags) = padded_inputs(&witness.inputs);
     let (_, input_flags) = padded_inputs(&witness.inputs);
     let (outputs, _output_flags) = padded_outputs(&witness.outputs);
@@ -5855,6 +5930,36 @@ mod tests {
     }
 
     #[test]
+    fn universal_auth_approval_requires_state_shape() {
+        let (mut missing_signer_input, auth) = valid_approval_fixture();
+        missing_signer_input.inputs.truncate(1);
+        let err = match build_smallwood_witness_context_with_auth(&missing_signer_input, &auth) {
+            Ok(_) => panic!("approval without signer input must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("approval requires"));
+
+        let (mut missing_next_output, auth) = valid_approval_fixture();
+        missing_next_output.outputs.clear();
+        let err = match build_smallwood_witness_context_with_auth(&missing_next_output, &auth) {
+            Ok(_) => panic!("approval without next accumulator output must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("approval requires"));
+    }
+
+    #[test]
+    fn universal_auth_approval_rejects_wrong_next_output_auth_key() {
+        let (mut witness, auth) = valid_approval_fixture();
+        witness.outputs[0].note.pk_auth = [19u8; 32];
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(
+            &material,
+            "approval output must use next accumulator auth key",
+        );
+    }
+
+    #[test]
     fn universal_auth_rejects_signer_outside_hidden_policy() {
         let (mut witness, mut auth) = valid_approval_fixture();
         auth.policy_signer_tags = padded_policy(&[
@@ -5902,6 +6007,17 @@ mod tests {
         rebuild_two_input_tree(&mut witness);
         let material = auth_material(&witness, &auth);
         assert_auth_material_rejects(&material, "final value input must use value-lock auth key");
+    }
+
+    #[test]
+    fn universal_auth_final_requires_accumulator_input() {
+        let (mut witness, auth) = final_fixture(2, 2);
+        witness.inputs.truncate(1);
+        let err = match build_smallwood_witness_context_with_auth(&witness, &auth) {
+            Ok(_) => panic!("final spend without accumulator input must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("final spend requires"));
     }
 
     #[test]
@@ -6203,6 +6319,12 @@ mod tests {
         let current_arithmetization =
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
         match fixture {
+            "current_valid" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: vec![1, 2, 3, 4],
+                auxiliary_witness_words: Vec::new(),
+            })
+            .expect("encode current SmallWood wrapper fixture"),
             "current_nonempty" => bincode::serialize(&SmallwoodCandidateProof {
                 arithmetization: current_arithmetization,
                 ark_proof: vec![1, 2, 3, 4],

@@ -13,7 +13,10 @@ use chacha20poly1305::{
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use state_merkle::CommitmentTree;
-use transaction_circuit::{hashing_pq::Commitment, note::NoteData};
+use transaction_circuit::{
+    constants::NATIVE_ASSET_ID, hashing_pq::Commitment, note::NoteData,
+    smallwood_accumulator_auth_key_bytes, smallwood_value_lock_auth_key_bytes,
+};
 use zeroize::Zeroize;
 
 use crate::address::ShieldedAddress;
@@ -24,6 +27,7 @@ use crate::multisig::{
     MultisigAccountPublic, MultisigAccountRecord,
 };
 use crate::notes::MemoPlaintext;
+use crate::tx_builder::PreparedMultisigFinalPlan;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
 const FILE_VERSION: u32 = 9;
@@ -673,6 +677,7 @@ impl WalletStore {
         }
         let opening_commitment = opening.commitment;
         self.with_mut(|state| {
+            validate_imported_local_note_opening(state, &opening)?;
             let commitment_index = usize::try_from(position)
                 .map_err(|_| WalletError::InvalidArgument("commitment position overflow"))?;
             match state.commitments.get(commitment_index) {
@@ -1397,6 +1402,99 @@ fn matching_local_note_opening<'a>(
             && opening.note.note_data.rho == decrypted.note_data.rho
             && opening.note.note_data.r == decrypted.note_data.r
     })
+}
+
+fn validate_imported_local_note_opening(
+    state: &WalletState,
+    opening: &LocalNoteOpeningRecord,
+) -> Result<(), WalletError> {
+    match (&opening.multisig_accumulator, &opening.multisig_value_lock) {
+        (None, None) => Ok(()),
+        (Some(_), Some(_)) => Err(WalletError::InvalidArgument(
+            "local note opening cannot be both multisig accumulator and value lock",
+        )),
+        (Some(meta), None) => {
+            let record = state
+                .multisig_accounts
+                .iter()
+                .find(|record| record.public.account_id == meta.account_id)
+                .ok_or(WalletError::InvalidArgument(
+                    "unknown multisig account for imported accumulator opening",
+                ))?;
+            if meta.policy_root != record.policy_root
+                || meta.threshold != record.threshold
+                || meta.signer_count != record.signer_count
+            {
+                return Err(WalletError::InvalidArgument(
+                    "imported accumulator opening does not match local account",
+                ));
+            }
+            if opening.note.note_data.value != 0
+                || opening.note.note_data.asset_id != NATIVE_ASSET_ID
+            {
+                return Err(WalletError::InvalidArgument(
+                    "imported accumulator opening must be a zero-value native note",
+                ));
+            }
+            let expected =
+                smallwood_accumulator_auth_key_bytes(&meta.to_smallwood()).map_err(|err| {
+                    WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str()))
+                })?;
+            if opening.note.note_data.pk_auth != expected {
+                return Err(WalletError::InvalidArgument(
+                    "imported accumulator opening auth key mismatch",
+                ));
+            }
+            Ok(())
+        }
+        (None, Some(meta)) => {
+            let record = state
+                .multisig_accounts
+                .iter()
+                .find(|record| record.public.account_id == meta.account_id)
+                .ok_or(WalletError::InvalidArgument(
+                    "unknown multisig account for imported value-lock opening",
+                ))?;
+            if meta.policy_root != record.policy_root {
+                return Err(WalletError::InvalidArgument(
+                    "imported value-lock opening does not match local account",
+                ));
+            }
+            if opening.note.note_data.value == 0
+                || opening.note.note_data.asset_id != NATIVE_ASSET_ID
+            {
+                return Err(WalletError::InvalidArgument(
+                    "imported value-lock opening must be a nonzero native note",
+                ));
+            }
+            let expected =
+                smallwood_value_lock_auth_key_bytes(&record.policy_root, &meta.intent_digest)
+                    .map_err(|err| {
+                        WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str()))
+                    })?;
+            if opening.note.note_data.pk_auth != expected {
+                return Err(WalletError::InvalidArgument(
+                    "imported value-lock opening auth key mismatch",
+                ));
+            }
+            if let Some(plan_bytes) = meta.final_plan_bytes.as_ref() {
+                let plan: PreparedMultisigFinalPlan =
+                    serde_json::from_slice(plan_bytes).map_err(|err| {
+                        WalletError::Serialization(format!(
+                            "deserialize imported multisig final plan: {err}"
+                        ))
+                    })?;
+                if plan.value_note_commitment != opening.commitment
+                    || plan.intent_digest != meta.intent_digest
+                {
+                    return Err(WalletError::InvalidArgument(
+                        "imported value-lock final plan does not match opening",
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Write a plaintext or encrypted wallet artifact with private permissions.
@@ -2442,6 +2540,78 @@ mod tests {
             .apply_ciphertext_batch(0, vec![Some(decrypted)])
             .unwrap_err();
         assert!(err.to_string().contains("ciphertext commitment mismatch"));
+        assert!(store.tracked_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn imported_multisig_opening_rejects_unknown_account_before_tracking() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let (_ciphertext, recovered, commitment) =
+            accumulator_ciphertext_fixture(&store, [42u8; 32], 141);
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        let opening = LocalNoteOpeningRecord {
+            commitment,
+            note: recovered,
+            multisig_accumulator: Some(LocalMultisigAccumulatorOpening {
+                account_id: [9u8; 32],
+                policy_root: [8u8; 48],
+                intent_digest: [7u8; 48],
+                threshold: 1,
+                signer_count: 1,
+                approval_count: 0,
+                approved_slots: [0; transaction_circuit::SMALLWOOD_MULTISIG_MAX_SIGNERS],
+            }),
+            multisig_value_lock: None,
+            created_at: 0,
+        };
+
+        let err = store
+            .import_local_note_opening_record(opening, 0, 0)
+            .expect_err("unknown-account multisig opening import must fail");
+        assert!(err.to_string().contains("unknown multisig account"));
+        assert!(store.local_note_openings().unwrap().is_empty());
+        assert!(store.tracked_notes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn imported_multisig_opening_rejects_wrong_auth_key_before_tracking() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let local_signer = store.local_multisig_signer_tag().unwrap();
+        let account = store
+            .create_multisig_account(1, vec![local_signer])
+            .unwrap();
+        let record = store
+            .multisig_account_record(&account.account_id)
+            .unwrap()
+            .unwrap();
+        let (_ciphertext, recovered, commitment) =
+            accumulator_ciphertext_fixture(&store, [42u8; 32], 142);
+        store.append_commitments(&[(0, commitment)]).unwrap();
+        let opening = LocalNoteOpeningRecord {
+            commitment,
+            note: recovered,
+            multisig_accumulator: Some(LocalMultisigAccumulatorOpening {
+                account_id: record.public.account_id,
+                policy_root: record.policy_root,
+                intent_digest: [6u8; 48],
+                threshold: record.threshold,
+                signer_count: record.signer_count,
+                approval_count: 0,
+                approved_slots: [0; transaction_circuit::SMALLWOOD_MULTISIG_MAX_SIGNERS],
+            }),
+            multisig_value_lock: None,
+            created_at: 0,
+        };
+
+        let err = store
+            .import_local_note_opening_record(opening, 0, 0)
+            .expect_err("wrong-auth multisig opening import must fail");
+        assert!(err.to_string().contains("auth key mismatch"));
+        assert!(store.local_note_openings().unwrap().is_empty());
         assert!(store.tracked_notes().unwrap().is_empty());
     }
 
