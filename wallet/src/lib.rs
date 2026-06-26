@@ -6,6 +6,7 @@ pub mod consolidate;
 pub mod disclosure;
 pub mod error;
 pub mod keys;
+pub mod multisig;
 #[cfg(feature = "rpc-client")]
 pub mod node_rpc;
 pub mod notes;
@@ -29,6 +30,13 @@ pub use consolidate::{execute_consolidation, ConsolidationPlan, MAX_INPUTS};
 pub use error::WalletError;
 pub use keys::{
     ml_dsa_account_id_from_seed, AddressKeyMaterial, DerivedKeys, RootSecret, SpendKey, ViewKey,
+};
+pub use multisig::{
+    approval_circuit_hooks_available, create_account_record, create_approval,
+    create_final_spend_package, intent_digest, signer_commitment_from_spend_key,
+    MultisigAccountPublic, MultisigAccountRecord, MultisigApprovalPackage,
+    MultisigFinalSpendPackage, MultisigIntentRecipient, MultisigIntentState, MultisigSpendIntent,
+    MultisigStoredApproval, VerifiedApproval,
 };
 #[cfg(feature = "rpc-client")]
 pub use node_rpc::{BlockingNodeRpcClient, ChainMetadata, NodeRpcClient, NodeRpcConfig};

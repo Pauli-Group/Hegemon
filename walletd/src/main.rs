@@ -31,7 +31,8 @@ use wallet::{
     parse_recipients, precheck_nullifiers,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     submission::{is_ambiguous_submission_error, provisional_pending_tx_id},
-    transfer_recipients_from_specs, ConsolidationPlan, RecipientSpec, WalletError, MAX_INPUTS,
+    transfer_recipients_from_specs, ConsolidationPlan, MultisigIntentRecipient,
+    MultisigSpendIntent, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 2;
@@ -139,6 +140,7 @@ struct WalletCapabilities {
     auto_consolidate: bool,
     notes_summary: bool,
     error_codes: bool,
+    private_multisig: bool,
 }
 
 #[derive(Serialize)]
@@ -300,6 +302,79 @@ struct DisclosureVerifyResponse {
     commitment: String,
     anchor: String,
     chain: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountCreateParams {
+    threshold: u16,
+    signer_commitments: Vec<String>,
+    #[serde(default = "default_true")]
+    include_local_signer: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountResponse {
+    version: u8,
+    account_id: String,
+    policy_commitment: String,
+    initial_accumulator_note: String,
+    approval_proof_hook: String,
+    final_spend_proof_hook: String,
+    circuit_hooks_available: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountListResponse {
+    accounts: Vec<MultisigAccountResponse>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigApprovalCreateParams {
+    account_id: String,
+    intent: MultisigIntentParams,
+    previous_accumulator_note: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigApprovalImportParams {
+    account_id: String,
+    approval_package: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigFinalizeParams {
+    account_id: String,
+    intent: MultisigIntentParams,
+    consumed_accumulator_note: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigIntentParams {
+    recipients: Vec<MultisigIntentRecipientParams>,
+    fee: u64,
+    anchor: String,
+    transaction_binding: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigIntentRecipientParams {
+    address: String,
+    value: u64,
+    asset_id: u64,
+    #[serde(default)]
+    memo: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn main() -> Result<()> {
@@ -524,6 +599,23 @@ fn handle_request(
                 to_json(disclosure_verify(runtime, params)?)
             }
             "disclosure.list" => to_json(disclosure_list(&store)?),
+            "multisig.accountCreate" => {
+                let params: MultisigAccountCreateParams = parse_params(request.params)?;
+                to_json(multisig_account_create(&store, params)?)
+            }
+            "multisig.accountList" => to_json(multisig_account_list(&store)?),
+            "multisig.approvalCreate" => {
+                let params: MultisigApprovalCreateParams = parse_params(request.params)?;
+                to_json(multisig_approval_create(&store, params)?)
+            }
+            "multisig.approvalImport" => {
+                let params: MultisigApprovalImportParams = parse_params(request.params)?;
+                to_json(multisig_approval_import(&store, params)?)
+            }
+            "multisig.finalize" => {
+                let params: MultisigFinalizeParams = parse_params(request.params)?;
+                to_json(multisig_finalize(&store, params)?)
+            }
             _ => Err(WalletdError::new(
                 WalletdErrorCode::UnknownMethod,
                 format!("unknown method {}", request.method),
@@ -657,6 +749,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
             auto_consolidate: true,
             notes_summary: true,
             error_codes: true,
+            private_multisig: true,
         },
         wallet_mode: match mode {
             WalletMode::Full => WalletModeLabel::Full,
@@ -774,6 +867,158 @@ fn disclosure_list(store: &Arc<WalletStore>) -> WalletdResult<Vec<DisclosureReco
         .outgoing_disclosures()
         .map_err(WalletdError::internal)?;
     Ok(records.iter().map(render_disclosure).collect())
+}
+
+fn multisig_account_create(
+    store: &Arc<WalletStore>,
+    params: MultisigAccountCreateParams,
+) -> WalletdResult<MultisigAccountResponse> {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot create multisig accounts",
+        ));
+    }
+    let signer_commitments = params
+        .signer_commitments
+        .iter()
+        .map(|value| parse_param_hex_48(value))
+        .collect::<WalletdResult<Vec<_>>>()?;
+    let public = store
+        .create_multisig_account(
+            params.threshold,
+            signer_commitments,
+            params.include_local_signer,
+        )
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+    Ok(render_multisig_account(&public))
+}
+
+fn multisig_account_list(store: &Arc<WalletStore>) -> WalletdResult<MultisigAccountListResponse> {
+    let accounts = store
+        .multisig_accounts()
+        .map_err(WalletdError::internal)?
+        .iter()
+        .map(render_multisig_account)
+        .collect();
+    Ok(MultisigAccountListResponse { accounts })
+}
+
+fn multisig_approval_create(
+    store: &Arc<WalletStore>,
+    params: MultisigApprovalCreateParams,
+) -> WalletdResult<serde_json::Value> {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot create multisig approval transactions",
+        ));
+    }
+    let account_id = parse_hex_32(&params.account_id)?;
+    let account = store
+        .multisig_account_record(&account_id)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig account id",
+            )
+        })?;
+    let intent = parse_multisig_intent(params.intent)?;
+    let previous_accumulator_note = parse_param_hex_48(&params.previous_accumulator_note)?;
+    let spend_key = store
+        .derived_keys()
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| WalletdError::new(WalletdErrorCode::WatchOnly, "missing spend key"))?
+        .spend
+        .to_bytes();
+    let _ = wallet::create_approval(
+        &spend_key,
+        &account.public,
+        &intent,
+        previous_accumulator_note,
+    )
+    .map_err(|err| WalletdError::new(WalletdErrorCode::ProofInvalid, err.to_string()))?;
+    Err(WalletdError::new(
+        WalletdErrorCode::ProofInvalid,
+        "multisig approval requires the real shielded approval-step circuit transaction hook; walletd refuses to emit local opaque approval packages",
+    ))
+}
+
+fn multisig_approval_import(
+    store: &Arc<WalletStore>,
+    params: MultisigApprovalImportParams,
+) -> WalletdResult<serde_json::Value> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let _ = store
+        .multisig_account_record(&account_id)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig account id",
+            )
+        })?;
+    let _ = params.approval_package;
+    Err(WalletdError::new(
+        WalletdErrorCode::ProofInvalid,
+        "multisig approval import requires a real shielded approval transaction receipt; walletd refuses host-verified opaque approval metadata",
+    ))
+}
+
+fn multisig_finalize(
+    store: &Arc<WalletStore>,
+    params: MultisigFinalizeParams,
+) -> WalletdResult<serde_json::Value> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let account = store
+        .multisig_account_record(&account_id)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig account id",
+            )
+        })?;
+    let intent = parse_multisig_intent(params.intent)?;
+    let consumed_accumulator_note = parse_param_hex_48(&params.consumed_accumulator_note)?;
+    let _ = wallet::create_final_spend_package(&account, &intent, consumed_accumulator_note)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::ProofInvalid, err.to_string()))?;
+    Err(WalletdError::new(
+        WalletdErrorCode::ProofInvalid,
+        "multisig finalization requires the real shielded final-spend circuit transaction hook; walletd refuses local opaque finalization packages",
+    ))
+}
+
+fn render_multisig_account(public: &wallet::MultisigAccountPublic) -> MultisigAccountResponse {
+    MultisigAccountResponse {
+        version: public.version,
+        account_id: format!("0x{}", hex::encode(public.account_id)),
+        policy_commitment: format!("0x{}", hex::encode(public.policy_commitment)),
+        initial_accumulator_note: format!("0x{}", hex::encode(public.initial_accumulator_note)),
+        approval_proof_hook: public.approval_proof_hook.clone(),
+        final_spend_proof_hook: public.final_spend_proof_hook.clone(),
+        circuit_hooks_available: wallet::approval_circuit_hooks_available(),
+    }
+}
+
+fn parse_multisig_intent(params: MultisigIntentParams) -> WalletdResult<MultisigSpendIntent> {
+    let recipients = params
+        .recipients
+        .into_iter()
+        .map(|recipient| MultisigIntentRecipient {
+            address: recipient.address,
+            value: recipient.value,
+            asset_id: recipient.asset_id,
+            memo: recipient.memo,
+        })
+        .collect();
+    Ok(MultisigSpendIntent {
+        recipients,
+        fee: params.fee,
+        anchor: parse_param_hex_48(&params.anchor)?,
+        transaction_binding: parse_param_hex_48(&params.transaction_binding)?,
+    })
 }
 
 fn render_disclosure(record: &OutgoingDisclosureRecord) -> DisclosureRecord {
@@ -1896,6 +2141,28 @@ fn parse_hex_32(input: &str) -> WalletdResult<[u8; 32]> {
     Ok(out)
 }
 
+fn parse_param_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
+    let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    if trimmed.len() != 96 {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "expected 48-byte hex value",
+        ));
+    }
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        WalletdError::new(WalletdErrorCode::InvalidParams, format!("invalid hex: {e}"))
+    })?;
+    if bytes.len() != 48 {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "expected 48-byte hex value",
+        ));
+    }
+    let mut out = [0u8; 48];
+    out.copy_from_slice(&bytes);
+    Ok(out)
+}
+
 fn memo_to_disclosed_string(memo: &Option<MemoPlaintext>) -> Option<String> {
     let memo = memo.as_ref()?;
     if memo.as_bytes().is_empty() {
@@ -1910,6 +2177,9 @@ fn memo_to_disclosed_string(memo: &Option<MemoPlaintext>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn walletd_submission_policy_preserves_pending_for_ambiguous_rpc_failures() {
@@ -1930,5 +2200,108 @@ mod tests {
             walletd_submission_failure_policy(&bad_proof),
             WalletdSubmissionFailurePolicy::UnlockSpentNotes
         );
+    }
+
+    #[test]
+    fn walletd_multisig_account_create_hides_policy_shape() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+        let response = handle_request(
+            &runtime,
+            store,
+            &store_path,
+            RequestEnvelope {
+                id: json!(1),
+                method: "multisig.accountCreate".to_string(),
+                params: json!({
+                    "threshold": 1,
+                    "signerCommitments": [],
+                    "includeLocalSigner": true
+                }),
+            },
+        );
+        assert!(response.ok, "{:?}", response.error);
+        let result = response.result.unwrap();
+        assert_eq!(result["circuitHooksAvailable"], false);
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(!json.contains("threshold"));
+        assert!(!json.contains("signer"));
+        assert!(!json.contains("policyRoot"));
+        assert!(!json.contains("approvalCount"));
+        assert!(!json.contains("approvalNullifier"));
+    }
+
+    #[test]
+    fn walletd_multisig_approval_create_fails_closed_without_circuit_hook() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+        let create = handle_request(
+            &runtime,
+            store.clone(),
+            &store_path,
+            RequestEnvelope {
+                id: json!(1),
+                method: "multisig.accountCreate".to_string(),
+                params: json!({
+                    "threshold": 1,
+                    "signerCommitments": [],
+                    "includeLocalSigner": true
+                }),
+            },
+        );
+        let account_id = create.result.unwrap()["accountId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let response = handle_request(
+            &runtime,
+            store,
+            &store_path,
+            RequestEnvelope {
+                id: json!(2),
+                method: "multisig.approvalCreate".to_string(),
+                params: json!({
+                    "accountId": account_id,
+                    "previousAccumulatorNote": format!("0x{}", hex::encode([7u8; 48])),
+                    "intent": {
+                        "recipients": [{
+                            "address": "shca1recipient",
+                            "value": 42,
+                            "assetId": 0,
+                            "memo": "exact"
+                        }],
+                        "fee": 3,
+                        "anchor": format!("0x{}", hex::encode([8u8; 48])),
+                        "transactionBinding": format!("0x{}", hex::encode([9u8; 48]))
+                    }
+                }),
+            },
+        );
+        assert!(!response.ok);
+        assert!(response
+            .error
+            .unwrap()
+            .contains("multisig approval circuit integration missing"));
+        assert!(matches!(
+            response.error_code,
+            Some(WalletdErrorCode::ProofInvalid)
+        ));
+    }
+
+    fn temp_store() -> (Arc<WalletStore>, String) {
+        let mut path = std::env::temp_dir();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("walletd-multisig-test-{nanos}.dat"));
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        (Arc::new(store), path.to_string_lossy().to_string())
     }
 }

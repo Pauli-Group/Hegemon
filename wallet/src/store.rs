@@ -19,10 +19,15 @@ use zeroize::Zeroize;
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::{DerivedKeys, RootSecret};
+use crate::multisig::{
+    create_account_record, signer_commitment_from_spend_key, MultisigAccountPublic,
+    MultisigAccountRecord,
+};
 use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 6;
+const FILE_VERSION: u32 = 7;
+const LEGACY_FILE_VERSION_V6: u32 = 6;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
@@ -99,6 +104,7 @@ impl WalletStore {
             last_synced_block_hash: None,
             outgoing_disclosures: Vec::new(),
             genesis_hash: None,
+            multisig_accounts: Vec::new(),
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -127,6 +133,7 @@ impl WalletStore {
             last_synced_block_hash: None,
             outgoing_disclosures: Vec::new(),
             genesis_hash: None,
+            multisig_accounts: Vec::new(),
         };
         Self::create_with_state(path, passphrase, state)
     }
@@ -166,6 +173,7 @@ impl WalletStore {
             .map_err(|_| WalletError::DecryptionFailure)?;
         let state: WalletState = match file.version {
             FILE_VERSION => deserialize_wallet_state(&plaintext)?,
+            LEGACY_FILE_VERSION_V6 => deserialize_wallet_state_v6(&plaintext)?,
             other => {
                 return Err(WalletError::Serialization(format!(
                     "unsupported wallet file version {other} (expected {FILE_VERSION})"
@@ -207,6 +215,13 @@ impl WalletStore {
 
     pub fn outgoing_key(&self) -> Result<Option<OutgoingViewingKey>, WalletError> {
         self.with_state(|state| Ok(state.outgoing.clone()))
+    }
+
+    pub fn local_multisig_signer_commitment(&self) -> Result<[u8; 48], WalletError> {
+        self.with_state(|state| {
+            let derived = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
+            Ok(signer_commitment_from_spend_key(&derived.spend.to_bytes()))
+        })
     }
 
     /// Returns the primary shielded address (diversifier index 0).
@@ -710,6 +725,59 @@ impl WalletStore {
         self.with_state(|state| Ok(state.outgoing_disclosures.clone()))
     }
 
+    pub fn create_multisig_account(
+        &self,
+        threshold: u16,
+        mut signer_commitments: Vec<[u8; 48]>,
+        include_local_signer: bool,
+    ) -> Result<MultisigAccountPublic, WalletError> {
+        if self.mode()? == WalletMode::WatchOnly {
+            return Err(WalletError::WatchOnly);
+        }
+        if include_local_signer {
+            signer_commitments.push(self.local_multisig_signer_commitment()?);
+        }
+        let mut rng = OsRng;
+        let record =
+            create_account_record(threshold, signer_commitments, &mut rng, current_timestamp())?;
+        let public = record.public.clone();
+        self.with_mut(|state| {
+            if state
+                .multisig_accounts
+                .iter()
+                .any(|existing| existing.public.account_id == public.account_id)
+            {
+                return Err(WalletError::InvalidState("multisig account id collision"));
+            }
+            state.multisig_accounts.push(record);
+            Ok(())
+        })?;
+        Ok(public)
+    }
+
+    pub fn multisig_accounts(&self) -> Result<Vec<MultisigAccountPublic>, WalletError> {
+        self.with_state(|state| {
+            Ok(state
+                .multisig_accounts
+                .iter()
+                .map(|record| record.public.clone())
+                .collect())
+        })
+    }
+
+    pub fn multisig_account_record(
+        &self,
+        account_id: &[u8; 32],
+    ) -> Result<Option<MultisigAccountRecord>, WalletError> {
+        self.with_state(|state| {
+            Ok(state
+                .multisig_accounts
+                .iter()
+                .find(|record| record.public.account_id == *account_id)
+                .cloned())
+        })
+    }
+
     pub fn find_outgoing_disclosure(
         &self,
         tx_id: &[u8; 32],
@@ -1142,6 +1210,17 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
     })
 }
 
+fn deserialize_wallet_state_v6(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    deserialize_exact::<WalletStateV6>(bytes)
+        .map(WalletState::from)
+        .map_err(|err| match err {
+            WalletError::Serialization(message) => WalletError::Serialization(format!(
+                "failed to deserialize legacy wallet state v6: {message}"
+            )),
+            other => other,
+        })
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WalletMode {
     Full,
@@ -1176,6 +1255,62 @@ struct WalletState {
     /// Used to detect chain resets/mismatches.
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV6 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+}
+
+impl From<WalletStateV6> for WalletState {
+    fn from(value: WalletStateV6) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1570,6 +1705,69 @@ mod tests {
     }
 
     #[test]
+    fn multisig_account_public_projection_hides_policy_shape() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let other_signer = crate::multisig::signer_commitment_from_spend_key(&[9u8; 32]);
+        let public = store
+            .create_multisig_account(2, vec![other_signer], true)
+            .unwrap();
+        assert_eq!(store.multisig_accounts().unwrap(), vec![public.clone()]);
+        let record = store
+            .multisig_account_record(&public.account_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.threshold, 2);
+        assert_eq!(record.signer_commitments.len(), 2);
+        assert_eq!(
+            record.public.approval_proof_hook,
+            crate::multisig::REAL_APPROVAL_PROOF_HOOK
+        );
+
+        let public_json = serde_json::to_string(&public).unwrap();
+        assert!(!public_json.contains("threshold"));
+        assert!(!public_json.contains("signer"));
+        assert!(!public_json.contains("policyRoot"));
+        assert!(!public_json.contains("approvalCount"));
+        assert!(!public_json.contains("approvalNullifier"));
+    }
+
+    #[test]
+    fn wallet_state_v6_migrates_to_empty_multisig_accounts() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let legacy = store
+            .with_state(|state| {
+                Ok(WalletStateV6 {
+                    mode: state.mode,
+                    tree_depth: state.tree_depth,
+                    root_secret: state.root_secret,
+                    derived: state.derived.clone(),
+                    incoming: state.incoming.clone(),
+                    full_viewing_key: state.full_viewing_key.clone(),
+                    outgoing: state.outgoing.clone(),
+                    next_address_index: state.next_address_index,
+                    notes: state.notes.clone(),
+                    pending: state.pending.clone(),
+                    recent: state.recent.clone(),
+                    commitments: state.commitments.clone(),
+                    next_commitment_index: state.next_commitment_index,
+                    next_ciphertext_index: state.next_ciphertext_index,
+                    last_synced_height: state.last_synced_height,
+                    last_synced_block_hash: state.last_synced_block_hash,
+                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    genesis_hash: state.genesis_hash,
+                })
+            })
+            .unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        let migrated = deserialize_wallet_state_v6(&plaintext).unwrap();
+        assert!(migrated.multisig_accounts.is_empty());
+    }
+
+    #[test]
     fn create_and_open_round_trip() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wallet.dat");
@@ -1667,6 +1865,7 @@ mod tests {
             last_synced_block_hash: None,
             outgoing_disclosures: Vec::new(),
             genesis_hash: None,
+            multisig_accounts: Vec::new(),
         };
         let mut bytes = bincode::serialize(&state).unwrap();
         bytes.push(0xff);
