@@ -273,6 +273,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodSpendAuthorization.lean
   lake env lean Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean
+  lake env lean Hegemon/Transaction/PrivateMultisigAccumulator.lean
+  lake env lean Hegemon/Transaction/GeneratePrivateMultisigAccumulatorVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodPublicStatementBinding.lean
   lake env lean Hegemon/Transaction/GenerateSmallWoodPublicStatementBindingVectors.lean
   lake env lean Hegemon/Transaction/SmallWoodVerifierStatementProjection.lean

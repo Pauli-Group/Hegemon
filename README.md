@@ -304,7 +304,7 @@ That keeps the current product narrow: post-quantum shielded money first, progra
 
 ### Candidate approaches
 
-**Option A: Predicate Notes** — Notes carry a spending predicate hash, and the STARK circuit proves predicate satisfaction. A small DSL covers common cases (timelocks, M-of-N multisig, hash preimages). Privacy is preserved because the predicate itself stays off-chain; only `H(predicate)` appears in the note commitment.
+**Option A: Predicate Notes** — Notes carry hidden policy material through the existing private authorization commitment slot, and the STARK circuit proves predicate satisfaction. A small DSL covers common cases (timelocks, M-of-N multisig, hash preimages). For private multisig, approvals advance a shielded accumulator note one exact spend intent at a time; the final spender consumes only the value note plus threshold-satisfied accumulator note and never receives signer long-term secrets. Privacy is preserved because the predicate, signer set, threshold, approval leaves, approval count, policy root, and approval nullifiers stay off-chain.
 
 **Option B: zkVM Execution Traces** — Users deploy WASM or RISC-V programs whose execution traces are proven in a recursive STARK. The chain sees only `code_hash`, nullifiers consumed, and new commitments—never the program logic or inputs. This keeps execution private while staying on transparent proofs and PQ-safe primitives.
 

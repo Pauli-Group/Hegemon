@@ -24,7 +24,7 @@ A **note** is conceptually:
 * `value` - integer (e.g. 64-bit, or 128-bit if you're paranoid)
 * `asset_id` - 64-bit label (u64) in the current circuit, encoded as a single field element inside the STARK. Commitments and nullifiers are serialized as 48-byte outputs with six 64-bit limbs for 384-bit capacity, and application-level types use 48-byte digests end-to-end. `0` = the native coin.
 * `pk_recipient` – an encoding of the recipient’s “note‑receiving” public data (tied to their incoming viewing key)
-* `pk_auth` – a spend-authorization public key derived from the owner’s spend secret
+* `pk_auth` – a spend-authorization public key derived from the owner’s spend secret. For private predicate or private multisig accumulator custody, this hidden note slot can instead commit to policy material such as `(policy_root, threshold, policy_commitment_randomness)`; the spend proof must rederive that policy commitment from private witness data and match the consumed note opening before authorization continues.
 * `rho` – per‑note secret (random)
 * `r` – commitment randomness
 
@@ -37,6 +37,8 @@ cm = Com_note(value, asset_id, pk_recipient, pk_auth, rho, r)
 
 * `Hc` is a commitment‑strength hash (could be domain‑separated Poseidon or Blake3; binding+hiding rely on hash + randomness).
 * `enc(value)` is some fixed‑width encoding for `value`.
+
+Private multisig uses a stateful accumulator authorization layer rather than signatures or MPC. An approval consumes a private accumulator note and a private signer capability note, rejects if the signer's approval nullifier already appears in the accumulator, and produces a new accumulator note for the same exact `(account, policy_root, spend_intent)` with one additional private approval leaf. The final spender receives only the value note plus the accumulator note. The final spend witness contains no signer long-term secret; it accepts only when the private accumulator matches the exact account, policy, and intent and its private approval count reaches the private threshold. The normal public transaction shape stays unchanged: public signer sets, thresholds, approval counts, approval leaves, policy roots, and approval nullifiers are not transaction fields.
 
 On‑chain, the **global state** for the pool is:
 

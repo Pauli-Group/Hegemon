@@ -27,6 +27,7 @@ pub mod hashing;
 pub mod hashing_pq;
 pub mod keys;
 pub mod note;
+pub mod private_multisig_accumulator;
 pub mod proof;
 pub mod public_inputs;
 mod smallwood_engine;

@@ -355,6 +355,9 @@ lean_exe gen_nullifier_input_vectors where
 lean_exe gen_smallwood_spend_authorization_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodSpendAuthorizationVectors
 
+lean_exe gen_private_multisig_accumulator_vectors where
+  root := `Hegemon.Transaction.GeneratePrivateMultisigAccumulatorVectors
+
 lean_exe gen_smallwood_candidate_wrapper_admission_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodCandidateWrapperAdmissionVectors
 

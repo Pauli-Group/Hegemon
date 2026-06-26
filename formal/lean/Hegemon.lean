@@ -168,6 +168,7 @@ import Hegemon.Transaction.ProofStatementBinding
 import Hegemon.Transaction.ProofSystemBoundary
 import Hegemon.Transaction.ProofWrapperAdmission
 import Hegemon.Transaction.ProofWrapperWire
+import Hegemon.Transaction.PrivateMultisigAccumulator
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
 import Hegemon.Transaction.SmallWoodPublicStatementBinding
