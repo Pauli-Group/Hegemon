@@ -44,6 +44,7 @@ structure ApprovalStep where
   intent : SpendIntent
   priorAccumulator : AccumulatorNote
   signerCapability : SignerCapabilityNote
+  spendDerivedSignerTag : Digest
   nextAccumulator : AccumulatorNote
 deriving DecidableEq, Repr
 
@@ -160,6 +161,7 @@ def approvalStepAccepted (step : ApprovalStep) : Bool :=
   approvalStepExactIntentAndOneShot step
     && accumulatorMatchesPolicy step.priorAccumulator step.policy
     && natEq step.signerCapability.policyRoot step.policy.policyRoot
+    && natEq step.signerCapability.signerTag step.spendDerivedSignerTag
     && signerInPolicy step.signerCapability step.policy
 
 def finalSpendAccepted (spend : FinalSpend) : Bool :=
@@ -240,6 +242,7 @@ def validApprovalStep : ApprovalStep :=
     intent := baseIntent,
     priorAccumulator := oneApprovalAccumulator,
     signerCapability := signerCapabilityB,
+    spendDerivedSignerTag := signerCapabilityB.signerTag,
     nextAccumulator := twoApprovalAccumulator }
 
 def duplicateSignerStep : ApprovalStep :=
@@ -257,10 +260,14 @@ def wrongPolicyStep : ApprovalStep :=
 def outsidePolicySignerStep : ApprovalStep :=
   { validApprovalStep with
     signerCapability := signerCapabilityOutsidePolicy,
+    spendDerivedSignerTag := signerCapabilityOutsidePolicy.signerTag,
     nextAccumulator :=
       nextAccumulatorForApproval
         oneApprovalAccumulator
         signerCapabilityOutsidePolicy }
+
+def forgedSignerTagStep : ApprovalStep :=
+  { validApprovalStep with spendDerivedSignerTag := signerCapabilityA.signerTag }
 
 def baseValueNote : ValueNote :=
   { accountDigest := baseIntent.accountDigest,
@@ -320,6 +327,10 @@ theorem wrong_policy_rejected :
 
 theorem outside_policy_signer_rejected :
     approvalStepAccepted outsidePolicySignerStep = false := by
+  decide
+
+theorem forged_signer_tag_rejected :
+    approvalStepAccepted forgedSignerTagStep = false := by
   decide
 
 theorem below_threshold_final_rejected :

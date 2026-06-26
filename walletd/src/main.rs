@@ -317,7 +317,7 @@ struct DisclosureVerifyResponse {
 #[serde(rename_all = "camelCase")]
 struct MultisigAccountCreateParams {
     threshold: u64,
-    policy_signers: [u64; 2],
+    policy_signer_tags: [transaction_circuit::SmallwoodSignerTag; 2],
 }
 
 #[derive(Serialize)]
@@ -363,7 +363,7 @@ struct MultisigNoteListResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MultisigLocalSignerResponse {
-    signer_id: u64,
+    signer_tag: transaction_circuit::SmallwoodSignerTag,
 }
 
 #[derive(Deserialize)]
@@ -701,7 +701,7 @@ fn handle_request(
                 let params: MultisigNoteListParams = parse_params(request.params)?;
                 to_json(multisig_note_list(&store, params)?)
             }
-            "multisig.localSignerId" => to_json(multisig_local_signer_id(&store)?),
+            "multisig.localSignerTag" => to_json(multisig_local_signer_tag(&store)?),
             "multisig.finalPlan" => {
                 let params: MultisigFinalPlanParams = parse_params(request.params)?;
                 to_json(multisig_final_plan(&store, multisig_final_plans, params)?)
@@ -999,7 +999,7 @@ fn multisig_account_create(
         ));
     }
     let public = store
-        .create_multisig_account(params.threshold, params.policy_signers)
+        .create_multisig_account(params.threshold, params.policy_signer_tags)
         .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
     Ok(render_multisig_account(&public))
 }
@@ -1038,19 +1038,19 @@ fn multisig_note_list(
     Ok(MultisigNoteListResponse { notes })
 }
 
-fn multisig_local_signer_id(
+fn multisig_local_signer_tag(
     store: &Arc<WalletStore>,
 ) -> WalletdResult<MultisigLocalSignerResponse> {
     if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
         return Err(WalletdError::new(
             WalletdErrorCode::WatchOnly,
-            "watch-only wallets do not have a local multisig signer id",
+            "watch-only wallets do not have a local multisig signer tag",
         ));
     }
-    let signer_id = store
-        .local_multisig_signer_id()
+    let signer_tag = store
+        .local_multisig_signer_tag()
         .map_err(WalletdError::internal)?;
-    Ok(MultisigLocalSignerResponse { signer_id })
+    Ok(MultisigLocalSignerResponse { signer_tag })
 }
 
 fn multisig_final_plan(
@@ -2671,7 +2671,10 @@ mod tests {
                 method: "multisig.accountCreate".to_string(),
                 params: json!({
                     "threshold": 1,
-                    "policySigners": [11, 17]
+                    "policySignerTags": [
+                        [11, 12, 13, 14, 15],
+                        [17, 18, 19, 20, 21]
+                    ]
                 }),
             },
         );
@@ -2703,7 +2706,10 @@ mod tests {
                 method: "multisig.accountCreate".to_string(),
                 params: json!({
                     "threshold": 1,
-                    "policySigners": [11, 17]
+                    "policySignerTags": [
+                        [11, 12, 13, 14, 15],
+                        [17, 18, 19, 20, 21]
+                    ]
                 }),
             },
         );

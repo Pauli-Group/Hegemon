@@ -52,6 +52,7 @@ pub struct ApprovalStep {
     pub intent: SpendIntent,
     pub prior_accumulator: AccumulatorNote,
     pub signer_capability: SignerCapabilityNote,
+    pub spend_derived_signer_tag: Digest,
     pub next_accumulator: AccumulatorNote,
 }
 
@@ -168,6 +169,7 @@ pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
     approval_step_exact_intent_and_one_shot(step)
         && accumulator_matches_policy(&step.prior_accumulator, &step.policy)
         && step.signer_capability.policy_root == step.policy.policy_root
+        && step.signer_capability.signer_tag == step.spend_derived_signer_tag
         && signer_in_policy(&step.signer_capability, &step.policy)
 }
 
@@ -220,6 +222,8 @@ mod tests {
         prior_accumulator: Option<AccumulatorNote>,
         #[serde(default)]
         signer_capability: Option<SignerCapabilityNote>,
+        #[serde(default)]
+        spend_derived_signer_tag: Option<Digest>,
         #[serde(default)]
         next_accumulator: Option<AccumulatorNote>,
         #[serde(default)]
@@ -281,6 +285,9 @@ mod tests {
                 .signer_capability
                 .clone()
                 .unwrap_or_else(|| panic!("{} missing signer_capability", case.name)),
+            spend_derived_signer_tag: case
+                .spend_derived_signer_tag
+                .unwrap_or_else(|| panic!("{} missing spend_derived_signer_tag", case.name)),
             next_accumulator: case
                 .next_accumulator
                 .clone()
@@ -338,6 +345,7 @@ mod tests {
             "policy_root",
             "approval_nullifiers",
             "signer_tags",
+            "spend_derived_signer_tag",
         ] {
             assert!(
                 vectors.private_fields.iter().any(|actual| actual == field),
@@ -351,6 +359,7 @@ mod tests {
             "wrong-intent-rejected",
             "wrong-policy-rejected",
             "outside-policy-signer-rejected",
+            "forged-signer-tag-rejected",
             "below-threshold-final-rejected",
             "exact-threshold-final-accepted",
             "final-intent-mismatch-rejected",

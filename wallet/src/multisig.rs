@@ -5,7 +5,8 @@ use blake2::{
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
-    constants::FIELD_MODULUS_U64, smallwood_policy_root_bytes, SmallwoodAccumulatorAuthOpening,
+    constants::FIELD_MODULUS_U64, smallwood_policy_root_bytes, smallwood_signer_tag_from_spend_key,
+    SmallwoodAccumulatorAuthOpening, SmallwoodSignerTag,
 };
 
 use crate::error::WalletError;
@@ -14,7 +15,6 @@ pub const MULTISIG_FLOW_VERSION: u8 = 2;
 pub const REAL_APPROVAL_PROOF_HOOK: &str = "hegemon_multisig_approval_step_circuit_v1";
 pub const REAL_FINAL_SPEND_PROOF_HOOK: &str = "hegemon_multisig_final_spend_circuit_v1";
 
-const DOMAIN_SIGNER_ID: &[u8] = b"hegemon-wallet-smallwood-multisig-signer-id-v1";
 const DOMAIN_POLICY_COMMITMENT: &[u8] = b"hegemon-wallet-smallwood-multisig-policy-commitment-v1";
 const DOMAIN_ACCOUNT_ID: &[u8] = b"hegemon-wallet-smallwood-multisig-account-id-v1";
 const DOMAIN_ACCOUNT_SETUP_HINT: &[u8] = b"hegemon-wallet-smallwood-multisig-account-setup-hint-v1";
@@ -60,7 +60,7 @@ pub struct MultisigAccountRecord {
     #[serde(with = "serde_bytes48")]
     pub policy_root: [u8; 48],
     pub threshold: u64,
-    pub policy_signers: [u64; 2],
+    pub policy_signer_tags: [SmallwoodSignerTag; 2],
     #[serde(with = "serde_bytes32")]
     pub policy_commitment_randomness: [u8; 32],
     pub intents: Vec<MultisigIntentState>,
@@ -74,13 +74,13 @@ pub struct MultisigIntentState {
     #[serde(with = "serde_bytes48")]
     pub current_accumulator_note: [u8; 48],
     pub approval_count: u64,
-    pub signer_slots: [u64; 2],
+    pub approved_slots: [u64; 2],
     pub approvals: Vec<MultisigStoredApproval>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultisigStoredApproval {
-    pub signer_id: u64,
+    pub signer_tag: SmallwoodSignerTag,
     #[serde(with = "serde_bytes48")]
     pub duplicate_tag: [u8; 48],
     pub imported_at: u64,
@@ -123,35 +123,31 @@ pub struct MultisigFinalSpendPackage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerifiedApproval {
     pub signer_slot: u16,
-    pub signer_id: u64,
+    pub signer_tag: SmallwoodSignerTag,
     pub duplicate_tag: [u8; 48],
 }
 
-pub fn signer_id_from_spend_key(spend_key: &[u8; 32]) -> u64 {
-    let digest = hash48(DOMAIN_SIGNER_ID, &[spend_key]);
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&digest[..16]);
-    let modulus = u128::from(FIELD_MODULUS_U64);
-    (u128::from_le_bytes(bytes) % (modulus - 1) + 1) as u64
+pub fn signer_tag_from_spend_key(spend_key: &[u8; 32]) -> SmallwoodSignerTag {
+    smallwood_signer_tag_from_spend_key(spend_key)
 }
 
 pub fn create_account_record<R: RngCore + ?Sized>(
     threshold: u64,
-    policy_signers: [u64; 2],
+    policy_signer_tags: [SmallwoodSignerTag; 2],
     rng: &mut R,
     created_at: u64,
 ) -> Result<MultisigAccountRecord, WalletError> {
-    let policy_signers = normalize_policy(threshold, policy_signers)?;
+    let policy_signer_tags = normalize_policy(threshold, policy_signer_tags)?;
 
     let mut policy_commitment_randomness = [0u8; 32];
     rng.fill_bytes(&mut policy_commitment_randomness);
     let mut account_nonce = [0u8; 32];
     rng.fill_bytes(&mut account_nonce);
 
-    let policy_root = smallwood_policy_root_bytes(threshold, policy_signers);
+    let policy_root = smallwood_policy_root_bytes(threshold, policy_signer_tags);
     let threshold_bytes = threshold.to_le_bytes();
-    let signer0 = policy_signers[0].to_le_bytes();
-    let signer1 = policy_signers[1].to_le_bytes();
+    let signer0 = signer_tag_bytes(policy_signer_tags[0]);
+    let signer1 = signer_tag_bytes(policy_signer_tags[1]);
     let policy_commitment = hash48(
         DOMAIN_POLICY_COMMITMENT,
         &[
@@ -186,7 +182,7 @@ pub fn create_account_record<R: RngCore + ?Sized>(
         },
         policy_root,
         threshold,
-        policy_signers,
+        policy_signer_tags,
         policy_commitment_randomness,
         intents: Vec::new(),
         created_at,
@@ -258,15 +254,15 @@ pub fn accumulator_opening(
     record: &MultisigAccountRecord,
     intent_digest: [u8; 48],
     approval_count: u64,
-    signer_slots: [u64; 2],
+    approved_slots: [u64; 2],
 ) -> Result<SmallwoodAccumulatorAuthOpening, WalletError> {
-    validate_accumulator_state(record.threshold, signer_slots, approval_count)?;
+    validate_accumulator_state(record.threshold, approved_slots, approval_count)?;
     Ok(SmallwoodAccumulatorAuthOpening {
         policy_root: record.policy_root,
         intent_digest,
         threshold: record.threshold,
         approval_count,
-        signer_slots,
+        approved_slots,
     })
 }
 
@@ -279,80 +275,79 @@ pub fn initial_accumulator_opening(
         intent_digest,
         threshold: record.threshold,
         approval_count: 0,
-        signer_slots: [0, 0],
+        approved_slots: [0, 0],
     }
 }
 
 pub fn next_accumulator_after_approval(
     current: &SmallwoodAccumulatorAuthOpening,
-    signer_id: u64,
-) -> Result<(SmallwoodAccumulatorAuthOpening, u64), WalletError> {
-    validate_signer_id(signer_id)?;
+    policy_signer_tags: [SmallwoodSignerTag; 2],
+    signer_tag: SmallwoodSignerTag,
+) -> Result<SmallwoodAccumulatorAuthOpening, WalletError> {
+    let slot = policy_signer_tags
+        .iter()
+        .position(|tag| *tag == signer_tag)
+        .ok_or(WalletError::InvalidArgument(
+            "local signer is not in hidden multisig policy",
+        ))?;
+    validate_accumulator_state(
+        current.threshold,
+        current.approved_slots,
+        current.approval_count,
+    )?;
+    if current.approved_slots[slot] != 0 {
+        return Err(WalletError::InvalidArgument(
+            "multisig duplicate signer approval",
+        ));
+    }
     let mut next = current.clone();
-    let duplicate_inverse = match current.approval_count {
-        0 => {
-            if current.signer_slots != [0, 0] {
-                return Err(WalletError::InvalidArgument(
-                    "empty multisig accumulator has nonempty signer slots",
-                ));
-            }
-            next.approval_count = 1;
-            next.signer_slots = [signer_id, 0];
-            0
-        }
-        1 => {
-            let existing = current.signer_slots[0];
-            validate_signer_id(existing)?;
-            if current.signer_slots[1] != 0 {
-                return Err(WalletError::InvalidArgument(
-                    "single-approval accumulator has a second signer slot",
-                ));
-            }
-            let duplicate_inverse = signer_difference_inverse(signer_id, existing)?;
-            next.approval_count = 2;
-            next.signer_slots = [existing, signer_id];
-            duplicate_inverse
-        }
-        _ => {
-            return Err(WalletError::InvalidArgument(
-                "multisig accumulator already reached the proven approval limit",
-            ));
-        }
-    };
-    Ok((next, duplicate_inverse))
+    next.approval_count =
+        current
+            .approval_count
+            .checked_add(1)
+            .ok_or(WalletError::InvalidArgument(
+                "multisig approval count overflow",
+            ))?;
+    next.approved_slots[slot] = 1;
+    validate_accumulator_state(next.threshold, next.approved_slots, next.approval_count)?;
+    Ok(next)
 }
 
 pub fn approval_duplicate_tag(
     account_id: &[u8; 32],
     intent_digest: &[u8; 48],
-    signer_id: u64,
+    signer_tag: SmallwoodSignerTag,
 ) -> [u8; 48] {
+    let signer_tag = signer_tag_bytes(signer_tag);
     hash48(
         DOMAIN_APPROVAL_DUPLICATE_TAG,
-        &[account_id, intent_digest, &signer_id.to_le_bytes()],
+        &[account_id, intent_digest, &signer_tag],
     )
 }
 
-fn normalize_policy(threshold: u64, mut policy_signers: [u64; 2]) -> Result<[u64; 2], WalletError> {
+fn normalize_policy(
+    threshold: u64,
+    mut policy_signer_tags: [SmallwoodSignerTag; 2],
+) -> Result<[SmallwoodSignerTag; 2], WalletError> {
     if !(1..=2).contains(&threshold) {
         return Err(WalletError::InvalidArgument(
             "multisig threshold outside proven SmallWood scope",
         ));
     }
-    validate_signer_id(policy_signers[0])?;
-    validate_signer_id(policy_signers[1])?;
-    policy_signers.sort_unstable();
-    if policy_signers[0] == policy_signers[1] {
+    validate_signer_tag(policy_signer_tags[0])?;
+    validate_signer_tag(policy_signer_tags[1])?;
+    policy_signer_tags.sort_unstable();
+    if policy_signer_tags[0] == policy_signer_tags[1] {
         return Err(WalletError::InvalidArgument(
             "multisig policy signers must be distinct",
         ));
     }
-    Ok(policy_signers)
+    Ok(policy_signer_tags)
 }
 
 fn validate_accumulator_state(
     threshold: u64,
-    signer_slots: [u64; 2],
+    approved_slots: [u64; 2],
     approval_count: u64,
 ) -> Result<(), WalletError> {
     if !(1..=2).contains(&threshold) {
@@ -360,70 +355,39 @@ fn validate_accumulator_state(
             "multisig threshold outside proven SmallWood scope",
         ));
     }
-    match approval_count {
-        0 => {
-            if signer_slots != [0, 0] {
-                return Err(WalletError::InvalidArgument(
-                    "empty multisig accumulator has nonempty signer slots",
-                ));
-            }
-        }
-        1 => {
-            validate_signer_id(signer_slots[0])?;
-            if signer_slots[1] != 0 {
-                return Err(WalletError::InvalidArgument(
-                    "single-approval accumulator has a second signer slot",
-                ));
-            }
-        }
-        2 => {
-            validate_signer_id(signer_slots[0])?;
-            validate_signer_id(signer_slots[1])?;
-            let _ = signer_difference_inverse(signer_slots[1], signer_slots[0])?;
-        }
-        _ => {
-            return Err(WalletError::InvalidArgument(
-                "multisig accumulator outside proven approval-count scope",
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn validate_signer_id(signer_id: u64) -> Result<(), WalletError> {
-    if signer_id == 0 || signer_id >= FIELD_MODULUS_U64 {
+    if approved_slots.iter().any(|slot| !matches!(slot, 0 | 1)) {
         return Err(WalletError::InvalidArgument(
-            "multisig signer id must be a nonzero canonical field element",
+            "multisig approved slots must be boolean",
+        ));
+    }
+    let actual_count = approved_slots[0] + approved_slots[1];
+    if approval_count > 2 || approval_count != actual_count {
+        return Err(WalletError::InvalidArgument(
+            "multisig accumulator outside proven approval-count scope",
         ));
     }
     Ok(())
 }
 
-fn signer_difference_inverse(signer_id: u64, existing: u64) -> Result<u64, WalletError> {
-    validate_signer_id(signer_id)?;
-    validate_signer_id(existing)?;
-    let modulus = i128::from(FIELD_MODULUS_U64);
-    let diff = (i128::from(signer_id) - i128::from(existing)).rem_euclid(modulus);
-    if diff == 0 {
+fn validate_signer_tag(signer_tag: SmallwoodSignerTag) -> Result<(), WalletError> {
+    if signer_tag.iter().all(|limb| *limb == 0)
+        || signer_tag.iter().any(|limb| *limb >= FIELD_MODULUS_U64)
+    {
         return Err(WalletError::InvalidArgument(
-            "multisig duplicate signer approval",
+            "multisig signer tag must be a nonzero canonical field tag",
         ));
     }
-    Ok(mod_inverse(diff as u64, FIELD_MODULUS_U64))
+    Ok(())
 }
 
-fn mod_inverse(value: u64, modulus: u64) -> u64 {
-    let (mut t, mut next_t) = (0i128, 1i128);
-    let (mut r, mut next_r) = (i128::from(modulus), i128::from(value));
-    while next_r != 0 {
-        let quotient = r / next_r;
-        (t, next_t) = (next_t, t - quotient * next_t);
-        (r, next_r) = (next_r, r - quotient * next_r);
+fn signer_tag_bytes(
+    signer_tag: SmallwoodSignerTag,
+) -> [u8; transaction_circuit::SMALLWOOD_SIGNER_TAG_WORDS * 8] {
+    let mut out = [0u8; transaction_circuit::SMALLWOOD_SIGNER_TAG_WORDS * 8];
+    for (idx, limb) in signer_tag.iter().enumerate() {
+        out[idx * 8..idx * 8 + 8].copy_from_slice(&limb.to_le_bytes());
     }
-    if t < 0 {
-        t += i128::from(modulus);
-    }
-    t as u64
+    out
 }
 
 fn hash32(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
@@ -525,6 +489,10 @@ mod tests {
     use super::*;
     use rand::{rngs::StdRng, SeedableRng};
 
+    fn tag(seed: u64) -> SmallwoodSignerTag {
+        [seed, seed + 1, seed + 2, seed + 3, seed + 4]
+    }
+
     fn intent() -> MultisigSpendIntent {
         MultisigSpendIntent {
             recipients: vec![MultisigIntentRecipient {
@@ -566,15 +534,20 @@ mod tests {
     #[test]
     fn account_record_uses_smallwood_two_signer_policy_root() {
         let mut rng = StdRng::seed_from_u64(7);
-        let record = create_account_record(2, [17, 11], &mut rng, 10).unwrap();
+        let tags = [tag(17), tag(11)];
+        let expected_tags = [tag(11), tag(17)];
+        let record = create_account_record(2, tags, &mut rng, 10).unwrap();
         assert_eq!(record.threshold, 2);
-        assert_eq!(record.policy_signers, [11, 17]);
-        assert_eq!(record.policy_root, smallwood_policy_root_bytes(2, [11, 17]));
+        assert_eq!(record.policy_signer_tags, expected_tags);
+        assert_eq!(
+            record.policy_root,
+            smallwood_policy_root_bytes(2, expected_tags)
+        );
         assert_eq!(record.public.approval_proof_hook, REAL_APPROVAL_PROOF_HOOK);
 
         let public_json = serde_json::to_string(&record.public).unwrap();
         assert!(!public_json.contains("threshold"));
-        assert!(!public_json.contains("policy_signers"));
+        assert!(!public_json.contains("policy_signer_tags"));
         assert!(!public_json.contains("policyRoot"));
         assert!(!public_json.contains("approvalCount"));
     }
@@ -582,15 +555,15 @@ mod tests {
     #[test]
     fn unsupported_policy_shapes_fail_closed() {
         let mut rng = StdRng::seed_from_u64(8);
-        assert!(create_account_record(0, [11, 17], &mut rng, 10)
+        assert!(create_account_record(0, [tag(11), tag(17)], &mut rng, 10)
             .unwrap_err()
             .to_string()
             .contains("outside proven"));
-        assert!(create_account_record(3, [11, 17], &mut rng, 10)
+        assert!(create_account_record(3, [tag(11), tag(17)], &mut rng, 10)
             .unwrap_err()
             .to_string()
             .contains("outside proven"));
-        assert!(create_account_record(2, [11, 11], &mut rng, 10)
+        assert!(create_account_record(2, [tag(11), tag(11)], &mut rng, 10)
             .unwrap_err()
             .to_string()
             .contains("distinct"));
@@ -599,24 +572,27 @@ mod tests {
     #[test]
     fn approval_accumulator_transition_matches_smallwood_scope() {
         let mut rng = StdRng::seed_from_u64(9);
-        let record = create_account_record(2, [11, 17], &mut rng, 10).unwrap();
+        let tags = [tag(11), tag(17)];
+        let record = create_account_record(2, tags, &mut rng, 10).unwrap();
         let current = initial_accumulator_opening(&record, [3u8; 48]);
-        let (next, inverse) = next_accumulator_after_approval(&current, 11).unwrap();
-        assert_eq!(inverse, 0);
+        let next =
+            next_accumulator_after_approval(&current, record.policy_signer_tags, tag(11)).unwrap();
         assert_eq!(next.approval_count, 1);
-        assert_eq!(next.signer_slots, [11, 0]);
+        assert_eq!(next.approved_slots, [1, 0]);
 
-        let (next, inverse) = next_accumulator_after_approval(&next, 17).unwrap();
-        assert_ne!(inverse, 0);
+        let next =
+            next_accumulator_after_approval(&next, record.policy_signer_tags, tag(17)).unwrap();
         assert_eq!(next.approval_count, 2);
-        assert_eq!(next.signer_slots, [11, 17]);
-        assert!(next_accumulator_after_approval(&next, 17).is_err());
+        assert_eq!(next.approved_slots, [1, 1]);
+        assert!(
+            next_accumulator_after_approval(&next, record.policy_signer_tags, tag(17)).is_err()
+        );
     }
 
     #[test]
     fn opaque_packages_fail_closed() {
         let mut rng = StdRng::seed_from_u64(10);
-        let record = create_account_record(2, [11, 17], &mut rng, 10).unwrap();
+        let record = create_account_record(2, [tag(11), tag(17)], &mut rng, 10).unwrap();
         assert!(approval_circuit_hooks_available());
         let err = create_approval(
             &[1u8; 32],

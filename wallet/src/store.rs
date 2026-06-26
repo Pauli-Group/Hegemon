@@ -20,7 +20,7 @@ use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::{DerivedKeys, RootSecret};
 use crate::multisig::{
-    create_account_record, signer_id_from_spend_key, MultisigAccountPublic, MultisigAccountRecord,
+    create_account_record, signer_tag_from_spend_key, MultisigAccountPublic, MultisigAccountRecord,
 };
 use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
@@ -220,10 +220,12 @@ impl WalletStore {
         self.with_state(|state| Ok(state.outgoing.clone()))
     }
 
-    pub fn local_multisig_signer_id(&self) -> Result<u64, WalletError> {
+    pub fn local_multisig_signer_tag(
+        &self,
+    ) -> Result<transaction_circuit::SmallwoodSignerTag, WalletError> {
         self.with_state(|state| {
             let derived = state.derived.as_ref().ok_or(WalletError::WatchOnly)?;
-            Ok(signer_id_from_spend_key(&derived.spend.to_bytes()))
+            Ok(signer_tag_from_spend_key(&derived.spend.to_bytes()))
         })
     }
 
@@ -823,14 +825,14 @@ impl WalletStore {
     pub fn create_multisig_account(
         &self,
         threshold: u64,
-        policy_signers: [u64; 2],
+        policy_signer_tags: [transaction_circuit::SmallwoodSignerTag; 2],
     ) -> Result<MultisigAccountPublic, WalletError> {
         if self.mode()? == WalletMode::WatchOnly {
             return Err(WalletError::WatchOnly);
         }
         let mut rng = OsRng;
         let record =
-            create_account_record(threshold, policy_signers, &mut rng, current_timestamp())?;
+            create_account_record(threshold, policy_signer_tags, &mut rng, current_timestamp())?;
         let public = record.public.clone();
         self.with_mut(|state| {
             if state
@@ -1609,7 +1611,7 @@ pub struct LocalMultisigAccumulatorOpening {
     pub intent_digest: [u8; 48],
     pub threshold: u64,
     pub approval_count: u64,
-    pub signer_slots: [u64; 2],
+    pub approved_slots: [u64; 2],
 }
 
 impl LocalMultisigAccumulatorOpening {
@@ -1619,7 +1621,7 @@ impl LocalMultisigAccumulatorOpening {
             intent_digest: self.intent_digest,
             threshold: self.threshold,
             approval_count: self.approval_count,
-            signer_slots: self.signer_slots,
+            approved_slots: self.approved_slots,
         }
     }
 }
@@ -1926,8 +1928,8 @@ mod tests {
         let temp = tempdir().unwrap();
         let path = temp.path().join("wallet.dat");
         let store = WalletStore::create_full(&path, "passphrase").unwrap();
-        let local_signer = store.local_multisig_signer_id().unwrap();
-        let other_signer = crate::multisig::signer_id_from_spend_key(&[9u8; 32]);
+        let local_signer = store.local_multisig_signer_tag().unwrap();
+        let other_signer = crate::multisig::signer_tag_from_spend_key(&[9u8; 32]);
         let public = store
             .create_multisig_account(2, [local_signer, other_signer])
             .unwrap();
@@ -1937,7 +1939,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(record.threshold, 2);
-        assert_eq!(record.policy_signers.len(), 2);
+        assert_eq!(record.policy_signer_tags.len(), 2);
         assert_eq!(
             record.public.approval_proof_hook,
             crate::multisig::REAL_APPROVAL_PROOF_HOOK

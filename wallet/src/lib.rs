@@ -33,7 +33,7 @@ pub use keys::{
 };
 pub use multisig::{
     approval_circuit_hooks_available, create_account_record, create_approval,
-    create_final_spend_package, intent_digest, signer_id_from_spend_key, MultisigAccountPublic,
+    create_final_spend_package, intent_digest, signer_tag_from_spend_key, MultisigAccountPublic,
     MultisigAccountRecord, MultisigApprovalPackage, MultisigFinalSpendPackage,
     MultisigIntentRecipient, MultisigIntentState, MultisigSpendIntent, MultisigStoredApproval,
     VerifiedApproval,

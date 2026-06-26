@@ -74,6 +74,7 @@ const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
 const SMALLWOOD_PUBLIC_ROWS: usize = 0;
 const SMALLWOOD_BASE_INPUT_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
 const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
+pub const SMALLWOOD_SIGNER_TAG_WORDS: usize = 5;
 const SMALLWOOD_AUTH_MODE_ROWS: usize = 3;
 const SMALLWOOD_AUTH_INPUT_PRF_ROWS: usize = MAX_INPUTS;
 const SMALLWOOD_AUTH_INPUT_KEY_ROWS: usize = MAX_INPUTS * 4;
@@ -87,7 +88,7 @@ const SMALLWOOD_AUTH_SCALAR_ROWS: usize = 9;
 const SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS: usize = 2;
 const SMALLWOOD_AUTH_COUNT_FLAG_ROWS: usize = 3;
 const SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS: usize = 3;
-const SMALLWOOD_AUTH_POLICY_SIGNER_ROWS: usize = 2;
+const SMALLWOOD_AUTH_POLICY_SIGNER_ROWS: usize = 2 * SMALLWOOD_SIGNER_TAG_WORDS;
 const SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS: usize = 2;
 const SMALLWOOD_AUTH_ROWS: usize = SMALLWOOD_AUTH_MODE_ROWS
     + SMALLWOOD_AUTH_INPUT_PRF_ROWS
@@ -109,12 +110,14 @@ const SMALLWOOD_AUTH_INTENT_PERMUTATIONS: usize =
 const SMALLWOOD_AUTH_ACCUMULATOR_INPUTS: usize = (SMALLWOOD_WORDS_PER_48_BYTES * 2) + 4;
 const SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS: usize =
     SMALLWOOD_AUTH_ACCUMULATOR_INPUTS.div_ceil(POSEIDON2_RATE);
-const SMALLWOOD_AUTH_POLICY_INPUTS: usize = 3;
+const SMALLWOOD_AUTH_POLICY_INPUTS: usize = 1 + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS;
 const SMALLWOOD_AUTH_POLICY_PERMUTATIONS: usize =
     SMALLWOOD_AUTH_POLICY_INPUTS.div_ceil(POSEIDON2_RATE);
 const SMALLWOOD_AUTH_POSEIDON_PERMUTATIONS: usize = SMALLWOOD_AUTH_INTENT_PERMUTATIONS
     + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
     + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2);
+
+pub type SmallwoodSignerTag = [u64; SMALLWOOD_SIGNER_TAG_WORDS];
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_NULLIFIERS: usize = 4;
@@ -155,7 +158,7 @@ pub struct SmallwoodAccumulatorAuthOpening {
     pub intent_digest: [u8; 48],
     pub threshold: u64,
     pub approval_count: u64,
-    pub signer_slots: [u64; 2],
+    pub approved_slots: [u64; 2],
 }
 
 impl Default for SmallwoodAccumulatorAuthOpening {
@@ -165,7 +168,7 @@ impl Default for SmallwoodAccumulatorAuthOpening {
             intent_digest: [0u8; 48],
             threshold: 0,
             approval_count: 0,
-            signer_slots: [0, 0],
+            approved_slots: [0, 0],
         }
     }
 }
@@ -175,9 +178,7 @@ pub struct SmallwoodPrivateAuthWitness {
     pub mode: SmallwoodPrivateAuthMode,
     pub accumulator: SmallwoodAccumulatorAuthOpening,
     pub next_accumulator: SmallwoodAccumulatorAuthOpening,
-    pub policy_signers: [u64; 2],
-    pub signer_id: u64,
-    pub duplicate_inverse: u64,
+    pub policy_signer_tags: [SmallwoodSignerTag; 2],
 }
 
 impl Default for SmallwoodPrivateAuthWitness {
@@ -186,9 +187,7 @@ impl Default for SmallwoodPrivateAuthWitness {
             mode: SmallwoodPrivateAuthMode::SingleKey,
             accumulator: SmallwoodAccumulatorAuthOpening::default(),
             next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
-            policy_signers: [0, 0],
-            signer_id: 0,
-            duplicate_inverse: 0,
+            policy_signer_tags: [[0; SMALLWOOD_SIGNER_TAG_WORDS]; 2],
         }
     }
 }
@@ -427,6 +426,7 @@ fn bridge_auth_policy_signer_row(layout: SmallwoodBridgeRowLayout, signer: usize
 }
 
 #[inline]
+#[cfg(test)]
 fn bridge_auth_membership_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
     bridge_auth_threshold_row(layout)
         + SMALLWOOD_AUTH_SCALAR_ROWS
@@ -2964,50 +2964,122 @@ fn build_packed_bridge_linear_constraints(
             }
         }
     }
-    let policy_permutation = bridge_auth_policy_permutation(0);
-    let policy_lane = permutation_lane(policy_permutation);
-    push_bridge_constraint(
-        &mut constraints,
-        packing_factor,
-        &[
-            (poseidon_row(policy_permutation, 0, 0), policy_lane, 1),
-            (bridge_auth_threshold_row(layout), policy_lane, neg_one),
-        ],
-        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG,
-    );
-    for signer in 0..SMALLWOOD_AUTH_POLICY_SIGNER_ROWS {
-        push_bridge_constraint(
-            &mut constraints,
-            packing_factor,
-            &[
-                (
-                    poseidon_row(policy_permutation, 0, 1 + signer),
-                    policy_lane,
-                    1,
-                ),
-                (
-                    bridge_auth_policy_signer_row(layout, signer),
-                    policy_lane,
-                    neg_one,
-                ),
-            ],
-            0,
-        );
+    let policy_input_row = |input_idx: usize| -> Option<usize> {
+        if input_idx == 0 {
+            Some(bridge_auth_threshold_row(layout))
+        } else if input_idx < SMALLWOOD_AUTH_POLICY_INPUTS {
+            Some(bridge_auth_policy_signer_row(layout, input_idx - 1))
+        } else {
+            None
+        }
+    };
+    for chunk in 0..SMALLWOOD_AUTH_POLICY_PERMUTATIONS {
+        let permutation = bridge_auth_policy_permutation(chunk);
+        let lane = permutation_lane(permutation);
+        for limb in 0..POSEIDON2_RATE {
+            let input_idx = chunk * POSEIDON2_RATE + limb;
+            match (chunk, policy_input_row(input_idx)) {
+                (0, Some(row)) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (row, lane, neg_one),
+                        ],
+                        target,
+                    );
+                }
+                (0, None) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constant(
+                        &mut constraints,
+                        poseidon_row(permutation, 0, limb),
+                        lane,
+                        target,
+                    );
+                }
+                (_, Some(row)) => {
+                    let prev = bridge_auth_policy_permutation(chunk - 1);
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                            (row, lane, neg_one),
+                        ],
+                        0,
+                    );
+                }
+                (_, None) => {
+                    let prev = bridge_auth_policy_permutation(chunk - 1);
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                        ],
+                        0,
+                    );
+                }
+            }
+        }
+        if chunk == 0 {
+            for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                lane,
+                1,
+            );
+        } else {
+            let prev = bridge_auth_policy_permutation(chunk - 1);
+            let prev_lane = permutation_lane(prev);
+            for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    0,
+                );
+            }
+        }
     }
-    for limb in (1 + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS)..(POSEIDON2_WIDTH - 1) {
-        push_bridge_constant(
-            &mut constraints,
-            poseidon_row(policy_permutation, 0, limb),
-            policy_lane,
-            0,
-        );
-    }
-    push_bridge_constant(
-        &mut constraints,
-        poseidon_row(policy_permutation, 0, POSEIDON2_WIDTH - 1),
-        policy_lane,
-        1,
-    );
     bind_digest_output(
         &mut constraints,
         bridge_auth_current_digest_row,
@@ -3607,15 +3679,13 @@ struct SmallwoodResolvedAuth {
     intent_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
     threshold: u64,
     approval_count: u64,
-    signer_slots: [u64; 2],
+    approved_slots: [u64; 2],
     next_approval_count: u64,
-    next_signer_slots: [u64; 2],
-    signer_id: u64,
-    duplicate_inverse: u64,
+    next_approved_slots: [u64; 2],
     threshold_flags: [u64; 2],
     count_flags: [u64; 3],
     next_count_flags: [u64; 3],
-    policy_signers: [u64; 2],
+    policy_signer_tags: [SmallwoodSignerTag; 2],
     membership_flags: [u64; 2],
 }
 
@@ -3669,8 +3739,8 @@ fn smallwood_accumulator_inputs(
     )?);
     inputs.push(Felt::from_u64(opening.threshold));
     inputs.push(Felt::from_u64(opening.approval_count));
-    inputs.push(Felt::from_u64(opening.signer_slots[0]));
-    inputs.push(Felt::from_u64(opening.signer_slots[1]));
+    inputs.push(Felt::from_u64(opening.approved_slots[0]));
+    inputs.push(Felt::from_u64(opening.approved_slots[1]));
     Ok(inputs)
 }
 
@@ -3684,24 +3754,42 @@ fn smallwood_accumulator_hash(
     .0)
 }
 
-fn smallwood_policy_inputs(threshold: u64, policy_signers: [u64; 2]) -> [Felt; 3] {
+pub fn smallwood_signer_tag_from_spend_key(spend_key: &[u8; 32]) -> SmallwoodSignerTag {
+    let auth = hash4_to_words(&spend_auth_key(spend_key));
     [
-        Felt::from_u64(threshold),
-        Felt::from_u64(policy_signers[0]),
-        Felt::from_u64(policy_signers[1]),
+        prf_key(spend_key).as_canonical_u64(),
+        auth[0],
+        auth[1],
+        auth[2],
+        auth[3],
     ]
 }
 
-fn smallwood_policy_root(threshold: u64, policy_signers: [u64; 2]) -> HashFelt {
+fn smallwood_policy_inputs(
+    threshold: u64,
+    policy_signer_tags: [SmallwoodSignerTag; 2],
+) -> Vec<Felt> {
+    let mut inputs = Vec::with_capacity(SMALLWOOD_AUTH_POLICY_INPUTS);
+    inputs.push(Felt::from_u64(threshold));
+    for tag in policy_signer_tags {
+        inputs.extend(tag.into_iter().map(Felt::from_u64));
+    }
+    inputs
+}
+
+fn smallwood_policy_root(threshold: u64, policy_signer_tags: [SmallwoodSignerTag; 2]) -> HashFelt {
     trace_sponge_hash(
         SMALLWOOD_AUTH_POLICY_DOMAIN_TAG,
-        &smallwood_policy_inputs(threshold, policy_signers),
+        &smallwood_policy_inputs(threshold, policy_signer_tags),
     )
     .0
 }
 
-pub fn smallwood_policy_root_bytes(threshold: u64, policy_signers: [u64; 2]) -> [u8; 48] {
-    crate::hashing_pq::felts_to_bytes48(&smallwood_policy_root(threshold, policy_signers))
+pub fn smallwood_policy_root_bytes(
+    threshold: u64,
+    policy_signer_tags: [SmallwoodSignerTag; 2],
+) -> [u8; 48] {
+    crate::hashing_pq::felts_to_bytes48(&smallwood_policy_root(threshold, policy_signer_tags))
 }
 
 fn smallwood_effective_next_accumulator(
@@ -3713,7 +3801,7 @@ fn smallwood_effective_next_accumulator(
             intent_digest: auth.accumulator.intent_digest,
             threshold: auth.accumulator.threshold,
             approval_count: 0,
-            signer_slots: [0, 0],
+            approved_slots: [0, 0],
         },
         _ => auth.next_accumulator.clone(),
     }
@@ -3765,6 +3853,13 @@ fn resolve_smallwood_private_auth(
 ) -> Result<SmallwoodResolvedAuth, TransactionCircuitError> {
     let legacy_prf = prf_key(&witness.sk_spend).as_canonical_u64();
     let legacy_auth = hash4_to_words(&spend_auth_key(&witness.sk_spend));
+    let legacy_digest: SmallwoodSignerTag = [
+        legacy_prf,
+        legacy_auth[0],
+        legacy_auth[1],
+        legacy_auth[2],
+        legacy_auth[3],
+    ];
     let next_accumulator = smallwood_effective_next_accumulator(auth);
     let current_hash = smallwood_accumulator_hash(&auth.accumulator)?;
     let next_hash = smallwood_accumulator_hash(&next_accumulator)?;
@@ -3810,7 +3905,7 @@ fn resolve_smallwood_private_auth(
     )?;
     let expected_policy_root = hash_felt_to_words(&smallwood_policy_root(
         auth.accumulator.threshold,
-        auth.policy_signers,
+        auth.policy_signer_tags,
     ));
     if !matches!(auth.mode, SmallwoodPrivateAuthMode::SingleKey)
         && policy_root != expected_policy_root
@@ -3836,14 +3931,14 @@ fn resolve_smallwood_private_auth(
         SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS],
         _ => count_flags(next_accumulator.approval_count),
     };
-    let policy_signers = match auth.mode {
-        SmallwoodPrivateAuthMode::SingleKey => [0, 0],
-        _ => auth.policy_signers,
+    let policy_signer_tags = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [[0; SMALLWOOD_SIGNER_TAG_WORDS]; 2],
+        _ => auth.policy_signer_tags,
     };
     let membership_flags = match auth.mode {
         SmallwoodPrivateAuthMode::ApprovalStep => [
-            u64::from(auth.signer_id == auth.policy_signers[0]),
-            u64::from(auth.signer_id == auth.policy_signers[1]),
+            u64::from(legacy_digest == auth.policy_signer_tags[0]),
+            u64::from(legacy_digest == auth.policy_signer_tags[1]),
         ],
         _ => [0, 0],
     };
@@ -3852,13 +3947,7 @@ fn resolve_smallwood_private_auth(
         mode_selectors,
         input_prfs,
         input_auth_keys,
-        legacy_digest: [
-            legacy_prf,
-            legacy_auth[0],
-            legacy_auth[1],
-            legacy_auth[2],
-            legacy_auth[3],
-        ],
+        legacy_digest,
         current_accumulator_digest: hash_felt_to_words(&current_hash),
         next_accumulator_digest: hash_felt_to_words(&next_hash),
         statement_digest: hash_felt_to_words(&statement_digest),
@@ -3866,15 +3955,13 @@ fn resolve_smallwood_private_auth(
         intent_digest,
         threshold: auth.accumulator.threshold,
         approval_count: auth.accumulator.approval_count,
-        signer_slots: auth.accumulator.signer_slots,
+        approved_slots: auth.accumulator.approved_slots,
         next_approval_count: next_accumulator.approval_count,
-        next_signer_slots: next_accumulator.signer_slots,
-        signer_id: auth.signer_id,
-        duplicate_inverse: auth.duplicate_inverse,
+        next_approved_slots: next_accumulator.approved_slots,
         threshold_flags: threshold_flag_rows,
         count_flags: count_flag_rows,
         next_count_flags: next_count_flag_rows,
-        policy_signers,
+        policy_signer_tags,
         membership_flags,
     })
 }
@@ -4077,15 +4164,17 @@ fn semantic_secret_witness_rows_with_shape_and_auth(
     values.extend_from_slice(&resolved_auth.intent_digest);
     values.push(resolved_auth.threshold);
     values.push(resolved_auth.approval_count);
-    values.extend_from_slice(&resolved_auth.signer_slots);
+    values.extend_from_slice(&resolved_auth.approved_slots);
     values.push(resolved_auth.next_approval_count);
-    values.extend_from_slice(&resolved_auth.next_signer_slots);
-    values.push(resolved_auth.signer_id);
-    values.push(resolved_auth.duplicate_inverse);
+    values.extend_from_slice(&resolved_auth.next_approved_slots);
+    values.push(0);
+    values.push(0);
     values.extend_from_slice(&resolved_auth.threshold_flags);
     values.extend_from_slice(&resolved_auth.count_flags);
     values.extend_from_slice(&resolved_auth.next_count_flags);
-    values.extend_from_slice(&resolved_auth.policy_signers);
+    for tag in resolved_auth.policy_signer_tags {
+        values.extend_from_slice(&tag);
+    }
     values.extend_from_slice(&resolved_auth.membership_flags);
 
     debug_assert_eq!(values.len(), layout.secret_witness_rows());
@@ -4249,7 +4338,7 @@ fn poseidon_subtrace_rows_with_auth(
 
     let (_, policy_traces) = trace_sponge_hash(
         SMALLWOOD_AUTH_POLICY_DOMAIN_TAG,
-        &smallwood_policy_inputs(auth.accumulator.threshold, auth.policy_signers),
+        &smallwood_policy_inputs(auth.accumulator.threshold, auth.policy_signer_tags),
     );
     traces.extend(policy_traces);
 
@@ -4689,7 +4778,6 @@ mod tests {
     };
     use crate::note::NoteData;
     use crate::public_inputs::StablecoinPolicyBinding;
-    use p3_field::Field;
     use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
 
     #[derive(Debug, serde::Deserialize)]
@@ -5191,9 +5279,10 @@ mod tests {
     fn valid_approval_fixture() -> (TransactionWitness, SmallwoodPrivateAuthWitness) {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-        let policy_signers = [11, 17];
-        let policy_root = smallwood_policy_root_bytes(2, policy_signers);
-        let signer = 17;
+        let signer_tag = smallwood_signer_tag_from_spend_key(&witness.sk_spend);
+        let other_tag = smallwood_signer_tag_from_spend_key(&[91u8; 32]);
+        let policy_signer_tags = [other_tag, signer_tag];
+        let policy_root = smallwood_policy_root_bytes(2, policy_signer_tags);
         let mut auth = SmallwoodPrivateAuthWitness {
             mode: SmallwoodPrivateAuthMode::ApprovalStep,
             accumulator: SmallwoodAccumulatorAuthOpening {
@@ -5201,18 +5290,16 @@ mod tests {
                 intent_digest: bytes48(2),
                 threshold: 2,
                 approval_count: 0,
-                signer_slots: [0, 0],
+                approved_slots: [0, 0],
             },
             next_accumulator: SmallwoodAccumulatorAuthOpening {
                 policy_root,
                 intent_digest: bytes48(2),
                 threshold: 2,
                 approval_count: 1,
-                signer_slots: [signer, 0],
+                approved_slots: [0, 1],
             },
-            policy_signers,
-            signer_id: signer,
-            duplicate_inverse: 0,
+            policy_signer_tags,
         };
         witness.inputs[0].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
@@ -5231,8 +5318,10 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         witness.inputs[0].note.pk_auth = spend_auth_key_bytes(&witness.sk_spend);
-        let policy_signers = [11, 17];
-        let policy_root = smallwood_policy_root_bytes(threshold, policy_signers);
+        let signer_tag = smallwood_signer_tag_from_spend_key(&witness.sk_spend);
+        let other_tag = smallwood_signer_tag_from_spend_key(&[92u8; 32]);
+        let policy_signer_tags = [signer_tag, other_tag];
+        let policy_root = smallwood_policy_root_bytes(threshold, policy_signer_tags);
         let mut auth = SmallwoodPrivateAuthWitness {
             mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
             accumulator: SmallwoodAccumulatorAuthOpening {
@@ -5240,12 +5329,16 @@ mod tests {
                 intent_digest: [0u8; 48],
                 threshold,
                 approval_count: count,
-                signer_slots: [11, 17],
+                approved_slots: if count >= 2 {
+                    [1, 1]
+                } else if count == 1 {
+                    [1, 0]
+                } else {
+                    [0, 0]
+                },
             },
             next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
-            policy_signers,
-            signer_id: 0,
-            duplicate_inverse: 0,
+            policy_signer_tags,
         };
         witness.inputs[1].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("placeholder key");
@@ -5306,48 +5399,42 @@ mod tests {
     #[test]
     fn universal_auth_rejects_duplicate_signer() {
         let (mut witness, mut auth) = valid_approval_fixture();
-        let slot0 = 11;
-        let signer = 17;
         auth.accumulator.approval_count = 1;
-        auth.accumulator.signer_slots = [slot0, 0];
+        auth.accumulator.approved_slots = [0, 1];
         auth.next_accumulator.approval_count = 2;
-        auth.next_accumulator.signer_slots = [slot0, signer];
-        auth.signer_id = signer;
-        auth.duplicate_inverse = (Felt::from_u64(signer) - Felt::from_u64(slot0))
-            .try_inverse()
-            .expect("distinct signer inverse")
-            .as_canonical_u64();
+        auth.next_accumulator.approved_slots = [0, 1];
         witness.inputs[0].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
         witness.outputs[0].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.next_accumulator).expect("next key");
         rebuild_two_input_tree(&mut witness);
 
-        let mut material = auth_material(&witness, &auth);
-        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
-        mutate_auth_row(
-            &mut material,
-            bridge_auth_signer_row(layout),
-            signer ^ slot0,
-        );
+        let material = auth_material(&witness, &auth);
         assert_auth_material_rejects(&material, "duplicate signer must reject");
     }
 
     #[test]
-    fn universal_auth_rejects_wrong_next_signer_slot() {
+    fn universal_auth_rejects_wrong_next_approved_slot() {
         let (witness, auth) = valid_approval_fixture();
         let mut material = auth_material(&witness, &auth);
         let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
         mutate_auth_row(&mut material, bridge_auth_next_slot_row(layout, 0), 1);
-        assert_auth_material_rejects(&material, "wrong next signer slot must reject");
+        assert_auth_material_rejects(&material, "wrong next approved slot must reject");
     }
 
     #[test]
     fn universal_auth_rejects_signer_outside_hidden_policy() {
         let (mut witness, mut auth) = valid_approval_fixture();
-        let unauthorized_signer = 23;
-        auth.signer_id = unauthorized_signer;
-        auth.next_accumulator.signer_slots = [unauthorized_signer, 0];
+        auth.policy_signer_tags = [
+            smallwood_signer_tag_from_spend_key(&[23u8; 32]),
+            smallwood_signer_tag_from_spend_key(&[24u8; 32]),
+        ];
+        auth.accumulator.policy_root =
+            smallwood_policy_root_bytes(auth.accumulator.threshold, auth.policy_signer_tags);
+        auth.next_accumulator.policy_root = auth.accumulator.policy_root;
+        auth.next_accumulator.approved_slots = [1, 0];
+        witness.inputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
         witness.outputs[0].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.next_accumulator).expect("next key");
         rebuild_two_input_tree(&mut witness);

@@ -62,6 +62,7 @@ p budgets.
 - Requests: `{ id, method, params }`. Responses: `{ id, ok, result?, error?, error_code? }`. `error_code` is snake_case.
 - `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, `pending` entries (still in mempool), `recent` confirmed outgoing entries, note summary, and `genesisHash`.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
+- Private multisig requests are `multisig.localSignerTag`, `multisig.accountCreate`, `multisig.accountList`, `multisig.noteList`, `multisig.finalPlan`, `multisig.setupSubmit`, `multisig.approvalSubmit`, `multisig.finalSubmit`, `multisig.approvalCreate`, `multisig.approvalImport`, and `multisig.finalize`. `multisig.accountCreate` accepts `policySignerTags: [[u64; 5]; 2]`; the scalar signer-id API is not exposed.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
 ## Protocol kernel and shielded family

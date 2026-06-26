@@ -398,7 +398,7 @@ pub fn build_multisig_initial_accumulator_transaction(
         intent_digest,
         threshold: record.threshold,
         approval_count: 0,
-        signer_slots: [0, 0],
+        approved_slots: [0, 0],
     };
     let mut rng = OsRng;
     let (output, ciphertext, recovered, commitment) =
@@ -501,8 +501,8 @@ pub fn build_multisig_approval_transaction(
     let current_opening = current_meta.to_smallwood();
     ensure_accumulator_note_auth(&current_note, &current_opening)?;
 
-    let signer_id = store.local_multisig_signer_id()?;
-    if !record.policy_signers.contains(&signer_id) {
+    let signer_tag = store.local_multisig_signer_tag()?;
+    if !record.policy_signer_tags.contains(&signer_tag) {
         return Err(WalletError::InvalidArgument(
             "local signer is not in hidden multisig policy",
         ));
@@ -510,10 +510,10 @@ pub fn build_multisig_approval_transaction(
     let duplicate_tag = approval_duplicate_tag(
         &record.public.account_id,
         &current_opening.intent_digest,
-        signer_id,
+        signer_tag,
     );
-    let (next_opening, duplicate_inverse) =
-        next_accumulator_after_approval(&current_opening, signer_id)?;
+    let next_opening =
+        next_accumulator_after_approval(&current_opening, record.policy_signer_tags, signer_tag)?;
     let mut rng = OsRng;
     let (next_output, next_ciphertext, next_recovered, _next_commitment) =
         build_accumulator_output(store, record, &next_opening, &mut rng)?;
@@ -553,9 +553,7 @@ pub fn build_multisig_approval_transaction(
         mode: SmallwoodPrivateAuthMode::ApprovalStep,
         accumulator: current_opening,
         next_accumulator: next_opening.clone(),
-        policy_signers: record.policy_signers,
-        signer_id,
-        duplicate_inverse,
+        policy_signer_tags: record.policy_signer_tags,
     };
     let built = built_transaction_from_witness(
         &witness,
@@ -662,7 +660,7 @@ pub fn prepare_multisig_final_plan(
         intent_digest: [0u8; 48],
         threshold: record.threshold,
         approval_count: record.threshold,
-        signer_slots: threshold_signer_slots(record),
+        approved_slots: threshold_approved_slots(record),
     };
     let dummy_acc_note = dummy_accumulator_input(&dummy_accumulator)?;
     let mut value_input = value_note.recovered.to_input_witness(value_note.position);
@@ -686,9 +684,7 @@ pub fn prepare_multisig_final_plan(
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
         accumulator: dummy_accumulator,
         next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
-        policy_signers: record.policy_signers,
-        signer_id: 0,
-        duplicate_inverse: 0,
+        policy_signer_tags: record.policy_signer_tags,
     };
     let intent_digest = smallwood_private_auth_intent_digest_bytes(&witness, &auth)
         .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
@@ -775,9 +771,7 @@ pub fn build_multisig_final_transaction_from_plan(
         mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
         accumulator: accumulator_opening,
         next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
-        policy_signers: record.policy_signers,
-        signer_id: 0,
-        duplicate_inverse: 0,
+        policy_signer_tags: record.policy_signer_tags,
     };
     let digest = smallwood_private_auth_intent_digest_bytes(&witness, &auth)
         .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
@@ -1333,7 +1327,7 @@ fn local_accumulator_metadata(
         intent_digest: opening.intent_digest,
         threshold: opening.threshold,
         approval_count: opening.approval_count,
-        signer_slots: opening.signer_slots,
+        approved_slots: opening.approved_slots,
     }
 }
 
@@ -1371,11 +1365,11 @@ fn ensure_accumulator_note_auth(
     Ok(())
 }
 
-fn threshold_signer_slots(record: &MultisigAccountRecord) -> [u64; 2] {
+fn threshold_approved_slots(record: &MultisigAccountRecord) -> [u64; 2] {
     if record.threshold == 1 {
-        [record.policy_signers[0], 0]
+        [1, 0]
     } else {
-        record.policy_signers
+        [1, 1]
     }
 }
 
@@ -1837,8 +1831,8 @@ mod tests {
     }
 
     fn test_multisig_record(store: &WalletStore) -> MultisigAccountRecord {
-        let local_signer = store.local_multisig_signer_id().unwrap();
-        let other_signer = crate::multisig::signer_id_from_spend_key(&[91u8; 32]);
+        let local_signer = store.local_multisig_signer_tag().unwrap();
+        let other_signer = crate::multisig::signer_tag_from_spend_key(&[91u8; 32]);
         let public = store
             .create_multisig_account(1, [local_signer, other_signer])
             .unwrap();
@@ -2069,8 +2063,8 @@ mod tests {
         let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
         let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
 
-        let local_signer = sender.local_multisig_signer_id().unwrap();
-        let other_signer = crate::multisig::signer_id_from_spend_key(&[77u8; 32]);
+        let local_signer = sender.local_multisig_signer_tag().unwrap();
+        let other_signer = crate::multisig::signer_tag_from_spend_key(&[77u8; 32]);
         let public = sender
             .create_multisig_account(1, [local_signer, other_signer])
             .unwrap();
@@ -2135,7 +2129,14 @@ mod tests {
         let threshold_meta = threshold_local.multisig_accumulator.unwrap();
         assert_eq!(threshold_meta.intent_digest, final_plan.intent_digest);
         assert_eq!(threshold_meta.approval_count, 1);
-        assert_eq!(threshold_meta.signer_slots, [local_signer, 0]);
+        let local_slot = record
+            .policy_signer_tags
+            .iter()
+            .position(|tag| *tag == local_signer)
+            .unwrap();
+        let mut expected_slots = [0u64, 0u64];
+        expected_slots[local_slot] = 1;
+        assert_eq!(threshold_meta.approved_slots, expected_slots);
 
         let final_tx = build_multisig_final_transaction_from_plan(
             &sender,
@@ -2147,10 +2148,10 @@ mod tests {
         assert_eq!(final_tx.spent_note_indexes.len(), 2);
         assert_eq!(final_tx.bundle.commitments.len(), final_plan.outputs.len());
         let public_json = serde_json::to_string(&final_tx.bundle).unwrap();
-        assert!(!public_json.contains("policy_signers"));
+        assert!(!public_json.contains("policy_signer_tags"));
         assert!(!public_json.contains("policy_root"));
         assert!(!public_json.contains("approval_count"));
-        assert!(!public_json.contains("signer_slots"));
+        assert!(!public_json.contains("approved_slots"));
 
         decode_native_tx_leaf_artifact_bytes(&approval.bundle.proof_bytes).unwrap();
         decode_native_tx_leaf_artifact_bytes(&final_tx.bundle.proof_bytes).unwrap();
@@ -2171,8 +2172,8 @@ mod tests {
         let setup_funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
         let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
         let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
-        let local_signer = sender.local_multisig_signer_id().unwrap();
-        let other_signer = crate::multisig::signer_id_from_spend_key(&[78u8; 32]);
+        let local_signer = sender.local_multisig_signer_tag().unwrap();
+        let other_signer = crate::multisig::signer_tag_from_spend_key(&[78u8; 32]);
         let public = sender
             .create_multisig_account(1, [local_signer, other_signer])
             .unwrap();
