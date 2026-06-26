@@ -446,10 +446,17 @@ impl WalletStore {
                     let mut expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
                         &note.note_data.commitment(),
                     );
+                    let matching_opening =
+                        matching_local_note_opening(state, chain_commitment, &note).cloned();
+                    if let Some(local_opening) = matching_opening.as_ref() {
+                        if local_opening.uses_private_auth() {
+                            note = local_opening.note.clone();
+                            expected_commitment = local_opening.commitment;
+                            used_local_opening = true;
+                        }
+                    }
                     if *chain_commitment != expected_commitment {
-                        let Some(local_opening) =
-                            matching_local_note_opening(state, chain_commitment, &note)
-                        else {
+                        let Some(local_opening) = matching_opening else {
                             return Err(WalletError::InvalidState(
                                 "ciphertext commitment mismatch",
                             ));
@@ -580,7 +587,9 @@ impl WalletStore {
                 .iter()
                 .find(|opening| opening.commitment == commitment)
             {
-                if opening.multisig_accumulator != multisig_accumulator {
+                if opening.multisig_accumulator != multisig_accumulator
+                    || opening.multisig_value_lock.is_some()
+                {
                     return Err(WalletError::InvalidState(
                         "local note opening metadata mismatch",
                     ));
@@ -591,6 +600,40 @@ impl WalletStore {
                 commitment,
                 note,
                 multisig_accumulator,
+                multisig_value_lock: None,
+                created_at,
+            });
+            Ok(())
+        })?;
+        Ok(commitment)
+    }
+
+    pub fn record_local_note_opening_with_multisig_value_lock(
+        &self,
+        note: RecoveredNote,
+        multisig_value_lock: LocalMultisigValueLockOpening,
+    ) -> Result<[u8; 48], WalletError> {
+        let commitment =
+            transaction_circuit::hashing_pq::felts_to_bytes48(&note.note_data.commitment());
+        let created_at = current_timestamp();
+        self.with_mut(|state| {
+            if let Some(opening) = state
+                .local_note_openings
+                .iter()
+                .find(|opening| opening.commitment == commitment)
+            {
+                if opening.multisig_value_lock != Some(multisig_value_lock.clone()) {
+                    return Err(WalletError::InvalidState(
+                        "local note opening metadata mismatch",
+                    ));
+                }
+                return Ok(());
+            }
+            state.local_note_openings.push(LocalNoteOpeningRecord {
+                commitment,
+                note,
+                multisig_accumulator: None,
+                multisig_value_lock: Some(multisig_value_lock),
                 created_at,
             });
             Ok(())
@@ -650,7 +693,9 @@ impl WalletStore {
                 .iter()
                 .find(|existing| existing.commitment == opening.commitment)
             {
-                if existing.multisig_accumulator != opening.multisig_accumulator {
+                if existing.multisig_accumulator != opening.multisig_accumulator
+                    || existing.multisig_value_lock != opening.multisig_value_lock
+                {
                     return Err(WalletError::InvalidState(
                         "local note opening metadata mismatch",
                     ));
@@ -1701,6 +1746,7 @@ impl From<WalletStateV8> for WalletState {
                 commitment: opening.commitment,
                 note: opening.note,
                 multisig_accumulator: None,
+                multisig_value_lock: None,
                 created_at: opening.created_at,
             })
             .collect();
@@ -1857,7 +1903,27 @@ pub struct LocalNoteOpeningRecord {
     pub note: RecoveredNote,
     #[serde(default)]
     pub multisig_accumulator: Option<LocalMultisigAccumulatorOpening>,
+    #[serde(default)]
+    pub multisig_value_lock: Option<LocalMultisigValueLockOpening>,
     pub created_at: u64,
+}
+
+impl LocalNoteOpeningRecord {
+    fn uses_private_auth(&self) -> bool {
+        self.multisig_accumulator.is_some() || self.multisig_value_lock.is_some()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalMultisigValueLockOpening {
+    #[serde(with = "serde_bytes32")]
+    pub account_id: [u8; 32],
+    #[serde(with = "serde_bytes48")]
+    pub policy_root: [u8; 48],
+    #[serde(with = "serde_bytes48")]
+    pub intent_digest: [u8; 48],
+    #[serde(default)]
+    pub final_plan_bytes: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

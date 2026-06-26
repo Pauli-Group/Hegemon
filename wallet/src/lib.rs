@@ -60,8 +60,9 @@ pub use submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 pub use sync::SyncOutcome;
 pub use tx_builder::{
     build_multisig_approval_transaction, build_multisig_final_transaction_from_plan,
-    build_multisig_initial_accumulator_transaction, build_stablecoin_burn, build_transaction,
-    build_transaction_with_binding, prepare_multisig_final_plan, BuiltTransaction,
+    build_multisig_initial_accumulator_transaction, build_multisig_value_lock_transaction,
+    build_stablecoin_burn, build_transaction, build_transaction_with_binding,
+    prepare_multisig_final_plan, BuiltMultisigValueLock, BuiltTransaction,
     PreparedMultisigFinalPlan, Recipient,
 };
 #[cfg(feature = "rpc-client")]

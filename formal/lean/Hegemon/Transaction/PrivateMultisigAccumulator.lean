@@ -51,6 +51,7 @@ deriving DecidableEq, Repr
 structure ValueNote where
   accountDigest : Digest
   noteCommitment : Digest
+  valueLockDigest : Digest
   publicNullifier : Digest
 deriving DecidableEq, Repr
 
@@ -126,6 +127,17 @@ def policyWellFormed (policy : PolicyWitness) : Bool :=
         policy.accountDigest
         policy.threshold
         policy.signerSetRoot)
+
+def valueLockDigest
+    (policyRoot : Digest)
+    (intentDigest : Digest) : Digest :=
+  (policyRoot * 163 + intentDigest * 167 + 31) % digestMod
+
+def valueNoteLockedToIntent
+    (note : ValueNote)
+    (intent : SpendIntent) : Bool :=
+  natEq note.valueLockDigest
+    (valueLockDigest intent.policyRoot intent.intentDigest)
 
 def approvalLeafDigest
     (intent : SpendIntent)
@@ -203,6 +215,7 @@ def approvalStepAccepted (step : ApprovalStep) : Bool :=
 def finalSpendAccepted (spend : FinalSpend) : Bool :=
   policyWellFormed spend.policy
     && natEq spend.valueNote.accountDigest spend.intent.accountDigest
+    && valueNoteLockedToIntent spend.valueNote spend.intent
     && accumulatorMatchesPolicy spend.accumulator spend.policy
     && accumulatorMatchesIntent spend.accumulator spend.intent
     && natEq spend.accumulator.stateDigest
@@ -345,7 +358,12 @@ def signerSetRootDriftPolicyStep : ApprovalStep :=
 def baseValueNote : ValueNote :=
   { accountDigest := baseIntent.accountDigest,
     noteCommitment := 808,
+    valueLockDigest :=
+      valueLockDigest baseIntent.policyRoot baseIntent.intentDigest,
     publicNullifier := 909 }
+
+def wrongValueLockNote : ValueNote :=
+  { baseValueNote with valueLockDigest := baseValueNote.valueLockDigest + 1 }
 
 def finalSpendWith
     (policy : PolicyWitness)
@@ -367,6 +385,9 @@ def exactThresholdFinalSpend : FinalSpend :=
 
 def finalIntentMismatchSpend : FinalSpend :=
   finalSpendWith basePolicy otherIntent twoApprovalAccumulator
+
+def finalValueLockMismatchSpend : FinalSpend :=
+  { exactThresholdFinalSpend with valueNote := wrongValueLockNote }
 
 def zeroThresholdFinalSpend : FinalSpend :=
   finalSpendWith zeroThresholdPolicy baseIntent twoApprovalAccumulator
@@ -451,6 +472,10 @@ theorem exact_threshold_final_accepted :
 
 theorem final_intent_mismatch_rejected :
     finalSpendAccepted finalIntentMismatchSpend = false := by
+  decide
+
+theorem final_value_lock_mismatch_rejected :
+    finalSpendAccepted finalValueLockMismatchSpend = false := by
   decide
 
 theorem zero_threshold_final_rejected :

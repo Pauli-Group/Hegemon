@@ -23,7 +23,8 @@ use wallet::{
     address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
     build_multisig_approval_transaction, build_multisig_final_transaction_from_plan,
-    build_multisig_initial_accumulator_transaction, build_transaction,
+    build_multisig_initial_accumulator_transaction, build_multisig_value_lock_transaction,
+    build_transaction,
     disclosure::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
@@ -430,6 +431,27 @@ struct MultisigFinalPlanResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MultisigValueLockSubmitParams {
+    ws_url: String,
+    account_id: String,
+    source_note_commitment: String,
+    recipients: Vec<RecipientSpec>,
+    final_fee: u64,
+    lock_fee: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigValueLockResponse {
+    tx_hash: String,
+    output_commitments: Vec<String>,
+    locked_value_note_commitment: String,
+    intent_digest: String,
+    recipients: Vec<TransferRecipient>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MultisigSetupSubmitParams {
     ws_url: String,
     account_id: String,
@@ -763,6 +785,15 @@ fn handle_request(
                 to_json(multisig_opening_import_private(&store, params)?)
             }
             "multisig.localSignerTag" => to_json(multisig_local_signer_tag(&store)?),
+            "multisig.valueLockSubmit" => {
+                let params: MultisigValueLockSubmitParams = parse_params(request.params)?;
+                to_json(multisig_value_lock_submit(
+                    runtime,
+                    store.clone(),
+                    multisig_final_plans,
+                    params,
+                )?)
+            }
             "multisig.finalPlan" => {
                 let params: MultisigFinalPlanParams = parse_params(request.params)?;
                 to_json(multisig_final_plan(&store, multisig_final_plans, params)?)
@@ -1144,10 +1175,10 @@ fn multisig_opening_export_private(
                 "unknown local multisig opening commitment",
             )
         })?;
-    if opening.multisig_accumulator.is_none() {
+    if opening.multisig_accumulator.is_none() && opening.multisig_value_lock.is_none() {
         return Err(WalletdError::new(
             WalletdErrorCode::InvalidParams,
-            "local note opening is not a multisig accumulator",
+            "local note opening is not a multisig private opening",
         ));
     }
     Ok(MultisigOpeningExportPrivateResponse {
@@ -1161,10 +1192,10 @@ fn multisig_opening_import_private(
 ) -> WalletdResult<MultisigOpeningImportPrivateResponse> {
     let opening: LocalNoteOpeningRecord =
         decode_private_payload(&params.opening, "multisig local note opening")?;
-    if opening.multisig_accumulator.is_none() {
+    if opening.multisig_accumulator.is_none() && opening.multisig_value_lock.is_none() {
         return Err(WalletdError::new(
             WalletdErrorCode::InvalidParams,
-            "local note opening is not a multisig accumulator",
+            "local note opening is not a multisig private opening",
         ));
     }
     let commitment = store
@@ -1237,6 +1268,73 @@ fn multisig_final_plan(
     Ok(MultisigFinalPlanResponse {
         intent_digest: format!("0x{}", hex::encode(intent_digest)),
         value_note_commitment: format!("0x{}", hex::encode(value_note_commitment)),
+        recipients: metadata,
+    })
+}
+
+fn multisig_value_lock_submit(
+    runtime: &tokio::runtime::Runtime,
+    store: Arc<WalletStore>,
+    cache: MultisigFinalPlanCache,
+    params: MultisigValueLockSubmitParams,
+) -> WalletdResult<MultisigValueLockResponse> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let source_note_commitment = parse_param_hex_48(&params.source_note_commitment)?;
+    let recipients = parse_recipients(&params.recipients)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+    let metadata = transfer_recipients_from_specs(&params.recipients);
+    let ws_url = params.ws_url;
+    let final_fee = params.final_fee;
+    let lock_fee = params.lock_fee;
+    let built_slot: Arc<Mutex<Option<(PreparedMultisigFinalPlan, [u8; 48])>>> =
+        Arc::new(Mutex::new(None));
+    let built_slot_for_closure = built_slot.clone();
+    let response = submit_multisig_built_transaction(
+        runtime,
+        store.clone(),
+        ws_url,
+        lock_fee,
+        Vec::new(),
+        move |store| {
+            let account = store
+                .multisig_account_record(&account_id)?
+                .ok_or(WalletError::InvalidArgument("unknown multisig account id"))?;
+            let built = build_multisig_value_lock_transaction(
+                store,
+                &account,
+                source_note_commitment,
+                &recipients,
+                final_fee,
+                lock_fee,
+            )?;
+            let mut slot = built_slot_for_closure.lock().map_err(|_| {
+                WalletError::InvalidState("multisig value-lock result slot poisoned")
+            })?;
+            *slot = Some((built.final_plan.clone(), built.locked_value_note_commitment));
+            Ok(built.transaction)
+        },
+    )?;
+    let (plan, locked_value_note_commitment) = built_slot
+        .lock()
+        .map_err(|_| WalletdError::internal("multisig value-lock result slot poisoned"))?
+        .take()
+        .ok_or_else(|| WalletdError::internal("missing built multisig value-lock result"))?;
+    let intent_digest = plan.intent_digest;
+    cache
+        .lock()
+        .map_err(|_| WalletdError::internal("multisig final plan cache poisoned"))?
+        .insert(
+            intent_digest,
+            CachedMultisigFinalPlan {
+                plan,
+                recipients: metadata.clone(),
+            },
+        );
+    Ok(MultisigValueLockResponse {
+        tx_hash: response.tx_hash,
+        output_commitments: response.output_commitments,
+        locked_value_note_commitment: format!("0x{}", hex::encode(locked_value_note_commitment)),
+        intent_digest: format!("0x{}", hex::encode(intent_digest)),
         recipients: metadata,
     })
 }

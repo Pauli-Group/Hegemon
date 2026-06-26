@@ -32,6 +32,7 @@ const AUTH_INPUT_KEY_ROWS: usize = MAX_INPUTS * 4;
 const AUTH_LEGACY_DIGEST_ROWS: usize = 5;
 const AUTH_ACCUMULATOR_DIGEST_ROWS: usize = HASH_LIMBS;
 const AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS: usize = HASH_LIMBS;
+const AUTH_VALUE_LOCK_DIGEST_ROWS: usize = HASH_LIMBS;
 const AUTH_STATEMENT_DIGEST_ROWS: usize = HASH_LIMBS;
 const AUTH_POLICY_ROWS: usize = HASH_LIMBS;
 const AUTH_INTENT_ROWS: usize = HASH_LIMBS;
@@ -49,6 +50,7 @@ const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_LEGACY_DIGEST_ROWS
     + AUTH_ACCUMULATOR_DIGEST_ROWS
     + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+    + AUTH_VALUE_LOCK_DIGEST_ROWS
     + AUTH_STATEMENT_DIGEST_ROWS
     + AUTH_POLICY_ROWS
     + AUTH_INTENT_ROWS
@@ -67,9 +69,13 @@ const AUTH_ACCUMULATOR_INPUTS: usize = HASH_LIMBS * 2 + 3 + MULTISIG_MAX_SIGNERS
 const AUTH_ACCUMULATOR_PERMUTATIONS: usize = AUTH_ACCUMULATOR_INPUTS.div_ceil(6);
 const AUTH_POLICY_INPUTS: usize = 2 + AUTH_POLICY_SIGNER_ROWS;
 const AUTH_POLICY_PERMUTATIONS: usize = AUTH_POLICY_INPUTS.div_ceil(6);
-const AUTH_POSEIDON_PERMUTATIONS: usize =
-    AUTH_INTENT_PERMUTATIONS + AUTH_POLICY_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS * 2;
-const AUTH_CONSTRAINTS: usize = 359;
+const AUTH_VALUE_LOCK_INPUTS: usize = HASH_LIMBS * 2;
+const AUTH_VALUE_LOCK_PERMUTATIONS: usize = AUTH_VALUE_LOCK_INPUTS.div_ceil(6);
+const AUTH_POSEIDON_PERMUTATIONS: usize = AUTH_INTENT_PERMUTATIONS
+    + AUTH_POLICY_PERMUTATIONS
+    + AUTH_ACCUMULATOR_PERMUTATIONS * 2
+    + AUTH_VALUE_LOCK_PERMUTATIONS;
+const AUTH_CONSTRAINTS: usize = 365;
 const POSEIDON_PERMUTATION_COUNT: usize = 1
     + MAX_INPUTS * INPUT_PERMUTATIONS
     + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
@@ -764,6 +770,18 @@ fn row_auth_next_digest(statement: &PackedStatement<'_>, limb: usize) -> usize {
 }
 
 #[inline]
+fn row_auth_value_lock_digest(statement: &PackedStatement<'_>, limb: usize) -> usize {
+    row_auth_base(statement)
+        + AUTH_MODE_ROWS
+        + AUTH_INPUT_PRF_ROWS
+        + AUTH_INPUT_KEY_ROWS
+        + AUTH_LEGACY_DIGEST_ROWS
+        + AUTH_ACCUMULATOR_DIGEST_ROWS
+        + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
 fn row_auth_statement_digest(statement: &PackedStatement<'_>, limb: usize) -> usize {
     row_auth_base(statement)
         + AUTH_MODE_ROWS
@@ -772,6 +790,7 @@ fn row_auth_statement_digest(statement: &PackedStatement<'_>, limb: usize) -> us
         + AUTH_LEGACY_DIGEST_ROWS
         + AUTH_ACCUMULATOR_DIGEST_ROWS
         + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + AUTH_VALUE_LOCK_DIGEST_ROWS
         + limb
 }
 
@@ -784,6 +803,7 @@ fn row_auth_policy(statement: &PackedStatement<'_>, limb: usize) -> usize {
         + AUTH_LEGACY_DIGEST_ROWS
         + AUTH_ACCUMULATOR_DIGEST_ROWS
         + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + AUTH_VALUE_LOCK_DIGEST_ROWS
         + AUTH_STATEMENT_DIGEST_ROWS
         + limb
 }
@@ -797,6 +817,7 @@ fn row_auth_intent(statement: &PackedStatement<'_>, limb: usize) -> usize {
         + AUTH_LEGACY_DIGEST_ROWS
         + AUTH_ACCUMULATOR_DIGEST_ROWS
         + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + AUTH_VALUE_LOCK_DIGEST_ROWS
         + AUTH_STATEMENT_DIGEST_ROWS
         + AUTH_POLICY_ROWS
         + limb
@@ -811,6 +832,7 @@ fn row_auth_threshold(statement: &PackedStatement<'_>) -> usize {
         + AUTH_LEGACY_DIGEST_ROWS
         + AUTH_ACCUMULATOR_DIGEST_ROWS
         + AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + AUTH_VALUE_LOCK_DIGEST_ROWS
         + AUTH_STATEMENT_DIGEST_ROWS
         + AUTH_POLICY_ROWS
         + AUTH_INTENT_ROWS
@@ -971,6 +993,15 @@ fn bridge_auth_next_permutation(chunk: usize) -> usize {
         + AUTH_INTENT_PERMUTATIONS
         + AUTH_POLICY_PERMUTATIONS
         + AUTH_ACCUMULATOR_PERMUTATIONS
+        + chunk
+}
+
+#[inline]
+fn bridge_auth_value_lock_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base()
+        + AUTH_INTENT_PERMUTATIONS
+        + AUTH_POLICY_PERMUTATIONS
+        + AUTH_ACCUMULATOR_PERMUTATIONS * 2
         + chunk
 }
 
@@ -1529,6 +1560,8 @@ fn compute_constraints(
             let statement_group = bridge_auth_intent_permutation(AUTH_INTENT_PERMUTATIONS - 1);
             let current_group = bridge_auth_current_permutation(AUTH_ACCUMULATOR_PERMUTATIONS - 1);
             let next_group = bridge_auth_next_permutation(AUTH_ACCUMULATOR_PERMUTATIONS - 1);
+            let value_lock_group =
+                bridge_auth_value_lock_permutation(AUTH_VALUE_LOCK_PERMUTATIONS - 1);
             out[c] = rows[row_auth_statement_digest(statement, limb)]
                 - rows[poseidon_group_row(
                     statement,
@@ -1548,6 +1581,14 @@ fn compute_constraints(
             out[c] = rows[row_auth_next_digest(statement, limb)]
                 - rows[poseidon_group_row(statement, next_group, layout.poseidon_last_row(), limb)];
             c += 1;
+            out[c] = rows[row_auth_value_lock_digest(statement, limb)]
+                - rows[poseidon_group_row(
+                    statement,
+                    value_lock_group,
+                    layout.poseidon_last_row(),
+                    limb,
+                )];
+            c += 1;
             let policy_group = bridge_auth_policy_permutation(AUTH_POLICY_PERMUTATIONS - 1);
             out[c] = non_single
                 * (rows[row_auth_policy(statement, limb)]
@@ -1560,7 +1601,7 @@ fn compute_constraints(
             c += 1;
         }
     } else {
-        for _ in 0..(5 + HASH_LIMBS * 4) {
+        for _ in 0..(5 + HASH_LIMBS * 5) {
             out[c] = Felt::ZERO;
             c += 1;
         }
@@ -1568,10 +1609,15 @@ fn compute_constraints(
 
     let legacy_prf = rows[row_auth_legacy_digest(statement, 0)];
     let current_prf = rows[row_auth_current_digest(statement, 4)];
+    let value_lock_prf = rows[row_auth_value_lock_digest(statement, 4)];
     for input in 0..MAX_INPUTS {
         let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
         let approval_prf = if input == 0 { current_prf } else { legacy_prf };
-        let final_prf = if input == 0 { legacy_prf } else { current_prf };
+        let final_prf = if input == 0 {
+            value_lock_prf
+        } else {
+            current_prf
+        };
         let expected_prf = flag
             * (mode_single * legacy_prf + mode_approval * approval_prf + mode_final * final_prf);
         out[c] = rows[row_auth_input_prf(statement, input)] - expected_prf;
@@ -1579,8 +1625,13 @@ fn compute_constraints(
         for limb in 0..4 {
             let legacy_key = rows[row_auth_legacy_digest(statement, 1 + limb)];
             let current_key = rows[row_auth_current_digest(statement, limb)];
+            let value_lock_key = rows[row_auth_value_lock_digest(statement, limb)];
             let approval_key = if input == 0 { current_key } else { legacy_key };
-            let final_key = if input == 0 { legacy_key } else { current_key };
+            let final_key = if input == 0 {
+                value_lock_key
+            } else {
+                current_key
+            };
             let expected_key = flag
                 * (mode_single * legacy_key
                     + mode_approval * approval_key

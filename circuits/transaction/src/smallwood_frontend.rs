@@ -49,6 +49,7 @@ const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_AUTH_INTENT_DOMAIN_TAG: u64 = 5;
 const SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG: u64 = 6;
 const SMALLWOOD_AUTH_POLICY_DOMAIN_TAG: u64 = 7;
+const SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG: u64 = 8;
 
 pub const SMALLWOOD_LPPC_PACKING_FACTOR: usize = 1;
 pub const SMALLWOOD_PACKED_LPPC_PACKING_FACTOR: usize = 64;
@@ -84,6 +85,7 @@ const SMALLWOOD_AUTH_INPUT_KEY_ROWS: usize = MAX_INPUTS * 4;
 const SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS: usize = 5;
 const SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
 const SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
 const SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
 const SMALLWOOD_AUTH_POLICY_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
 const SMALLWOOD_AUTH_INTENT_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
@@ -102,6 +104,7 @@ const SMALLWOOD_AUTH_ROWS: usize = SMALLWOOD_AUTH_MODE_ROWS
     + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
     + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
     + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+    + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
     + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
     + SMALLWOOD_AUTH_POLICY_ROWS
     + SMALLWOOD_AUTH_INTENT_ROWS
@@ -122,9 +125,13 @@ const SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS: usize =
 const SMALLWOOD_AUTH_POLICY_INPUTS: usize = 2 + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS;
 const SMALLWOOD_AUTH_POLICY_PERMUTATIONS: usize =
     SMALLWOOD_AUTH_POLICY_INPUTS.div_ceil(POSEIDON2_RATE);
+const SMALLWOOD_AUTH_VALUE_LOCK_INPUTS: usize = SMALLWOOD_WORDS_PER_48_BYTES * 2;
+const SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS: usize =
+    SMALLWOOD_AUTH_VALUE_LOCK_INPUTS.div_ceil(POSEIDON2_RATE);
 const SMALLWOOD_AUTH_POSEIDON_PERMUTATIONS: usize = SMALLWOOD_AUTH_INTENT_PERMUTATIONS
     + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
-    + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2);
+    + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2)
+    + SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS;
 
 pub type SmallwoodSignerTag = [u64; SMALLWOOD_SIGNER_TAG_WORDS];
 const PUB_INPUT_FLAG0: usize = 0;
@@ -348,6 +355,18 @@ fn bridge_auth_next_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) ->
 }
 
 #[inline]
+fn bridge_auth_value_lock_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
 fn bridge_auth_statement_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
     bridge_auth_base(layout)
         + SMALLWOOD_AUTH_MODE_ROWS
@@ -356,6 +375,7 @@ fn bridge_auth_statement_digest_row(layout: SmallwoodBridgeRowLayout, limb: usiz
         + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
         + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
         + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
         + limb
 }
 
@@ -368,6 +388,7 @@ fn bridge_auth_policy_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usiz
         + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
         + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
         + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
         + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
         + limb
 }
@@ -381,6 +402,7 @@ fn bridge_auth_intent_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usiz
         + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
         + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
         + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
         + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
         + SMALLWOOD_AUTH_POLICY_ROWS
         + limb
@@ -395,6 +417,7 @@ fn bridge_auth_threshold_row(layout: SmallwoodBridgeRowLayout) -> usize {
         + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
         + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
         + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
         + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
         + SMALLWOOD_AUTH_POLICY_ROWS
         + SMALLWOOD_AUTH_INTENT_ROWS
@@ -3168,6 +3191,132 @@ fn build_packed_bridge_linear_constraints(
         bridge_auth_next_permutation(SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS - 1),
         SMALLWOOD_WORDS_PER_48_BYTES,
     );
+    bind_digest_output(
+        &mut constraints,
+        bridge_auth_value_lock_digest_row,
+        bridge_auth_value_lock_permutation(SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS - 1),
+        SMALLWOOD_WORDS_PER_48_BYTES,
+    );
+
+    for chunk in 0..SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS {
+        let permutation = bridge_auth_value_lock_permutation(chunk);
+        let lane = permutation_lane(permutation);
+        let value_lock_input_row = |input_idx: usize| -> Option<usize> {
+            if input_idx < SMALLWOOD_WORDS_PER_48_BYTES {
+                Some(bridge_auth_policy_row(layout, input_idx))
+            } else if input_idx < SMALLWOOD_AUTH_VALUE_LOCK_INPUTS {
+                Some(bridge_auth_intent_row(
+                    layout,
+                    input_idx - SMALLWOOD_WORDS_PER_48_BYTES,
+                ))
+            } else {
+                None
+            }
+        };
+        for limb in 0..POSEIDON2_RATE {
+            let input_idx = chunk * POSEIDON2_RATE + limb;
+            match (chunk, value_lock_input_row(input_idx)) {
+                (0, Some(row)) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (row, lane, neg_one),
+                        ],
+                        target,
+                    );
+                }
+                (0, None) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constant(
+                        &mut constraints,
+                        poseidon_row(permutation, 0, limb),
+                        lane,
+                        target,
+                    );
+                }
+                (_, Some(row)) => {
+                    let prev = permutation - 1;
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                            (row, lane, neg_one),
+                        ],
+                        0,
+                    );
+                }
+                (_, None) => {
+                    let prev = permutation - 1;
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                        ],
+                        0,
+                    );
+                }
+            }
+        }
+        if chunk == 0 {
+            for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                lane,
+                1,
+            );
+        } else {
+            let prev = permutation - 1;
+            let prev_lane = permutation_lane(prev);
+            for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    0,
+                );
+            }
+        }
+    }
 
     let bind_accumulator_preimage =
         |constraints: &mut SmallwoodLinearConstraints,
@@ -3806,6 +3955,7 @@ struct SmallwoodResolvedAuth {
     legacy_digest: [u64; 5],
     current_accumulator_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
     next_accumulator_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    value_lock_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
     statement_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
     policy_root: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
     intent_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
@@ -3862,6 +4012,15 @@ pub fn smallwood_accumulator_auth_key_bytes(
     )))
 }
 
+pub fn smallwood_value_lock_auth_key_bytes(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<[u8; 32], TransactionCircuitError> {
+    Ok(auth_key_words_to_bytes(hash_to_auth_key_words(
+        &smallwood_value_lock_hash(policy_root, intent_digest)?,
+    )))
+}
+
 fn smallwood_accumulator_inputs(
     opening: &SmallwoodAccumulatorAuthOpening,
 ) -> Result<Vec<Felt>, TransactionCircuitError> {
@@ -3887,6 +4046,31 @@ fn smallwood_accumulator_hash(
     Ok(trace_sponge_hash(
         SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG,
         &smallwood_accumulator_inputs(opening)?,
+    )
+    .0)
+}
+
+fn smallwood_value_lock_inputs(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<Vec<Felt>, TransactionCircuitError> {
+    let mut inputs = Vec::with_capacity(SMALLWOOD_AUTH_VALUE_LOCK_INPUTS);
+    inputs.extend(bytes48_to_felts(policy_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private value-lock policy root"),
+    )?);
+    inputs.extend(bytes48_to_felts(intent_digest).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private value-lock intent digest"),
+    )?);
+    Ok(inputs)
+}
+
+fn smallwood_value_lock_hash(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<HashFelt, TransactionCircuitError> {
+    Ok(trace_sponge_hash(
+        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG,
+        &smallwood_value_lock_inputs(policy_root, intent_digest)?,
     )
     .0)
 }
@@ -4039,8 +4223,14 @@ fn resolve_smallwood_private_auth(
     let next_accumulator = smallwood_effective_next_accumulator(auth);
     let current_hash = smallwood_accumulator_hash(&auth.accumulator)?;
     let next_hash = smallwood_accumulator_hash(&next_accumulator)?;
+    let value_lock_hash = smallwood_value_lock_hash(
+        &auth.accumulator.policy_root,
+        &auth.accumulator.intent_digest,
+    )?;
     let current_prf = current_hash[4].as_canonical_u64();
     let current_auth = hash_to_auth_key_words(&current_hash);
+    let value_lock_prf = value_lock_hash[4].as_canonical_u64();
+    let value_lock_auth = hash_to_auth_key_words(&value_lock_hash);
 
     let mut input_prfs = [0u64; MAX_INPUTS];
     let mut input_auth_keys = [[0u64; 4]; MAX_INPUTS];
@@ -4065,7 +4255,7 @@ fn resolve_smallwood_private_auth(
             }
             SmallwoodPrivateAuthMode::FinalThresholdSpend => {
                 if input == 0 {
-                    (legacy_prf, legacy_auth)
+                    (value_lock_prf, value_lock_auth)
                 } else {
                     (current_prf, current_auth)
                 }
@@ -4137,6 +4327,7 @@ fn resolve_smallwood_private_auth(
         legacy_digest,
         current_accumulator_digest: hash_felt_to_words(&current_hash),
         next_accumulator_digest: hash_felt_to_words(&next_hash),
+        value_lock_digest: hash_felt_to_words(&value_lock_hash),
         statement_digest: hash_felt_to_words(&statement_digest),
         policy_root,
         intent_digest,
@@ -4349,6 +4540,7 @@ fn semantic_secret_witness_rows_with_shape_and_auth(
     values.extend_from_slice(&resolved_auth.legacy_digest);
     values.extend_from_slice(&resolved_auth.current_accumulator_digest);
     values.extend_from_slice(&resolved_auth.next_accumulator_digest);
+    values.extend_from_slice(&resolved_auth.value_lock_digest);
     values.extend_from_slice(&resolved_auth.statement_digest);
     values.extend_from_slice(&resolved_auth.policy_root);
     values.extend_from_slice(&resolved_auth.intent_digest);
@@ -4436,6 +4628,15 @@ fn bridge_auth_next_permutation(chunk: usize) -> usize {
         + SMALLWOOD_AUTH_INTENT_PERMUTATIONS
         + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
         + SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS
+        + chunk
+}
+
+#[inline]
+fn bridge_auth_value_lock_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base()
+        + SMALLWOOD_AUTH_INTENT_PERMUTATIONS
+        + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
+        + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2)
         + chunk
 }
 
@@ -4550,6 +4751,14 @@ fn poseidon_subtrace_rows_with_auth(
         &smallwood_accumulator_inputs(&next_accumulator)?,
     );
     traces.extend(next_auth_traces);
+    let (_, value_lock_traces) = trace_sponge_hash(
+        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG,
+        &smallwood_value_lock_inputs(
+            &auth.accumulator.policy_root,
+            &auth.accumulator.intent_digest,
+        )?,
+    );
+    traces.extend(value_lock_traces);
 
     debug_assert_eq!(traces.len(), smallwood_poseidon_permutation_count());
     let _ = prf_hash;
@@ -5565,6 +5774,11 @@ mod tests {
             .expect("placeholder final context");
         auth.accumulator.intent_digest =
             auth_digest_bytes(smallwood_statement_digest(&context.public_values));
+        witness.inputs[0].note.pk_auth = smallwood_value_lock_auth_key_bytes(
+            &auth.accumulator.policy_root,
+            &auth.accumulator.intent_digest,
+        )
+        .expect("value-lock key");
         witness.inputs[1].note.pk_auth =
             smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("final key");
         rebuild_two_input_tree(&mut witness);
@@ -5679,6 +5893,15 @@ mod tests {
         let (witness, auth) = final_fixture(2, 2);
         let material = auth_material(&witness, &auth);
         assert_auth_material_accepts(&material);
+    }
+
+    #[test]
+    fn universal_auth_final_rejects_single_key_value_input() {
+        let (mut witness, auth) = final_fixture(2, 2);
+        witness.inputs[0].note.pk_auth = spend_auth_key_bytes(&witness.sk_spend);
+        rebuild_two_input_tree(&mut witness);
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(&material, "final value input must use value-lock auth key");
     }
 
     #[test]

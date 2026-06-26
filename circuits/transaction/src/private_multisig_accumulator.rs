@@ -60,6 +60,7 @@ pub struct ApprovalStep {
 pub struct ValueNote {
     pub account_digest: Digest,
     pub note_commitment: Digest,
+    pub value_lock_digest: Digest,
     pub public_nullifier: Digest,
 }
 
@@ -188,6 +189,14 @@ pub fn policy_well_formed(policy: &PolicyWitness) -> bool {
             )
 }
 
+pub fn value_lock_digest(policy_root: Digest, intent_digest: Digest) -> Digest {
+    (policy_root * 163 + intent_digest * 167 + 31) % DIGEST_MODULUS
+}
+
+pub fn value_note_locked_to_intent(note: &ValueNote, intent: &SpendIntent) -> bool {
+    note.value_lock_digest == value_lock_digest(intent.policy_root, intent.intent_digest)
+}
+
 pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
     accumulator_matches_intent(&step.prior_accumulator, &step.intent)
         && !step
@@ -215,6 +224,7 @@ pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
 pub fn final_spend_accepted(spend: &FinalSpend) -> bool {
     policy_well_formed(&spend.policy)
         && spend.value_note.account_digest == spend.intent.account_digest
+        && value_note_locked_to_intent(&spend.value_note, &spend.intent)
         && accumulator_matches_policy(&spend.accumulator, &spend.policy)
         && accumulator_matches_intent(&spend.accumulator, &spend.intent)
         && spend.accumulator.state_digest == accumulator_state_digest(&spend.accumulator)
@@ -386,6 +396,7 @@ mod tests {
             "approval_nullifiers",
             "signer_tags",
             "spend_derived_signer_tag",
+            "value_lock_digest",
         ] {
             assert!(
                 vectors.private_fields.iter().any(|actual| actual == field),
@@ -407,6 +418,7 @@ mod tests {
             "below-threshold-final-rejected",
             "exact-threshold-final-accepted",
             "final-intent-mismatch-rejected",
+            "final-value-lock-mismatch-rejected",
             "zero-threshold-final-rejected",
             "duplicate-signer-policy-final-rejected",
         ];

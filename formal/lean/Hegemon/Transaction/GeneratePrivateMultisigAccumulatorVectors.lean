@@ -52,6 +52,7 @@ def valueNoteJson (note : ValueNote) : String :=
   "{"
     ++ "\"account_digest\": " ++ toString note.accountDigest ++ ", "
     ++ "\"note_commitment\": " ++ toString note.noteCommitment ++ ", "
+    ++ "\"value_lock_digest\": " ++ toString note.valueLockDigest ++ ", "
     ++ "\"public_nullifier\": " ++ toString note.publicNullifier
     ++ "}"
 
@@ -101,7 +102,8 @@ def vectorJson : String :=
     ++ "  \"private_fields\": ["
     ++ "\"signer_set_root\", \"threshold\", \"approval_count\", "
     ++ "\"approval_leaves\", \"policy_root\", \"approval_nullifiers\", "
-    ++ "\"signer_tags\", \"spend_derived_signer_tag\""
+    ++ "\"signer_tags\", \"spend_derived_signer_tag\", "
+    ++ "\"value_lock_digest\""
     ++ "],\n"
     ++ "  \"public_shape_fields\": ["
     ++ "\"input_nullifier\", \"output_commitment\", "
@@ -135,6 +137,9 @@ def vectorJson : String :=
     ++ finalCaseJson
       "final-intent-mismatch-rejected"
       finalIntentMismatchSpend ++ ",\n"
+    ++ finalCaseJson
+      "final-value-lock-mismatch-rejected"
+      finalValueLockMismatchSpend ++ ",\n"
     ++ finalCaseJson
       "zero-threshold-final-rejected"
       zeroThresholdFinalSpend ++ ",\n"
