@@ -33,6 +33,8 @@ const AUTH_SCALAR_ROWS: usize = 9;
 const AUTH_THRESHOLD_FLAG_ROWS: usize = 2;
 const AUTH_COUNT_FLAG_ROWS: usize = 3;
 const AUTH_NEXT_COUNT_FLAG_ROWS: usize = 3;
+const AUTH_POLICY_SIGNER_ROWS: usize = 2;
+const AUTH_MEMBERSHIP_FLAG_ROWS: usize = 2;
 const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_INPUT_PRF_ROWS
     + AUTH_INPUT_KEY_ROWS
@@ -45,14 +47,17 @@ const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_SCALAR_ROWS
     + AUTH_THRESHOLD_FLAG_ROWS
     + AUTH_COUNT_FLAG_ROWS
-    + AUTH_NEXT_COUNT_FLAG_ROWS;
+    + AUTH_NEXT_COUNT_FLAG_ROWS
+    + AUTH_POLICY_SIGNER_ROWS
+    + AUTH_MEMBERSHIP_FLAG_ROWS;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
 const AUTH_INTENT_PERMUTATIONS: usize = PUBLIC_VALUE_COUNT.div_ceil(6);
 const AUTH_ACCUMULATOR_INPUTS: usize = HASH_LIMBS * 2 + 4;
 const AUTH_ACCUMULATOR_PERMUTATIONS: usize = AUTH_ACCUMULATOR_INPUTS.div_ceil(6);
+const AUTH_POLICY_PERMUTATIONS: usize = 1;
 const AUTH_POSEIDON_PERMUTATIONS: usize =
-    AUTH_INTENT_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS * 2;
+    AUTH_INTENT_PERMUTATIONS + AUTH_POLICY_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS * 2;
 const POSEIDON_PERMUTATION_COUNT: usize = 1
     + MAX_INPUTS * INPUT_PERMUTATIONS
     + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
@@ -848,6 +853,27 @@ fn row_auth_next_count_flag(statement: &PackedStatement<'_>, flag: usize) -> usi
         + flag
 }
 
+#[inline]
+fn row_auth_policy_signer(statement: &PackedStatement<'_>, signer: usize) -> usize {
+    row_auth_threshold(statement)
+        + AUTH_SCALAR_ROWS
+        + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_COUNT_FLAG_ROWS
+        + AUTH_NEXT_COUNT_FLAG_ROWS
+        + signer
+}
+
+#[inline]
+fn row_auth_membership_flag(statement: &PackedStatement<'_>, flag: usize) -> usize {
+    row_auth_threshold(statement)
+        + AUTH_SCALAR_ROWS
+        + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_COUNT_FLAG_ROWS
+        + AUTH_NEXT_COUNT_FLAG_ROWS
+        + AUTH_POLICY_SIGNER_ROWS
+        + flag
+}
+
 #[allow(dead_code)]
 #[inline]
 fn bridge_prf_permutation() -> usize {
@@ -887,14 +913,20 @@ fn bridge_auth_intent_permutation(chunk: usize) -> usize {
 }
 
 #[inline]
-fn bridge_auth_current_permutation(chunk: usize) -> usize {
+fn bridge_auth_policy_permutation(chunk: usize) -> usize {
     bridge_auth_permutation_base() + AUTH_INTENT_PERMUTATIONS + chunk
+}
+
+#[inline]
+fn bridge_auth_current_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base() + AUTH_INTENT_PERMUTATIONS + AUTH_POLICY_PERMUTATIONS + chunk
 }
 
 #[inline]
 fn bridge_auth_next_permutation(chunk: usize) -> usize {
     bridge_auth_permutation_base()
         + AUTH_INTENT_PERMUTATIONS
+        + AUTH_POLICY_PERMUTATIONS
         + AUTH_ACCUMULATOR_PERMUTATIONS
         + chunk
 }
@@ -1099,7 +1131,7 @@ fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: u
     let output_constraints = MAX_OUTPUTS * (1 + 1);
     let stablecoin_constraints = 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
-    let auth_constraints = 112;
+    let auth_constraints = 125;
     let poseidon_transition =
         poseidon_group_count(packing_factor) * layout.poseidon_transition_count();
     public_bools
@@ -1371,6 +1403,14 @@ fn compute_constraints(
         rows[row_auth_next_count_flag(statement, 1)],
         rows[row_auth_next_count_flag(statement, 2)],
     ];
+    let policy_signers = [
+        rows[row_auth_policy_signer(statement, 0)],
+        rows[row_auth_policy_signer(statement, 1)],
+    ];
+    let membership_flags = [
+        rows[row_auth_membership_flag(statement, 0)],
+        rows[row_auth_membership_flag(statement, 1)],
+    ];
 
     for limb in 0..HASH_LIMBS {
         out[c] = mode_single * rows[row_auth_policy(statement, limb)];
@@ -1396,6 +1436,10 @@ fn compute_constraints(
         next_count_flags[0],
         next_count_flags[1],
         next_count_flags[2],
+        policy_signers[0],
+        policy_signers[1],
+        membership_flags[0],
+        membership_flags[1],
     ] {
         out[c] = mode_single * value;
         c += 1;
@@ -1431,9 +1475,19 @@ fn compute_constraints(
             out[c] = rows[row_auth_next_digest(statement, limb)]
                 - rows[poseidon_group_row(statement, next_group, layout.poseidon_last_row(), limb)];
             c += 1;
+            let policy_group = bridge_auth_policy_permutation(AUTH_POLICY_PERMUTATIONS - 1);
+            out[c] = non_single
+                * (rows[row_auth_policy(statement, limb)]
+                    - rows[poseidon_group_row(
+                        statement,
+                        policy_group,
+                        layout.poseidon_last_row(),
+                        limb,
+                    )]);
+            c += 1;
         }
     } else {
-        for _ in 0..(5 + HASH_LIMBS * 3) {
+        for _ in 0..(5 + HASH_LIMBS * 4) {
             out[c] = Felt::ZERO;
             c += 1;
         }
@@ -1509,6 +1563,16 @@ fn compute_constraints(
     c += 1;
     out[c] = mode_approval * count_flags[1] * ((signer - slot0) * duplicate_inverse - Felt::ONE);
     c += 1;
+    for bit in membership_flags {
+        out[c] = mode_approval * felt_bool_v(bit);
+        c += 1;
+    }
+    out[c] = mode_approval * (membership_flags[0] + membership_flags[1] - Felt::ONE);
+    c += 1;
+    out[c] = mode_approval * membership_flags[0] * (signer - policy_signers[0]);
+    c += 1;
+    out[c] = mode_approval * membership_flags[1] * (signer - policy_signers[1]);
+    c += 1;
 
     out[c] = mode_final
         * (threshold_flags[0] * count_flags[0]
@@ -1536,7 +1600,11 @@ fn compute_constraints(
     c += 1;
     out[c] = mode_final * next_count_flags[2];
     c += 1;
-    while c < auth_start + 112 {
+    out[c] = mode_final * membership_flags[0];
+    c += 1;
+    out[c] = mode_final * membership_flags[1];
+    c += 1;
+    while c < auth_start + 125 {
         out[c] = Felt::ZERO;
         c += 1;
     }

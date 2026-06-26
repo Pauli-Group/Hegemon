@@ -19,6 +19,7 @@ structure PolicyWitness where
   policyRoot : Digest
   threshold : Nat
   signerSetRoot : Digest
+  signerTags : List Digest
 deriving DecidableEq, Repr
 
 structure AccumulatorNote where
@@ -84,6 +85,11 @@ theorem accumulatorEq_true_eq {left right : AccumulatorNote} :
 def digestIn (needle : Digest) : List Digest -> Bool
   | [] => false
   | item :: rest => natEq needle item || digestIn needle rest
+
+def signerInPolicy
+    (capability : SignerCapabilityNote)
+    (policy : PolicyWitness) : Bool :=
+  digestIn capability.signerTag policy.signerTags
 
 def approvalLeafDigest
     (intent : SpendIntent)
@@ -154,6 +160,7 @@ def approvalStepAccepted (step : ApprovalStep) : Bool :=
   approvalStepExactIntentAndOneShot step
     && accumulatorMatchesPolicy step.priorAccumulator step.policy
     && natEq step.signerCapability.policyRoot step.policy.policyRoot
+    && signerInPolicy step.signerCapability step.policy
 
 def finalSpendAccepted (spend : FinalSpend) : Bool :=
   natEq spend.valueNote.accountDigest spend.intent.accountDigest
@@ -179,7 +186,8 @@ def basePolicy : PolicyWitness :=
   { accountDigest := 101,
     policyRoot := 202,
     threshold := 2,
-    signerSetRoot := 303 }
+    signerSetRoot := 303,
+    signerTags := [501, 502] }
 
 def baseIntent : SpendIntent :=
   { accountDigest := 101,
@@ -215,6 +223,12 @@ def signerCapabilityB : SignerCapabilityNote :=
     signerNullifier := 602,
     capabilitySecretCommitment := 702 }
 
+def signerCapabilityOutsidePolicy : SignerCapabilityNote :=
+  { policyRoot := basePolicy.policyRoot,
+    signerTag := 777,
+    signerNullifier := 677,
+    capabilitySecretCommitment := 707 }
+
 def oneApprovalAccumulator : AccumulatorNote :=
   nextAccumulatorForApproval emptyAccumulator signerCapabilityA
 
@@ -239,6 +253,14 @@ def wrongIntentStep : ApprovalStep :=
 
 def wrongPolicyStep : ApprovalStep :=
   { validApprovalStep with policy := otherPolicy }
+
+def outsidePolicySignerStep : ApprovalStep :=
+  { validApprovalStep with
+    signerCapability := signerCapabilityOutsidePolicy,
+    nextAccumulator :=
+      nextAccumulatorForApproval
+        oneApprovalAccumulator
+        signerCapabilityOutsidePolicy }
 
 def baseValueNote : ValueNote :=
   { accountDigest := baseIntent.accountDigest,
@@ -296,6 +318,10 @@ theorem wrong_policy_rejected :
     approvalStepAccepted wrongPolicyStep = false := by
   decide
 
+theorem outside_policy_signer_rejected :
+    approvalStepAccepted outsidePolicySignerStep = false := by
+  decide
+
 theorem below_threshold_final_rejected :
     finalSpendAccepted belowThresholdFinalSpend = false := by
   decide
@@ -321,7 +347,11 @@ theorem public_shape_hides_policy_and_accumulator_private_fields :
     publicShapeFromFinalSpend exactThresholdFinalSpend =
       publicShapeFromFinalSpend
         { exactThresholdFinalSpend with
-          policy := { basePolicy with threshold := 9, signerSetRoot := 12345 },
+          policy := {
+            basePolicy with
+            threshold := 9,
+            signerSetRoot := 12345,
+            signerTags := [9, 8, 7] },
           accumulator :=
             { twoApprovalAccumulator with
               approvalCount := 9,

@@ -24,6 +24,7 @@ pub struct PolicyWitness {
     pub policy_root: Digest,
     pub threshold: u64,
     pub signer_set_root: Digest,
+    pub signer_tags: Vec<Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +145,10 @@ pub fn accumulator_matches_policy(accumulator: &AccumulatorNote, policy: &Policy
         && accumulator.policy_root == policy.policy_root
 }
 
+pub fn signer_in_policy(capability: &SignerCapabilityNote, policy: &PolicyWitness) -> bool {
+    policy.signer_tags.contains(&capability.signer_tag)
+}
+
 pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
     accumulator_matches_intent(&step.prior_accumulator, &step.intent)
         && !step
@@ -163,6 +168,7 @@ pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
     approval_step_exact_intent_and_one_shot(step)
         && accumulator_matches_policy(&step.prior_accumulator, &step.policy)
         && step.signer_capability.policy_root == step.policy.policy_root
+        && signer_in_policy(&step.signer_capability, &step.policy)
 }
 
 pub fn final_spend_accepted(spend: &FinalSpend) -> bool {
@@ -331,6 +337,7 @@ mod tests {
             "approval_leaves",
             "policy_root",
             "approval_nullifiers",
+            "signer_tags",
         ] {
             assert!(
                 vectors.private_fields.iter().any(|actual| actual == field),
@@ -343,6 +350,7 @@ mod tests {
             "duplicate-signer-rejected",
             "wrong-intent-rejected",
             "wrong-policy-rejected",
+            "outside-policy-signer-rejected",
             "below-threshold-final-rejected",
             "exact-threshold-final-accepted",
             "final-intent-mismatch-rejected",

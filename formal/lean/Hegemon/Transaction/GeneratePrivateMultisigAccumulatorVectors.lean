@@ -22,7 +22,8 @@ def policyJson (policy : PolicyWitness) : String :=
     ++ "\"account_digest\": " ++ toString policy.accountDigest ++ ", "
     ++ "\"policy_root\": " ++ toString policy.policyRoot ++ ", "
     ++ "\"threshold\": " ++ toString policy.threshold ++ ", "
-    ++ "\"signer_set_root\": " ++ toString policy.signerSetRoot
+    ++ "\"signer_set_root\": " ++ toString policy.signerSetRoot ++ ", "
+    ++ "\"signer_tags\": " ++ natListJson policy.signerTags
     ++ "}"
 
 def accumulatorJson (accumulator : AccumulatorNote) : String :=
@@ -97,7 +98,8 @@ def vectorJson : String :=
     ++ "\"stateful_shielded_accumulator_no_signatures_no_mpc\",\n"
     ++ "  \"private_fields\": ["
     ++ "\"signer_set_root\", \"threshold\", \"approval_count\", "
-    ++ "\"approval_leaves\", \"policy_root\", \"approval_nullifiers\""
+    ++ "\"approval_leaves\", \"policy_root\", \"approval_nullifiers\", "
+    ++ "\"signer_tags\""
     ++ "],\n"
     ++ "  \"public_shape_fields\": ["
     ++ "\"input_nullifier\", \"output_commitment\", "
@@ -109,6 +111,8 @@ def vectorJson : String :=
     ++ ",\n"
     ++ approvalCaseJson "wrong-intent-rejected" wrongIntentStep ++ ",\n"
     ++ approvalCaseJson "wrong-policy-rejected" wrongPolicyStep ++ ",\n"
+    ++ approvalCaseJson "outside-policy-signer-rejected"
+      outsidePolicySignerStep ++ ",\n"
     ++ finalCaseJson
       "below-threshold-final-rejected"
       belowThresholdFinalSpend ++ ",\n"
