@@ -307,10 +307,8 @@ struct DisclosureVerifyResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MultisigAccountCreateParams {
-    threshold: u16,
-    signer_commitments: Vec<String>,
-    #[serde(default = "default_true")]
-    include_local_signer: bool,
+    threshold: u64,
+    policy_signers: [u64; 2],
 }
 
 #[derive(Serialize)]
@@ -371,10 +369,6 @@ struct MultisigIntentRecipientParams {
     asset_id: u64,
     #[serde(default)]
     memo: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn main() -> Result<()> {
@@ -879,17 +873,8 @@ fn multisig_account_create(
             "watch-only wallets cannot create multisig accounts",
         ));
     }
-    let signer_commitments = params
-        .signer_commitments
-        .iter()
-        .map(|value| parse_param_hex_48(value))
-        .collect::<WalletdResult<Vec<_>>>()?;
     let public = store
-        .create_multisig_account(
-            params.threshold,
-            signer_commitments,
-            params.include_local_signer,
-        )
+        .create_multisig_account(params.threshold, params.policy_signers)
         .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
     Ok(render_multisig_account(&public))
 }
@@ -2218,14 +2203,13 @@ mod tests {
                 method: "multisig.accountCreate".to_string(),
                 params: json!({
                     "threshold": 1,
-                    "signerCommitments": [],
-                    "includeLocalSigner": true
+                    "policySigners": [11, 17]
                 }),
             },
         );
         assert!(response.ok, "{:?}", response.error);
         let result = response.result.unwrap();
-        assert_eq!(result["circuitHooksAvailable"], false);
+        assert_eq!(result["circuitHooksAvailable"], true);
         let json = serde_json::to_string(&result).unwrap();
         assert!(!json.contains("threshold"));
         assert!(!json.contains("signer"));
@@ -2250,8 +2234,7 @@ mod tests {
                 method: "multisig.accountCreate".to_string(),
                 params: json!({
                     "threshold": 1,
-                    "signerCommitments": [],
-                    "includeLocalSigner": true
+                    "policySigners": [11, 17]
                 }),
             },
         );
@@ -2287,7 +2270,7 @@ mod tests {
         assert!(response
             .error
             .unwrap()
-            .contains("multisig approval circuit integration missing"));
+            .contains("opaque multisig approval packages are unsupported"));
         assert!(matches!(
             response.error_code,
             Some(WalletdErrorCode::ProofInvalid)

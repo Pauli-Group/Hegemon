@@ -16,7 +16,7 @@ use crate::{
     constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
     error::TransactionCircuitError,
     hashing_pq::{
-        bytes48_to_felts, merkle_node, note_commitment_inputs,
+        bytes48_to_felts, felts_to_bytes48, merkle_node, note_commitment_inputs,
         nullifier_inputs as core_nullifier_inputs, prf_key, spend_auth_key, Felt, HashFelt,
     },
     note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
@@ -2548,6 +2548,22 @@ fn smallwood_public_inputs_with_auth(
         witness.stablecoin.clone(),
         witness.version,
     )
+}
+
+pub fn smallwood_private_auth_intent_digest_bytes(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    witness.validate()?;
+    let public_inputs = smallwood_public_inputs_with_auth(witness, auth)?;
+    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
+    let public_values =
+        smallwood_public_statement_values_for_p3(&public_inputs_p3, witness.version);
+    Ok(felts_to_bytes48(&smallwood_statement_digest(
+        &public_values,
+    )))
 }
 
 pub fn smallwood_public_statement_values_for_p3(

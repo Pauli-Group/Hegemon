@@ -49,6 +49,12 @@ The daemon repeats that loop continuously (subscriptions or polling), while `wal
 
 `wallet node-send` consumes a JSON document that lists recipients (address/value/asset/memo). The command selects local notes, computes fees/change, proves the transaction with the `transaction_circuit`, encrypts the note plaintexts, and submits it to the node. Pending nullifiers are cached inside the store so the daemon can mark them as mined once the node reports them in the nullifier set. `wallet node-send` also records outgoing note openings so `wallet payment-proof create` can emit disclosure packages later. Use `wallet status` at any time to view balances and pending transaction confirmations.
 
+### Private multisig builders
+
+The wallet library exposes proof-backed private multisig setup, approval, and final-spend builders for the current SmallWood scope: exactly two hidden signer ids and threshold `1` or `2`. Setup consumes a normal spendable native funding note, pays an explicit fee, creates the initial zero-value accumulator/control note, and returns native change when it fits the two-output shape. The builders return the same `TransactionBundle` shape used by ordinary shielded payments, so the chain still sees only nullifiers, commitments, ciphertext hashes, balance tags, and proof artifacts. Public signer lists, signatures, policy roots, approval counts, and authorization packages are not transaction fields.
+
+Accumulator/control notes use SmallWood authorization keys instead of the wallet's ordinary spend-auth key. Because generic note decryption cannot recover arbitrary `pk_auth` values, the wallet stores local accumulator openings in the encrypted store and reconciles them during sync only when the stored opening recomputes an exact chain commitment already present in the verified wallet commitment list.
+
 Stablecoin mint/burn commands (`wallet stablecoin-mint`, `wallet stablecoin-burn`) fetch the active `StablecoinPolicy` plus the latest oracle and attestation commitments over native node RPC, build the binding required by the circuit, and submit it through the Hegemon shielded RPC. Issuance failures surface early if the policy is inactive, the oracle commitment is stale, or the attestation is disputed.
 
 When a counterparty requests a targeted receipt, run `wallet payment-proof create` against the stored transaction hash/output index. Verifiers run `wallet payment-proof verify` to check the STARK proof, Merkle inclusion, anchor validity, and genesis hash before crediting.

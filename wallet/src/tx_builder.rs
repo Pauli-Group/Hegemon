@@ -7,18 +7,28 @@ use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS, NATIVE_ASSET_ID};
 use transaction_circuit::hashing_pq::{
     bytes48_to_felts, ciphertext_hash_bytes, felts_to_bytes48, merkle_node,
 };
-use transaction_circuit::note::OutputNoteWitness;
+use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness};
 use transaction_circuit::witness::TransactionWitness;
-use transaction_circuit::SmallwoodPrivateAuthWitness;
 use transaction_circuit::StablecoinPolicyBinding;
+use transaction_circuit::{
+    smallwood_accumulator_auth_key_bytes, smallwood_private_auth_intent_digest_bytes,
+    SmallwoodAccumulatorAuthOpening, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
+};
 
 use crate::address::ShieldedAddress;
 use crate::error::WalletError;
+use crate::multisig::{
+    approval_duplicate_tag, next_accumulator_after_approval, MultisigAccountRecord,
+};
 #[cfg(feature = "rpc-client")]
 use crate::node_rpc::NodeRpcClient;
 use crate::notes::{MemoPlaintext, NoteCiphertext, NotePlaintext};
 use crate::rpc::TransactionBundle;
-use crate::store::{OutgoingDisclosureDraft, SpendableNote, WalletMode, WalletStore};
+use crate::store::{
+    LocalMultisigAccumulatorOpening, OutgoingDisclosureDraft, SpendableNote, WalletMode,
+    WalletStore,
+};
+use crate::viewing::RecoveredNote;
 
 pub struct Recipient {
     pub address: ShieldedAddress,
@@ -27,11 +37,23 @@ pub struct Recipient {
     pub memo: MemoPlaintext,
 }
 
+#[derive(Debug)]
 pub struct BuiltTransaction {
     pub bundle: TransactionBundle,
     pub nullifiers: Vec<[u8; 48]>,
     pub spent_note_indexes: Vec<usize>,
     pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
+}
+
+#[derive(Debug)]
+pub struct PreparedMultisigFinalPlan {
+    pub intent_digest: [u8; 48],
+    pub value_note_commitment: [u8; 48],
+    pub fee: u64,
+    outputs: Vec<OutputNoteWitness>,
+    ciphertexts: Vec<NoteCiphertext>,
+    ciphertext_hashes: Vec<[u8; 48]>,
+    outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 }
 
 #[derive(Debug)]
@@ -335,6 +357,442 @@ pub fn build_transaction_with_binding(
         spent_note_indexes: spent_indexes,
         outgoing_disclosures,
     })
+}
+
+pub fn build_multisig_initial_accumulator_transaction(
+    store: &WalletStore,
+    record: &MultisigAccountRecord,
+    intent_digest: [u8; 48],
+    funding_note_commitment: [u8; 48],
+    fee: u64,
+) -> Result<BuiltTransaction, WalletError> {
+    if store.mode()? == WalletMode::WatchOnly {
+        return Err(WalletError::WatchOnly);
+    }
+    if fee == 0 {
+        return Err(WalletError::InvalidArgument(
+            "multisig setup fee must be greater than zero",
+        ));
+    }
+    let derived = store
+        .derived_keys()?
+        .ok_or(WalletError::InvalidState("missing derived keys"))?;
+    let funding_note = store
+        .spendable_note_by_commitment(&funding_note_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "multisig setup funding note is not spendable",
+        ))?;
+    if funding_note.asset_id() != NATIVE_ASSET_ID {
+        return Err(WalletError::InvalidArgument(
+            "multisig setup funding note must use the native asset",
+        ));
+    }
+    if funding_note.value() < fee {
+        return Err(WalletError::InsufficientFunds {
+            needed: fee,
+            available: funding_note.value(),
+        });
+    }
+    let opening = SmallwoodAccumulatorAuthOpening {
+        policy_root: record.policy_root,
+        intent_digest,
+        threshold: record.threshold,
+        approval_count: 0,
+        signer_slots: [0, 0],
+    };
+    let mut rng = OsRng;
+    let (output, ciphertext, recovered, commitment) =
+        build_accumulator_output(store, record, &opening, &mut rng)?;
+    let mut outputs = vec![output];
+    let mut ciphertexts = vec![ciphertext];
+    let mut outgoing_disclosures = Vec::new();
+    let change = funding_note.value().saturating_sub(fee);
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        change,
+        NATIVE_ASSET_ID,
+        "multisig setup change would exceed output limit",
+        &mut rng,
+    )?;
+    let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
+    let tree = store.commitment_tree()?;
+    let witness = TransactionWitness {
+        inputs: vec![checked_input_witness(store, &tree, &funding_note)?],
+        outputs,
+        ciphertext_hashes: ciphertext_hashes.clone(),
+        sk_spend: derived.spend.to_bytes(),
+        merkle_root: tree.root(),
+        fee,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let built = built_transaction_from_witness(
+        &witness,
+        &SmallwoodPrivateAuthWitness::default(),
+        &ciphertexts,
+        vec![funding_note.index],
+        outgoing_disclosures,
+    )?;
+    store.record_local_note_opening_with_multisig(
+        recovered,
+        Some(local_accumulator_metadata(record, &opening)),
+    )?;
+    debug_assert_eq!(built.bundle.commitments.first().copied(), Some(commitment));
+    Ok(built)
+}
+
+pub fn build_multisig_approval_transaction(
+    store: &WalletStore,
+    record: &MultisigAccountRecord,
+    current_accumulator_commitment: [u8; 48],
+    signer_note_commitment: [u8; 48],
+    fee: u64,
+) -> Result<BuiltTransaction, WalletError> {
+    if store.mode()? == WalletMode::WatchOnly {
+        return Err(WalletError::WatchOnly);
+    }
+    let derived = store
+        .derived_keys()?
+        .ok_or(WalletError::InvalidState("missing derived keys"))?;
+    let current_note = store
+        .spendable_note_by_commitment(&current_accumulator_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "current multisig accumulator note is not spendable",
+        ))?;
+    let signer_note = store
+        .spendable_note_by_commitment(&signer_note_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "multisig signer value note is not spendable",
+        ))?;
+    if current_note.index == signer_note.index {
+        return Err(WalletError::InvalidArgument(
+            "multisig approval requires distinct accumulator and signer notes",
+        ));
+    }
+    if signer_note.value() == 0 || signer_note.value() < fee {
+        return Err(WalletError::InsufficientFunds {
+            needed: fee.max(1),
+            available: signer_note.value(),
+        });
+    }
+
+    let current_local = store
+        .local_note_opening_by_commitment(&current_accumulator_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "missing local multisig accumulator opening",
+        ))?;
+    let current_meta =
+        current_local
+            .multisig_accumulator
+            .as_ref()
+            .ok_or(WalletError::InvalidArgument(
+                "local note opening is not a multisig accumulator",
+            ))?;
+    ensure_accumulator_matches_record(record, current_meta)?;
+    if current_meta.approval_count >= record.threshold {
+        return Err(WalletError::InvalidArgument(
+            "multisig accumulator already satisfies threshold",
+        ));
+    }
+    let current_opening = current_meta.to_smallwood();
+    ensure_accumulator_note_auth(&current_note, &current_opening)?;
+
+    let signer_id = store.local_multisig_signer_id()?;
+    if !record.policy_signers.contains(&signer_id) {
+        return Err(WalletError::InvalidArgument(
+            "local signer is not in hidden multisig policy",
+        ));
+    }
+    let duplicate_tag = approval_duplicate_tag(
+        &record.public.account_id,
+        &current_opening.intent_digest,
+        signer_id,
+    );
+    let (next_opening, duplicate_inverse) =
+        next_accumulator_after_approval(&current_opening, signer_id)?;
+    let mut rng = OsRng;
+    let (next_output, next_ciphertext, next_recovered, _next_commitment) =
+        build_accumulator_output(store, record, &next_opening, &mut rng)?;
+    let mut outputs = vec![next_output];
+    let mut ciphertexts = vec![next_ciphertext];
+    let mut outgoing_disclosures = Vec::new();
+    let signer_change = signer_note.value().saturating_sub(fee);
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        signer_change,
+        signer_note.asset_id(),
+        "multisig approval change would exceed output limit",
+        &mut rng,
+    )?;
+
+    let tree = store.commitment_tree()?;
+    let inputs = vec![
+        checked_input_witness(store, &tree, &current_note)?,
+        checked_input_witness(store, &tree, &signer_note)?,
+    ];
+    let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
+    let witness = TransactionWitness {
+        inputs,
+        outputs,
+        ciphertext_hashes,
+        sk_spend: derived.spend.to_bytes(),
+        merkle_root: tree.root(),
+        fee,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let auth = SmallwoodPrivateAuthWitness {
+        mode: SmallwoodPrivateAuthMode::ApprovalStep,
+        accumulator: current_opening,
+        next_accumulator: next_opening.clone(),
+        policy_signers: record.policy_signers,
+        signer_id,
+        duplicate_inverse,
+    };
+    let built = built_transaction_from_witness(
+        &witness,
+        &auth,
+        &ciphertexts,
+        vec![current_note.index, signer_note.index],
+        outgoing_disclosures,
+    )?;
+    store.record_local_note_opening_with_multisig(
+        next_recovered,
+        Some(local_accumulator_metadata(record, &next_opening)),
+    )?;
+    let _ = duplicate_tag;
+    Ok(built)
+}
+
+pub fn prepare_multisig_final_plan(
+    store: &WalletStore,
+    record: &MultisigAccountRecord,
+    value_note_commitment: [u8; 48],
+    recipients: &[Recipient],
+    fee: u64,
+) -> Result<PreparedMultisigFinalPlan, WalletError> {
+    if store.mode()? == WalletMode::WatchOnly {
+        return Err(WalletError::WatchOnly);
+    }
+    if recipients.is_empty() {
+        return Err(WalletError::InvalidArgument("at least one recipient"));
+    }
+    if recipients.len() > 1 {
+        return Err(WalletError::InvalidArgument(
+            "multisig final spend supports a single recipient",
+        ));
+    }
+    let value_note = store
+        .spendable_note_by_commitment(&value_note_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "multisig value note is not spendable",
+        ))?;
+    let recipient = &recipients[0];
+    if recipient.value == 0 {
+        return Err(WalletError::InvalidArgument(
+            "recipient value must be greater than zero",
+        ));
+    }
+    if recipient.asset_id != value_note.asset_id() {
+        return Err(WalletError::InvalidArgument(
+            "multisig final recipient asset mismatch",
+        ));
+    }
+    let required = if value_note.asset_id() == NATIVE_ASSET_ID {
+        recipient
+            .value
+            .checked_add(fee)
+            .ok_or(WalletError::InvalidArgument("fee overflow"))?
+    } else {
+        if fee != 0 {
+            return Err(WalletError::InvalidArgument(
+                "non-native multisig final spend cannot pay a native fee in the proven two-input shape",
+            ));
+        }
+        recipient.value
+    };
+    if value_note.value() < required {
+        return Err(WalletError::InsufficientFunds {
+            needed: required,
+            available: value_note.value(),
+        });
+    }
+
+    let mut rng = OsRng;
+    let (recipient_output, recipient_ciphertext, recipient_note) =
+        build_output(recipient, &mut rng)?;
+    let mut outputs = vec![recipient_output];
+    let mut ciphertexts = vec![recipient_ciphertext];
+    let recipient_address = recipient.address.encode()?;
+    let memo = if recipient_note.memo.as_bytes().is_empty() {
+        None
+    } else {
+        Some(recipient_note.memo.clone())
+    };
+    let mut outgoing_disclosures = vec![OutgoingDisclosureDraft {
+        output_index: 0,
+        recipient_address,
+        note: outputs[0].note.clone(),
+        commitment: felts_to_bytes48(&outputs[0].note.commitment()),
+        memo,
+    }];
+    let change = value_note.value().saturating_sub(required);
+    append_change_output(
+        store,
+        &mut outputs,
+        &mut ciphertexts,
+        &mut outgoing_disclosures,
+        change,
+        value_note.asset_id(),
+        "multisig final change would exceed output limit",
+        &mut rng,
+    )?;
+    let ciphertext_hashes = ciphertext_hashes(&ciphertexts)?;
+
+    let dummy_accumulator = SmallwoodAccumulatorAuthOpening {
+        policy_root: record.policy_root,
+        intent_digest: [0u8; 48],
+        threshold: record.threshold,
+        approval_count: record.threshold,
+        signer_slots: threshold_signer_slots(record),
+    };
+    let dummy_acc_note = dummy_accumulator_input(&dummy_accumulator)?;
+    let mut value_input = value_note.recovered.to_input_witness(value_note.position);
+    value_input.merkle_path = Default::default();
+    let witness = TransactionWitness {
+        inputs: vec![value_input, dummy_acc_note],
+        outputs: outputs.clone(),
+        ciphertext_hashes: ciphertext_hashes.clone(),
+        sk_spend: store
+            .derived_keys()?
+            .ok_or(WalletError::InvalidState("missing derived keys"))?
+            .spend
+            .to_bytes(),
+        merkle_root: store.commitment_tree()?.root(),
+        fee,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let auth = SmallwoodPrivateAuthWitness {
+        mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
+        accumulator: dummy_accumulator,
+        next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
+        policy_signers: record.policy_signers,
+        signer_id: 0,
+        duplicate_inverse: 0,
+    };
+    let intent_digest = smallwood_private_auth_intent_digest_bytes(&witness, &auth)
+        .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
+    Ok(PreparedMultisigFinalPlan {
+        intent_digest,
+        value_note_commitment,
+        fee,
+        outputs,
+        ciphertexts,
+        ciphertext_hashes,
+        outgoing_disclosures,
+    })
+}
+
+pub fn build_multisig_final_transaction_from_plan(
+    store: &WalletStore,
+    record: &MultisigAccountRecord,
+    plan: &PreparedMultisigFinalPlan,
+    accumulator_commitment: [u8; 48],
+) -> Result<BuiltTransaction, WalletError> {
+    if store.mode()? == WalletMode::WatchOnly {
+        return Err(WalletError::WatchOnly);
+    }
+    let derived = store
+        .derived_keys()?
+        .ok_or(WalletError::InvalidState("missing derived keys"))?;
+    let value_note = store
+        .spendable_note_by_commitment(&plan.value_note_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "multisig value note is not spendable",
+        ))?;
+    let accumulator_note = store
+        .spendable_note_by_commitment(&accumulator_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "threshold multisig accumulator note is not spendable",
+        ))?;
+    if value_note.index == accumulator_note.index {
+        return Err(WalletError::InvalidArgument(
+            "multisig final spend requires distinct value and accumulator notes",
+        ));
+    }
+    let local = store
+        .local_note_opening_by_commitment(&accumulator_commitment)?
+        .ok_or(WalletError::InvalidArgument(
+            "missing local threshold accumulator opening",
+        ))?;
+    let meta = local
+        .multisig_accumulator
+        .as_ref()
+        .ok_or(WalletError::InvalidArgument(
+            "local note opening is not a multisig accumulator",
+        ))?;
+    ensure_accumulator_matches_record(record, meta)?;
+    if meta.intent_digest != plan.intent_digest {
+        return Err(WalletError::InvalidArgument(
+            "multisig final plan digest does not match threshold accumulator",
+        ));
+    }
+    if meta.approval_count < record.threshold {
+        return Err(WalletError::InvalidArgument(
+            "multisig threshold accumulator is incomplete",
+        ));
+    }
+    let accumulator_opening = meta.to_smallwood();
+    ensure_accumulator_note_auth(&accumulator_note, &accumulator_opening)?;
+
+    let tree = store.commitment_tree()?;
+    let inputs = vec![
+        checked_input_witness(store, &tree, &value_note)?,
+        checked_input_witness(store, &tree, &accumulator_note)?,
+    ];
+    let witness = TransactionWitness {
+        inputs,
+        outputs: plan.outputs.clone(),
+        ciphertext_hashes: plan.ciphertext_hashes.clone(),
+        sk_spend: derived.spend.to_bytes(),
+        merkle_root: tree.root(),
+        fee: plan.fee,
+        value_balance: 0,
+        stablecoin: StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let auth = SmallwoodPrivateAuthWitness {
+        mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
+        accumulator: accumulator_opening,
+        next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
+        policy_signers: record.policy_signers,
+        signer_id: 0,
+        duplicate_inverse: 0,
+    };
+    let digest = smallwood_private_auth_intent_digest_bytes(&witness, &auth)
+        .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
+    if digest != plan.intent_digest {
+        return Err(WalletError::InvalidArgument(
+            "multisig final statement digest drifted",
+        ));
+    }
+    built_transaction_from_witness(
+        &witness,
+        &auth,
+        &plan.ciphertexts,
+        vec![value_note.index, accumulator_note.index],
+        plan.outgoing_disclosures.clone(),
+    )
 }
 
 pub fn build_stablecoin_burn(
@@ -726,6 +1184,219 @@ fn to_chain_stablecoin_binding(
             issuance_delta: binding.issuance_delta,
             policy_version: binding.policy_version,
         })
+}
+
+fn built_transaction_from_witness(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+    ciphertexts: &[NoteCiphertext],
+    spent_note_indexes: Vec<usize>,
+    outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
+) -> Result<BuiltTransaction, WalletError> {
+    let submission = submission_proof_material_from_witness_with_auth(witness, auth)?;
+    let binding_hash = compute_binding_hash(
+        &submission.anchor,
+        &submission.nullifiers,
+        &submission.commitments,
+        &witness.ciphertext_hashes,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
+        to_chain_stablecoin_binding(&witness.stablecoin),
+    );
+    let bundle = TransactionBundle::new(
+        submission.proof_bytes,
+        submission.nullifiers.clone(),
+        submission.commitments.clone(),
+        ciphertexts,
+        submission.anchor,
+        binding_hash,
+        submission.balance_slot_asset_ids,
+        submission.fee,
+        submission.value_balance,
+        witness.stablecoin.clone(),
+    )?;
+    Ok(BuiltTransaction {
+        bundle,
+        nullifiers: submission.nullifiers,
+        spent_note_indexes,
+        outgoing_disclosures,
+    })
+}
+
+fn checked_input_witness(
+    store: &WalletStore,
+    tree: &state_merkle::CommitmentTree,
+    note: &SpendableNote,
+) -> Result<InputNoteWitness, WalletError> {
+    let expected_commitment =
+        transaction_circuit::hashing_pq::felts_to_bytes48(&note.recovered.note_data.commitment());
+    match store.find_commitment_index(expected_commitment)? {
+        Some(index) if index == note.position => {}
+        Some(index) => {
+            return Err(WalletError::InvalidState(Box::leak(
+                format!(
+                    "commitment index mismatch: note position {} != commitment index {}",
+                    note.position, index
+                )
+                .into_boxed_str(),
+            )));
+        }
+        None => {
+            return Err(WalletError::InvalidState(
+                "note commitment not found in local commitment list",
+            ));
+        }
+    }
+
+    let auth_path = tree
+        .authentication_path(note.position as usize)
+        .map_err(|e| {
+            WalletError::InvalidState(Box::leak(
+                format!("merkle path error: {e}").into_boxed_str(),
+            ))
+        })?;
+    let wallet_root = tree.root();
+    let mut current = note.recovered.note_data.commitment();
+    let mut pos = note.position;
+    let mut siblings = Vec::with_capacity(auth_path.len());
+    for sibling in auth_path.iter() {
+        let felts = bytes48_to_felts(sibling).ok_or(WalletError::InvalidState(
+            "non-canonical merkle sibling encoding",
+        ))?;
+        siblings.push(felts);
+        let (left, right) = if pos & 1 == 0 {
+            (current, felts)
+        } else {
+            (felts, current)
+        };
+        current = merkle_node(left, right);
+        pos >>= 1;
+    }
+    if felts_to_bytes48(&current) != wallet_root {
+        return Err(WalletError::InvalidState(
+            "merkle path does not match wallet root",
+        ));
+    }
+    let mut input = note.recovered.to_input_witness(note.position);
+    input.merkle_path = transaction_circuit::note::MerklePath { siblings };
+    Ok(input)
+}
+
+fn build_accumulator_output(
+    store: &WalletStore,
+    record: &MultisigAccountRecord,
+    opening: &SmallwoodAccumulatorAuthOpening,
+    rng: &mut OsRng,
+) -> Result<(OutputNoteWitness, NoteCiphertext, RecoveredNote, [u8; 48]), WalletError> {
+    if opening.policy_root != record.policy_root || opening.threshold != record.threshold {
+        return Err(WalletError::InvalidArgument(
+            "multisig accumulator opening does not match account policy",
+        ));
+    }
+    let auth_key = smallwood_accumulator_auth_key_bytes(opening)
+        .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
+    let mut address = store.primary_address()?;
+    address.pk_auth = auth_key;
+    let note = NotePlaintext::random(0, NATIVE_ASSET_ID, MemoPlaintext::default(), rng);
+    let ciphertext = NoteCiphertext::encrypt(&address, &note, rng)?;
+    let note_data = note.to_note_data(address.pk_recipient, auth_key);
+    let commitment = felts_to_bytes48(&note_data.commitment());
+    let recovered = RecoveredNote {
+        diversifier_index: address.diversifier_index,
+        note,
+        note_data: note_data.clone(),
+        address,
+    };
+    Ok((
+        OutputNoteWitness { note: note_data },
+        ciphertext,
+        recovered,
+        commitment,
+    ))
+}
+
+fn ciphertext_hashes(ciphertexts: &[NoteCiphertext]) -> Result<Vec<[u8; 48]>, WalletError> {
+    ciphertexts
+        .iter()
+        .map(|ct| ct.to_da_bytes().map(|bytes| ciphertext_hash_bytes(&bytes)))
+        .collect()
+}
+
+fn local_accumulator_metadata(
+    record: &MultisigAccountRecord,
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> LocalMultisigAccumulatorOpening {
+    LocalMultisigAccumulatorOpening {
+        account_id: record.public.account_id,
+        policy_root: opening.policy_root,
+        intent_digest: opening.intent_digest,
+        threshold: opening.threshold,
+        approval_count: opening.approval_count,
+        signer_slots: opening.signer_slots,
+    }
+}
+
+fn ensure_accumulator_matches_record(
+    record: &MultisigAccountRecord,
+    meta: &LocalMultisigAccumulatorOpening,
+) -> Result<(), WalletError> {
+    if meta.account_id != record.public.account_id
+        || meta.policy_root != record.policy_root
+        || meta.threshold != record.threshold
+    {
+        return Err(WalletError::InvalidArgument(
+            "local multisig accumulator does not match account record",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_accumulator_note_auth(
+    note: &SpendableNote,
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> Result<(), WalletError> {
+    if note.value() != 0 || note.asset_id() != NATIVE_ASSET_ID {
+        return Err(WalletError::InvalidArgument(
+            "multisig accumulator note must be zero-value native asset",
+        ));
+    }
+    let expected = smallwood_accumulator_auth_key_bytes(opening)
+        .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
+    if note.recovered.note_data.pk_auth != expected {
+        return Err(WalletError::InvalidArgument(
+            "multisig accumulator note auth key mismatch",
+        ));
+    }
+    Ok(())
+}
+
+fn threshold_signer_slots(record: &MultisigAccountRecord) -> [u64; 2] {
+    if record.threshold == 1 {
+        [record.policy_signers[0], 0]
+    } else {
+        record.policy_signers
+    }
+}
+
+fn dummy_accumulator_input(
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> Result<InputNoteWitness, WalletError> {
+    let auth_key = smallwood_accumulator_auth_key_bytes(opening)
+        .map_err(|err| WalletError::InvalidState(Box::leak(err.to_string().into_boxed_str())))?;
+    Ok(InputNoteWitness {
+        note: transaction_circuit::note::NoteData {
+            value: 0,
+            asset_id: NATIVE_ASSET_ID,
+            pk_recipient: [0u8; 32],
+            pk_auth: auth_key,
+            rho: [7u8; 32],
+            r: [8u8; 32],
+        },
+        position: 0,
+        rho_seed: [7u8; 32],
+        merkle_path: Default::default(),
+    })
 }
 
 struct Selection {
@@ -1165,6 +1836,146 @@ mod tests {
             .unwrap();
     }
 
+    fn test_multisig_record(store: &WalletStore) -> MultisigAccountRecord {
+        let local_signer = store.local_multisig_signer_id().unwrap();
+        let other_signer = crate::multisig::signer_id_from_spend_key(&[91u8; 32]);
+        let public = store
+            .create_multisig_account(1, [local_signer, other_signer])
+            .unwrap();
+        store
+            .multisig_account_record(&public.account_id)
+            .unwrap()
+            .unwrap()
+    }
+
+    fn apply_built_outputs(store: &WalletStore, built: &BuiltTransaction) {
+        let start = store.next_commitment_index().unwrap();
+        let entries: Vec<_> = built
+            .bundle
+            .commitments
+            .iter()
+            .enumerate()
+            .map(|(idx, commitment)| (start + idx as u64, *commitment))
+            .collect();
+        store.append_commitments(&entries).unwrap();
+        let ciphertexts = built.bundle.decode_notes().unwrap();
+        let fvk = store.full_viewing_key().unwrap().unwrap();
+        let recovered = ciphertexts
+            .iter()
+            .map(|ciphertext| Some(fvk.decrypt_note(ciphertext).unwrap()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            store
+                .apply_ciphertext_batch(store.next_ciphertext_index().unwrap(), recovered)
+                .unwrap(),
+            ciphertexts.len()
+        );
+    }
+
+    #[test]
+    fn multisig_setup_requires_spendable_native_funding_note() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let record = test_multisig_record(&sender);
+        let err = build_multisig_initial_accumulator_transaction(
+            &sender, &record, [3u8; 48], [9u8; 48], 1,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("funding note is not spendable"));
+
+        let mut rng = StdRng::seed_from_u64(912);
+        seed_recovered_note(&sender, 7, 10, 0, &mut rng);
+        let non_native = sender.spendable_notes(7).unwrap();
+        let non_native_commitment =
+            felts_to_bytes48(&non_native[0].recovered.note_data.commitment());
+        let err = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            [3u8; 48],
+            non_native_commitment,
+            1,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("must use the native asset"));
+    }
+
+    #[test]
+    fn multisig_setup_rejects_zero_fee_and_insufficient_funding() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let record = test_multisig_record(&sender);
+        let mut rng = StdRng::seed_from_u64(913);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 2, 0, &mut rng);
+        let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
+        let funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
+
+        let err = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            [4u8; 48],
+            funding_commitment,
+            0,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("fee must be greater than zero"));
+
+        let err = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            [4u8; 48],
+            funding_commitment,
+            3,
+        )
+        .unwrap_err();
+        assert!(matches!(err, WalletError::InsufficientFunds { .. }));
+    }
+
+    #[test]
+    fn multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let record = test_multisig_record(&sender);
+        let mut rng = StdRng::seed_from_u64(914);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 9, 0, &mut rng);
+        let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
+        let funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
+
+        let setup = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            [5u8; 48],
+            funding_commitment,
+            4,
+        )
+        .unwrap();
+        assert_eq!(setup.bundle.fee, 4);
+        assert_eq!(setup.spent_note_indexes.len(), 1);
+        assert!(setup
+            .bundle
+            .nullifiers
+            .iter()
+            .any(|nullifier| nullifier.iter().any(|byte| *byte != 0)));
+        apply_built_outputs(&sender, &setup);
+
+        let accumulator_commitment = setup.bundle.commitments[0];
+        let local = sender
+            .local_note_opening_by_commitment(&accumulator_commitment)
+            .unwrap()
+            .unwrap();
+        assert_eq!(local.commitment, accumulator_commitment);
+        assert_eq!(
+            felts_to_bytes48(&local.note.note_data.commitment()),
+            accumulator_commitment
+        );
+        assert!(sender
+            .spendable_note_by_commitment(&accumulator_commitment)
+            .unwrap()
+            .is_some());
+    }
+
     fn wallet_output_batch_fixture(
         case: &LeanWalletOutputBatchCase,
         private_witness_seed: u64,
@@ -1240,6 +2051,172 @@ mod tests {
             sender,
             recipient,
         }
+    }
+
+    #[test]
+    fn multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
+        let mut rng = StdRng::seed_from_u64(910);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 12, 0, &mut rng);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 25, 1, &mut rng);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 60, 2, &mut rng);
+        let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
+        let setup_funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
+        let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
+        let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
+
+        let local_signer = sender.local_multisig_signer_id().unwrap();
+        let other_signer = crate::multisig::signer_id_from_spend_key(&[77u8; 32]);
+        let public = sender
+            .create_multisig_account(1, [local_signer, other_signer])
+            .unwrap();
+        let record = sender
+            .multisig_account_record(&public.account_id)
+            .unwrap()
+            .unwrap();
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 40,
+            asset_id: NATIVE_ASSET_ID,
+            memo: MemoPlaintext::new(b"private multisig final".to_vec()),
+        };
+        let final_plan =
+            prepare_multisig_final_plan(&sender, &record, value_note_commitment, &[recipient], 0)
+                .unwrap();
+
+        let setup = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            final_plan.intent_digest,
+            setup_funding_commitment,
+            3,
+        )
+        .unwrap();
+        assert_eq!(setup.spent_note_indexes.len(), 1);
+        assert_eq!(setup.bundle.fee, 3);
+        assert!(setup
+            .bundle
+            .nullifiers
+            .iter()
+            .any(|nullifier| nullifier.iter().any(|byte| *byte != 0)));
+        apply_built_outputs(&sender, &setup);
+        let initial_accumulator_commitment = setup.bundle.commitments[0];
+        let initial_tracked = sender
+            .spendable_note_by_commitment(&initial_accumulator_commitment)
+            .unwrap()
+            .unwrap();
+        assert_eq!(initial_tracked.recovered.note_data.pk_auth, {
+            let local = sender
+                .local_note_opening_by_commitment(&initial_accumulator_commitment)
+                .unwrap()
+                .unwrap();
+            local.note.note_data.pk_auth
+        });
+
+        let approval = build_multisig_approval_transaction(
+            &sender,
+            &record,
+            initial_accumulator_commitment,
+            signer_note_commitment,
+            0,
+        )
+        .unwrap();
+        assert_eq!(approval.spent_note_indexes.len(), 2);
+        apply_built_outputs(&sender, &approval);
+        let threshold_accumulator_commitment = approval.bundle.commitments[0];
+        let threshold_local = sender
+            .local_note_opening_by_commitment(&threshold_accumulator_commitment)
+            .unwrap()
+            .unwrap();
+        let threshold_meta = threshold_local.multisig_accumulator.unwrap();
+        assert_eq!(threshold_meta.intent_digest, final_plan.intent_digest);
+        assert_eq!(threshold_meta.approval_count, 1);
+        assert_eq!(threshold_meta.signer_slots, [local_signer, 0]);
+
+        let final_tx = build_multisig_final_transaction_from_plan(
+            &sender,
+            &record,
+            &final_plan,
+            threshold_accumulator_commitment,
+        )
+        .unwrap();
+        assert_eq!(final_tx.spent_note_indexes.len(), 2);
+        assert_eq!(final_tx.bundle.commitments.len(), final_plan.outputs.len());
+        let public_json = serde_json::to_string(&final_tx.bundle).unwrap();
+        assert!(!public_json.contains("policy_signers"));
+        assert!(!public_json.contains("policy_root"));
+        assert!(!public_json.contains("approval_count"));
+        assert!(!public_json.contains("signer_slots"));
+
+        decode_native_tx_leaf_artifact_bytes(&approval.bundle.proof_bytes).unwrap();
+        decode_native_tx_leaf_artifact_bytes(&final_tx.bundle.proof_bytes).unwrap();
+    }
+
+    #[test]
+    fn multisig_final_rejects_plan_digest_drift() {
+        let dir = tempdir().unwrap();
+        let sender_path = dir.path().join("sender.wallet");
+        let recipient_path = dir.path().join("recipient.wallet");
+        let sender = WalletStore::create_full(&sender_path, "passphrase").unwrap();
+        let recipient_store = WalletStore::create_full(&recipient_path, "passphrase").unwrap();
+        let mut rng = StdRng::seed_from_u64(911);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 12, 0, &mut rng);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 25, 1, &mut rng);
+        seed_recovered_note(&sender, NATIVE_ASSET_ID, 60, 2, &mut rng);
+        let notes = sender.spendable_notes(NATIVE_ASSET_ID).unwrap();
+        let setup_funding_commitment = felts_to_bytes48(&notes[0].recovered.note_data.commitment());
+        let signer_note_commitment = felts_to_bytes48(&notes[1].recovered.note_data.commitment());
+        let value_note_commitment = felts_to_bytes48(&notes[2].recovered.note_data.commitment());
+        let local_signer = sender.local_multisig_signer_id().unwrap();
+        let other_signer = crate::multisig::signer_id_from_spend_key(&[78u8; 32]);
+        let public = sender
+            .create_multisig_account(1, [local_signer, other_signer])
+            .unwrap();
+        let record = sender
+            .multisig_account_record(&public.account_id)
+            .unwrap()
+            .unwrap();
+        let recipient = Recipient {
+            address: recipient_store.primary_address().unwrap(),
+            value: 40,
+            asset_id: NATIVE_ASSET_ID,
+            memo: MemoPlaintext::default(),
+        };
+        let mut final_plan =
+            prepare_multisig_final_plan(&sender, &record, value_note_commitment, &[recipient], 0)
+                .unwrap();
+        let setup = build_multisig_initial_accumulator_transaction(
+            &sender,
+            &record,
+            final_plan.intent_digest,
+            setup_funding_commitment,
+            3,
+        )
+        .unwrap();
+        apply_built_outputs(&sender, &setup);
+        let approval = build_multisig_approval_transaction(
+            &sender,
+            &record,
+            setup.bundle.commitments[0],
+            signer_note_commitment,
+            0,
+        )
+        .unwrap();
+        apply_built_outputs(&sender, &approval);
+        final_plan.intent_digest[0] ^= 1;
+
+        let err = build_multisig_final_transaction_from_plan(
+            &sender,
+            &record,
+            &final_plan,
+            approval.bundle.commitments[0],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("digest does not match"));
     }
 
     fn split_recipient_values(total: u64, count: usize) -> Vec<u64> {

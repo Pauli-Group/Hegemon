@@ -33,10 +33,10 @@ pub use keys::{
 };
 pub use multisig::{
     approval_circuit_hooks_available, create_account_record, create_approval,
-    create_final_spend_package, intent_digest, signer_commitment_from_spend_key,
-    MultisigAccountPublic, MultisigAccountRecord, MultisigApprovalPackage,
-    MultisigFinalSpendPackage, MultisigIntentRecipient, MultisigIntentState, MultisigSpendIntent,
-    MultisigStoredApproval, VerifiedApproval,
+    create_final_spend_package, intent_digest, signer_id_from_spend_key, MultisigAccountPublic,
+    MultisigAccountRecord, MultisigApprovalPackage, MultisigFinalSpendPackage,
+    MultisigIntentRecipient, MultisigIntentState, MultisigSpendIntent, MultisigStoredApproval,
+    VerifiedApproval,
 };
 #[cfg(feature = "rpc-client")]
 pub use node_rpc::{BlockingNodeRpcClient, ChainMetadata, NodeRpcClient, NodeRpcConfig};
@@ -52,14 +52,17 @@ pub use scanner::{
 };
 pub use shielded_tx::{BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder};
 pub use store::{
-    OutgoingDisclosureDraft, OutgoingDisclosureRecord, PendingStatus, PendingTransaction,
-    RecentTransaction, SpendableNote, TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
+    LocalMultisigAccumulatorOpening, LocalNoteOpeningRecord, OutgoingDisclosureDraft,
+    OutgoingDisclosureRecord, PendingStatus, PendingTransaction, RecentTransaction, SpendableNote,
+    TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
 };
 pub use submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
 pub use sync::SyncOutcome;
 pub use tx_builder::{
-    build_stablecoin_burn, build_transaction, build_transaction_with_binding, BuiltTransaction,
-    Recipient,
+    build_multisig_approval_transaction, build_multisig_final_transaction_from_plan,
+    build_multisig_initial_accumulator_transaction, build_stablecoin_burn, build_transaction,
+    build_transaction_with_binding, prepare_multisig_final_plan, BuiltTransaction,
+    PreparedMultisigFinalPlan, Recipient,
 };
 #[cfg(feature = "rpc-client")]
 pub use tx_builder::{precheck_nullifiers, precheck_nullifiers_with_binding};
