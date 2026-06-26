@@ -13,6 +13,7 @@ use transaction_circuit::StablecoinPolicyBinding;
 use transaction_circuit::{
     smallwood_accumulator_auth_key_bytes, smallwood_private_auth_intent_digest_bytes,
     SmallwoodAccumulatorAuthOpening, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
+    SMALLWOOD_MULTISIG_MAX_SIGNERS,
 };
 
 use crate::address::ShieldedAddress;
@@ -397,8 +398,9 @@ pub fn build_multisig_initial_accumulator_transaction(
         policy_root: record.policy_root,
         intent_digest,
         threshold: record.threshold,
+        signer_count: record.signer_count,
         approval_count: 0,
-        approved_slots: [0, 0],
+        approved_slots: [0; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     };
     let mut rng = OsRng;
     let (output, ciphertext, recovered, commitment) =
@@ -502,7 +504,8 @@ pub fn build_multisig_approval_transaction(
     ensure_accumulator_note_auth(&current_note, &current_opening)?;
 
     let signer_tag = store.local_multisig_signer_tag()?;
-    if !record.policy_signer_tags.contains(&signer_tag) {
+    let active_signers = active_multisig_signer_count(record)?;
+    if !record.policy_signer_tags[..active_signers].contains(&signer_tag) {
         return Err(WalletError::InvalidArgument(
             "local signer is not in hidden multisig policy",
         ));
@@ -659,6 +662,7 @@ pub fn prepare_multisig_final_plan(
         policy_root: record.policy_root,
         intent_digest: [0u8; 48],
         threshold: record.threshold,
+        signer_count: record.signer_count,
         approval_count: record.threshold,
         approved_slots: threshold_approved_slots(record),
     };
@@ -1283,7 +1287,10 @@ fn build_accumulator_output(
     opening: &SmallwoodAccumulatorAuthOpening,
     rng: &mut OsRng,
 ) -> Result<(OutputNoteWitness, NoteCiphertext, RecoveredNote, [u8; 48]), WalletError> {
-    if opening.policy_root != record.policy_root || opening.threshold != record.threshold {
+    if opening.policy_root != record.policy_root
+        || opening.threshold != record.threshold
+        || opening.signer_count != record.signer_count
+    {
         return Err(WalletError::InvalidArgument(
             "multisig accumulator opening does not match account policy",
         ));
@@ -1326,6 +1333,7 @@ fn local_accumulator_metadata(
         policy_root: opening.policy_root,
         intent_digest: opening.intent_digest,
         threshold: opening.threshold,
+        signer_count: opening.signer_count,
         approval_count: opening.approval_count,
         approved_slots: opening.approved_slots,
     }
@@ -1338,6 +1346,7 @@ fn ensure_accumulator_matches_record(
     if meta.account_id != record.public.account_id
         || meta.policy_root != record.policy_root
         || meta.threshold != record.threshold
+        || meta.signer_count != record.signer_count
     {
         return Err(WalletError::InvalidArgument(
             "local multisig accumulator does not match account record",
@@ -1365,12 +1374,23 @@ fn ensure_accumulator_note_auth(
     Ok(())
 }
 
-fn threshold_approved_slots(record: &MultisigAccountRecord) -> [u64; 2] {
-    if record.threshold == 1 {
-        [1, 0]
-    } else {
-        [1, 1]
+fn active_multisig_signer_count(record: &MultisigAccountRecord) -> Result<usize, WalletError> {
+    if record.signer_count == 0 || record.signer_count as usize > SMALLWOOD_MULTISIG_MAX_SIGNERS {
+        return Err(WalletError::InvalidArgument(
+            "multisig signer count outside proven SmallWood scope",
+        ));
     }
+    Ok(record.signer_count as usize)
+}
+
+fn threshold_approved_slots(
+    record: &MultisigAccountRecord,
+) -> [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS] {
+    let mut slots = [0u64; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+    for slot in slots.iter_mut().take(record.threshold as usize) {
+        *slot = 1;
+    }
+    slots
 }
 
 fn dummy_accumulator_input(
@@ -1834,7 +1854,7 @@ mod tests {
         let local_signer = store.local_multisig_signer_tag().unwrap();
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[91u8; 32]);
         let public = store
-            .create_multisig_account(1, [local_signer, other_signer])
+            .create_multisig_account(1, vec![local_signer, other_signer])
             .unwrap();
         store
             .multisig_account_record(&public.account_id)
@@ -2066,7 +2086,7 @@ mod tests {
         let local_signer = sender.local_multisig_signer_tag().unwrap();
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[77u8; 32]);
         let public = sender
-            .create_multisig_account(1, [local_signer, other_signer])
+            .create_multisig_account(1, vec![local_signer, other_signer])
             .unwrap();
         let record = sender
             .multisig_account_record(&public.account_id)
@@ -2134,7 +2154,7 @@ mod tests {
             .iter()
             .position(|tag| *tag == local_signer)
             .unwrap();
-        let mut expected_slots = [0u64, 0u64];
+        let mut expected_slots = [0u64; SMALLWOOD_MULTISIG_MAX_SIGNERS];
         expected_slots[local_slot] = 1;
         assert_eq!(threshold_meta.approved_slots, expected_slots);
 
@@ -2175,7 +2195,7 @@ mod tests {
         let local_signer = sender.local_multisig_signer_tag().unwrap();
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[78u8; 32]);
         let public = sender
-            .create_multisig_account(1, [local_signer, other_signer])
+            .create_multisig_account(1, vec![local_signer, other_signer])
             .unwrap();
         let record = sender
             .multisig_account_record(&public.account_id)

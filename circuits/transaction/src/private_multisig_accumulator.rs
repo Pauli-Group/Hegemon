@@ -150,6 +150,44 @@ pub fn signer_in_policy(capability: &SignerCapabilityNote, policy: &PolicyWitnes
     policy.signer_tags.contains(&capability.signer_tag)
 }
 
+pub fn signer_set_root_digest(signer_tags: &[Digest]) -> Digest {
+    signer_tags
+        .iter()
+        .rev()
+        .fold(19 % DIGEST_MODULUS, |rest, tag| {
+            (tag * 131 + rest * 137 + 23) % DIGEST_MODULUS
+        })
+}
+
+pub fn policy_root_digest(
+    account_digest: Digest,
+    threshold: u64,
+    signer_set_root: Digest,
+) -> Digest {
+    (account_digest * 149 + threshold * 151 + signer_set_root * 157 + 29) % DIGEST_MODULUS
+}
+
+pub fn policy_well_formed(policy: &PolicyWitness) -> bool {
+    if policy.threshold == 0 || policy.threshold as usize > policy.signer_tags.len() {
+        return false;
+    }
+    if policy.signer_tags.iter().any(|tag| *tag == 0) {
+        return false;
+    }
+    for (idx, tag) in policy.signer_tags.iter().enumerate() {
+        if policy.signer_tags[idx + 1..].contains(tag) {
+            return false;
+        }
+    }
+    policy.signer_set_root == signer_set_root_digest(&policy.signer_tags)
+        && policy.policy_root
+            == policy_root_digest(
+                policy.account_digest,
+                policy.threshold,
+                policy.signer_set_root,
+            )
+}
+
 pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
     accumulator_matches_intent(&step.prior_accumulator, &step.intent)
         && !step
@@ -166,7 +204,8 @@ pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
 }
 
 pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
-    approval_step_exact_intent_and_one_shot(step)
+    policy_well_formed(&step.policy)
+        && approval_step_exact_intent_and_one_shot(step)
         && accumulator_matches_policy(&step.prior_accumulator, &step.policy)
         && step.signer_capability.policy_root == step.policy.policy_root
         && step.signer_capability.signer_tag == step.spend_derived_signer_tag
@@ -174,7 +213,8 @@ pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
 }
 
 pub fn final_spend_accepted(spend: &FinalSpend) -> bool {
-    spend.value_note.account_digest == spend.intent.account_digest
+    policy_well_formed(&spend.policy)
+        && spend.value_note.account_digest == spend.intent.account_digest
         && accumulator_matches_policy(&spend.accumulator, &spend.policy)
         && accumulator_matches_intent(&spend.accumulator, &spend.intent)
         && spend.accumulator.state_digest == accumulator_state_digest(&spend.accumulator)
@@ -360,9 +400,15 @@ mod tests {
             "wrong-policy-rejected",
             "outside-policy-signer-rejected",
             "forged-signer-tag-rejected",
+            "zero-threshold-policy-approval-rejected",
+            "threshold-above-signer-count-policy-approval-rejected",
+            "duplicate-signer-policy-approval-rejected",
+            "signer-set-root-drift-policy-approval-rejected",
             "below-threshold-final-rejected",
             "exact-threshold-final-accepted",
             "final-intent-mismatch-rejected",
+            "zero-threshold-final-rejected",
+            "duplicate-signer-policy-final-rejected",
         ];
         assert_eq!(vectors.cases.len(), expected_names.len());
 

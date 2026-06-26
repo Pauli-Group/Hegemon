@@ -33,8 +33,9 @@ use wallet::{
     parse_recipients, precheck_nullifiers, prepare_multisig_final_plan,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     submission::{is_ambiguous_submission_error, provisional_pending_tx_id},
-    transfer_recipients_from_specs, BuiltTransaction, ConsolidationPlan, MultisigIntentRecipient,
-    MultisigSpendIntent, PreparedMultisigFinalPlan, RecipientSpec, WalletError, MAX_INPUTS,
+    transfer_recipients_from_specs, BuiltTransaction, ConsolidationPlan, LocalNoteOpeningRecord,
+    MultisigAccountRecord, MultisigIntentRecipient, MultisigSpendIntent, PreparedMultisigFinalPlan,
+    RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 2;
@@ -317,7 +318,7 @@ struct DisclosureVerifyResponse {
 #[serde(rename_all = "camelCase")]
 struct MultisigAccountCreateParams {
     threshold: u64,
-    policy_signer_tags: [transaction_circuit::SmallwoodSignerTag; 2],
+    policy_signer_tags: Vec<transaction_circuit::SmallwoodSignerTag>,
 }
 
 #[derive(Serialize)]
@@ -330,6 +331,50 @@ struct MultisigAccountResponse {
     approval_proof_hook: String,
     final_spend_proof_hook: String,
     circuit_hooks_available: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountExportPrivateParams {
+    account_id: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountExportPrivateResponse {
+    descriptor: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigAccountImportPrivateParams {
+    descriptor: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigOpeningExportPrivateParams {
+    commitment: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigOpeningExportPrivateResponse {
+    opening: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigOpeningImportPrivateParams {
+    opening: String,
+    position: u64,
+    ciphertext_index: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigOpeningImportPrivateResponse {
+    commitment: String,
 }
 
 #[derive(Serialize)]
@@ -696,10 +741,26 @@ fn handle_request(
                 let params: MultisigAccountCreateParams = parse_params(request.params)?;
                 to_json(multisig_account_create(&store, params)?)
             }
+            "multisig.accountExportPrivate" => {
+                let params: MultisigAccountExportPrivateParams = parse_params(request.params)?;
+                to_json(multisig_account_export_private(&store, params)?)
+            }
+            "multisig.accountImportPrivate" => {
+                let params: MultisigAccountImportPrivateParams = parse_params(request.params)?;
+                to_json(multisig_account_import_private(&store, params)?)
+            }
             "multisig.accountList" => to_json(multisig_account_list(&store)?),
             "multisig.noteList" => {
                 let params: MultisigNoteListParams = parse_params(request.params)?;
                 to_json(multisig_note_list(&store, params)?)
+            }
+            "multisig.openingExportPrivate" => {
+                let params: MultisigOpeningExportPrivateParams = parse_params(request.params)?;
+                to_json(multisig_opening_export_private(&store, params)?)
+            }
+            "multisig.openingImportPrivate" => {
+                let params: MultisigOpeningImportPrivateParams = parse_params(request.params)?;
+                to_json(multisig_opening_import_private(&store, params)?)
             }
             "multisig.localSignerTag" => to_json(multisig_local_signer_tag(&store)?),
             "multisig.finalPlan" => {
@@ -1004,6 +1065,37 @@ fn multisig_account_create(
     Ok(render_multisig_account(&public))
 }
 
+fn multisig_account_export_private(
+    store: &Arc<WalletStore>,
+    params: MultisigAccountExportPrivateParams,
+) -> WalletdResult<MultisigAccountExportPrivateResponse> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let record = store
+        .multisig_account_record(&account_id)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig account id",
+            )
+        })?;
+    Ok(MultisigAccountExportPrivateResponse {
+        descriptor: encode_private_payload(&record)?,
+    })
+}
+
+fn multisig_account_import_private(
+    store: &Arc<WalletStore>,
+    params: MultisigAccountImportPrivateParams,
+) -> WalletdResult<MultisigAccountResponse> {
+    let record: MultisigAccountRecord =
+        decode_private_payload(&params.descriptor, "multisig account descriptor")?;
+    let public = store
+        .import_multisig_account_record(record)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+    Ok(render_multisig_account(&public))
+}
+
 fn multisig_account_list(store: &Arc<WalletStore>) -> WalletdResult<MultisigAccountListResponse> {
     let accounts = store
         .multisig_accounts()
@@ -1036,6 +1128,51 @@ fn multisig_note_list(
         })
         .collect();
     Ok(MultisigNoteListResponse { notes })
+}
+
+fn multisig_opening_export_private(
+    store: &Arc<WalletStore>,
+    params: MultisigOpeningExportPrivateParams,
+) -> WalletdResult<MultisigOpeningExportPrivateResponse> {
+    let commitment = parse_param_hex_48(&params.commitment)?;
+    let opening = store
+        .local_note_opening_by_commitment(&commitment)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown local multisig opening commitment",
+            )
+        })?;
+    if opening.multisig_accumulator.is_none() {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "local note opening is not a multisig accumulator",
+        ));
+    }
+    Ok(MultisigOpeningExportPrivateResponse {
+        opening: encode_private_payload(&opening)?,
+    })
+}
+
+fn multisig_opening_import_private(
+    store: &Arc<WalletStore>,
+    params: MultisigOpeningImportPrivateParams,
+) -> WalletdResult<MultisigOpeningImportPrivateResponse> {
+    let opening: LocalNoteOpeningRecord =
+        decode_private_payload(&params.opening, "multisig local note opening")?;
+    if opening.multisig_accumulator.is_none() {
+        return Err(WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            "local note opening is not a multisig accumulator",
+        ));
+    }
+    let commitment = store
+        .import_local_note_opening_record(opening, params.position, params.ciphertext_index)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+    Ok(MultisigOpeningImportPrivateResponse {
+        commitment: format!("0x{}", hex::encode(commitment)),
+    })
 }
 
 fn multisig_local_signer_tag(
@@ -1355,6 +1492,30 @@ fn memo_to_string(memo: &Option<MemoPlaintext>) -> Option<String> {
         Ok(value) => Some(value),
         Err(_) => Some(format!("base64:{}", encode_base64(memo.as_bytes()))),
     }
+}
+
+fn encode_private_payload<T: Serialize>(payload: &T) -> WalletdResult<String> {
+    let bytes = bincode::serialize(payload)
+        .map_err(|err| WalletdError::internal(format!("private payload encode failed: {err}")))?;
+    Ok(encode_base64(&bytes))
+}
+
+fn decode_private_payload<T: serde::de::DeserializeOwned>(
+    encoded: &str,
+    label: &'static str,
+) -> WalletdResult<T> {
+    let bytes = decode_base64(encoded).map_err(|err| {
+        WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!("invalid {label} base64: {err}"),
+        )
+    })?;
+    bincode::deserialize(&bytes).map_err(|err| {
+        WalletdError::new(
+            WalletdErrorCode::InvalidParams,
+            format!("invalid {label} payload: {err}"),
+        )
+    })
 }
 
 fn sync_once(
@@ -2687,6 +2848,79 @@ mod tests {
         assert!(!json.contains("policyRoot"));
         assert!(!json.contains("approvalCount"));
         assert!(!json.contains("approvalNullifier"));
+    }
+
+    #[test]
+    fn walletd_multisig_private_account_descriptor_round_trips() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store_a, store_a_path) = temp_store();
+        let cache = Arc::new(Mutex::new(HashMap::new()));
+        let create = handle_request(
+            &runtime,
+            store_a.clone(),
+            cache.clone(),
+            &store_a_path,
+            RequestEnvelope {
+                id: json!(1),
+                method: "multisig.accountCreate".to_string(),
+                params: json!({
+                    "threshold": 2,
+                    "policySignerTags": [
+                        [11, 12, 13, 14, 15],
+                        [17, 18, 19, 20, 21],
+                        [23, 24, 25, 26, 27]
+                    ]
+                }),
+            },
+        );
+        assert!(create.ok, "{:?}", create.error);
+        let account_id = create.result.unwrap()["accountId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let export = handle_request(
+            &runtime,
+            store_a,
+            cache,
+            &store_a_path,
+            RequestEnvelope {
+                id: json!(2),
+                method: "multisig.accountExportPrivate".to_string(),
+                params: json!({ "accountId": account_id }),
+            },
+        );
+        assert!(export.ok, "{:?}", export.error);
+        let descriptor = export.result.unwrap()["descriptor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let (store_b, store_b_path) = temp_store();
+        let import = handle_request(
+            &runtime,
+            store_b.clone(),
+            Arc::new(Mutex::new(HashMap::new())),
+            &store_b_path,
+            RequestEnvelope {
+                id: json!(3),
+                method: "multisig.accountImportPrivate".to_string(),
+                params: json!({ "descriptor": descriptor }),
+            },
+        );
+        assert!(import.ok, "{:?}", import.error);
+        let imported = import.result.unwrap();
+        assert_eq!(imported["accountId"].as_str().unwrap(), account_id);
+        let imported_json = serde_json::to_string(&imported).unwrap();
+        assert!(!imported_json.contains("threshold"));
+        assert!(!imported_json.contains("policyRoot"));
+        assert!(!imported_json.contains("signer"));
+
+        let listed = multisig_account_list(&store_b).unwrap();
+        assert_eq!(listed.accounts.len(), 1);
+        assert_eq!(listed.accounts[0].account_id, account_id);
     }
 
     #[test]

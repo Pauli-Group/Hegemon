@@ -117,6 +117,15 @@ def vectorJson : String :=
       outsidePolicySignerStep ++ ",\n"
     ++ approvalCaseJson "forged-signer-tag-rejected"
       forgedSignerTagStep ++ ",\n"
+    ++ approvalCaseJson "zero-threshold-policy-approval-rejected"
+      zeroThresholdPolicyStep ++ ",\n"
+    ++ approvalCaseJson
+      "threshold-above-signer-count-policy-approval-rejected"
+      thresholdAboveSignerCountPolicyStep ++ ",\n"
+    ++ approvalCaseJson "duplicate-signer-policy-approval-rejected"
+      duplicateSignerPolicyStep ++ ",\n"
+    ++ approvalCaseJson "signer-set-root-drift-policy-approval-rejected"
+      signerSetRootDriftPolicyStep ++ ",\n"
     ++ finalCaseJson
       "below-threshold-final-rejected"
       belowThresholdFinalSpend ++ ",\n"
@@ -125,7 +134,13 @@ def vectorJson : String :=
       exactThresholdFinalSpend ++ ",\n"
     ++ finalCaseJson
       "final-intent-mismatch-rejected"
-      finalIntentMismatchSpend ++ "\n"
+      finalIntentMismatchSpend ++ ",\n"
+    ++ finalCaseJson
+      "zero-threshold-final-rejected"
+      zeroThresholdFinalSpend ++ ",\n"
+    ++ finalCaseJson
+      "duplicate-signer-policy-final-rejected"
+      duplicateSignerPolicyFinalSpend ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

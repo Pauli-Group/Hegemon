@@ -20,12 +20,14 @@ use crate::address::ShieldedAddress;
 use crate::error::WalletError;
 use crate::keys::{DerivedKeys, RootSecret};
 use crate::multisig::{
-    create_account_record, signer_tag_from_spend_key, MultisigAccountPublic, MultisigAccountRecord,
+    create_account_record, signer_tag_from_spend_key, validate_account_record,
+    MultisigAccountPublic, MultisigAccountRecord,
 };
 use crate::notes::MemoPlaintext;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, OutgoingViewingKey, RecoveredNote};
 
-const FILE_VERSION: u32 = 8;
+const FILE_VERSION: u32 = 9;
+const LEGACY_FILE_VERSION_V8: u32 = 8;
 const LEGACY_FILE_VERSION_V7: u32 = 7;
 const LEGACY_FILE_VERSION_V6: u32 = 6;
 const KEY_LEN: usize = 32;
@@ -175,6 +177,7 @@ impl WalletStore {
             .map_err(|_| WalletError::DecryptionFailure)?;
         let state: WalletState = match file.version {
             FILE_VERSION => deserialize_wallet_state(&plaintext)?,
+            LEGACY_FILE_VERSION_V8 => deserialize_wallet_state_v8(&plaintext)?,
             LEGACY_FILE_VERSION_V7 => deserialize_wallet_state_v7(&plaintext)?,
             LEGACY_FILE_VERSION_V6 => deserialize_wallet_state_v6(&plaintext)?,
             other => {
@@ -434,15 +437,15 @@ impl WalletStore {
                 }
 
                 if let Some(mut note) = maybe_note {
-                    let mut used_local_opening = false;
-                    let mut expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
-                        &note.note_data.commitment(),
-                    );
                     let commitment_index = usize::try_from(index)
                         .map_err(|_| WalletError::InvalidState("ciphertext index overflow"))?;
                     let Some(chain_commitment) = state.commitments.get(commitment_index) else {
                         return Err(WalletError::InvalidState("ciphertext commitment missing"));
                     };
+                    let mut used_local_opening = false;
+                    let mut expected_commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+                        &note.note_data.commitment(),
+                    );
                     if *chain_commitment != expected_commitment {
                         let Some(local_opening) =
                             matching_local_note_opening(state, chain_commitment, &note)
@@ -482,6 +485,41 @@ impl WalletStore {
                         added = added
                             .checked_add(1)
                             .ok_or(WalletError::InvalidState("note count overflow"))?;
+                    }
+                } else {
+                    let commitment_index = usize::try_from(index)
+                        .map_err(|_| WalletError::InvalidState("ciphertext index overflow"))?;
+                    if let Some(chain_commitment) = state.commitments.get(commitment_index) {
+                        if let Some(local_opening) = state
+                            .local_note_openings
+                            .iter()
+                            .find(|opening| opening.commitment == *chain_commitment)
+                            .cloned()
+                        {
+                            let expected_commitment =
+                                transaction_circuit::hashing_pq::felts_to_bytes48(
+                                    &local_opening.note.note_data.commitment(),
+                                );
+                            if expected_commitment != local_opening.commitment {
+                                return Err(WalletError::InvalidState(
+                                    "local note opening commitment mismatch",
+                                ));
+                            }
+                            let position = index;
+                            if !state.notes.iter().any(|n| n.position == position) {
+                                state.notes.push(TrackedNote {
+                                    note: local_opening.note,
+                                    position,
+                                    ciphertext_index: index,
+                                    nullifier: None,
+                                    spent: false,
+                                    pending_spend: false,
+                                });
+                                added = added
+                                    .checked_add(1)
+                                    .ok_or(WalletError::InvalidState("note count overflow"))?;
+                            }
+                        }
                     }
                 }
 
@@ -575,6 +613,73 @@ impl WalletStore {
                 .find(|opening| opening.commitment == *commitment)
                 .cloned())
         })
+    }
+
+    pub fn import_local_note_opening_record(
+        &self,
+        opening: LocalNoteOpeningRecord,
+        position: u64,
+        ciphertext_index: u64,
+    ) -> Result<[u8; 48], WalletError> {
+        let recomputed =
+            transaction_circuit::hashing_pq::felts_to_bytes48(&opening.note.note_data.commitment());
+        if recomputed != opening.commitment {
+            return Err(WalletError::InvalidArgument(
+                "local note opening commitment mismatch",
+            ));
+        }
+        let opening_commitment = opening.commitment;
+        self.with_mut(|state| {
+            let commitment_index = usize::try_from(position)
+                .map_err(|_| WalletError::InvalidArgument("commitment position overflow"))?;
+            match state.commitments.get(commitment_index) {
+                Some(commitment) if *commitment == opening.commitment => {}
+                Some(_) => {
+                    return Err(WalletError::InvalidArgument(
+                        "local note opening position commitment mismatch",
+                    ));
+                }
+                None => {
+                    return Err(WalletError::InvalidArgument(
+                        "local note opening commitment position unavailable",
+                    ));
+                }
+            }
+            if let Some(existing) = state
+                .local_note_openings
+                .iter()
+                .find(|existing| existing.commitment == opening.commitment)
+            {
+                if existing.multisig_accumulator != opening.multisig_accumulator {
+                    return Err(WalletError::InvalidState(
+                        "local note opening metadata mismatch",
+                    ));
+                }
+            } else {
+                state.local_note_openings.push(opening.clone());
+            }
+            if let Some(existing) = state.notes.iter().find(|note| {
+                transaction_circuit::hashing_pq::felts_to_bytes48(&note.note.note_data.commitment())
+                    == opening.commitment
+            }) {
+                if existing.position != position || existing.ciphertext_index != ciphertext_index {
+                    return Err(WalletError::InvalidState(
+                        "local note opening tracked-note mismatch",
+                    ));
+                }
+            } else {
+                state.notes.push(TrackedNote {
+                    note: opening.note,
+                    position,
+                    ciphertext_index,
+                    nullifier: None,
+                    spent: false,
+                    pending_spend: false,
+                });
+            }
+            Ok(())
+        })?;
+        Ok(opening_commitment)
     }
 
     pub fn spendable_note_by_commitment(
@@ -825,7 +930,7 @@ impl WalletStore {
     pub fn create_multisig_account(
         &self,
         threshold: u64,
-        policy_signer_tags: [transaction_circuit::SmallwoodSignerTag; 2],
+        policy_signer_tags: Vec<transaction_circuit::SmallwoodSignerTag>,
     ) -> Result<MultisigAccountPublic, WalletError> {
         if self.mode()? == WalletMode::WatchOnly {
             return Err(WalletError::WatchOnly);
@@ -841,6 +946,32 @@ impl WalletStore {
                 .any(|existing| existing.public.account_id == public.account_id)
             {
                 return Err(WalletError::InvalidState("multisig account id collision"));
+            }
+            state.multisig_accounts.push(record);
+            Ok(())
+        })?;
+        Ok(public)
+    }
+
+    pub fn import_multisig_account_record(
+        &self,
+        record: MultisigAccountRecord,
+    ) -> Result<MultisigAccountPublic, WalletError> {
+        if self.mode()? == WalletMode::WatchOnly {
+            return Err(WalletError::WatchOnly);
+        }
+        validate_account_record(&record)?;
+        let public = record.public.clone();
+        self.with_mut(|state| {
+            if let Some(existing) = state
+                .multisig_accounts
+                .iter()
+                .find(|existing| existing.public.account_id == public.account_id)
+            {
+                if existing != &record {
+                    return Err(WalletError::InvalidState("multisig account id collision"));
+                }
+                return Ok(());
             }
             state.multisig_accounts.push(record);
             Ok(())
@@ -1323,6 +1454,17 @@ fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
     })
 }
 
+fn deserialize_wallet_state_v8(bytes: &[u8]) -> Result<WalletState, WalletError> {
+    deserialize_exact::<WalletStateV8>(bytes)
+        .map(WalletState::from)
+        .map_err(|err| match err {
+            WalletError::Serialization(message) => WalletError::Serialization(format!(
+                "failed to deserialize legacy wallet state v8: {message}"
+            )),
+            other => other,
+        })
+}
+
 fn deserialize_wallet_state_v7(bytes: &[u8]) -> Result<WalletState, WalletError> {
     deserialize_exact::<WalletStateV7>(bytes)
         .map(WalletState::from)
@@ -1383,6 +1525,85 @@ struct WalletState {
     multisig_accounts: Vec<MultisigAccountRecord>,
     #[serde(default)]
     local_note_openings: Vec<LocalNoteOpeningRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV8 {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNote>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecordV8>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecordV8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MultisigAccountRecordV8 {
+    public: MultisigAccountPublic,
+    #[serde(with = "serde_bytes48")]
+    policy_root: [u8; 48],
+    threshold: u64,
+    policy_signer_tags: [transaction_circuit::SmallwoodSignerTag; 2],
+    #[serde(with = "serde_bytes32")]
+    policy_commitment_randomness: [u8; 32],
+    intents: Vec<MultisigIntentStateV8>,
+    created_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct MultisigIntentStateV8 {
+    #[serde(with = "serde_bytes48")]
+    intent_digest: [u8; 48],
+    #[serde(with = "serde_bytes48")]
+    current_accumulator_note: [u8; 48],
+    approval_count: u64,
+    approved_slots: [u64; 2],
+    approvals: Vec<crate::multisig::MultisigStoredApproval>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LocalNoteOpeningRecordV8 {
+    #[serde(with = "serde_bytes48")]
+    commitment: [u8; 48],
+    note: RecoveredNote,
+    #[serde(default)]
+    multisig_accumulator: Option<LocalMultisigAccumulatorOpeningV8>,
+    created_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct LocalMultisigAccumulatorOpeningV8 {
+    #[serde(with = "serde_bytes32")]
+    account_id: [u8; 32],
+    #[serde(with = "serde_bytes48")]
+    policy_root: [u8; 48],
+    #[serde(with = "serde_bytes48")]
+    intent_digest: [u8; 48],
+    threshold: u64,
+    approval_count: u64,
+    approved_slots: [u64; 2],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1466,6 +1687,44 @@ impl From<WalletStateV6> for WalletState {
             genesis_hash: value.genesis_hash,
             multisig_accounts: Vec::new(),
             local_note_openings: Vec::new(),
+        }
+    }
+}
+
+impl From<WalletStateV8> for WalletState {
+    fn from(value: WalletStateV8) -> Self {
+        let local_note_openings = value
+            .local_note_openings
+            .into_iter()
+            .filter(|opening| opening.multisig_accumulator.is_none())
+            .map(|opening| LocalNoteOpeningRecord {
+                commitment: opening.commitment,
+                note: opening.note,
+                multisig_accumulator: None,
+                created_at: opening.created_at,
+            })
+            .collect();
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes,
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: Vec::new(),
+            local_note_openings,
         }
     }
 }
@@ -1610,8 +1869,9 @@ pub struct LocalMultisigAccumulatorOpening {
     #[serde(with = "serde_bytes48")]
     pub intent_digest: [u8; 48],
     pub threshold: u64,
+    pub signer_count: u64,
     pub approval_count: u64,
-    pub approved_slots: [u64; 2],
+    pub approved_slots: [u64; transaction_circuit::SMALLWOOD_MULTISIG_MAX_SIGNERS],
 }
 
 impl LocalMultisigAccumulatorOpening {
@@ -1620,6 +1880,7 @@ impl LocalMultisigAccumulatorOpening {
             policy_root: self.policy_root,
             intent_digest: self.intent_digest,
             threshold: self.threshold,
+            signer_count: self.signer_count,
             approval_count: self.approval_count,
             approved_slots: self.approved_slots,
         }
@@ -1931,7 +2192,7 @@ mod tests {
         let local_signer = store.local_multisig_signer_tag().unwrap();
         let other_signer = crate::multisig::signer_tag_from_spend_key(&[9u8; 32]);
         let public = store
-            .create_multisig_account(2, [local_signer, other_signer])
+            .create_multisig_account(2, vec![local_signer, other_signer])
             .unwrap();
         assert_eq!(store.multisig_accounts().unwrap(), vec![public.clone()]);
         let record = store
@@ -1939,7 +2200,11 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(record.threshold, 2);
-        assert_eq!(record.policy_signer_tags.len(), 2);
+        assert_eq!(record.signer_count, 2);
+        assert_eq!(
+            record.policy_signer_tags.len(),
+            transaction_circuit::SMALLWOOD_MULTISIG_MAX_SIGNERS
+        );
         assert_eq!(
             record.public.approval_proof_hook,
             crate::multisig::REAL_APPROVAL_PROOF_HOOK
@@ -2036,6 +2301,26 @@ mod tests {
         let notes = store.tracked_notes().unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].note.note_data.pk_auth, [42u8; 32]);
+        assert_eq!(notes[0].nullifier, None);
+    }
+
+    #[test]
+    fn local_accumulator_opening_rehydrates_after_rescan_without_decryptable_ciphertext() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let (_ciphertext, opening, commitment) =
+            accumulator_ciphertext_fixture(&store, [45u8; 32], 45);
+        store.record_local_note_opening(opening).unwrap();
+        store.reset_sync_state().unwrap();
+        store.append_commitments(&[(0, commitment)]).unwrap();
+
+        assert_eq!(store.apply_ciphertext_batch(0, vec![None]).unwrap(), 1);
+        let notes = store.tracked_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].position, 0);
+        assert_eq!(notes[0].ciphertext_index, 0);
+        assert_eq!(notes[0].note.note_data.pk_auth, [45u8; 32]);
         assert_eq!(notes[0].nullifier, None);
     }
 

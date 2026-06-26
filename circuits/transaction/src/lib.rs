@@ -105,7 +105,8 @@ pub use smallwood_frontend::{
     SmallwoodCandidateProfileAnalysisReport, SmallwoodCandidateProfileSurface,
     SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport, SmallwoodFrontendShape,
     SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
-    SmallwoodPublicBindingMode, SmallwoodSignerTag, SMALLWOOD_SIGNER_TAG_WORDS,
+    SmallwoodPublicBindingMode, SmallwoodSignerTag, SMALLWOOD_MULTISIG_MAX_SIGNERS,
+    SMALLWOOD_SIGNER_TAG_WORDS,
 };
 pub use smallwood_lppc_frontend::{
     analyze_smallwood_semantic_bridge_lower_bound_from_witness,

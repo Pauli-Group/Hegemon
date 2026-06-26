@@ -6,7 +6,8 @@ use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     constants::FIELD_MODULUS_U64, smallwood_policy_root_bytes, smallwood_signer_tag_from_spend_key,
-    SmallwoodAccumulatorAuthOpening, SmallwoodSignerTag,
+    SmallwoodAccumulatorAuthOpening, SmallwoodSignerTag, SMALLWOOD_MULTISIG_MAX_SIGNERS,
+    SMALLWOOD_SIGNER_TAG_WORDS,
 };
 
 use crate::error::WalletError;
@@ -60,7 +61,8 @@ pub struct MultisigAccountRecord {
     #[serde(with = "serde_bytes48")]
     pub policy_root: [u8; 48],
     pub threshold: u64,
-    pub policy_signer_tags: [SmallwoodSignerTag; 2],
+    pub signer_count: u64,
+    pub policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     #[serde(with = "serde_bytes32")]
     pub policy_commitment_randomness: [u8; 32],
     pub intents: Vec<MultisigIntentState>,
@@ -74,7 +76,7 @@ pub struct MultisigIntentState {
     #[serde(with = "serde_bytes48")]
     pub current_accumulator_note: [u8; 48],
     pub approval_count: u64,
-    pub approved_slots: [u64; 2],
+    pub approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     pub approvals: Vec<MultisigStoredApproval>,
 }
 
@@ -133,28 +135,28 @@ pub fn signer_tag_from_spend_key(spend_key: &[u8; 32]) -> SmallwoodSignerTag {
 
 pub fn create_account_record<R: RngCore + ?Sized>(
     threshold: u64,
-    policy_signer_tags: [SmallwoodSignerTag; 2],
+    policy_signer_tags: Vec<SmallwoodSignerTag>,
     rng: &mut R,
     created_at: u64,
 ) -> Result<MultisigAccountRecord, WalletError> {
-    let policy_signer_tags = normalize_policy(threshold, policy_signer_tags)?;
+    let (signer_count, policy_signer_tags) = normalize_policy(threshold, policy_signer_tags)?;
 
     let mut policy_commitment_randomness = [0u8; 32];
     rng.fill_bytes(&mut policy_commitment_randomness);
     let mut account_nonce = [0u8; 32];
     rng.fill_bytes(&mut account_nonce);
 
-    let policy_root = smallwood_policy_root_bytes(threshold, policy_signer_tags);
+    let policy_root = smallwood_policy_root_bytes(threshold, signer_count, policy_signer_tags);
     let threshold_bytes = threshold.to_le_bytes();
-    let signer0 = signer_tag_bytes(policy_signer_tags[0]);
-    let signer1 = signer_tag_bytes(policy_signer_tags[1]);
+    let signer_count_bytes = signer_count.to_le_bytes();
+    let policy_encoding = policy_encoding(threshold, signer_count, &policy_signer_tags);
     let policy_commitment = hash48(
         DOMAIN_POLICY_COMMITMENT,
         &[
             &policy_root,
             &threshold_bytes,
-            &signer0,
-            &signer1,
+            &signer_count_bytes,
+            &policy_encoding,
             &policy_commitment_randomness,
         ],
     );
@@ -182,11 +184,78 @@ pub fn create_account_record<R: RngCore + ?Sized>(
         },
         policy_root,
         threshold,
+        signer_count,
         policy_signer_tags,
         policy_commitment_randomness,
         intents: Vec::new(),
         created_at,
     })
+}
+
+pub fn validate_account_record(record: &MultisigAccountRecord) -> Result<(), WalletError> {
+    let active = validate_normalized_policy(
+        record.threshold,
+        record.signer_count,
+        &record.policy_signer_tags,
+    )?;
+    if record.policy_signer_tags[active..]
+        .iter()
+        .any(|tag| tag.iter().any(|limb| *limb != 0))
+    {
+        return Err(WalletError::InvalidArgument(
+            "multisig inactive policy signer slots must be zero",
+        ));
+    }
+    let expected_policy_root = smallwood_policy_root_bytes(
+        record.threshold,
+        record.signer_count,
+        record.policy_signer_tags,
+    );
+    if record.policy_root != expected_policy_root {
+        return Err(WalletError::InvalidArgument(
+            "multisig account policy root mismatch",
+        ));
+    }
+    let threshold_bytes = record.threshold.to_le_bytes();
+    let signer_count_bytes = record.signer_count.to_le_bytes();
+    let policy_encoding = policy_encoding(
+        record.threshold,
+        record.signer_count,
+        &record.policy_signer_tags,
+    );
+    let expected_policy_commitment = hash48(
+        DOMAIN_POLICY_COMMITMENT,
+        &[
+            &record.policy_root,
+            &threshold_bytes,
+            &signer_count_bytes,
+            &policy_encoding,
+            &record.policy_commitment_randomness,
+        ],
+    );
+    if record.public.policy_commitment != expected_policy_commitment {
+        return Err(WalletError::InvalidArgument(
+            "multisig account policy commitment mismatch",
+        ));
+    }
+    let expected_setup_hint = hash48(
+        DOMAIN_ACCOUNT_SETUP_HINT,
+        &[&record.public.account_id, &record.public.policy_commitment],
+    );
+    if record.public.initial_accumulator_note != expected_setup_hint {
+        return Err(WalletError::InvalidArgument(
+            "multisig account setup hint mismatch",
+        ));
+    }
+    if record.public.version != MULTISIG_FLOW_VERSION
+        || record.public.approval_proof_hook != REAL_APPROVAL_PROOF_HOOK
+        || record.public.final_spend_proof_hook != REAL_FINAL_SPEND_PROOF_HOOK
+    {
+        return Err(WalletError::InvalidArgument(
+            "multisig account public hook mismatch",
+        ));
+    }
+    Ok(())
 }
 
 pub fn intent_digest(intent: &MultisigSpendIntent) -> Result<[u8; 48], WalletError> {
@@ -254,13 +323,19 @@ pub fn accumulator_opening(
     record: &MultisigAccountRecord,
     intent_digest: [u8; 48],
     approval_count: u64,
-    approved_slots: [u64; 2],
+    approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
 ) -> Result<SmallwoodAccumulatorAuthOpening, WalletError> {
-    validate_accumulator_state(record.threshold, approved_slots, approval_count)?;
+    validate_accumulator_state(
+        record.threshold,
+        record.signer_count,
+        approved_slots,
+        approval_count,
+    )?;
     Ok(SmallwoodAccumulatorAuthOpening {
         policy_root: record.policy_root,
         intent_digest,
         threshold: record.threshold,
+        signer_count: record.signer_count,
         approval_count,
         approved_slots,
     })
@@ -274,27 +349,30 @@ pub fn initial_accumulator_opening(
         policy_root: record.policy_root,
         intent_digest,
         threshold: record.threshold,
+        signer_count: record.signer_count,
         approval_count: 0,
-        approved_slots: [0, 0],
+        approved_slots: [0; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     }
 }
 
 pub fn next_accumulator_after_approval(
     current: &SmallwoodAccumulatorAuthOpening,
-    policy_signer_tags: [SmallwoodSignerTag; 2],
+    policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     signer_tag: SmallwoodSignerTag,
 ) -> Result<SmallwoodAccumulatorAuthOpening, WalletError> {
-    let slot = policy_signer_tags
+    validate_accumulator_state(
+        current.threshold,
+        current.signer_count,
+        current.approved_slots,
+        current.approval_count,
+    )?;
+    let active = signer_count_usize(current.signer_count)?;
+    let slot = policy_signer_tags[..active]
         .iter()
         .position(|tag| *tag == signer_tag)
         .ok_or(WalletError::InvalidArgument(
             "local signer is not in hidden multisig policy",
         ))?;
-    validate_accumulator_state(
-        current.threshold,
-        current.approved_slots,
-        current.approval_count,
-    )?;
     if current.approved_slots[slot] != 0 {
         return Err(WalletError::InvalidArgument(
             "multisig duplicate signer approval",
@@ -309,7 +387,12 @@ pub fn next_accumulator_after_approval(
                 "multisig approval count overflow",
             ))?;
     next.approved_slots[slot] = 1;
-    validate_accumulator_state(next.threshold, next.approved_slots, next.approval_count)?;
+    validate_accumulator_state(
+        next.threshold,
+        next.signer_count,
+        next.approved_slots,
+        next.approval_count,
+    )?;
     Ok(next)
 }
 
@@ -327,32 +410,90 @@ pub fn approval_duplicate_tag(
 
 fn normalize_policy(
     threshold: u64,
-    mut policy_signer_tags: [SmallwoodSignerTag; 2],
-) -> Result<[SmallwoodSignerTag; 2], WalletError> {
-    if !(1..=2).contains(&threshold) {
+    mut policy_signer_tags: Vec<SmallwoodSignerTag>,
+) -> Result<(u64, [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS]), WalletError> {
+    if policy_signer_tags.is_empty() || policy_signer_tags.len() > SMALLWOOD_MULTISIG_MAX_SIGNERS {
         return Err(WalletError::InvalidArgument(
-            "multisig threshold outside proven SmallWood scope",
+            "multisig signer count outside proven SmallWood scope",
         ));
     }
-    validate_signer_tag(policy_signer_tags[0])?;
-    validate_signer_tag(policy_signer_tags[1])?;
+    let signer_count = policy_signer_tags.len() as u64;
+    if threshold == 0 || threshold > signer_count {
+        return Err(WalletError::InvalidArgument(
+            "multisig threshold outside active signer count",
+        ));
+    }
+    for tag in &policy_signer_tags {
+        validate_signer_tag(*tag)?;
+    }
     policy_signer_tags.sort_unstable();
-    if policy_signer_tags[0] == policy_signer_tags[1] {
+    for pair in policy_signer_tags.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(WalletError::InvalidArgument(
+                "multisig policy signers must be distinct",
+            ));
+        }
+    }
+    for i in 0..policy_signer_tags.len() {
+        for j in i + 1..policy_signer_tags.len() {
+            if policy_signer_tags[i][0] == policy_signer_tags[j][0] {
+                return Err(WalletError::InvalidArgument(
+                    "multisig policy signer first limbs must be distinct",
+                ));
+            }
+        }
+    }
+    let mut padded = [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+    for (idx, tag) in policy_signer_tags.into_iter().enumerate() {
+        padded[idx] = tag;
+    }
+    validate_normalized_policy(threshold, signer_count, &padded)?;
+    Ok((signer_count, padded))
+}
+
+fn validate_normalized_policy(
+    threshold: u64,
+    signer_count: u64,
+    policy_signer_tags: &[SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> Result<usize, WalletError> {
+    let active = signer_count_usize(signer_count)?;
+    if threshold == 0 || threshold > signer_count {
         return Err(WalletError::InvalidArgument(
-            "multisig policy signers must be distinct",
+            "multisig threshold outside active signer count",
         ));
     }
-    Ok(policy_signer_tags)
+    for tag in &policy_signer_tags[..active] {
+        validate_signer_tag(*tag)?;
+    }
+    for pair in policy_signer_tags[..active].windows(2) {
+        if pair[0] >= pair[1] {
+            return Err(WalletError::InvalidArgument(
+                "multisig policy signers must be sorted and distinct",
+            ));
+        }
+    }
+    for i in 0..active {
+        for j in i + 1..active {
+            if policy_signer_tags[i][0] == policy_signer_tags[j][0] {
+                return Err(WalletError::InvalidArgument(
+                    "multisig policy signer first limbs must be distinct",
+                ));
+            }
+        }
+    }
+    Ok(active)
 }
 
 fn validate_accumulator_state(
     threshold: u64,
-    approved_slots: [u64; 2],
+    signer_count: u64,
+    approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
     approval_count: u64,
 ) -> Result<(), WalletError> {
-    if !(1..=2).contains(&threshold) {
+    let active = signer_count_usize(signer_count)?;
+    if threshold == 0 || threshold > signer_count {
         return Err(WalletError::InvalidArgument(
-            "multisig threshold outside proven SmallWood scope",
+            "multisig threshold outside active signer count",
         ));
     }
     if approved_slots.iter().any(|slot| !matches!(slot, 0 | 1)) {
@@ -360,13 +501,27 @@ fn validate_accumulator_state(
             "multisig approved slots must be boolean",
         ));
     }
-    let actual_count = approved_slots[0] + approved_slots[1];
-    if approval_count > 2 || approval_count != actual_count {
+    if approved_slots[active..].iter().any(|slot| *slot != 0) {
+        return Err(WalletError::InvalidArgument(
+            "multisig inactive approved slots must be zero",
+        ));
+    }
+    let actual_count = approved_slots[..active].iter().copied().sum::<u64>();
+    if approval_count > signer_count || approval_count != actual_count {
         return Err(WalletError::InvalidArgument(
             "multisig accumulator outside proven approval-count scope",
         ));
     }
     Ok(())
+}
+
+fn signer_count_usize(signer_count: u64) -> Result<usize, WalletError> {
+    if signer_count == 0 || signer_count as usize > SMALLWOOD_MULTISIG_MAX_SIGNERS {
+        return Err(WalletError::InvalidArgument(
+            "multisig signer count outside proven SmallWood scope",
+        ));
+    }
+    Ok(signer_count as usize)
 }
 
 fn validate_signer_tag(signer_tag: SmallwoodSignerTag) -> Result<(), WalletError> {
@@ -380,10 +535,23 @@ fn validate_signer_tag(signer_tag: SmallwoodSignerTag) -> Result<(), WalletError
     Ok(())
 }
 
-fn signer_tag_bytes(
-    signer_tag: SmallwoodSignerTag,
-) -> [u8; transaction_circuit::SMALLWOOD_SIGNER_TAG_WORDS * 8] {
-    let mut out = [0u8; transaction_circuit::SMALLWOOD_SIGNER_TAG_WORDS * 8];
+fn policy_encoding(
+    threshold: u64,
+    signer_count: u64,
+    policy_signer_tags: &[SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> Vec<u8> {
+    let mut out =
+        Vec::with_capacity(16 + SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_SIGNER_TAG_WORDS * 8);
+    out.extend_from_slice(&threshold.to_le_bytes());
+    out.extend_from_slice(&signer_count.to_le_bytes());
+    for tag in policy_signer_tags {
+        out.extend_from_slice(&signer_tag_bytes(*tag));
+    }
+    out
+}
+
+fn signer_tag_bytes(signer_tag: SmallwoodSignerTag) -> [u8; SMALLWOOD_SIGNER_TAG_WORDS * 8] {
+    let mut out = [0u8; SMALLWOOD_SIGNER_TAG_WORDS * 8];
     for (idx, limb) in signer_tag.iter().enumerate() {
         out[idx * 8..idx * 8 + 8].copy_from_slice(&limb.to_le_bytes());
     }
@@ -493,6 +661,16 @@ mod tests {
         [seed, seed + 1, seed + 2, seed + 3, seed + 4]
     }
 
+    fn padded(tags: &[SmallwoodSignerTag]) -> [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS] {
+        let mut sorted = tags.to_vec();
+        sorted.sort_unstable();
+        let mut out = [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+        for (idx, tag) in sorted.into_iter().enumerate() {
+            out[idx] = tag;
+        }
+        out
+    }
+
     fn intent() -> MultisigSpendIntent {
         MultisigSpendIntent {
             recipients: vec![MultisigIntentRecipient {
@@ -532,16 +710,17 @@ mod tests {
     }
 
     #[test]
-    fn account_record_uses_smallwood_two_signer_policy_root() {
+    fn account_record_uses_smallwood_hidden_m_of_n_policy_root() {
         let mut rng = StdRng::seed_from_u64(7);
-        let tags = [tag(17), tag(11)];
-        let expected_tags = [tag(11), tag(17)];
+        let tags = vec![tag(23), tag(17), tag(11)];
+        let expected_tags = padded(&tags);
         let record = create_account_record(2, tags, &mut rng, 10).unwrap();
         assert_eq!(record.threshold, 2);
+        assert_eq!(record.signer_count, 3);
         assert_eq!(record.policy_signer_tags, expected_tags);
         assert_eq!(
             record.policy_root,
-            smallwood_policy_root_bytes(2, expected_tags)
+            smallwood_policy_root_bytes(2, 3, expected_tags)
         );
         assert_eq!(record.public.approval_proof_hook, REAL_APPROVAL_PROOF_HOOK);
 
@@ -555,44 +734,74 @@ mod tests {
     #[test]
     fn unsupported_policy_shapes_fail_closed() {
         let mut rng = StdRng::seed_from_u64(8);
-        assert!(create_account_record(0, [tag(11), tag(17)], &mut rng, 10)
+        assert!(
+            create_account_record(0, vec![tag(11), tag(17)], &mut rng, 10)
+                .unwrap_err()
+                .to_string()
+                .contains("threshold")
+        );
+        assert!(
+            create_account_record(3, vec![tag(11), tag(17)], &mut rng, 10)
+                .unwrap_err()
+                .to_string()
+                .contains("threshold")
+        );
+        assert!(create_account_record(1, Vec::new(), &mut rng, 10)
             .unwrap_err()
             .to_string()
-            .contains("outside proven"));
-        assert!(create_account_record(3, [tag(11), tag(17)], &mut rng, 10)
-            .unwrap_err()
-            .to_string()
-            .contains("outside proven"));
-        assert!(create_account_record(2, [tag(11), tag(11)], &mut rng, 10)
-            .unwrap_err()
-            .to_string()
-            .contains("distinct"));
+            .contains("signer count"));
+        assert!(create_account_record(
+            1,
+            vec![tag(1), tag(2), tag(3), tag(4), tag(5), tag(6), tag(7)],
+            &mut rng,
+            10,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("signer count"));
+        assert!(
+            create_account_record(2, vec![tag(11), tag(11)], &mut rng, 10)
+                .unwrap_err()
+                .to_string()
+                .contains("distinct")
+        );
+        assert!(
+            create_account_record(2, vec![[99, 1, 2, 3, 4], [99, 5, 6, 7, 8]], &mut rng, 10,)
+                .unwrap_err()
+                .to_string()
+                .contains("first limbs")
+        );
     }
 
     #[test]
     fn approval_accumulator_transition_matches_smallwood_scope() {
         let mut rng = StdRng::seed_from_u64(9);
-        let tags = [tag(11), tag(17)];
+        let tags = vec![tag(11), tag(17), tag(23)];
         let record = create_account_record(2, tags, &mut rng, 10).unwrap();
         let current = initial_accumulator_opening(&record, [3u8; 48]);
         let next =
             next_accumulator_after_approval(&current, record.policy_signer_tags, tag(11)).unwrap();
         assert_eq!(next.approval_count, 1);
-        assert_eq!(next.approved_slots, [1, 0]);
+        assert_eq!(next.approved_slots, [1, 0, 0, 0, 0, 0]);
 
         let next =
             next_accumulator_after_approval(&next, record.policy_signer_tags, tag(17)).unwrap();
         assert_eq!(next.approval_count, 2);
-        assert_eq!(next.approved_slots, [1, 1]);
+        assert_eq!(next.approved_slots, [1, 1, 0, 0, 0, 0]);
         assert!(
             next_accumulator_after_approval(&next, record.policy_signer_tags, tag(17)).is_err()
         );
+        let next =
+            next_accumulator_after_approval(&next, record.policy_signer_tags, tag(23)).unwrap();
+        assert_eq!(next.approval_count, 3);
+        assert_eq!(next.approved_slots, [1, 1, 1, 0, 0, 0]);
     }
 
     #[test]
     fn opaque_packages_fail_closed() {
         let mut rng = StdRng::seed_from_u64(10);
-        let record = create_account_record(2, [tag(11), tag(17)], &mut rng, 10).unwrap();
+        let record =
+            create_account_record(2, vec![tag(11), tag(17), tag(23)], &mut rng, 10).unwrap();
         assert!(approval_circuit_hooks_available());
         let err = create_approval(
             &[1u8; 32],

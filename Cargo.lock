@@ -5230,6 +5230,7 @@ name = "walletd"
 version = "0.10.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "chrono",
  "disclosure-circuit",
  "fs2",

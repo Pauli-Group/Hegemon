@@ -5,7 +5,10 @@ use transaction_core::{
     poseidon2::{poseidon2_step, Felt},
 };
 
-use crate::{error::TransactionCircuitError, smallwood_engine::SmallwoodArithmetization};
+use crate::{
+    error::TransactionCircuitError, smallwood_engine::SmallwoodArithmetization,
+    smallwood_frontend::SMALLWOOD_MULTISIG_MAX_SIGNERS,
+};
 
 const GOLDILOCKS_MODULUS: u128 = 0xffff_ffff_0000_0001;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
@@ -21,6 +24,8 @@ const INPUT_ROWS: usize = 130;
 const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
 const SIGNER_TAG_WORDS: usize = 5;
+const MULTISIG_MAX_SIGNERS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS;
+const MULTISIG_PAIR_COUNT: usize = MULTISIG_MAX_SIGNERS * (MULTISIG_MAX_SIGNERS - 1) / 2;
 const AUTH_MODE_ROWS: usize = 3;
 const AUTH_INPUT_PRF_ROWS: usize = MAX_INPUTS;
 const AUTH_INPUT_KEY_ROWS: usize = MAX_INPUTS * 4;
@@ -30,12 +35,14 @@ const AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS: usize = HASH_LIMBS;
 const AUTH_STATEMENT_DIGEST_ROWS: usize = HASH_LIMBS;
 const AUTH_POLICY_ROWS: usize = HASH_LIMBS;
 const AUTH_INTENT_ROWS: usize = HASH_LIMBS;
-const AUTH_SCALAR_ROWS: usize = 9;
-const AUTH_THRESHOLD_FLAG_ROWS: usize = 2;
-const AUTH_COUNT_FLAG_ROWS: usize = 3;
-const AUTH_NEXT_COUNT_FLAG_ROWS: usize = 3;
-const AUTH_POLICY_SIGNER_ROWS: usize = 2 * SIGNER_TAG_WORDS;
-const AUTH_MEMBERSHIP_FLAG_ROWS: usize = 2;
+const AUTH_SCALAR_ROWS: usize = 4 + (MULTISIG_MAX_SIGNERS * 2) + 2;
+const AUTH_THRESHOLD_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS;
+const AUTH_SIGNER_COUNT_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS;
+const AUTH_COUNT_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS + 1;
+const AUTH_NEXT_COUNT_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS + 1;
+const AUTH_POLICY_SIGNER_ROWS: usize = MULTISIG_MAX_SIGNERS * SIGNER_TAG_WORDS;
+const AUTH_MEMBERSHIP_FLAG_ROWS: usize = MULTISIG_MAX_SIGNERS;
+const AUTH_POLICY_DISTINCT_INVERSE_ROWS: usize = MULTISIG_PAIR_COUNT;
 const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_INPUT_PRF_ROWS
     + AUTH_INPUT_KEY_ROWS
@@ -47,19 +54,22 @@ const AUTH_ROWS: usize = AUTH_MODE_ROWS
     + AUTH_INTENT_ROWS
     + AUTH_SCALAR_ROWS
     + AUTH_THRESHOLD_FLAG_ROWS
+    + AUTH_SIGNER_COUNT_FLAG_ROWS
     + AUTH_COUNT_FLAG_ROWS
     + AUTH_NEXT_COUNT_FLAG_ROWS
     + AUTH_POLICY_SIGNER_ROWS
-    + AUTH_MEMBERSHIP_FLAG_ROWS;
+    + AUTH_MEMBERSHIP_FLAG_ROWS
+    + AUTH_POLICY_DISTINCT_INVERSE_ROWS;
 const INPUT_PERMUTATIONS: usize = 3 + MERKLE_DEPTH * 2 + 1;
 const OUTPUT_PERMUTATIONS: usize = 3;
 const AUTH_INTENT_PERMUTATIONS: usize = PUBLIC_VALUE_COUNT.div_ceil(6);
-const AUTH_ACCUMULATOR_INPUTS: usize = HASH_LIMBS * 2 + 4;
+const AUTH_ACCUMULATOR_INPUTS: usize = HASH_LIMBS * 2 + 3 + MULTISIG_MAX_SIGNERS;
 const AUTH_ACCUMULATOR_PERMUTATIONS: usize = AUTH_ACCUMULATOR_INPUTS.div_ceil(6);
-const AUTH_POLICY_INPUTS: usize = 1 + AUTH_POLICY_SIGNER_ROWS;
+const AUTH_POLICY_INPUTS: usize = 2 + AUTH_POLICY_SIGNER_ROWS;
 const AUTH_POLICY_PERMUTATIONS: usize = AUTH_POLICY_INPUTS.div_ceil(6);
 const AUTH_POSEIDON_PERMUTATIONS: usize =
     AUTH_INTENT_PERMUTATIONS + AUTH_POLICY_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS * 2;
+const AUTH_CONSTRAINTS: usize = 359;
 const POSEIDON_PERMUTATION_COUNT: usize = 1
     + MAX_INPUTS * INPUT_PERMUTATIONS
     + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
@@ -807,33 +817,38 @@ fn row_auth_threshold(statement: &PackedStatement<'_>) -> usize {
 }
 
 #[inline]
-fn row_auth_count(statement: &PackedStatement<'_>) -> usize {
+fn row_auth_signer_count(statement: &PackedStatement<'_>) -> usize {
     row_auth_threshold(statement) + 1
 }
 
 #[inline]
+fn row_auth_count(statement: &PackedStatement<'_>) -> usize {
+    row_auth_threshold(statement) + 2
+}
+
+#[inline]
 fn row_auth_slot(statement: &PackedStatement<'_>, slot: usize) -> usize {
-    row_auth_threshold(statement) + 2 + slot
+    row_auth_threshold(statement) + 3 + slot
 }
 
 #[inline]
 fn row_auth_next_count(statement: &PackedStatement<'_>) -> usize {
-    row_auth_threshold(statement) + 4
+    row_auth_threshold(statement) + 3 + MULTISIG_MAX_SIGNERS
 }
 
 #[inline]
 fn row_auth_next_slot(statement: &PackedStatement<'_>, slot: usize) -> usize {
-    row_auth_threshold(statement) + 5 + slot
+    row_auth_threshold(statement) + 4 + MULTISIG_MAX_SIGNERS + slot
 }
 
 #[inline]
 fn row_auth_signer(statement: &PackedStatement<'_>) -> usize {
-    row_auth_threshold(statement) + 7
+    row_auth_threshold(statement) + 4 + (MULTISIG_MAX_SIGNERS * 2)
 }
 
 #[inline]
 fn row_auth_duplicate_inverse(statement: &PackedStatement<'_>) -> usize {
-    row_auth_threshold(statement) + 8
+    row_auth_signer(statement) + 1
 }
 
 #[inline]
@@ -842,8 +857,17 @@ fn row_auth_threshold_flag(statement: &PackedStatement<'_>, flag: usize) -> usiz
 }
 
 #[inline]
-fn row_auth_count_flag(statement: &PackedStatement<'_>, flag: usize) -> usize {
+fn row_auth_signer_count_flag(statement: &PackedStatement<'_>, flag: usize) -> usize {
     row_auth_threshold(statement) + AUTH_SCALAR_ROWS + AUTH_THRESHOLD_FLAG_ROWS + flag
+}
+
+#[inline]
+fn row_auth_count_flag(statement: &PackedStatement<'_>, flag: usize) -> usize {
+    row_auth_threshold(statement)
+        + AUTH_SCALAR_ROWS
+        + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_SIGNER_COUNT_FLAG_ROWS
+        + flag
 }
 
 #[inline]
@@ -851,6 +875,7 @@ fn row_auth_next_count_flag(statement: &PackedStatement<'_>, flag: usize) -> usi
     row_auth_threshold(statement)
         + AUTH_SCALAR_ROWS
         + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_SIGNER_COUNT_FLAG_ROWS
         + AUTH_COUNT_FLAG_ROWS
         + flag
 }
@@ -860,6 +885,7 @@ fn row_auth_policy_signer(statement: &PackedStatement<'_>, signer: usize) -> usi
     row_auth_threshold(statement)
         + AUTH_SCALAR_ROWS
         + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_SIGNER_COUNT_FLAG_ROWS
         + AUTH_COUNT_FLAG_ROWS
         + AUTH_NEXT_COUNT_FLAG_ROWS
         + signer
@@ -870,10 +896,25 @@ fn row_auth_membership_flag(statement: &PackedStatement<'_>, flag: usize) -> usi
     row_auth_threshold(statement)
         + AUTH_SCALAR_ROWS
         + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_SIGNER_COUNT_FLAG_ROWS
         + AUTH_COUNT_FLAG_ROWS
         + AUTH_NEXT_COUNT_FLAG_ROWS
         + AUTH_POLICY_SIGNER_ROWS
         + flag
+}
+
+#[allow(dead_code)]
+#[inline]
+fn row_auth_policy_distinct_inverse(statement: &PackedStatement<'_>, pair: usize) -> usize {
+    row_auth_threshold(statement)
+        + AUTH_SCALAR_ROWS
+        + AUTH_THRESHOLD_FLAG_ROWS
+        + AUTH_SIGNER_COUNT_FLAG_ROWS
+        + AUTH_COUNT_FLAG_ROWS
+        + AUTH_NEXT_COUNT_FLAG_ROWS
+        + AUTH_POLICY_SIGNER_ROWS
+        + AUTH_MEMBERSHIP_FLAG_ROWS
+        + pair
 }
 
 #[allow(dead_code)]
@@ -1133,7 +1174,7 @@ fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: u
     let output_constraints = MAX_OUTPUTS * (1 + 1);
     let stablecoin_constraints = 1 + 1 + 7;
     let balance_constraints = BALANCE_SLOTS;
-    let auth_constraints = 145;
+    let auth_constraints = AUTH_CONSTRAINTS;
     let poseidon_transition =
         poseidon_group_count(packing_factor) * layout.poseidon_transition_count();
     public_bools
@@ -1383,35 +1424,45 @@ fn compute_constraints(
     c += 1;
 
     let threshold = rows[row_auth_threshold(statement)];
+    let signer_count = rows[row_auth_signer_count(statement)];
     let count = rows[row_auth_count(statement)];
-    let approved0 = rows[row_auth_slot(statement, 0)];
-    let approved1 = rows[row_auth_slot(statement, 1)];
+    let approved_slots = core::array::from_fn::<_, MULTISIG_MAX_SIGNERS, _>(|slot| {
+        rows[row_auth_slot(statement, slot)]
+    });
     let next_count = rows[row_auth_next_count(statement)];
-    let next_approved0 = rows[row_auth_next_slot(statement, 0)];
-    let next_approved1 = rows[row_auth_next_slot(statement, 1)];
+    let next_approved_slots = core::array::from_fn::<_, MULTISIG_MAX_SIGNERS, _>(|slot| {
+        rows[row_auth_next_slot(statement, slot)]
+    });
     let reserved_signer = rows[row_auth_signer(statement)];
     let reserved_duplicate_inverse = rows[row_auth_duplicate_inverse(statement)];
-    let threshold_flags = [
-        rows[row_auth_threshold_flag(statement, 0)],
-        rows[row_auth_threshold_flag(statement, 1)],
-    ];
-    let count_flags = [
-        rows[row_auth_count_flag(statement, 0)],
-        rows[row_auth_count_flag(statement, 1)],
-        rows[row_auth_count_flag(statement, 2)],
-    ];
-    let next_count_flags = [
-        rows[row_auth_next_count_flag(statement, 0)],
-        rows[row_auth_next_count_flag(statement, 1)],
-        rows[row_auth_next_count_flag(statement, 2)],
-    ];
+    let threshold_flags = core::array::from_fn::<_, AUTH_THRESHOLD_FLAG_ROWS, _>(|flag| {
+        rows[row_auth_threshold_flag(statement, flag)]
+    });
+    let signer_count_flags = core::array::from_fn::<_, AUTH_SIGNER_COUNT_FLAG_ROWS, _>(|flag| {
+        rows[row_auth_signer_count_flag(statement, flag)]
+    });
+    let count_flags = core::array::from_fn::<_, AUTH_COUNT_FLAG_ROWS, _>(|flag| {
+        rows[row_auth_count_flag(statement, flag)]
+    });
+    let next_count_flags = core::array::from_fn::<_, AUTH_NEXT_COUNT_FLAG_ROWS, _>(|flag| {
+        rows[row_auth_next_count_flag(statement, flag)]
+    });
     let policy_signer_tags = core::array::from_fn::<_, AUTH_POLICY_SIGNER_ROWS, _>(|idx| {
         rows[row_auth_policy_signer(statement, idx)]
     });
-    let membership_flags = [
-        rows[row_auth_membership_flag(statement, 0)],
-        rows[row_auth_membership_flag(statement, 1)],
-    ];
+    let membership_flags = core::array::from_fn::<_, AUTH_MEMBERSHIP_FLAG_ROWS, _>(|flag| {
+        rows[row_auth_membership_flag(statement, flag)]
+    });
+    let policy_distinct_inverses =
+        core::array::from_fn::<_, AUTH_POLICY_DISTINCT_INVERSE_ROWS, _>(|pair| {
+            rows[row_auth_policy_distinct_inverse(statement, pair)]
+        });
+    let slot_active = |slot: usize| -> Felt {
+        signer_count_flags[slot..]
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, value| acc + value)
+    };
 
     for limb in 0..HASH_LIMBS {
         out[c] = mode_single * rows[row_auth_policy(statement, limb)];
@@ -1421,29 +1472,48 @@ fn compute_constraints(
     }
     for value in [
         threshold,
+        signer_count,
         count,
-        approved0,
-        approved1,
         next_count,
-        next_approved0,
-        next_approved1,
         reserved_signer,
         reserved_duplicate_inverse,
-        threshold_flags[0],
-        threshold_flags[1],
-        count_flags[0],
-        count_flags[1],
-        count_flags[2],
-        next_count_flags[0],
-        next_count_flags[1],
-        next_count_flags[2],
-        membership_flags[0],
-        membership_flags[1],
     ] {
         out[c] = mode_single * value;
         c += 1;
     }
+    for value in approved_slots {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in next_approved_slots {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in threshold_flags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in signer_count_flags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in count_flags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in next_count_flags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in membership_flags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
     for value in policy_signer_tags {
+        out[c] = mode_single * value;
+        c += 1;
+    }
+    for value in policy_distinct_inverses {
         out[c] = mode_single * value;
         c += 1;
     }
@@ -1524,52 +1594,129 @@ fn compute_constraints(
         out[c] = non_single * felt_bool_v(bit);
         c += 1;
     }
-    out[c] = non_single * (threshold_flags[0] + threshold_flags[1] - Felt::ONE);
+    out[c] = non_single
+        * (threshold_flags
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit)
+            - Felt::ONE);
     c += 1;
-    out[c] = non_single * (threshold - threshold_flags[0] - threshold_flags[1] * Felt::from_u64(2));
+    out[c] = non_single
+        * (threshold
+            - threshold_flags
+                .iter()
+                .enumerate()
+                .fold(Felt::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * Felt::from_u64((idx + 1) as u64)
+                }));
+    c += 1;
+    for bit in signer_count_flags {
+        out[c] = non_single * felt_bool_v(bit);
+        c += 1;
+    }
+    out[c] = non_single
+        * (signer_count_flags
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit)
+            - Felt::ONE);
+    c += 1;
+    out[c] = non_single
+        * (signer_count
+            - signer_count_flags
+                .iter()
+                .enumerate()
+                .fold(Felt::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * Felt::from_u64((idx + 1) as u64)
+                }));
+    c += 1;
+    let mut threshold_exceeds_signer_count = Felt::ZERO;
+    for (threshold_idx, threshold_flag) in threshold_flags.iter().enumerate() {
+        let invalid_signer_counts = signer_count_flags[..threshold_idx]
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit);
+        threshold_exceeds_signer_count += *threshold_flag * invalid_signer_counts;
+    }
+    out[c] = non_single * threshold_exceeds_signer_count;
     c += 1;
     for bit in count_flags {
         out[c] = non_single * felt_bool_v(bit);
         c += 1;
     }
-    out[c] = non_single * (count_flags[0] + count_flags[1] + count_flags[2] - Felt::ONE);
+    out[c] = non_single
+        * (count_flags
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit)
+            - Felt::ONE);
     c += 1;
-    out[c] = non_single * (count - count_flags[1] - count_flags[2] * Felt::from_u64(2));
+    out[c] = non_single
+        * (count
+            - count_flags
+                .iter()
+                .enumerate()
+                .fold(Felt::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * Felt::from_u64(idx as u64)
+                }));
     c += 1;
     for bit in next_count_flags {
         out[c] = mode_approval * felt_bool_v(bit);
         c += 1;
     }
     out[c] = mode_approval
-        * (next_count_flags[0] + next_count_flags[1] + next_count_flags[2] - Felt::ONE);
+        * (next_count_flags
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit)
+            - Felt::ONE);
     c += 1;
     out[c] = mode_approval
-        * (next_count - next_count_flags[1] - next_count_flags[2] * Felt::from_u64(2));
+        * (next_count
+            - next_count_flags
+                .iter()
+                .enumerate()
+                .fold(Felt::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * Felt::from_u64(idx as u64)
+                }));
     c += 1;
     out[c] = mode_approval * (next_count - count - Felt::ONE);
     c += 1;
-    out[c] = mode_approval * count_flags[2];
+    out[c] = mode_approval * count_flags[MULTISIG_MAX_SIGNERS];
     c += 1;
-    out[c] = non_single * felt_bool_v(approved0);
+    for (slot, approved) in approved_slots.iter().copied().enumerate() {
+        out[c] = non_single * felt_bool_v(approved);
+        c += 1;
+        out[c] = non_single * approved * (Felt::ONE - slot_active(slot));
+        c += 1;
+    }
+    out[c] = non_single
+        * (count
+            - approved_slots
+                .iter()
+                .copied()
+                .fold(Felt::ZERO, |acc, bit| acc + bit));
     c += 1;
-    out[c] = non_single * felt_bool_v(approved1);
+    for (slot, approved) in next_approved_slots.iter().copied().enumerate() {
+        out[c] = mode_approval * felt_bool_v(approved);
+        c += 1;
+        out[c] = mode_approval * approved * (Felt::ONE - slot_active(slot));
+        c += 1;
+    }
+    out[c] = mode_approval
+        * (next_count
+            - next_approved_slots
+                .iter()
+                .copied()
+                .fold(Felt::ZERO, |acc, bit| acc + bit));
     c += 1;
-    out[c] = non_single * (count - approved0 - approved1);
-    c += 1;
-    out[c] = mode_approval * felt_bool_v(next_approved0);
-    c += 1;
-    out[c] = mode_approval * felt_bool_v(next_approved1);
-    c += 1;
-    out[c] = mode_approval * (next_count - next_approved0 - next_approved1);
-    c += 1;
-    out[c] = mode_approval * membership_flags[0] * approved0;
-    c += 1;
-    out[c] = mode_approval * membership_flags[1] * approved1;
-    c += 1;
-    out[c] = mode_approval * (next_approved0 - approved0 - membership_flags[0]);
-    c += 1;
-    out[c] = mode_approval * (next_approved1 - approved1 - membership_flags[1]);
-    c += 1;
+    for slot in 0..MULTISIG_MAX_SIGNERS {
+        out[c] = mode_approval * membership_flags[slot] * approved_slots[slot];
+        c += 1;
+        out[c] = mode_approval
+            * (next_approved_slots[slot] - approved_slots[slot] - membership_flags[slot]);
+        c += 1;
+    }
     out[c] = mode_approval * reserved_signer;
     c += 1;
     out[c] = mode_approval * reserved_duplicate_inverse;
@@ -1578,23 +1725,57 @@ fn compute_constraints(
         out[c] = mode_approval * felt_bool_v(bit);
         c += 1;
     }
-    out[c] = mode_approval * (membership_flags[0] + membership_flags[1] - Felt::ONE);
+    out[c] = mode_approval
+        * (membership_flags
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit)
+            - Felt::ONE);
     c += 1;
-    for limb in 0..SIGNER_TAG_WORDS {
-        out[c] = mode_approval
-            * membership_flags[0]
-            * (rows[row_auth_legacy_digest(statement, limb)] - policy_signer_tags[limb]);
+    for (slot, membership) in membership_flags.iter().copied().enumerate() {
+        out[c] = mode_approval * membership * (Felt::ONE - slot_active(slot));
         c += 1;
-        out[c] = mode_approval
-            * membership_flags[1]
-            * (rows[row_auth_legacy_digest(statement, limb)]
-                - policy_signer_tags[SIGNER_TAG_WORDS + limb]);
-        c += 1;
+        for limb in 0..SIGNER_TAG_WORDS {
+            out[c] = mode_approval
+                * membership
+                * (rows[row_auth_legacy_digest(statement, limb)]
+                    - policy_signer_tags[slot * SIGNER_TAG_WORDS + limb]);
+            c += 1;
+        }
+    }
+    for slot in 0..MULTISIG_MAX_SIGNERS {
+        let active = slot_active(slot);
+        for limb in 0..SIGNER_TAG_WORDS {
+            out[c] = non_single
+                * (Felt::ONE - active)
+                * policy_signer_tags[slot * SIGNER_TAG_WORDS + limb];
+            c += 1;
+        }
+    }
+    let mut pair = 0;
+    for left in 0..MULTISIG_MAX_SIGNERS {
+        for right in (left + 1)..MULTISIG_MAX_SIGNERS {
+            let active_pair = slot_active(left) * slot_active(right);
+            let diff = policy_signer_tags[left * SIGNER_TAG_WORDS]
+                - policy_signer_tags[right * SIGNER_TAG_WORDS];
+            let inverse = policy_distinct_inverses[pair];
+            out[c] = non_single * active_pair * (diff * inverse - Felt::ONE);
+            c += 1;
+            out[c] = non_single * (Felt::ONE - active_pair) * inverse;
+            c += 1;
+            pair += 1;
+        }
     }
 
-    out[c] = mode_final
-        * (threshold_flags[0] * count_flags[0]
-            + threshold_flags[1] * (count_flags[0] + count_flags[1]));
+    let mut final_below_threshold = Felt::ZERO;
+    for (threshold_idx, threshold_flag) in threshold_flags.iter().enumerate() {
+        let below = count_flags[..=threshold_idx]
+            .iter()
+            .copied()
+            .fold(Felt::ZERO, |acc, bit| acc + bit);
+        final_below_threshold += *threshold_flag * below;
+    }
+    out[c] = mode_final * final_below_threshold;
     c += 1;
     for limb in 0..HASH_LIMBS {
         out[c] = mode_final
@@ -1604,25 +1785,25 @@ fn compute_constraints(
     }
     out[c] = mode_final * next_count;
     c += 1;
-    out[c] = mode_final * next_approved0;
-    c += 1;
-    out[c] = mode_final * next_approved1;
-    c += 1;
+    for approved in next_approved_slots {
+        out[c] = mode_final * approved;
+        c += 1;
+    }
     out[c] = mode_final * reserved_signer;
     c += 1;
     out[c] = mode_final * reserved_duplicate_inverse;
     c += 1;
     out[c] = mode_final * (next_count_flags[0] - Felt::ONE);
     c += 1;
-    out[c] = mode_final * next_count_flags[1];
-    c += 1;
-    out[c] = mode_final * next_count_flags[2];
-    c += 1;
-    out[c] = mode_final * membership_flags[0];
-    c += 1;
-    out[c] = mode_final * membership_flags[1];
-    c += 1;
-    while c < auth_start + 145 {
+    for flag in next_count_flags.iter().skip(1) {
+        out[c] = mode_final * *flag;
+        c += 1;
+    }
+    for flag in membership_flags {
+        out[c] = mode_final * flag;
+        c += 1;
+    }
+    while c < auth_start + AUTH_CONSTRAINTS {
         out[c] = Felt::ZERO;
         c += 1;
     }
