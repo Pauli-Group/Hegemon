@@ -53,10 +53,10 @@ const AUTH_ACCUMULATOR_INPUTS: usize = HASH_LIMBS * 2 + 4;
 const AUTH_ACCUMULATOR_PERMUTATIONS: usize = AUTH_ACCUMULATOR_INPUTS.div_ceil(6);
 const AUTH_POSEIDON_PERMUTATIONS: usize =
     AUTH_INTENT_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS * 2;
-const POSEIDON_PERMUTATION_COUNT: usize =
-    1 + MAX_INPUTS * INPUT_PERMUTATIONS
-        + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
-        + AUTH_POSEIDON_PERMUTATIONS;
+const POSEIDON_PERMUTATION_COUNT: usize = 1
+    + MAX_INPUTS * INPUT_PERMUTATIONS
+    + MAX_OUTPUTS * OUTPUT_PERMUTATIONS
+    + AUTH_POSEIDON_PERMUTATIONS;
 const PUB_INPUT_FLAG0: usize = 0;
 const PUB_OUTPUT_FLAG0: usize = 2;
 const PUB_CIPHERTEXT_HASHES: usize = 28;
@@ -699,7 +699,9 @@ fn row_output_asset(statement: &PackedStatement<'_>, output: usize) -> usize {
 #[inline]
 fn row_auth_base(statement: &PackedStatement<'_>) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
-    PUBLIC_ROWS + MAX_INPUTS * layout.input_rows + MAX_OUTPUTS * layout.output_rows
+    PUBLIC_ROWS
+        + MAX_INPUTS * layout.input_rows
+        + MAX_OUTPUTS * layout.output_rows
         + layout.stable_binding_rows
 }
 
@@ -891,7 +893,10 @@ fn bridge_auth_current_permutation(chunk: usize) -> usize {
 
 #[inline]
 fn bridge_auth_next_permutation(chunk: usize) -> usize {
-    bridge_auth_permutation_base() + AUTH_INTENT_PERMUTATIONS + AUTH_ACCUMULATOR_PERMUTATIONS + chunk
+    bridge_auth_permutation_base()
+        + AUTH_INTENT_PERMUTATIONS
+        + AUTH_ACCUMULATOR_PERMUTATIONS
+        + chunk
 }
 
 #[inline]
@@ -1404,16 +1409,24 @@ fn compute_constraints(
             c += 1;
         }
         for limb in 0..HASH_LIMBS {
-            let statement_group =
-                bridge_auth_intent_permutation(AUTH_INTENT_PERMUTATIONS - 1);
-            let current_group =
-                bridge_auth_current_permutation(AUTH_ACCUMULATOR_PERMUTATIONS - 1);
+            let statement_group = bridge_auth_intent_permutation(AUTH_INTENT_PERMUTATIONS - 1);
+            let current_group = bridge_auth_current_permutation(AUTH_ACCUMULATOR_PERMUTATIONS - 1);
             let next_group = bridge_auth_next_permutation(AUTH_ACCUMULATOR_PERMUTATIONS - 1);
             out[c] = rows[row_auth_statement_digest(statement, limb)]
-                - rows[poseidon_group_row(statement, statement_group, layout.poseidon_last_row(), limb)];
+                - rows[poseidon_group_row(
+                    statement,
+                    statement_group,
+                    layout.poseidon_last_row(),
+                    limb,
+                )];
             c += 1;
             out[c] = rows[row_auth_current_digest(statement, limb)]
-                - rows[poseidon_group_row(statement, current_group, layout.poseidon_last_row(), limb)];
+                - rows[poseidon_group_row(
+                    statement,
+                    current_group,
+                    layout.poseidon_last_row(),
+                    limb,
+                )];
             c += 1;
             out[c] = rows[row_auth_next_digest(statement, limb)]
                 - rows[poseidon_group_row(statement, next_group, layout.poseidon_last_row(), limb)];
@@ -1432,8 +1445,8 @@ fn compute_constraints(
         let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
         let approval_prf = if input == 0 { current_prf } else { legacy_prf };
         let final_prf = if input == 0 { legacy_prf } else { current_prf };
-        let expected_prf =
-            flag * (mode_single * legacy_prf + mode_approval * approval_prf + mode_final * final_prf);
+        let expected_prf = flag
+            * (mode_single * legacy_prf + mode_approval * approval_prf + mode_final * final_prf);
         out[c] = rows[row_auth_input_prf(statement, input)] - expected_prf;
         c += 1;
         for limb in 0..4 {
@@ -1456,8 +1469,7 @@ fn compute_constraints(
     }
     out[c] = non_single * (threshold_flags[0] + threshold_flags[1] - Felt::ONE);
     c += 1;
-    out[c] = non_single
-        * (threshold - threshold_flags[0] - threshold_flags[1] * Felt::from_u64(2));
+    out[c] = non_single * (threshold - threshold_flags[0] - threshold_flags[1] * Felt::from_u64(2));
     c += 1;
     for bit in count_flags {
         out[c] = non_single * felt_bool_v(bit);
@@ -1465,14 +1477,14 @@ fn compute_constraints(
     }
     out[c] = non_single * (count_flags[0] + count_flags[1] + count_flags[2] - Felt::ONE);
     c += 1;
-    out[c] = non_single
-        * (count - count_flags[1] - count_flags[2] * Felt::from_u64(2));
+    out[c] = non_single * (count - count_flags[1] - count_flags[2] * Felt::from_u64(2));
     c += 1;
     for bit in next_count_flags {
         out[c] = mode_approval * felt_bool_v(bit);
         c += 1;
     }
-    out[c] = mode_approval * (next_count_flags[0] + next_count_flags[1] + next_count_flags[2] - Felt::ONE);
+    out[c] = mode_approval
+        * (next_count_flags[0] + next_count_flags[1] + next_count_flags[2] - Felt::ONE);
     c += 1;
     out[c] = mode_approval
         * (next_count - next_count_flags[1] - next_count_flags[2] * Felt::from_u64(2));
@@ -1495,12 +1507,12 @@ fn compute_constraints(
     c += 1;
     out[c] = mode_approval * count_flags[1] * (next_slot1 - signer);
     c += 1;
-    out[c] =
-        mode_approval * count_flags[1] * ((signer - slot0) * duplicate_inverse - Felt::ONE);
+    out[c] = mode_approval * count_flags[1] * ((signer - slot0) * duplicate_inverse - Felt::ONE);
     c += 1;
 
-    out[c] = mode_final * (threshold_flags[0] * count_flags[0]
-        + threshold_flags[1] * (count_flags[0] + count_flags[1]));
+    out[c] = mode_final
+        * (threshold_flags[0] * count_flags[0]
+            + threshold_flags[1] * (count_flags[0] + count_flags[1]));
     c += 1;
     for limb in 0..HASH_LIMBS {
         out[c] = mode_final
