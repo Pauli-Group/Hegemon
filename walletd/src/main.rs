@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
@@ -15,24 +16,25 @@ use serde_json::Value;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
     constants::is_canonical_asset_id,
-    hashing_pq::{bytes48_to_felts, note_commitment_bytes},
+    hashing_pq::{bytes48_to_felts, felts_to_bytes48, note_commitment_bytes},
     note::MerklePath,
 };
 use wallet::{
     address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
-    build_transaction,
+    build_multisig_approval_transaction, build_multisig_final_transaction_from_plan,
+    build_multisig_initial_accumulator_transaction, build_transaction,
     disclosure::{
         decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
         DisclosurePackage, DisclosureProof,
     },
     node_rpc::NodeRpcClient,
     notes::MemoPlaintext,
-    parse_recipients, precheck_nullifiers,
+    parse_recipients, precheck_nullifiers, prepare_multisig_final_plan,
     store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     submission::{is_ambiguous_submission_error, provisional_pending_tx_id},
-    transfer_recipients_from_specs, ConsolidationPlan, MultisigIntentRecipient,
-    MultisigSpendIntent, RecipientSpec, WalletError, MAX_INPUTS,
+    transfer_recipients_from_specs, BuiltTransaction, ConsolidationPlan, MultisigIntentRecipient,
+    MultisigSpendIntent, PreparedMultisigFinalPlan, RecipientSpec, WalletError, MAX_INPUTS,
 };
 
 const PROTOCOL_VERSION: u32 = 2;
@@ -93,6 +95,13 @@ struct WalletdError {
 }
 
 type WalletdResult<T> = std::result::Result<T, WalletdError>;
+type MultisigFinalPlanCache = Arc<Mutex<HashMap<[u8; 48], CachedMultisigFinalPlan>>>;
+
+#[derive(Clone, Debug)]
+struct CachedMultisigFinalPlan {
+    plan: PreparedMultisigFinalPlan,
+    recipients: Vec<TransferRecipient>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalletdSubmissionFailurePolicy {
@@ -331,6 +340,82 @@ struct MultisigAccountListResponse {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MultisigNoteListParams {
+    #[serde(default)]
+    asset_id: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigSpendableNoteResponse {
+    commitment: String,
+    value: u64,
+    asset_id: u64,
+    position: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigNoteListResponse {
+    notes: Vec<MultisigSpendableNoteResponse>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigFinalPlanParams {
+    account_id: String,
+    value_note_commitment: String,
+    recipients: Vec<RecipientSpec>,
+    fee: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigFinalPlanResponse {
+    intent_digest: String,
+    value_note_commitment: String,
+    recipients: Vec<TransferRecipient>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigSetupSubmitParams {
+    ws_url: String,
+    account_id: String,
+    intent_digest: String,
+    funding_note_commitment: String,
+    fee: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigApprovalSubmitParams {
+    ws_url: String,
+    account_id: String,
+    accumulator_commitment: String,
+    signer_note_commitment: String,
+    fee: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigFinalSubmitParams {
+    ws_url: String,
+    account_id: String,
+    intent_digest: String,
+    accumulator_commitment: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigTxResponse {
+    tx_hash: String,
+    output_commitments: Vec<String>,
+    recipients: Vec<TransferRecipient>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct MultisigApprovalCreateParams {
     account_id: String,
     intent: MultisigIntentParams,
@@ -392,6 +477,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .context("failed to create tokio runtime")?;
+    let multisig_final_plans: MultisigFinalPlanCache = Arc::new(Mutex::new(HashMap::new()));
 
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
@@ -411,7 +497,13 @@ fn main() -> Result<()> {
         }
 
         let response = match serde_json::from_str::<RequestEnvelope>(&line) {
-            Ok(request) => handle_request(&runtime, store.clone(), &store_path, request),
+            Ok(request) => handle_request(
+                &runtime,
+                store.clone(),
+                multisig_final_plans.clone(),
+                &store_path,
+                request,
+            ),
             Err(err) => ResponseEnvelope {
                 id: Value::Null,
                 ok: false,
@@ -565,6 +657,7 @@ fn acquire_store_lock(store_path: &Path) -> WalletdResult<StoreLock> {
 fn handle_request(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
+    multisig_final_plans: MultisigFinalPlanCache,
     store_path: &str,
     request: RequestEnvelope,
 ) -> ResponseEnvelope {
@@ -598,6 +691,31 @@ fn handle_request(
                 to_json(multisig_account_create(&store, params)?)
             }
             "multisig.accountList" => to_json(multisig_account_list(&store)?),
+            "multisig.noteList" => {
+                let params: MultisigNoteListParams = parse_params(request.params)?;
+                to_json(multisig_note_list(&store, params)?)
+            }
+            "multisig.finalPlan" => {
+                let params: MultisigFinalPlanParams = parse_params(request.params)?;
+                to_json(multisig_final_plan(&store, multisig_final_plans, params)?)
+            }
+            "multisig.setupSubmit" => {
+                let params: MultisigSetupSubmitParams = parse_params(request.params)?;
+                to_json(multisig_setup_submit(runtime, store.clone(), params)?)
+            }
+            "multisig.approvalSubmit" => {
+                let params: MultisigApprovalSubmitParams = parse_params(request.params)?;
+                to_json(multisig_approval_submit(runtime, store.clone(), params)?)
+            }
+            "multisig.finalSubmit" => {
+                let params: MultisigFinalSubmitParams = parse_params(request.params)?;
+                to_json(multisig_final_submit(
+                    runtime,
+                    store.clone(),
+                    multisig_final_plans,
+                    params,
+                )?)
+            }
             "multisig.approvalCreate" => {
                 let params: MultisigApprovalCreateParams = parse_params(request.params)?;
                 to_json(multisig_approval_create(&store, params)?)
@@ -887,6 +1005,184 @@ fn multisig_account_list(store: &Arc<WalletStore>) -> WalletdResult<MultisigAcco
         .map(render_multisig_account)
         .collect();
     Ok(MultisigAccountListResponse { accounts })
+}
+
+fn multisig_note_list(
+    store: &Arc<WalletStore>,
+    params: MultisigNoteListParams,
+) -> WalletdResult<MultisigNoteListResponse> {
+    let asset_id = params
+        .asset_id
+        .unwrap_or(transaction_circuit::constants::NATIVE_ASSET_ID);
+    let notes = store
+        .spendable_notes(asset_id)
+        .map_err(WalletdError::internal)?
+        .into_iter()
+        .map(|note| {
+            let commitment = felts_to_bytes48(&note.recovered.note_data.commitment());
+            MultisigSpendableNoteResponse {
+                commitment: format!("0x{}", hex::encode(commitment)),
+                value: note.recovered.note.value,
+                asset_id: note.recovered.note.asset_id,
+                position: note.position,
+            }
+        })
+        .collect();
+    Ok(MultisigNoteListResponse { notes })
+}
+
+fn multisig_final_plan(
+    store: &Arc<WalletStore>,
+    cache: MultisigFinalPlanCache,
+    params: MultisigFinalPlanParams,
+) -> WalletdResult<MultisigFinalPlanResponse> {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot create multisig final plans",
+        ));
+    }
+    let account_id = parse_hex_32(&params.account_id)?;
+    let account = store
+        .multisig_account_record(&account_id)
+        .map_err(WalletdError::internal)?
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig account id",
+            )
+        })?;
+    let value_note_commitment = parse_param_hex_48(&params.value_note_commitment)?;
+    let recipients = parse_recipients(&params.recipients)
+        .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
+    let metadata = transfer_recipients_from_specs(&params.recipients);
+    let plan = prepare_multisig_final_plan(
+        store,
+        &account,
+        value_note_commitment,
+        &recipients,
+        params.fee,
+    )
+    .map_err(|err| WalletdError::new(WalletdErrorCode::TransactionFailed, err.to_string()))?;
+    let intent_digest = plan.intent_digest;
+    cache
+        .lock()
+        .map_err(|_| WalletdError::internal("multisig final plan cache poisoned"))?
+        .insert(
+            intent_digest,
+            CachedMultisigFinalPlan {
+                plan,
+                recipients: metadata.clone(),
+            },
+        );
+    Ok(MultisigFinalPlanResponse {
+        intent_digest: format!("0x{}", hex::encode(intent_digest)),
+        value_note_commitment: format!("0x{}", hex::encode(value_note_commitment)),
+        recipients: metadata,
+    })
+}
+
+fn multisig_setup_submit(
+    runtime: &tokio::runtime::Runtime,
+    store: Arc<WalletStore>,
+    params: MultisigSetupSubmitParams,
+) -> WalletdResult<MultisigTxResponse> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let intent_digest = parse_param_hex_48(&params.intent_digest)?;
+    let funding_note_commitment = parse_param_hex_48(&params.funding_note_commitment)?;
+    submit_multisig_built_transaction(
+        runtime,
+        store.clone(),
+        params.ws_url,
+        params.fee,
+        Vec::new(),
+        move |store| {
+            let account = store
+                .multisig_account_record(&account_id)?
+                .ok_or(WalletError::InvalidArgument("unknown multisig account id"))?;
+            build_multisig_initial_accumulator_transaction(
+                store,
+                &account,
+                intent_digest,
+                funding_note_commitment,
+                params.fee,
+            )
+        },
+    )
+}
+
+fn multisig_approval_submit(
+    runtime: &tokio::runtime::Runtime,
+    store: Arc<WalletStore>,
+    params: MultisigApprovalSubmitParams,
+) -> WalletdResult<MultisigTxResponse> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let accumulator_commitment = parse_param_hex_48(&params.accumulator_commitment)?;
+    let signer_note_commitment = parse_param_hex_48(&params.signer_note_commitment)?;
+    submit_multisig_built_transaction(
+        runtime,
+        store.clone(),
+        params.ws_url,
+        params.fee,
+        Vec::new(),
+        move |store| {
+            let account = store
+                .multisig_account_record(&account_id)?
+                .ok_or(WalletError::InvalidArgument("unknown multisig account id"))?;
+            build_multisig_approval_transaction(
+                store,
+                &account,
+                accumulator_commitment,
+                signer_note_commitment,
+                params.fee,
+            )
+        },
+    )
+}
+
+fn multisig_final_submit(
+    runtime: &tokio::runtime::Runtime,
+    store: Arc<WalletStore>,
+    cache: MultisigFinalPlanCache,
+    params: MultisigFinalSubmitParams,
+) -> WalletdResult<MultisigTxResponse> {
+    let account_id = parse_hex_32(&params.account_id)?;
+    let intent_digest = parse_param_hex_48(&params.intent_digest)?;
+    let accumulator_commitment = parse_param_hex_48(&params.accumulator_commitment)?;
+    let cached = cache
+        .lock()
+        .map_err(|_| WalletdError::internal("multisig final plan cache poisoned"))?
+        .get(&intent_digest)
+        .cloned()
+        .ok_or_else(|| {
+            WalletdError::new(
+                WalletdErrorCode::InvalidParams,
+                "unknown multisig final plan digest",
+            )
+        })?;
+    let response = submit_multisig_built_transaction(
+        runtime,
+        store.clone(),
+        params.ws_url,
+        cached.plan.fee,
+        cached.recipients.clone(),
+        move |store| {
+            let account = store
+                .multisig_account_record(&account_id)?
+                .ok_or(WalletError::InvalidArgument("unknown multisig account id"))?;
+            build_multisig_final_transaction_from_plan(
+                store,
+                &account,
+                &cached.plan,
+                accumulator_commitment,
+            )
+        },
+    )?;
+    cache
+        .lock()
+        .map_err(|_| WalletdError::internal("multisig final plan cache poisoned"))?
+        .remove(&intent_digest);
+    Ok(response)
 }
 
 fn multisig_approval_create(
@@ -1252,6 +1548,155 @@ async fn submit_bundle_strict(
         // envelope and validation route as the main wallet API.
         client.submit_transaction(bundle).await
     }
+}
+
+fn submit_multisig_built_transaction<F>(
+    runtime: &tokio::runtime::Runtime,
+    store: Arc<WalletStore>,
+    ws_url: String,
+    fee: u64,
+    recipients: Vec<TransferRecipient>,
+    build: F,
+) -> WalletdResult<MultisigTxResponse>
+where
+    F: FnOnce(&WalletStore) -> Result<BuiltTransaction, WalletError>,
+{
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets cannot submit multisig transactions",
+        ));
+    }
+
+    runtime.block_on(async {
+        let client = Arc::new(NodeRpcClient::connect(&ws_url).await.map_err(|e| {
+            WalletdError::new(
+                WalletdErrorCode::RpcConnectionFailed,
+                format!("Failed to connect: {e}"),
+            )
+        })?);
+        let engine = AsyncWalletSyncEngine::new(client.clone(), store.clone());
+        engine
+            .sync_once()
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::SyncFailed, e.to_string()))?;
+        ensure_wallet_root_consistency(&engine, &store, &client).await?;
+
+        let built = build(&store)
+            .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
+        for nullifier in &built.nullifiers {
+            if client.is_nullifier_spent(nullifier).await.map_err(|e| {
+                WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string())
+            })? {
+                return Err(WalletdError::new(
+                    WalletdErrorCode::TransactionFailed,
+                    format!("nullifier already spent: 0x{}", hex::encode(nullifier)),
+                ));
+            }
+        }
+        let anchor_valid = client
+            .is_valid_anchor(&built.bundle.anchor)
+            .await
+            .map_err(|e| WalletdError::new(WalletdErrorCode::TransactionFailed, e.to_string()))?;
+        if !anchor_valid {
+            return Err(WalletdError::new(
+                WalletdErrorCode::AnchorInvalid,
+                format!("invalid multisig transaction anchor {}", hex::encode(built.bundle.anchor)),
+            ));
+        }
+
+        store
+            .mark_notes_pending(&built.spent_note_indexes, true)
+            .map_err(WalletdError::internal)?;
+
+        let signing_seed = store
+            .derived_keys()
+            .map_err(WalletdError::internal)?
+            .map(|keys| keys.spend.to_bytes());
+        let use_da_sidecar = env_bool("HEGEMON_WALLET_DA_SIDECAR", false);
+        let use_proof_sidecar = env_bool("HEGEMON_WALLET_PROOF_SIDECAR", false);
+        let try_signed_first = env_bool("HEGEMON_WALLET_TRY_SIGNED_SUBMIT", false);
+        let output_commitments = built
+            .bundle
+            .commitments
+            .iter()
+            .map(|commitment| format!("0x{}", hex::encode(commitment)))
+            .collect::<Vec<_>>();
+
+        match submit_bundle_strict(
+            &client,
+            &built.bundle,
+            signing_seed,
+            try_signed_first,
+            use_da_sidecar,
+            use_proof_sidecar,
+        )
+        .await
+        {
+            Ok(tx_hash) => {
+                let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
+                store
+                    .record_outgoing_disclosures(
+                        tx_hash,
+                        genesis_hash,
+                        built.outgoing_disclosures.clone(),
+                    )
+                    .map_err(WalletdError::internal)?;
+                store
+                    .record_pending_submission(
+                        tx_hash,
+                        built.nullifiers.clone(),
+                        built.spent_note_indexes.clone(),
+                        recipients.clone(),
+                        fee,
+                    )
+                    .map_err(WalletdError::internal)?;
+                Ok(MultisigTxResponse {
+                    tx_hash: format!("0x{}", hex::encode(tx_hash)),
+                    output_commitments,
+                    recipients,
+                })
+            }
+            Err(err) => {
+                if walletd_submission_failure_policy(&err)
+                    == WalletdSubmissionFailurePolicy::PreservePendingWithProvisionalTx
+                {
+                    let provisional_tx_id = provisional_pending_tx_id(&built.bundle);
+                    let genesis_hash = ensure_walletd_genesis_hash(&store, &client).await?;
+                    store
+                        .record_outgoing_disclosures(
+                            provisional_tx_id,
+                            genesis_hash,
+                            built.outgoing_disclosures.clone(),
+                        )
+                        .map_err(WalletdError::internal)?;
+                    store
+                        .record_pending_submission(
+                            provisional_tx_id,
+                            built.nullifiers.clone(),
+                            built.spent_note_indexes.clone(),
+                            recipients,
+                            fee,
+                        )
+                        .map_err(WalletdError::internal)?;
+                    return Err(WalletdError::new(
+                        WalletdErrorCode::TransactionFailed,
+                        format!(
+                            "Multisig transaction submission status unknown after ambiguous RPC failure; recorded provisional pending transaction 0x{}: {err}",
+                            hex::encode(provisional_tx_id)
+                        ),
+                    ));
+                }
+                store
+                    .mark_notes_pending(&built.spent_note_indexes, false)
+                    .map_err(WalletdError::internal)?;
+                Err(WalletdError::new(
+                    WalletdErrorCode::TransactionFailed,
+                    format!("Multisig transaction submission failed: {err}"),
+                ))
+            }
+        }
+    })
 }
 
 fn tx_send(
@@ -2197,6 +2642,7 @@ mod tests {
         let response = handle_request(
             &runtime,
             store,
+            Arc::new(Mutex::new(HashMap::new())),
             &store_path,
             RequestEnvelope {
                 id: json!(1),
@@ -2228,6 +2674,7 @@ mod tests {
         let create = handle_request(
             &runtime,
             store.clone(),
+            Arc::new(Mutex::new(HashMap::new())),
             &store_path,
             RequestEnvelope {
                 id: json!(1),
@@ -2245,6 +2692,7 @@ mod tests {
         let response = handle_request(
             &runtime,
             store,
+            Arc::new(Mutex::new(HashMap::new())),
             &store_path,
             RequestEnvelope {
                 id: json!(2),
@@ -2275,6 +2723,29 @@ mod tests {
             response.error_code,
             Some(WalletdErrorCode::ProofInvalid)
         ));
+    }
+
+    #[test]
+    fn walletd_multisig_note_list_exposes_local_commitments_only() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+        let response = handle_request(
+            &runtime,
+            store,
+            Arc::new(Mutex::new(HashMap::new())),
+            &store_path,
+            RequestEnvelope {
+                id: json!(3),
+                method: "multisig.noteList".to_string(),
+                params: json!({ "assetId": 0 }),
+            },
+        );
+        assert!(response.ok, "{:?}", response.error);
+        let result = response.result.unwrap();
+        assert_eq!(result["notes"].as_array().unwrap().len(), 0);
     }
 
     fn temp_store() -> (Arc<WalletStore>, String) {

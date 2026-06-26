@@ -45,7 +45,7 @@ pub struct BuiltTransaction {
     pub outgoing_disclosures: Vec<OutgoingDisclosureDraft>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PreparedMultisigFinalPlan {
     pub intent_digest: [u8; 48],
     pub value_note_commitment: [u8; 48],
