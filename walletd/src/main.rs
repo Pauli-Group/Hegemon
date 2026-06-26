@@ -360,6 +360,12 @@ struct MultisigNoteListResponse {
     notes: Vec<MultisigSpendableNoteResponse>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigLocalSignerResponse {
+    signer_id: u64,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MultisigFinalPlanParams {
@@ -695,6 +701,7 @@ fn handle_request(
                 let params: MultisigNoteListParams = parse_params(request.params)?;
                 to_json(multisig_note_list(&store, params)?)
             }
+            "multisig.localSignerId" => to_json(multisig_local_signer_id(&store)?),
             "multisig.finalPlan" => {
                 let params: MultisigFinalPlanParams = parse_params(request.params)?;
                 to_json(multisig_final_plan(&store, multisig_final_plans, params)?)
@@ -1029,6 +1036,21 @@ fn multisig_note_list(
         })
         .collect();
     Ok(MultisigNoteListResponse { notes })
+}
+
+fn multisig_local_signer_id(
+    store: &Arc<WalletStore>,
+) -> WalletdResult<MultisigLocalSignerResponse> {
+    if store.mode().map_err(WalletdError::internal)? == WalletMode::WatchOnly {
+        return Err(WalletdError::new(
+            WalletdErrorCode::WatchOnly,
+            "watch-only wallets do not have a local multisig signer id",
+        ));
+    }
+    let signer_id = store
+        .local_multisig_signer_id()
+        .map_err(WalletdError::internal)?;
+    Ok(MultisigLocalSignerResponse { signer_id })
 }
 
 fn multisig_final_plan(
