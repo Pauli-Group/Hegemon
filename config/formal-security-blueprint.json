@@ -424,7 +424,7 @@
           "path": "circuits/transaction/src/smallwood_frontend.rs",
           "callee": "commitment_inputs",
           "required_callers": [
-            "poseidon_subtrace_rows"
+            "poseidon_subtrace_rows_with_auth"
           ]
         },
         {
@@ -551,7 +551,7 @@
           "path": "circuits/transaction/src/smallwood_frontend.rs",
           "callee": "nullifier_inputs",
           "required_callers": [
-            "poseidon_subtrace_rows"
+            "poseidon_subtrace_rows_with_auth"
           ]
         }
       ],
