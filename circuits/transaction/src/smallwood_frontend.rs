@@ -1948,6 +1948,11 @@ fn decode_exact_current_smallwood_candidate_proof(
             "smallwood candidate proof wrapper must use canonical serialization",
         ));
     }
+    if !candidate.auxiliary_witness_words.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must not carry auxiliary witness words",
+        ));
+    }
     Ok(candidate)
 }
 
@@ -3400,6 +3405,11 @@ fn encode_smallwood_candidate_proof(
     ark_proof: Vec<u8>,
     auxiliary_witness_words: &[u64],
 ) -> Result<Vec<u8>, TransactionCircuitError> {
+    if !auxiliary_witness_words.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must not carry auxiliary witness words",
+        ));
+    }
     if auxiliary_witness_words.is_empty() {
         return bincode::serialize(&LegacySmallwoodCandidateProof {
             arithmetization,
@@ -3721,10 +3731,12 @@ mod tests {
         current_exact_consumption: bool,
         current_canonical_reencode: bool,
         current_ark_proof_bytes_present: bool,
+        current_auxiliary_witness_words_empty: bool,
         legacy_decode_ok: bool,
         legacy_exact_consumption: bool,
         legacy_canonical_reencode: bool,
         legacy_ark_proof_bytes_present: bool,
+        legacy_auxiliary_witness_words_empty: bool,
         expected_valid: bool,
         expected_kind: Option<String>,
         expected_rejection: Option<String>,
@@ -4183,6 +4195,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn smallwood_candidate_wrapper_rejects_outer_auxiliary_witness_words() {
+        // This is only an outer-wrapper guard. The inner SmallWood proof trace can
+        // still carry public opening auxiliary words, so hidden auth data must not
+        // be routed through either channel.
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let leaky_wrapper = bincode::serialize(&SmallwoodCandidateProof {
+            arithmetization,
+            ark_proof: vec![1, 2, 3, 4],
+            auxiliary_witness_words: vec![0xfeed, 0xbeef],
+        })
+        .expect("encode leaky current wrapper");
+
+        let decode_err = decode_smallwood_candidate_proof(&leaky_wrapper)
+            .expect_err("outer candidate wrapper must reject auxiliary witness words");
+        assert!(
+            format!("{decode_err}").contains("must not carry auxiliary witness words"),
+            "unexpected error for leaky outer wrapper: {decode_err}"
+        );
+
+        let encode_err =
+            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3, 4], &[0xfeed])
+                .expect_err("encoder must not emit auxiliary witness words in outer wrapper");
+        assert!(
+            format!("{encode_err}").contains("must not carry auxiliary witness words"),
+            "unexpected encode error for leaky outer wrapper: {encode_err}"
+        );
+    }
+
     fn modeled_smallwood_candidate_wrapper_outcome(
         case: &LeanSmallwoodCandidateWrapperAdmissionCase,
     ) -> (bool, Option<String>, Option<String>) {
@@ -4193,7 +4235,13 @@ mod tests {
             && case.legacy_exact_consumption
             && case.legacy_canonical_reencode;
         if current_accepts {
-            if case.current_ark_proof_bytes_present {
+            if !case.current_auxiliary_witness_words_empty {
+                (
+                    false,
+                    Some("current".to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                )
+            } else if case.current_ark_proof_bytes_present {
                 (true, Some("current".to_string()), None)
             } else {
                 (
@@ -4203,7 +4251,13 @@ mod tests {
                 )
             }
         } else if legacy_accepts {
-            if case.legacy_ark_proof_bytes_present {
+            if !case.legacy_auxiliary_witness_words_empty {
+                (
+                    false,
+                    Some("legacy".to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                )
+            } else if case.legacy_ark_proof_bytes_present {
                 (true, Some("legacy".to_string()), None)
             } else {
                 (
@@ -4221,6 +4275,25 @@ mod tests {
         fixture: &str,
     ) -> (bool, Option<String>, Option<String>) {
         let bytes = smallwood_candidate_wrapper_fixture_bytes(fixture);
+        match decode_exact_current_smallwood_candidate_proof(&bytes) {
+            Ok(candidate) => {
+                let kind = Some(SmallwoodCandidateWrapperKind::Current.label().to_string());
+                if candidate.ark_proof.is_empty() {
+                    return (false, kind, Some("missing_ark_proof_bytes".to_string()));
+                }
+                return (true, kind, None);
+            }
+            Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood candidate proof wrapper must not carry auxiliary witness words",
+            )) => {
+                return (
+                    false,
+                    Some(SmallwoodCandidateWrapperKind::Current.label().to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                );
+            }
+            Err(_) => {}
+        }
         match decode_smallwood_candidate_proof_with_kind(&bytes) {
             Ok((candidate, kind)) => {
                 let kind = Some(kind.label().to_string());
@@ -4238,11 +4311,11 @@ mod tests {
         let current_arithmetization =
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
         match fixture {
-            "current_nonempty" => encode_smallwood_candidate_proof(
-                current_arithmetization,
-                vec![1, 2, 3, 4],
-                &[9, 10],
-            )
+            "current_nonempty" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: vec![1, 2, 3, 4],
+                auxiliary_witness_words: vec![9, 10],
+            })
             .expect("encode current SmallWood wrapper fixture"),
             "legacy_nonempty" => encode_smallwood_candidate_proof(
                 SmallwoodArithmetization::Bridge64V1,
@@ -4250,10 +4323,12 @@ mod tests {
                 &[],
             )
             .expect("encode legacy SmallWood wrapper fixture"),
-            "current_empty_ark" => {
-                encode_smallwood_candidate_proof(current_arithmetization, Vec::new(), &[9])
-                    .expect("encode empty current SmallWood wrapper fixture")
-            }
+            "current_empty_ark" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: Vec::new(),
+                auxiliary_witness_words: Vec::new(),
+            })
+            .expect("encode empty current SmallWood wrapper fixture"),
             "legacy_empty_ark" => encode_smallwood_candidate_proof(
                 SmallwoodArithmetization::Bridge64V1,
                 Vec::new(),
@@ -4262,11 +4337,11 @@ mod tests {
             .expect("encode empty legacy SmallWood wrapper fixture"),
             "malformed" => vec![0xff, 0x00, 0x01],
             "current_trailing" => {
-                let mut bytes = encode_smallwood_candidate_proof(
-                    current_arithmetization,
-                    vec![1, 2, 3, 4],
-                    &[9],
-                )
+                let mut bytes = bincode::serialize(&SmallwoodCandidateProof {
+                    arithmetization: current_arithmetization,
+                    ark_proof: vec![1, 2, 3, 4],
+                    auxiliary_witness_words: vec![9],
+                })
                 .expect("encode current trailing SmallWood wrapper fixture");
                 bytes.push(0);
                 bytes
@@ -4467,7 +4542,8 @@ mod tests {
             Vec::new()
         };
         let wrapper_bytes = if case.candidate_wrapper_accepted {
-            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3], &auxiliary_words)
+            let _ = auxiliary_words;
+            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3], &[])
                 .expect("encode SmallWood candidate wrapper")
         } else {
             vec![0xff, 0x00, 0x01]

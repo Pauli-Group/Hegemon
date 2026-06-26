@@ -9,6 +9,7 @@ deriving DecidableEq, Repr
 
 inductive WrapperReject where
   | noCanonicalWrapper
+  | auxiliaryWitnessWordsPresent
   | missingArkProofBytes
 deriving DecidableEq, Repr
 
@@ -17,6 +18,7 @@ structure DecodeAttempt where
   exactConsumption : Bool
   canonicalReencode : Bool
   arkProofBytesPresent : Bool
+  auxiliaryWitnessWordsEmpty : Bool
 deriving DecidableEq, Repr
 
 structure WrapperAdmissionInput where
@@ -40,12 +42,16 @@ def evaluateWrapperRejection (input : WrapperAdmissionInput) :
   match selectedWrapperKind input with
   | none => some WrapperReject.noCanonicalWrapper
   | some WrapperKind.current =>
-      if input.current.arkProofBytesPresent then
+      if !input.current.auxiliaryWitnessWordsEmpty then
+        some WrapperReject.auxiliaryWitnessWordsPresent
+      else if input.current.arkProofBytesPresent then
         none
       else
         some WrapperReject.missingArkProofBytes
   | some WrapperKind.legacy =>
-      if input.legacy.arkProofBytesPresent then
+      if !input.legacy.auxiliaryWitnessWordsEmpty then
+        some WrapperReject.auxiliaryWitnessWordsPresent
+      else if input.legacy.arkProofBytesPresent then
         none
       else
         some WrapperReject.missingArkProofBytes
@@ -55,12 +61,14 @@ def wrapperAccepts (input : WrapperAdmissionInput) : Bool :=
 
 def acceptedCurrentWrapperSurface (input : WrapperAdmissionInput) : Prop :=
   canonicalWrapperAdmits input.current = true
+    ∧ input.current.auxiliaryWitnessWordsEmpty = true
     ∧ input.current.arkProofBytesPresent = true
     ∧ selectedWrapperKind input = some WrapperKind.current
 
 def acceptedLegacyWrapperSurface (input : WrapperAdmissionInput) : Prop :=
   canonicalWrapperAdmits input.current = false
     ∧ canonicalWrapperAdmits input.legacy = true
+    ∧ input.legacy.auxiliaryWitnessWordsEmpty = true
     ∧ input.legacy.arkProofBytesPresent = true
     ∧ selectedWrapperKind input = some WrapperKind.legacy
 
@@ -68,15 +76,19 @@ theorem wrapper_accepts_iff_selected_canonical_nonempty
     {input : WrapperAdmissionInput} :
     wrapperAccepts input = true ↔
       (canonicalWrapperAdmits input.current = true
+        ∧ input.current.auxiliaryWitnessWordsEmpty = true
         ∧ input.current.arkProofBytesPresent = true)
       ∨ (canonicalWrapperAdmits input.current = false
         ∧ canonicalWrapperAdmits input.legacy = true
+        ∧ input.legacy.auxiliaryWitnessWordsEmpty = true
         ∧ input.legacy.arkProofBytesPresent = true) := by
   unfold wrapperAccepts evaluateWrapperRejection selectedWrapperKind
   by_cases hCurrent : canonicalWrapperAdmits input.current
-  · cases input.current.arkProofBytesPresent <;> simp [hCurrent]
+  · cases input.current.auxiliaryWitnessWordsEmpty <;>
+      cases input.current.arkProofBytesPresent <;> simp [hCurrent]
   · by_cases hLegacy : canonicalWrapperAdmits input.legacy
-    · cases input.legacy.arkProofBytesPresent <;> simp [hCurrent, hLegacy]
+    · cases input.legacy.auxiliaryWitnessWordsEmpty <;>
+        cases input.legacy.arkProofBytesPresent <;> simp [hCurrent, hLegacy]
     · simp [hCurrent, hLegacy]
 
 theorem current_wrapper_selected_precedes_legacy
@@ -107,8 +119,10 @@ theorem accepted_current_wrapper_exposes_surface
     acceptedCurrentWrapperSurface input := by
   have hCurrent := current_wrapper_selected_precedes_legacy selected
   unfold wrapperAccepts evaluateWrapperRejection at accepted
-  simp [selected] at accepted
-  exact ⟨hCurrent, accepted, selected⟩
+  cases hAux : input.current.auxiliaryWitnessWordsEmpty <;>
+    cases hArk : input.current.arkProofBytesPresent <;>
+    simp [selected, hAux, hArk] at accepted
+  exact ⟨hCurrent, hAux, hArk, selected⟩
 
 theorem accepted_legacy_wrapper_exposes_surface
     {input : WrapperAdmissionInput}
@@ -118,32 +132,38 @@ theorem accepted_legacy_wrapper_exposes_surface
   have hSelected := legacy_wrapper_selected_requires_current_rejected selected
   rcases hSelected with ⟨hCurrent, hLegacy⟩
   unfold wrapperAccepts evaluateWrapperRejection at accepted
-  simp [selected] at accepted
-  exact ⟨hCurrent, hLegacy, accepted, selected⟩
+  cases hAux : input.legacy.auxiliaryWitnessWordsEmpty <;>
+    cases hArk : input.legacy.arkProofBytesPresent <;>
+    simp [selected, hAux, hArk] at accepted
+  exact ⟨hCurrent, hLegacy, hAux, hArk, selected⟩
 
 def validCurrentWrapper : WrapperAdmissionInput :=
   { current :=
       { decodeOk := true
         exactConsumption := true
         canonicalReencode := true
-        arkProofBytesPresent := true }
+        arkProofBytesPresent := true
+        auxiliaryWitnessWordsEmpty := true }
     legacy :=
       { decodeOk := false
         exactConsumption := false
         canonicalReencode := false
-        arkProofBytesPresent := false } }
+        arkProofBytesPresent := false
+        auxiliaryWitnessWordsEmpty := true } }
 
 def validLegacyWrapper : WrapperAdmissionInput :=
   { current :=
       { decodeOk := false
         exactConsumption := false
         canonicalReencode := false
-        arkProofBytesPresent := false }
+        arkProofBytesPresent := false
+        auxiliaryWitnessWordsEmpty := true }
     legacy :=
       { decodeOk := true
         exactConsumption := true
         canonicalReencode := true
-        arkProofBytesPresent := true } }
+        arkProofBytesPresent := true
+        auxiliaryWitnessWordsEmpty := true } }
 
 theorem valid_current_wrapper_accepts :
     evaluateWrapperRejection validCurrentWrapper = none := by
@@ -159,6 +179,14 @@ theorem current_empty_ark_rejects_before_legacy :
         current := { validCurrentWrapper.current with arkProofBytesPresent := false },
         legacy := validLegacyWrapper.legacy } =
       some WrapperReject.missingArkProofBytes := by
+  decide
+
+theorem current_auxiliary_witness_words_reject_before_legacy :
+    evaluateWrapperRejection
+      { validCurrentWrapper with
+        current := { validCurrentWrapper.current with auxiliaryWitnessWordsEmpty := false },
+        legacy := validLegacyWrapper.legacy } =
+      some WrapperReject.auxiliaryWitnessWordsPresent := by
   decide
 
 theorem legacy_empty_ark_rejects :

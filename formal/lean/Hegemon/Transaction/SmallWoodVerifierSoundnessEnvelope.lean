@@ -23,11 +23,13 @@ structure CandidateWrapperAdmissionFacts
   selectedCanonicalNonempty :
     (SmallWoodCandidateWrapperAdmission.canonicalWrapperAdmits
         input.current = true
+      ∧ input.current.auxiliaryWitnessWordsEmpty = true
       ∧ input.current.arkProofBytesPresent = true)
       ∨ (SmallWoodCandidateWrapperAdmission.canonicalWrapperAdmits
           input.current = false
         ∧ SmallWoodCandidateWrapperAdmission.canonicalWrapperAdmits
           input.legacy = true
+        ∧ input.legacy.auxiliaryWitnessWordsEmpty = true
         ∧ input.legacy.arkProofBytesPresent = true)
 
 structure SmallWoodVerifierEnvelopeFacts
