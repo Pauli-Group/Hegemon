@@ -49,7 +49,7 @@ pub const LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
         beta: 2,
         opening_pow_bits: 0,
         decs_nb_evals: 32768,
-        decs_nb_opened_evals: 24,
+        decs_nb_opened_evals: 25,
         decs_eta: 3,
         decs_pow_bits: 0,
     };

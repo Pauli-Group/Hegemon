@@ -105,7 +105,7 @@ def validCandidateArtifact : CandidateArtifactInput :=
     receiptRootAbsent := true,
     recursivePayloadPresent := true,
     recursiveProofBytes := 32,
-    maxRecursiveProofBytes := 522159
+    maxRecursiveProofBytes := 523736
   }
 
 def customProofKindCandidateArtifact : CandidateArtifactInput :=

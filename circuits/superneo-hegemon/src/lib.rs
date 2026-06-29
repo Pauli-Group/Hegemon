@@ -5601,7 +5601,6 @@ mod tests {
     const TX_LEAF_ORACLE_PLONKY3_BACKEND: u8 = 1;
     const TX_LEAF_ORACLE_SMALLWOOD_BACKEND: u8 = 2;
     const TX_LEAF_ORACLE_CIRCUIT_V2: u16 = 2;
-    const TX_LEAF_ORACLE_CRYPTO_BETA: u16 = 2;
     const TX_LEAF_ORACLE_CRYPTO_GAMMA: u16 = 3;
 
     #[derive(Clone, Debug)]
@@ -5822,10 +5821,6 @@ mod tests {
             && crypto_suite == TX_LEAF_ORACLE_CRYPTO_GAMMA
         {
             TX_LEAF_ORACLE_PLONKY3_BACKEND
-        } else if circuit_version == TX_LEAF_ORACLE_CIRCUIT_V2
-            && crypto_suite == TX_LEAF_ORACLE_CRYPTO_BETA
-        {
-            TX_LEAF_ORACLE_SMALLWOOD_BACKEND
         } else {
             TX_LEAF_ORACLE_SMALLWOOD_BACKEND
         }
@@ -7170,7 +7165,7 @@ mod tests {
                 + artifact.folds.len()
                 + total_row_count
                 + total_challenge_count;
-            let max_item_bytes = (48 * 3).max((5 * 8).max(54 * 8));
+            let max_item_bytes = 54 * 8;
             let aggregate_bytes =
                 48 * 3 * artifact.leaves.len() + 8 * total_challenge_count + 8 * total_coeff_count;
             let work_units = dynamic_item_count + total_coeff_count;

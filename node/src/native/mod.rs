@@ -81,6 +81,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio::time::{interval, MissedTickBehavior};
+use tower::limit::ConcurrencyLimitLayer;
 use tracing::{debug, info, warn};
 use transaction_circuit::hashing_pq::felts_to_bytes48;
 use transaction_core::hashing_pq::ciphertext_hash_bytes;
@@ -136,7 +137,8 @@ const MIN_NATIVE_WALLET_CIPHERTEXT_BYTES: usize =
     ENCRYPTED_NOTE_SIZE + MIN_NATIVE_ARCHIVE_KEM_CIPHERTEXT_BYTES;
 const MAX_NATIVE_TIMESTAMP_ROWS: u64 = 4096;
 const MAX_NATIVE_RPC_BATCH_REQUESTS: usize = 128;
-const MAX_NATIVE_RPC_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_NATIVE_RPC_BODY_BYTES: usize = 8 * 1024 * 1024;
+const MAX_NATIVE_RPC_CONCURRENT_REQUESTS: usize = 8;
 const MAX_NATIVE_MEMPOOL_ACTION_BYTES: usize = 64 * 1024 * 1024;
 const MAX_NATIVE_BLOCK_ACTIONS: usize = MAX_NATIVE_MEMPOOL_ACTIONS;
 const MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES: usize = MAX_NATIVE_RPC_ACTION_BYTES + 16 * 1024;
@@ -1762,21 +1764,21 @@ struct NativeActionWireReplayProjectionSummary {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeActionWireReplayProjectionAdmissionRejection {
-    PlanLengthMismatch,
-    CiphertextCountMismatch,
-    CiphertextHashMismatch,
-    CiphertextSizeMismatch,
-    ReplayKeyMismatch,
+    PlanLength,
+    CiphertextCount,
+    CiphertextHash,
+    CiphertextSize,
+    ReplayKey,
 }
 
 impl NativeActionWireReplayProjectionAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
-            Self::PlanLengthMismatch => "plan_length_mismatch",
-            Self::CiphertextCountMismatch => "ciphertext_count_mismatch",
-            Self::CiphertextHashMismatch => "ciphertext_hash_mismatch",
-            Self::CiphertextSizeMismatch => "ciphertext_size_mismatch",
-            Self::ReplayKeyMismatch => "replay_key_mismatch",
+            Self::PlanLength => "plan_length_mismatch",
+            Self::CiphertextCount => "ciphertext_count_mismatch",
+            Self::CiphertextHash => "ciphertext_hash_mismatch",
+            Self::CiphertextSize => "ciphertext_size_mismatch",
+            Self::ReplayKey => "replay_key_mismatch",
         }
     }
 }
@@ -1992,40 +1994,40 @@ struct NativeTxLeafActionBindingAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeTxLeafActionBindingAdmissionRejection {
-    NullifiersMismatch,
-    CommitmentsMismatch,
-    CiphertextHashesMismatch,
-    InputCountMismatch,
-    OutputCountMismatch,
-    VersionMismatch,
-    FeeMismatch,
-    StablecoinPayloadMismatch,
-    BalanceTagMismatch,
-    ReceiptStatementHashMismatch,
-    PublicInputsDigestMismatch,
-    ProofDigestMismatch,
-    ProofBackendMismatch,
-    CiphertextPayloadHashMismatch,
+    Nullifiers,
+    Commitments,
+    CiphertextHashes,
+    InputCount,
+    OutputCount,
+    Version,
+    Fee,
+    StablecoinPayload,
+    BalanceTag,
+    ReceiptStatementHash,
+    PublicInputsDigest,
+    ProofDigest,
+    ProofBackend,
+    CiphertextPayloadHash,
 }
 
 impl NativeTxLeafActionBindingAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::NullifiersMismatch => "nullifiers_mismatch",
-            Self::CommitmentsMismatch => "commitments_mismatch",
-            Self::CiphertextHashesMismatch => "ciphertext_hashes_mismatch",
-            Self::InputCountMismatch => "input_count_mismatch",
-            Self::OutputCountMismatch => "output_count_mismatch",
-            Self::VersionMismatch => "version_mismatch",
-            Self::FeeMismatch => "fee_mismatch",
-            Self::StablecoinPayloadMismatch => "stablecoin_payload_mismatch",
-            Self::BalanceTagMismatch => "balance_tag_mismatch",
-            Self::ReceiptStatementHashMismatch => "receipt_statement_hash_mismatch",
-            Self::PublicInputsDigestMismatch => "public_inputs_digest_mismatch",
-            Self::ProofDigestMismatch => "proof_digest_mismatch",
-            Self::ProofBackendMismatch => "proof_backend_mismatch",
-            Self::CiphertextPayloadHashMismatch => "ciphertext_payload_hash_mismatch",
+            Self::Nullifiers => "nullifiers_mismatch",
+            Self::Commitments => "commitments_mismatch",
+            Self::CiphertextHashes => "ciphertext_hashes_mismatch",
+            Self::InputCount => "input_count_mismatch",
+            Self::OutputCount => "output_count_mismatch",
+            Self::Version => "version_mismatch",
+            Self::Fee => "fee_mismatch",
+            Self::StablecoinPayload => "stablecoin_payload_mismatch",
+            Self::BalanceTag => "balance_tag_mismatch",
+            Self::ReceiptStatementHash => "receipt_statement_hash_mismatch",
+            Self::PublicInputsDigest => "public_inputs_digest_mismatch",
+            Self::ProofDigest => "proof_digest_mismatch",
+            Self::ProofBackend => "proof_backend_mismatch",
+            Self::CiphertextPayloadHash => "ciphertext_payload_hash_mismatch",
         }
     }
 }
@@ -2040,20 +2042,20 @@ struct NativeCandidateArtifactBindingAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeCandidateArtifactBindingAdmissionRejection {
-    DaRootMismatch,
-    DaChunkCountMismatch,
-    TxStatementCommitmentMismatch,
-    RecursiveStateRootMismatch,
+    DaRoot,
+    DaChunkCount,
+    TxStatementCommitment,
+    RecursiveStateRoot,
 }
 
 impl NativeCandidateArtifactBindingAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::DaRootMismatch => "da_root_mismatch",
-            Self::DaChunkCountMismatch => "da_chunk_count_mismatch",
-            Self::TxStatementCommitmentMismatch => "tx_statement_commitment_mismatch",
-            Self::RecursiveStateRootMismatch => "recursive_state_root_mismatch",
+            Self::DaRoot => "da_root_mismatch",
+            Self::DaChunkCount => "da_chunk_count_mismatch",
+            Self::TxStatementCommitment => "tx_statement_commitment_mismatch",
+            Self::RecursiveStateRoot => "recursive_state_root_mismatch",
         }
     }
 }
@@ -2183,16 +2185,16 @@ impl NativeCanonicalReorgChainAdmissionRejection {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBlockCommitmentAdmissionRejection {
-    TxCountMismatch,
-    StateRootMismatch,
-    KernelRootMismatch,
-    NullifierRootMismatch,
-    ExtrinsicsRootMismatch,
-    MessageRootMismatch,
-    MessageCountMismatch,
-    HeaderMmrRootMismatch,
-    HeaderMmrLenMismatch,
-    SupplyDigestMismatch,
+    TxCount,
+    StateRoot,
+    KernelRoot,
+    NullifierRoot,
+    ExtrinsicsRoot,
+    MessageRoot,
+    MessageCount,
+    HeaderMmrRoot,
+    HeaderMmrLen,
+    SupplyDigest,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2234,20 +2236,20 @@ struct NativeAtomicCommitManifestAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeAtomicCommitManifestAdmissionRejection {
-    MinedPlanLengthMismatch,
-    BlockRecordWritesMismatch,
-    HeightIndexWritesMismatch,
-    BestPointerWritesMismatch,
-    CanonicalIndexClearMismatch,
-    PendingTreeClearMismatch,
-    PendingActionRemovalMismatch,
-    PendingActionWriteMismatch,
-    CommitmentWriteMismatch,
-    NullifierWriteMismatch,
-    BridgeReplayWriteMismatch,
-    CiphertextIndexWriteMismatch,
-    CiphertextArchiveWriteMismatch,
-    StagedCiphertextRemovalMismatch,
+    MinedPlanLength,
+    BlockRecordWrites,
+    HeightIndexWrites,
+    BestPointerWrites,
+    CanonicalIndexClear,
+    PendingTreeClear,
+    PendingActionRemoval,
+    PendingActionWrite,
+    CommitmentWrite,
+    NullifierWrite,
+    BridgeReplayWrite,
+    CiphertextIndexWrite,
+    CiphertextArchiveWrite,
+    StagedCiphertextRemoval,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2334,20 +2336,20 @@ impl NativeStorageDurabilityAdmissionRejection {
 impl NativeAtomicCommitManifestAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
-            Self::MinedPlanLengthMismatch => "mined_plan_length_mismatch",
-            Self::BlockRecordWritesMismatch => "block_record_writes_mismatch",
-            Self::HeightIndexWritesMismatch => "height_index_writes_mismatch",
-            Self::BestPointerWritesMismatch => "best_pointer_writes_mismatch",
-            Self::CanonicalIndexClearMismatch => "canonical_index_clear_mismatch",
-            Self::PendingTreeClearMismatch => "pending_tree_clear_mismatch",
-            Self::PendingActionRemovalMismatch => "pending_action_removal_mismatch",
-            Self::PendingActionWriteMismatch => "pending_action_write_mismatch",
-            Self::CommitmentWriteMismatch => "commitment_write_mismatch",
-            Self::NullifierWriteMismatch => "nullifier_write_mismatch",
-            Self::BridgeReplayWriteMismatch => "bridge_replay_write_mismatch",
-            Self::CiphertextIndexWriteMismatch => "ciphertext_index_write_mismatch",
-            Self::CiphertextArchiveWriteMismatch => "ciphertext_archive_write_mismatch",
-            Self::StagedCiphertextRemovalMismatch => "staged_ciphertext_removal_mismatch",
+            Self::MinedPlanLength => "mined_plan_length_mismatch",
+            Self::BlockRecordWrites => "block_record_writes_mismatch",
+            Self::HeightIndexWrites => "height_index_writes_mismatch",
+            Self::BestPointerWrites => "best_pointer_writes_mismatch",
+            Self::CanonicalIndexClear => "canonical_index_clear_mismatch",
+            Self::PendingTreeClear => "pending_tree_clear_mismatch",
+            Self::PendingActionRemoval => "pending_action_removal_mismatch",
+            Self::PendingActionWrite => "pending_action_write_mismatch",
+            Self::CommitmentWrite => "commitment_write_mismatch",
+            Self::NullifierWrite => "nullifier_write_mismatch",
+            Self::BridgeReplayWrite => "bridge_replay_write_mismatch",
+            Self::CiphertextIndexWrite => "ciphertext_index_write_mismatch",
+            Self::CiphertextArchiveWrite => "ciphertext_archive_write_mismatch",
+            Self::StagedCiphertextRemoval => "staged_ciphertext_removal_mismatch",
         }
     }
 }
@@ -2398,16 +2400,16 @@ impl NativeBlockReplayRefinementRejection {
 impl NativeBlockCommitmentAdmissionRejection {
     fn label(self) -> &'static str {
         match self {
-            Self::TxCountMismatch => "tx_count_mismatch",
-            Self::StateRootMismatch => "state_root_mismatch",
-            Self::KernelRootMismatch => "kernel_root_mismatch",
-            Self::NullifierRootMismatch => "nullifier_root_mismatch",
-            Self::ExtrinsicsRootMismatch => "extrinsics_root_mismatch",
-            Self::MessageRootMismatch => "message_root_mismatch",
-            Self::MessageCountMismatch => "message_count_mismatch",
-            Self::HeaderMmrRootMismatch => "header_mmr_root_mismatch",
-            Self::HeaderMmrLenMismatch => "header_mmr_len_mismatch",
-            Self::SupplyDigestMismatch => "supply_digest_mismatch",
+            Self::TxCount => "tx_count_mismatch",
+            Self::StateRoot => "state_root_mismatch",
+            Self::KernelRoot => "kernel_root_mismatch",
+            Self::NullifierRoot => "nullifier_root_mismatch",
+            Self::ExtrinsicsRoot => "extrinsics_root_mismatch",
+            Self::MessageRoot => "message_root_mismatch",
+            Self::MessageCount => "message_count_mismatch",
+            Self::HeaderMmrRoot => "header_mmr_root_mismatch",
+            Self::HeaderMmrLen => "header_mmr_len_mismatch",
+            Self::SupplyDigest => "supply_digest_mismatch",
         }
     }
 }
@@ -2461,24 +2463,24 @@ struct NativeBoundedRequestAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeBoundedRequestAdmissionRejection {
-    RawBytesExceeded,
-    DecodedBytesExceeded,
-    ItemCountExceeded,
-    ItemBytesExceeded,
-    AggregateBytesExceeded,
-    WorkUnitsExceeded,
+    RawBytes,
+    DecodedBytes,
+    ItemCount,
+    ItemBytes,
+    AggregateBytes,
+    WorkUnits,
 }
 
 impl NativeBoundedRequestAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::RawBytesExceeded => "raw_bytes_exceeded",
-            Self::DecodedBytesExceeded => "decoded_bytes_exceeded",
-            Self::ItemCountExceeded => "item_count_exceeded",
-            Self::ItemBytesExceeded => "item_bytes_exceeded",
-            Self::AggregateBytesExceeded => "aggregate_bytes_exceeded",
-            Self::WorkUnitsExceeded => "work_units_exceeded",
+            Self::RawBytes => "raw_bytes_exceeded",
+            Self::DecodedBytes => "decoded_bytes_exceeded",
+            Self::ItemCount => "item_count_exceeded",
+            Self::ItemBytes => "item_bytes_exceeded",
+            Self::AggregateBytes => "aggregate_bytes_exceeded",
+            Self::WorkUnits => "work_units_exceeded",
         }
     }
 }
@@ -3715,8 +3717,8 @@ impl NativeNode {
         }) {
             Ok(()) => {}
             Err(
-                rejection @ (NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch
-                | NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch),
+                rejection @ (NativeBlockCommitmentAdmissionRejection::HeaderMmrRoot
+                | NativeBlockCommitmentAdmissionRejection::HeaderMmrLen),
             ) => {
                 return Err(native_block_commitment_admission_error(
                     "native mined block commitment mismatch",
@@ -4157,7 +4159,7 @@ impl NativeNode {
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
-        for meta in chain.iter().cloned().skip(1) {
+        for meta in chain.iter().skip(1).cloned() {
             verify_native_block_meta_projection(Some(&state.best), &meta).with_context(|| {
                 format!(
                     "replay stored native block metadata at height {} ({})",
@@ -5517,6 +5519,9 @@ pub async fn run(cli: NativeCli) -> Result<()> {
         )
         .route("/health", get(health_handler))
         .layer(DefaultBodyLimit::max(MAX_NATIVE_RPC_BODY_BYTES))
+        .layer(ConcurrencyLimitLayer::new(
+            MAX_NATIVE_RPC_CONCURRENT_REQUESTS,
+        ))
         .with_state(Arc::clone(&node));
 
     axum::serve(listener, app)
@@ -8669,7 +8674,7 @@ fn evaluate_native_action_wire_replay_projection_admission(
     NativeActionWireReplayProjectionAdmissionRejection,
 > {
     if action_count != planned_count || action_count != steps.len() {
-        return Err(NativeActionWireReplayProjectionAdmissionRejection::PlanLengthMismatch);
+        return Err(NativeActionWireReplayProjectionAdmissionRejection::PlanLength);
     }
 
     let mut projected_ciphertext_row_count = 0usize;
@@ -8678,26 +8683,24 @@ fn evaluate_native_action_wire_replay_projection_admission(
         if step.ciphertext_hash_count != step.ciphertext_size_count
             || step.ciphertext_hash_count != step.planned_ciphertext_count
         {
-            return Err(
-                NativeActionWireReplayProjectionAdmissionRejection::CiphertextCountMismatch,
-            );
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextCount);
         }
         if !step.ciphertext_hashes_match {
-            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextHashMismatch);
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextHash);
         }
         if !step.ciphertext_sizes_match {
-            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextSizeMismatch);
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::CiphertextSize);
         }
         if !step.replay_key_matches {
-            return Err(NativeActionWireReplayProjectionAdmissionRejection::ReplayKeyMismatch);
+            return Err(NativeActionWireReplayProjectionAdmissionRejection::ReplayKey);
         }
         projected_ciphertext_row_count = projected_ciphertext_row_count
             .checked_add(step.planned_ciphertext_count)
-            .ok_or(NativeActionWireReplayProjectionAdmissionRejection::CiphertextCountMismatch)?;
+            .ok_or(NativeActionWireReplayProjectionAdmissionRejection::CiphertextCount)?;
         if step.planned_replay_present {
             projected_bridge_replay_row_count = projected_bridge_replay_row_count
                 .checked_add(1)
-                .ok_or(NativeActionWireReplayProjectionAdmissionRejection::ReplayKeyMismatch)?;
+                .ok_or(NativeActionWireReplayProjectionAdmissionRejection::ReplayKey)?;
         }
     }
 
@@ -8755,7 +8758,7 @@ fn admit_native_action_wire_replay_projection(
     if actions.len() != planned.len() {
         return Err(native_action_wire_replay_projection_admission_error(
             context,
-            NativeActionWireReplayProjectionAdmissionRejection::PlanLengthMismatch,
+            NativeActionWireReplayProjectionAdmissionRejection::PlanLength,
         ));
     }
     let steps = actions
@@ -9113,32 +9116,32 @@ fn inline_transfer_ciphertext_resource_admission_error(
     rejection: NativeBoundedRequestAdmissionRejection,
 ) -> anyhow::Error {
     match rejection {
-        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::RawBytes => anyhow!(
             "inline transfer route payload bytes {} exceeds cap {}",
             input.raw_bytes,
             input.raw_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::DecodedBytes => anyhow!(
             "inline transfer decoded proof+ciphertext bytes {} exceeds cap {}",
             input.decoded_bytes,
             input.decoded_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemCount => anyhow!(
             "inline ciphertext count {} exceeds limit {}",
             input.item_count,
             input.item_count_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemBytes => anyhow!(
             "inline ciphertext size {} exceeds limit {}",
             input.max_item_bytes,
             input.item_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::AggregateBytes => anyhow!(
             "inline ciphertext aggregate bytes {} exceeds cap {}",
             input.aggregate_bytes,
             input.aggregate_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::WorkUnits => anyhow!(
             "inline ciphertext work units {} exceeds cap {}",
             input.work_units,
             input.work_unit_cap
@@ -9203,7 +9206,7 @@ fn admitted_inline_ciphertext_metadata(
     let (ciphertext_hashes, ciphertext_sizes) = metadata.ok_or_else(|| {
         inline_transfer_ciphertext_resource_admission_error(
             inline_transfer_ciphertext_resource_bounded_request(input),
-            NativeBoundedRequestAdmissionRejection::ItemBytesExceeded,
+            NativeBoundedRequestAdmissionRejection::ItemBytes,
         )
     })?;
     Ok((
@@ -9543,32 +9546,32 @@ fn native_candidate_artifact_resource_admission_error(
     rejection: NativeBoundedRequestAdmissionRejection,
 ) -> anyhow::Error {
     match rejection {
-        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::RawBytes => anyhow!(
             "candidate artifact declared byte count {} exceeds cap {}",
             input.raw_bytes,
             input.raw_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::DecodedBytes => anyhow!(
             "candidate artifact decoded byte count {} exceeds cap {}",
             input.decoded_bytes,
             input.decoded_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemCount => anyhow!(
             "candidate artifact tx_count {} exceeds bounded request cap {}",
             input.item_count,
             input.item_count_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemBytes => anyhow!(
             "candidate artifact proof-like item byte count {} exceeds cap {}",
             input.max_item_bytes,
             input.item_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::AggregateBytes => anyhow!(
             "candidate artifact aggregate proof-like byte count {} exceeds cap {}",
             input.aggregate_bytes,
             input.aggregate_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::WorkUnits => anyhow!(
             "candidate artifact DA chunk count {} exceeds bounded request work cap {}",
             input.work_units,
             input.work_unit_cap
@@ -9891,17 +9894,17 @@ fn evaluate_native_bounded_request_admission(
     input: NativeBoundedRequestAdmissionInput,
 ) -> Result<(), NativeBoundedRequestAdmissionRejection> {
     if input.raw_bytes > input.raw_byte_cap {
-        Err(NativeBoundedRequestAdmissionRejection::RawBytesExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::RawBytes)
     } else if input.decoded_bytes > input.decoded_byte_cap {
-        Err(NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::DecodedBytes)
     } else if input.item_count > input.item_count_cap {
-        Err(NativeBoundedRequestAdmissionRejection::ItemCountExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::ItemCount)
     } else if input.max_item_bytes > input.item_byte_cap {
-        Err(NativeBoundedRequestAdmissionRejection::ItemBytesExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::ItemBytes)
     } else if input.aggregate_bytes > input.aggregate_byte_cap {
-        Err(NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::AggregateBytes)
     } else if input.work_units > input.work_unit_cap {
-        Err(NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded)
+        Err(NativeBoundedRequestAdmissionRejection::WorkUnits)
     } else {
         Ok(())
     }
@@ -10039,9 +10042,7 @@ fn evaluate_native_sync_block_range_publication_admission(
         Err(NativeSyncBlockRangePublicationAdmissionRejection::LastHeightMismatch)
     } else if !input.served_heights_contiguous {
         Err(NativeSyncBlockRangePublicationAdmissionRejection::HeightContinuityMismatch)
-    } else if !input.previous_parent_anchor_verified {
-        Err(NativeSyncBlockRangePublicationAdmissionRejection::ParentHashMismatch)
-    } else if !input.parent_hashes_contiguous {
+    } else if !input.previous_parent_anchor_verified || !input.parent_hashes_contiguous {
         Err(NativeSyncBlockRangePublicationAdmissionRejection::ParentHashMismatch)
     } else if !input.canonical_rows_verified {
         Err(NativeSyncBlockRangePublicationAdmissionRejection::CanonicalRowsUnverified)
@@ -10126,7 +10127,7 @@ fn native_sync_response_count_bounded_request(
 }
 
 fn admit_and_sort_native_sync_response_blocks(
-    blocks: &mut Vec<NativeBlockMeta>,
+    blocks: &mut [NativeBlockMeta],
     max_blocks: usize,
 ) -> Result<(), NativeSyncAdmissionRejection> {
     evaluate_native_sync_response_count_admission(NativeSyncResponseCountAdmissionInput {
@@ -10705,32 +10706,32 @@ fn bridge_action_resource_admission_error(
     rejection: NativeBoundedRequestAdmissionRejection,
 ) -> anyhow::Error {
     match rejection {
-        NativeBoundedRequestAdmissionRejection::RawBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::RawBytes => anyhow!(
             "bridge action public_args byte count {} exceeds cap {}",
             input.raw_bytes,
             input.raw_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::DecodedBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::DecodedBytes => anyhow!(
             "bridge action decoded byte count {} exceeds cap {}",
             input.decoded_bytes,
             input.decoded_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemCountExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemCount => anyhow!(
             "bridge action dynamic item count {} exceeds cap {}",
             input.item_count,
             input.item_count_cap
         ),
-        NativeBoundedRequestAdmissionRejection::ItemBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::ItemBytes => anyhow!(
             "bridge action proof receipt or payload item byte count {} exceeds cap {}",
             input.max_item_bytes,
             input.item_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::AggregateBytesExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::AggregateBytes => anyhow!(
             "bridge action dynamic byte aggregate {} exceeds cap {}",
             input.aggregate_bytes,
             input.aggregate_byte_cap
         ),
-        NativeBoundedRequestAdmissionRejection::WorkUnitsExceeded => anyhow!(
+        NativeBoundedRequestAdmissionRejection::WorkUnits => anyhow!(
             "bridge action message payload byte count {} exceeds cap {}",
             input.work_units,
             input.work_unit_cap
@@ -11890,25 +11891,25 @@ fn evaluate_native_block_commitment_admission(
     input: NativeBlockCommitmentAdmissionInput,
 ) -> Result<(), NativeBlockCommitmentAdmissionRejection> {
     if !input.tx_count_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::TxCountMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::TxCount)
     } else if !input.state_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::StateRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::StateRoot)
     } else if !input.kernel_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::KernelRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::KernelRoot)
     } else if !input.nullifier_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::NullifierRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::NullifierRoot)
     } else if !input.extrinsics_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::ExtrinsicsRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::ExtrinsicsRoot)
     } else if !input.message_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::MessageRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::MessageRoot)
     } else if !input.message_count_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::MessageCountMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::MessageCount)
     } else if !input.header_mmr_root_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrRoot)
     } else if !input.header_mmr_len_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::HeaderMmrLen)
     } else if !input.supply_digest_matches {
-        Err(NativeBlockCommitmentAdmissionRejection::SupplyDigestMismatch)
+        Err(NativeBlockCommitmentAdmissionRejection::SupplyDigest)
     } else {
         Ok(())
     }
@@ -12044,34 +12045,34 @@ fn evaluate_native_atomic_commit_manifest_admission(
     if matches!(input.kind, NativeAtomicCommitKind::MinedBlockCommit)
         && input.action_count != input.planned_action_count
     {
-        Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLengthMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLength)
     } else if input.block_record_writes != expected_atomic_block_record_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BlockRecordWritesMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::BlockRecordWrites)
     } else if input.height_index_writes != expected_atomic_height_index_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::HeightIndexWritesMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::HeightIndexWrites)
     } else if input.best_pointer_writes != expected_atomic_best_pointer_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BestPointerWritesMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::BestPointerWrites)
     } else if input.canonical_index_cleared != expected_atomic_canonical_index_cleared(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CanonicalIndexClearMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::CanonicalIndexClear)
     } else if input.pending_tree_cleared != expected_atomic_pending_tree_cleared(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingTreeClearMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingTreeClear)
     } else if input.pending_action_removals != expected_atomic_pending_action_removals(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionRemovalMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionRemoval)
     } else if input.pending_action_writes != expected_atomic_pending_action_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::PendingActionWrite)
     } else if input.commitment_writes != expected_atomic_commitment_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CommitmentWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::CommitmentWrite)
     } else if input.nullifier_writes != expected_atomic_nullifier_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::NullifierWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::NullifierWrite)
     } else if input.bridge_replay_writes != expected_atomic_bridge_replay_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::BridgeReplayWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::BridgeReplayWrite)
     } else if input.ciphertext_index_writes != expected_atomic_ciphertext_index_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextIndexWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextIndexWrite)
     } else if input.ciphertext_archive_writes != expected_atomic_ciphertext_archive_writes(input) {
-        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextArchiveWriteMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::CiphertextArchiveWrite)
     } else if input.staged_ciphertext_removals != expected_atomic_staged_ciphertext_removals(input)
     {
-        Err(NativeAtomicCommitManifestAdmissionRejection::StagedCiphertextRemovalMismatch)
+        Err(NativeAtomicCommitManifestAdmissionRejection::StagedCiphertextRemoval)
     } else {
         Ok(())
     }
@@ -12538,34 +12539,34 @@ fn native_block_replay_refinement_commitment_rejection(
     rejection: NativeBlockCommitmentAdmissionRejection,
 ) -> NativeBlockReplayRefinementRejection {
     match rejection {
-        NativeBlockCommitmentAdmissionRejection::TxCountMismatch => {
+        NativeBlockCommitmentAdmissionRejection::TxCount => {
             NativeBlockReplayRefinementRejection::TxCountMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::StateRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::StateRoot => {
             NativeBlockReplayRefinementRejection::StateRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::KernelRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::KernelRoot => {
             NativeBlockReplayRefinementRejection::KernelRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::NullifierRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::NullifierRoot => {
             NativeBlockReplayRefinementRejection::NullifierRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::ExtrinsicsRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::ExtrinsicsRoot => {
             NativeBlockReplayRefinementRejection::ExtrinsicsRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::MessageRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::MessageRoot => {
             NativeBlockReplayRefinementRejection::MessageRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::MessageCountMismatch => {
+        NativeBlockCommitmentAdmissionRejection::MessageCount => {
             NativeBlockReplayRefinementRejection::MessageCountMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::HeaderMmrRootMismatch => {
+        NativeBlockCommitmentAdmissionRejection::HeaderMmrRoot => {
             NativeBlockReplayRefinementRejection::HeaderMmrRootMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::HeaderMmrLenMismatch => {
+        NativeBlockCommitmentAdmissionRejection::HeaderMmrLen => {
             NativeBlockReplayRefinementRejection::HeaderMmrLenMismatch
         }
-        NativeBlockCommitmentAdmissionRejection::SupplyDigestMismatch => {
+        NativeBlockCommitmentAdmissionRejection::SupplyDigest => {
             NativeBlockReplayRefinementRejection::SupplyDigestMismatch
         }
     }
@@ -12803,6 +12804,7 @@ fn validate_block_actions_locked(state: &NativeState, actions: &[PendingAction])
     Ok(())
 }
 
+#[allow(dead_code)]
 fn materialize_native_action_payloads(
     da_ciphertext_tree: &sled::Tree,
     actions: &[PendingAction],
@@ -12968,6 +12970,7 @@ fn plan_materialized_action_effects_with_archive(
     Ok(planned)
 }
 
+#[cfg(test)]
 fn apply_actions_to_memory(
     da_ciphertext_tree: &sled::Tree,
     state: &mut NativeState,
@@ -13572,33 +13575,33 @@ fn evaluate_native_tx_leaf_action_binding_admission(
     input: NativeTxLeafActionBindingAdmissionInput,
 ) -> Result<(), NativeTxLeafActionBindingAdmissionRejection> {
     if !input.nullifiers_match {
-        Err(NativeTxLeafActionBindingAdmissionRejection::NullifiersMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::Nullifiers)
     } else if !input.commitments_match {
-        Err(NativeTxLeafActionBindingAdmissionRejection::CommitmentsMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::Commitments)
     } else if !input.ciphertext_hashes_match {
-        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextHashes)
     } else if !input.input_count_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::InputCountMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::InputCount)
     } else if !input.output_count_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::OutputCountMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::OutputCount)
     } else if !input.version_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::VersionMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::Version)
     } else if !input.fee_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::FeeMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::Fee)
     } else if !input.stablecoin_payload_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::StablecoinPayloadMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::StablecoinPayload)
     } else if !input.balance_tag_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::BalanceTag)
     } else if !input.receipt_statement_hash_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHashMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHash)
     } else if !input.public_inputs_digest_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigestMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigest)
     } else if !input.proof_digest_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::ProofDigestMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::ProofDigest)
     } else if !input.proof_backend_matches {
-        Err(NativeTxLeafActionBindingAdmissionRejection::ProofBackendMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::ProofBackend)
     } else if !input.ciphertext_payload_hashes_match {
-        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch)
+        Err(NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHash)
     } else {
         Ok(())
     }
@@ -13608,46 +13611,46 @@ fn native_tx_leaf_action_binding_admission_error(
     rejection: NativeTxLeafActionBindingAdmissionRejection,
 ) -> anyhow::Error {
     match rejection {
-        NativeTxLeafActionBindingAdmissionRejection::NullifiersMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::Nullifiers => {
             anyhow!("native tx-leaf nullifiers mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::CommitmentsMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::Commitments => {
             anyhow!("native tx-leaf commitments mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::CiphertextHashesMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::CiphertextHashes => {
             anyhow!("native tx-leaf ciphertext hashes mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::InputCountMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::InputCount => {
             anyhow!("native tx-leaf input count mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::OutputCountMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::OutputCount => {
             anyhow!("native tx-leaf output count mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::VersionMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::Version => {
             anyhow!("native tx-leaf version mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::FeeMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::Fee => {
             anyhow!("native tx-leaf fee mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::StablecoinPayloadMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::StablecoinPayload => {
             anyhow!("native tx-leaf stablecoin payload mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::BalanceTagMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::BalanceTag => {
             anyhow!("native tx-leaf balance tag mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHashMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::ReceiptStatementHash => {
             anyhow!("native tx-leaf receipt statement hash mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigestMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::PublicInputsDigest => {
             anyhow!("native tx-leaf public inputs digest mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::ProofDigestMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::ProofDigest => {
             anyhow!("native tx-leaf proof digest mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::ProofBackendMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::ProofBackend => {
             anyhow!("native tx-leaf proof backend/profile mismatch")
         }
-        NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHashMismatch => {
+        NativeTxLeafActionBindingAdmissionRejection::CiphertextPayloadHash => {
             anyhow!("native tx ciphertext payload hash mismatch")
         }
     }
@@ -13783,13 +13786,13 @@ fn evaluate_native_candidate_artifact_binding_admission(
     input: NativeCandidateArtifactBindingAdmissionInput,
 ) -> Result<(), NativeCandidateArtifactBindingAdmissionRejection> {
     if !input.da_root_matches {
-        Err(NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch)
+        Err(NativeCandidateArtifactBindingAdmissionRejection::DaRoot)
     } else if !input.da_chunk_count_matches {
-        Err(NativeCandidateArtifactBindingAdmissionRejection::DaChunkCountMismatch)
+        Err(NativeCandidateArtifactBindingAdmissionRejection::DaChunkCount)
     } else if !input.tx_statements_commitment_matches {
-        Err(NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch)
+        Err(NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitment)
     } else if !input.recursive_state_root_matches {
-        Err(NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRootMismatch)
+        Err(NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRoot)
     } else {
         Ok(())
     }
@@ -13799,16 +13802,16 @@ fn native_candidate_artifact_binding_admission_error(
     rejection: NativeCandidateArtifactBindingAdmissionRejection,
 ) -> anyhow::Error {
     match rejection {
-        NativeCandidateArtifactBindingAdmissionRejection::DaRootMismatch => {
+        NativeCandidateArtifactBindingAdmissionRejection::DaRoot => {
             anyhow!("candidate artifact DA root mismatch")
         }
-        NativeCandidateArtifactBindingAdmissionRejection::DaChunkCountMismatch => {
+        NativeCandidateArtifactBindingAdmissionRejection::DaChunkCount => {
             anyhow!("candidate artifact DA chunk count mismatch")
         }
-        NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitmentMismatch => {
+        NativeCandidateArtifactBindingAdmissionRejection::TxStatementCommitment => {
             anyhow!("candidate artifact tx statement commitment mismatch")
         }
-        NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRootMismatch => {
+        NativeCandidateArtifactBindingAdmissionRejection::RecursiveStateRoot => {
             anyhow!("native recursive block state root mismatch")
         }
     }
@@ -14831,13 +14834,7 @@ fn rpc_method_policy(raw: &str, rpc_external: bool) -> Result<RpcMethodPolicy> {
                 Ok(RpcMethodPolicy::Unsafe)
             }
         }
-        "auto" | "" => {
-            if rpc_external {
-                Ok(RpcMethodPolicy::Safe)
-            } else {
-                Ok(RpcMethodPolicy::Safe)
-            }
-        }
+        "auto" | "" => Ok(RpcMethodPolicy::Safe),
         other => Err(anyhow!(
             "invalid --rpc-methods value {other:?}; expected auto, safe, or unsafe"
         )),
@@ -15030,6 +15027,7 @@ fn decode_scale_exact<T: Decode + Encode>(bytes: &[u8], label: &str) -> Result<T
     Ok(value)
 }
 
+#[cfg(test)]
 fn bincode_deserialize_exact<T: DeserializeOwned + Serialize>(
     bytes: &[u8],
     label: &str,
@@ -21723,6 +21721,22 @@ mod tests {
     }
 
     #[test]
+    fn native_rpc_http_caps_bound_preparse_resource_use() {
+        assert_eq!(MAX_NATIVE_RPC_BODY_BYTES, 8 * 1024 * 1024);
+        assert_eq!(MAX_NATIVE_RPC_CONCURRENT_REQUESTS, 8);
+        let http_body_cap = MAX_NATIVE_RPC_BODY_BYTES;
+        let mempool_action_cap = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
+        assert!(
+            http_body_cap > encoded_len_limit(MAX_NATIVE_RPC_ACTION_BYTES),
+            "body cap must still admit a max-sized submitAction public_args payload"
+        );
+        assert!(
+            http_body_cap < mempool_action_cap,
+            "HTTP JSON parser cap must stay below the aggregate mempool action budget"
+        );
+    }
+
+    #[test]
     fn identity_seed_is_random_persisted_and_reloaded() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("pq-identity.seed");
@@ -24958,7 +24972,7 @@ mod tests {
         assert_scale_exact_decode_matches_raw_oracle::<ShieldedTransferSidecarArgs>(
             "ShieldedTransferSidecarArgs",
             &exact_decode_equivalence_corpus_from_valid_encodings(
-                0x5349_4445_4341_52,
+                0x0053_4944_4543_4152,
                 vec![sidecar_a.encode(), sidecar_b.encode()],
             ),
             192,
@@ -24996,7 +25010,7 @@ mod tests {
         assert_scale_exact_decode_matches_raw_oracle::<InboundBridgeArgsV1>(
             "InboundBridgeArgsV1",
             &exact_decode_equivalence_corpus_from_valid_encodings(
-                0x494e_424f_554e_44,
+                0x0049_4e42_4f55_4e44,
                 vec![inbound_a.encode(), inbound_b.encode()],
             ),
             192,
@@ -26212,9 +26226,9 @@ mod tests {
                 Some("native_asset_not_allowed")
             } else if !case.destination_matches_bridge_policy {
                 Some("destination_policy_mismatch")
-            } else if !case.bridge_instance_matches_token_category {
-                Some("asset_binding_mismatch")
-            } else if !case.token_category_matches_payload_asset {
+            } else if !case.bridge_instance_matches_token_category
+                || !case.token_category_matches_payload_asset
+            {
                 Some("asset_binding_mismatch")
             } else if !case.recipient_hash_matches_payload_recipient {
                 Some("recipient_binding_mismatch")
@@ -31977,7 +31991,7 @@ mod tests {
         assert_eq!(bounded.decoded_bytes, 0);
         assert_eq!(
             evaluate_native_bounded_request_admission(bounded),
-            Err(NativeBoundedRequestAdmissionRejection::ItemCountExceeded)
+            Err(NativeBoundedRequestAdmissionRejection::ItemCount)
         );
         assert_eq!(
             evaluate_native_sync_response_count_admission(input),
@@ -32448,7 +32462,7 @@ mod tests {
         let err = validate_block_action_byte_budget(
             item_count as u32,
             item_count,
-            std::iter::repeat(item_len).take(item_count),
+            std::iter::repeat_n(item_len, item_count),
         )
         .expect_err("aggregate block action bytes over cap must reject before decode");
         assert!(err
@@ -35035,8 +35049,8 @@ mod tests {
                     .iter()
                     .all(|commitment| *commitment != [0u8; 48])
             );
-            assert_eq!(
-                step.transfer_state_input.sidecar_route, false,
+            assert!(
+                !step.transfer_state_input.sidecar_route,
                 "block validation intentionally checks sidecar availability before replay"
             );
         } else {
@@ -35502,7 +35516,7 @@ mod tests {
                     bridge_inbound_replay_key_from_action(action)
                         .expect("project materialized replay key")
                 );
-                action.nullifiers.iter().copied().collect::<Vec<_>>()
+                action.nullifiers.to_vec()
             })
             .collect::<Vec<_>>();
         let materialized_replay_keys = materialized
@@ -35900,7 +35914,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &over_limit,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "issuance above policy limit must reject"
         );
@@ -35911,7 +35925,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &zero_issuance,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "zero issuance must reject"
         );
@@ -35922,7 +35936,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &bad_hash,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "policy hash mismatch must reject"
         );
@@ -35933,7 +35947,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &bad_oracle,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "oracle commitment mismatch must reject"
         );
@@ -35944,7 +35958,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &bad_attestation,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "attestation commitment mismatch must reject"
         );
@@ -35955,7 +35969,7 @@ mod tests {
             !native_stablecoin_policy_binding_authorized_by_entries(
                 height,
                 &bad_version,
-                &[entry.clone()]
+                std::slice::from_ref(&entry)
             ),
             "policy version mismatch must reject"
         );
@@ -36522,7 +36536,7 @@ mod tests {
         let bounded = native_candidate_artifact_resource_bounded_request(input);
         assert_eq!(
             evaluate_native_bounded_request_admission(bounded),
-            Err(NativeBoundedRequestAdmissionRejection::ItemBytesExceeded)
+            Err(NativeBoundedRequestAdmissionRejection::ItemBytes)
         );
     }
 
@@ -36534,7 +36548,7 @@ mod tests {
             NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
         let action = test_candidate_artifact_action(1, 12);
-        validate_block_actions_locked(&state, &[action.clone()])
+        validate_block_actions_locked(&state, std::slice::from_ref(&action))
             .expect("candidate artifact payload is structurally valid");
 
         let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
@@ -36552,7 +36566,7 @@ mod tests {
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
         let transfer =
             test_inline_transfer_action(state.commitment_tree.root(), [7u8; 48], [8u8; 48], 0);
-        validate_block_actions_locked(&state, &[transfer.clone()])
+        validate_block_actions_locked(&state, std::slice::from_ref(&transfer))
             .expect("transfer action is structurally valid");
 
         let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
@@ -39092,7 +39106,7 @@ mod tests {
         let bridge_transfer_id_collision =
             test_empty_action(FAMILY_BRIDGE, ACTION_SHIELDED_TRANSFER_INLINE, 1_337);
         assert_eq!(
-            expected_coinbase_amount(&[bridge_transfer_id_collision.clone()], height)
+            expected_coinbase_amount(std::slice::from_ref(&bridge_transfer_id_collision), height)
                 .expect("expected coinbase amount"),
             subsidy
         );
@@ -39104,7 +39118,7 @@ mod tests {
 
         let bridge_coinbase_id_collision =
             test_empty_action(FAMILY_BRIDGE, ACTION_MINT_COINBASE, 0);
-        validate_coinbase_accounting(&[bridge_coinbase_id_collision.clone()], height)
+        validate_coinbase_accounting(std::slice::from_ref(&bridge_coinbase_id_collision), height)
             .expect("non-shielded coinbase action id is ignored");
         assert_eq!(
             native_block_supply_delta(&[bridge_coinbase_id_collision], height)

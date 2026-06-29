@@ -542,19 +542,16 @@ impl<V: ProofVerifier> PowConsensus<V> {
 
         if header.signature_bitmap.is_none()
             && header.signature_aggregate.len() == ML_DSA_SIGNATURE_LEN
+            && let Some((_, miner_key)) = miner
+            && let Ok(signature) = MlDsaSignature::from_bytes(&header.signature_aggregate)
         {
-            if let Some((_, miner_key)) = miner {
-                if let Ok(signature) = MlDsaSignature::from_bytes(&header.signature_aggregate) {
-                    signature_bytes_parse = true;
-                    match header.signing_hash() {
-                        Ok(signing_hash) => {
-                            signature_verifies =
-                                miner_key.verify(&signing_hash, &signature).is_ok();
-                        }
-                        Err(err) => {
-                            signing_hash_error = Some(err);
-                        }
-                    }
+            signature_bytes_parse = true;
+            match header.signing_hash() {
+                Ok(signing_hash) => {
+                    signature_verifies = miner_key.verify(&signing_hash, &signature).is_ok();
+                }
+                Err(err) => {
+                    signing_hash_error = Some(err);
                 }
             }
         }

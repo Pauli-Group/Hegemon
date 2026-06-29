@@ -546,8 +546,8 @@ fn read_scale_compact_len_with_cap(
     };
     let canonical = match mode {
         0 => value < (1 << 6),
-        1 => (1 << 6) <= value && value < (1 << 14),
-        2 => (1 << 14) <= value && value < (1 << 30),
+        1 => ((1 << 6)..(1 << 14)).contains(&value),
+        2 => ((1 << 14)..(1 << 30)).contains(&value),
         _ => false,
     };
     if !canonical || value > u64::try_from(cap).unwrap_or(u64::MAX) {
@@ -3107,7 +3107,10 @@ mod tests {
 
     fn bytes_from_hex(raw: &str) -> Vec<u8> {
         let stripped = raw.strip_prefix("0x").unwrap_or(raw);
-        assert!(stripped.len() % 2 == 0, "hex string length must be even");
+        assert!(
+            stripped.len().is_multiple_of(2),
+            "hex string length must be even"
+        );
         stripped
             .as_bytes()
             .chunks_exact(2)
@@ -4360,8 +4363,8 @@ mod tests {
         };
         let canonical = match mode {
             0 => value < (1 << 6),
-            1 => (1 << 6) <= value && value < (1 << 14),
-            2 => (1 << 14) <= value && value < (1 << 30),
+            1 => ((1 << 6)..(1 << 14)).contains(&value),
+            2 => ((1 << 14)..(1 << 30)).contains(&value),
             _ => false,
         };
         if !canonical || value > u64::try_from(cap).unwrap_or(u64::MAX) {

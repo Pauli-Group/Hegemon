@@ -257,6 +257,41 @@ impl StarkVerifier {
     }
 }
 
+impl ProofVerifier for StarkVerifier {
+    fn verify_stark(
+        &self,
+        proof: &StarkProof,
+        _inputs: &ShieldedTransferInputs,
+        vk: &VerifyingKey,
+    ) -> VerificationResult {
+        if !vk.enabled {
+            return VerificationResult::KeyNotFound;
+        }
+        if proof.is_empty() {
+            return VerificationResult::InvalidProofFormat;
+        }
+        VerificationResult::VerificationFailed
+    }
+
+    fn verify_binding_hash(
+        &self,
+        binding_hash: &BindingHash,
+        inputs: &ShieldedTransferInputs,
+    ) -> bool {
+        binding_hash.data == Self::compute_binding_hash(inputs).data
+    }
+}
+
+fn blake2_256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Blake2bVar::new(32).expect("valid BLAKE2b output length");
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("fixed output buffer has requested length");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,39 +550,4 @@ mod tests {
         let hex = value.strip_prefix("0x").unwrap_or(value);
         hex::decode(hex).expect("Lean vector hex decodes")
     }
-}
-
-impl ProofVerifier for StarkVerifier {
-    fn verify_stark(
-        &self,
-        proof: &StarkProof,
-        _inputs: &ShieldedTransferInputs,
-        vk: &VerifyingKey,
-    ) -> VerificationResult {
-        if !vk.enabled {
-            return VerificationResult::KeyNotFound;
-        }
-        if proof.is_empty() {
-            return VerificationResult::InvalidProofFormat;
-        }
-        VerificationResult::VerificationFailed
-    }
-
-    fn verify_binding_hash(
-        &self,
-        binding_hash: &BindingHash,
-        inputs: &ShieldedTransferInputs,
-    ) -> bool {
-        binding_hash.data == Self::compute_binding_hash(inputs).data
-    }
-}
-
-fn blake2_256(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = Blake2bVar::new(32).expect("valid BLAKE2b output length");
-    hasher.update(bytes);
-    let mut out = [0u8; 32];
-    hasher
-        .finalize_variable(&mut out)
-        .expect("fixed output buffer has requested length");
-    out
 }

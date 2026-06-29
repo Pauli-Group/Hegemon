@@ -53,7 +53,7 @@ const RECURSIVE_BLOCK_V1_ARTIFACT_MAX_BYTES: usize =
     block_recursion::RECURSIVE_BLOCK_HEADER_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PROOF_BYTES_V1
         + block_recursion::RECURSIVE_BLOCK_PUBLIC_BYTES_V1;
-const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 522_159;
+const RECURSIVE_BLOCK_V2_ARTIFACT_MAX_BYTES: usize = 523_736;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct BlockProofPolicyInput {
@@ -2204,30 +2204,30 @@ pub fn tx_validity_claims_from_tx_artifacts(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TxValidityClaimMatchRejection {
-    CountMismatch,
-    ReceiptStatementHashMismatch,
-    ReceiptProofDigestMismatch,
-    ReceiptPublicInputsDigestMismatch,
-    ReceiptVerifierProfileMismatch,
-    BindingStatementHashMismatch,
-    BindingAnchorRootMismatch,
-    BindingFeeMismatch,
-    BindingCircuitVersionMismatch,
+    Count,
+    ReceiptStatementHash,
+    ReceiptProofDigest,
+    ReceiptPublicInputsDigest,
+    ReceiptVerifierProfile,
+    BindingStatementHash,
+    BindingAnchorRoot,
+    BindingFee,
+    BindingCircuitVersion,
 }
 
 impl TxValidityClaimMatchRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::CountMismatch => "count_mismatch",
-            Self::ReceiptStatementHashMismatch => "receipt_statement_hash_mismatch",
-            Self::ReceiptProofDigestMismatch => "receipt_proof_digest_mismatch",
-            Self::ReceiptPublicInputsDigestMismatch => "receipt_public_inputs_digest_mismatch",
-            Self::ReceiptVerifierProfileMismatch => "receipt_verifier_profile_mismatch",
-            Self::BindingStatementHashMismatch => "binding_statement_hash_mismatch",
-            Self::BindingAnchorRootMismatch => "binding_anchor_root_mismatch",
-            Self::BindingFeeMismatch => "binding_fee_mismatch",
-            Self::BindingCircuitVersionMismatch => "binding_circuit_version_mismatch",
+            Self::Count => "count_mismatch",
+            Self::ReceiptStatementHash => "receipt_statement_hash_mismatch",
+            Self::ReceiptProofDigest => "receipt_proof_digest_mismatch",
+            Self::ReceiptPublicInputsDigest => "receipt_public_inputs_digest_mismatch",
+            Self::ReceiptVerifierProfile => "receipt_verifier_profile_mismatch",
+            Self::BindingStatementHash => "binding_statement_hash_mismatch",
+            Self::BindingAnchorRoot => "binding_anchor_root_mismatch",
+            Self::BindingFee => "binding_fee_mismatch",
+            Self::BindingCircuitVersion => "binding_circuit_version_mismatch",
         }
     }
 }
@@ -2237,28 +2237,28 @@ fn evaluate_tx_validity_claim_match(
     verified: &TxValidityClaim,
 ) -> Result<(), TxValidityClaimMatchRejection> {
     if provided.receipt.statement_hash != verified.receipt.statement_hash {
-        return Err(TxValidityClaimMatchRejection::ReceiptStatementHashMismatch);
+        return Err(TxValidityClaimMatchRejection::ReceiptStatementHash);
     }
     if provided.receipt.proof_digest != verified.receipt.proof_digest {
-        return Err(TxValidityClaimMatchRejection::ReceiptProofDigestMismatch);
+        return Err(TxValidityClaimMatchRejection::ReceiptProofDigest);
     }
     if provided.receipt.public_inputs_digest != verified.receipt.public_inputs_digest {
-        return Err(TxValidityClaimMatchRejection::ReceiptPublicInputsDigestMismatch);
+        return Err(TxValidityClaimMatchRejection::ReceiptPublicInputsDigest);
     }
     if provided.receipt.verifier_profile != verified.receipt.verifier_profile {
-        return Err(TxValidityClaimMatchRejection::ReceiptVerifierProfileMismatch);
+        return Err(TxValidityClaimMatchRejection::ReceiptVerifierProfile);
     }
     if provided.binding.statement_hash != verified.binding.statement_hash {
-        return Err(TxValidityClaimMatchRejection::BindingStatementHashMismatch);
+        return Err(TxValidityClaimMatchRejection::BindingStatementHash);
     }
     if provided.binding.anchor != verified.binding.anchor {
-        return Err(TxValidityClaimMatchRejection::BindingAnchorRootMismatch);
+        return Err(TxValidityClaimMatchRejection::BindingAnchorRoot);
     }
     if provided.binding.fee != verified.binding.fee {
-        return Err(TxValidityClaimMatchRejection::BindingFeeMismatch);
+        return Err(TxValidityClaimMatchRejection::BindingFee);
     }
     if provided.binding.circuit_version != verified.binding.circuit_version {
-        return Err(TxValidityClaimMatchRejection::BindingCircuitVersionMismatch);
+        return Err(TxValidityClaimMatchRejection::BindingCircuitVersion);
     }
     Ok(())
 }
@@ -2268,7 +2268,7 @@ fn evaluate_tx_validity_claims_match_verified_artifacts(
     verified_claims: &[TxValidityClaim],
 ) -> Result<(), TxValidityClaimMatchRejection> {
     if provided_claims.len() != verified_claims.len() {
-        return Err(TxValidityClaimMatchRejection::CountMismatch);
+        return Err(TxValidityClaimMatchRejection::Count);
     }
     provided_claims
         .iter()

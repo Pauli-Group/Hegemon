@@ -67,7 +67,7 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 
 ### Assumptions
 
-- shipped on-chain block artifact: `recursive_block_v2 = 522,159 B`
+- shipped on-chain block artifact: `recursive_block_v2 = 523,736 B`
 - current shipped `RecursiveBlockV2` domain is one chunk (`max_supported_txs = chunk_size = 1000`, `max_tree_level = 0`)
 - legacy `RecursiveBlockV1 = 699,452 B` is not used for the shipped planning model
 - proofless sidecar transfer public on-chain body: about `468 B/tx`
@@ -77,7 +77,7 @@ The shipped planning model is now the real bounded `RecursiveBlockV2` lane. `Rec
 The current constants behind those assumptions are:
 
 - `RECURSIVE_BLOCK_V1_ARTIFACT_MAX_SIZE = 699_452`
-- `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 522_159`
+- `RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE = 523_736`
 - `ENCRYPTED_NOTE_SIZE = 579`
 - `MAX_KEM_CIPHERTEXT_LEN = 1568`
 - `MAX_OUTPUTS = 2`
@@ -92,8 +92,8 @@ Let:
 Then the shipped lane projects to:
 
 ```text
-G_on(T, k) ~= 86400 * T * (468 + 522159 / k) bytes/day
-           ~= T * (0.0377 + 42.02 / k) GiB/day
+G_on(T, k) ~= 86400 * T * (468 + 523736 / k) bytes/day
+           ~= T * (0.0377 + 42.14 / k) GiB/day
 
 G_da(T)    ~= 86400 * T * 4294 bytes/day
            ~= 0.3455 * T GiB/day
@@ -101,7 +101,7 @@ G_da(T)    ~= 86400 * T * 4294 bytes/day
 
 Interpretation:
 
-- `42.02 / k` GiB/day is the recursive-block proof cost amortized over `k` tx per non-empty shielded block
+- `42.14 / k` GiB/day is the recursive-block proof cost amortized over `k` tx per non-empty shielded block
 - `0.0377 * T` GiB/day is the public on-chain tx body growth
 - `0.3455 * T` GiB/day is raw DA ciphertext ingress before erasure/sampling/replication overhead
 
@@ -136,10 +136,10 @@ Those assumptions reflect the intended operational direction of the shipped lane
 
 | target block time | assumed tx/block | implied TPS | proof GiB/day | public tx body GiB/day | on-chain GiB/day | raw DA GiB/day | total GiB/day |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1s | 2 | 2.00 | 42.02 | 0.08 | 42.09 | 0.69 | 42.78 |
-| 5s | 8 | 1.60 | 8.40 | 0.06 | 8.46 | 0.55 | 9.02 |
-| 10s | 16 | 1.60 | 4.20 | 0.06 | 4.26 | 0.55 | 4.81 |
-| 30s | 64 | 2.13 | 1.40 | 0.08 | 1.48 | 0.74 | 2.22 |
+| 1s | 2 | 2.00 | 42.14 | 0.08 | 42.22 | 0.69 | 42.91 |
+| 5s | 8 | 1.60 | 8.43 | 0.06 | 8.49 | 0.55 | 9.04 |
+| 10s | 16 | 1.60 | 4.21 | 0.06 | 4.27 | 0.55 | 4.83 |
+| 30s | 64 | 2.13 | 1.40 | 0.08 | 1.49 | 0.74 | 2.22 |
 
 This interval view is useful for operators because it separates the two levers:
 

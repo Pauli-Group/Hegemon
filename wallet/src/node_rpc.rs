@@ -32,11 +32,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use codec::{Decode, Encode};
-use jsonrpsee::core::client::{ClientT, Error as RpcError, Subscription, SubscriptionClientT};
-use jsonrpsee::core::traits::ToRpcParams;
-use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
-use jsonrpsee::rpc_params;
-use jsonrpsee::ws_client::{WsClient, WsClientBuilder};
+use jsonrpsee_core::client::{ClientT, Error as RpcError, Subscription, SubscriptionClientT};
+use jsonrpsee_core::rpc_params;
+use jsonrpsee_core::traits::ToRpcParams;
+use jsonrpsee_http_client::{HttpClient, HttpClientBuilder};
+use jsonrpsee_ws_client::{WsClient, WsClientBuilder};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -176,7 +176,7 @@ fn ensure_hex_encoded_max_bytes(
     max_decoded_bytes: usize,
     label: &'static str,
 ) -> Result<(), WalletError> {
-    if input.len() % 2 != 0 {
+    if !input.len().is_multiple_of(2) {
         return Err(WalletError::Serialization(format!(
             "{label} hex length must be even"
         )));
@@ -397,8 +397,8 @@ struct ArchiveRpcState {
 
 #[derive(Debug)]
 enum RpcTransport {
-    Http(HttpClient),
-    Ws(WsClient),
+    Http(Box<HttpClient>),
+    Ws(Box<WsClient>),
 }
 
 impl RpcTransport {
@@ -437,7 +437,7 @@ impl RpcTransport {
                     .await
             }
             Self::Http(_) => Err(RpcError::Custom(
-                "subscriptions require a ws:// or wss:// RPC endpoint".to_string(),
+                "subscriptions require a ws:// RPC endpoint".to_string(),
             )),
         }
     }
@@ -490,11 +490,18 @@ impl NodeRpcClient {
         endpoint: &str,
         config: &NodeRpcConfig,
     ) -> Result<RpcTransport, WalletError> {
-        if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+        if endpoint.starts_with("https://") || endpoint.starts_with("wss://") {
+            return Err(WalletError::Rpc(format!(
+                "TLS RPC endpoint not supported by PQ-only wallet build: {}",
+                endpoint
+            )));
+        }
+
+        if endpoint.starts_with("http://") {
             return HttpClientBuilder::default()
                 .request_timeout(config.request_timeout)
                 .build(endpoint)
-                .map(RpcTransport::Http)
+                .map(|client| RpcTransport::Http(Box::new(client)))
                 .map_err(|e| {
                     WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e))
                 });
@@ -505,7 +512,7 @@ impl NodeRpcClient {
             .request_timeout(config.request_timeout)
             .build(endpoint)
             .await
-            .map(RpcTransport::Ws)
+            .map(|client| RpcTransport::Ws(Box::new(client)))
             .map_err(|e| WalletError::Rpc(format!("Failed to connect to {}: {}", endpoint, e)))
     }
 
@@ -2154,6 +2161,23 @@ mod tests {
     fn test_config_with_endpoint() {
         let config = NodeRpcConfig::with_endpoint("ws://localhost:9955");
         assert_eq!(config.endpoint, "ws://localhost:9955");
+    }
+
+    #[tokio::test]
+    async fn rejects_tls_rpc_endpoints() {
+        for endpoint in ["https://127.0.0.1:9944", "wss://127.0.0.1:9944"] {
+            let config = NodeRpcConfig::with_endpoint(endpoint);
+            let result = NodeRpcClient::build_client_for_endpoint(endpoint, &config).await;
+            let err = match result {
+                Ok(_) => panic!("TLS endpoint must be rejected"),
+                Err(err) => err,
+            };
+            assert!(matches!(
+                err,
+                WalletError::Rpc(message)
+                    if message.contains("TLS RPC endpoint not supported by PQ-only wallet build")
+            ));
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ Usage: ./scripts/check-core.sh [lint|test|build|all]
 
 lint   Run the default formatting and lint gate.
 test   Run the default fast Rust test gate.
-build  Build the release node binary.
+build  Build the release node, wallet, and walletd binaries.
 all    Run lint, test, and build gates.
 EOF
 }
@@ -60,6 +60,7 @@ run_test() {
 
 run_build() {
   cargo build -p hegemon-node --bin hegemon-node --no-default-features --release
+  cargo build -p wallet -p walletd --release
 }
 
 case "${1:-all}" in

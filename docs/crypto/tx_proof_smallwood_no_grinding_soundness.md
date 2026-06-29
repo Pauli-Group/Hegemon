@@ -6,8 +6,8 @@ Important status note:
 
 - the currently integrated prover/verifier backend in the repo is the packed Rust candidate, not the old scalar fallback,
 - the Rust-side packed frontend material exists and lands on the current packed bridge statement shape,
-- the shipped default now has a structural upper bound of `91262` bytes on the current backend after adding output ciphertext-hash binding rows to the inline-Merkle statement; the exact sampled release proof report predates that hardening and should be refreshed before quoting a new exact sampled byte band,
-- and the latest focused local release roundtrips on the current host measured about `6.1s` directly on the old bridge statement and about `5.4s` on the older compact-binding branch before the final `skip-initial-mds` promotion, after promoting the smaller checked no-grinding DECS point `32768 / 24 / 3`, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
+- the shipped default still fits under the current `524288`-byte native `tx_leaf` cap after adding output ciphertext-hash binding rows to the inline-Merkle statement; the exact sampled release proof report predates the later row-growth and should be refreshed before quoting a new exact sampled byte band,
+- and the latest focused local release roundtrips on the current host measured about `6.1s` directly on the old bridge statement and about `5.4s` on the older compact-binding branch before the final `skip-initial-mds` promotion, after promoting the checked no-grinding DECS family that now uses `32768 / 25 / 3` for legacy bridge/direct profiles and `32768 / 23 / 3` for the shipped inline-Merkle profile, keeping the preallocated DECS row buffers with thread-local scratch, deleting the duplicated input-position rows from the live bridge, deleting the duplicated stable-selector rows, deleting the duplicated input/output selector rows, deleting the duplicated public witness rows too, and then killing the witness-carrying direct alternate envelope in favor of the same succinct row-aligned PCS path,
 - but this note should still be read as the exact no-grinding security note for the candidate statement, not as a blanket claim that the backend is final.
 
 It is intentionally narrow. This is not a blanket release claim for every future SmallWood frontend Hegemon might build. It is the exact engineering note for the active integrated statement behind `TxProofBackend::SmallwoodCandidate`.
@@ -42,11 +42,11 @@ and from fixed shape metadata for the packed expanded native witness.
 The exact active public statement fields are:
 
 - `public_value_count = 78`
-- `raw_witness_len = 84`
-- `poseidon_permutation_count = 143`
-- `poseidon_state_row_count = 4433`
-- `expanded_witness_len = 76800`
-- `lppc_row_count = 1200`
+- `raw_witness_len = 241`
+- `poseidon_permutation_count = 172`
+- `poseidon_state_row_count = 5332`
+- `expanded_witness_len = 86848`
+- `lppc_row_count = 1357`
 - `lppc_packing_factor = 64`
 - `effective_constraint_degree = 8`
 
@@ -174,7 +174,7 @@ That is why the current no-grinding candidate moved to:
 - `decs_nb_opened_evals = 23`
 - `decs_eta = 3`
 
-Those are not cosmetic tweaks. The checked realistic no-grinding sweep artifact `docs/crypto/tx_proof_smallwood_profile_sweep.json` now shows that Bridge/direct still prefer `32768 / 24 / 3`, while the shipped inline-Merkle arithmetization has one smaller passing point at `32768 / 23 / 3`.
+Those are not cosmetic tweaks. The checked realistic no-grinding profile tests now keep Bridge/direct on the legacy `32768 / 25 / 3` family to clear the larger row geometry while the shipped inline-Merkle arithmetization keeps the smaller passing point at `32768 / 23 / 3`.
 
 ## What this note does and does not prove
 
@@ -191,7 +191,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 
-Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now has a structural upper bound of `91262` bytes after adding twelve scalar rows that bind both output ciphertext hashes to public statement fields. That is still about `3.9x` smaller than the shipped Plonky3 proof and about `9.6%` smaller than the old `100956`-byte bridge baseline. The exact sampled release proof report predates this binding fix, so do not quote the older sampled byte band as current until that ignored release-size artifact is refreshed. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
+Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now binds both output ciphertext hashes to public statement fields while staying under the native `tx_leaf` cap. The exact sampled release proof report and older bridge-baseline byte figures predate the latest row-growth and 25-opening legacy profile, so do not quote those sampled byte bands as current until the ignored release-size artifacts are refreshed. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
 
 ## Product conclusion
 

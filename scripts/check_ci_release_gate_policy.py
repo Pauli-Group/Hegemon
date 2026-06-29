@@ -124,6 +124,20 @@ def require_contains(name: str, text: str, needle: str) -> None:
         raise SystemExit(f"{name}: missing {needle!r}")
 
 
+def require_binary_audit(
+    name: str,
+    text: str,
+    node_bin: str,
+    wallet_bin: str,
+    walletd_bin: str,
+) -> None:
+    require_contains(name, text, "./scripts/security-audit.sh")
+    require_contains(name, text, "--require-binary")
+    require_contains(name, text, f"--node-bin {node_bin}")
+    require_contains(name, text, f"--binary {wallet_bin}")
+    require_contains(name, text, f"--binary {walletd_bin}")
+
+
 def check_ci_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
     release_build = job_block(workflow, "release-build")
@@ -149,12 +163,12 @@ def check_ci_workflow(path: Path) -> None:
         "- native-backend-security",
     )
     require_contains("release-build build command", release_build, "./scripts/check-core.sh build")
-    require_contains("release-build binary audit", release_build, "./scripts/security-audit.sh")
-    require_contains("release-build binary audit", release_build, "--require-binary")
-    require_contains(
+    require_binary_audit(
         "release-build binary audit",
         release_build,
-        "--node-bin target/release/hegemon-node",
+        "target/release/hegemon-node",
+        "target/release/wallet",
+        "target/release/walletd",
     )
     print(f"ci workflow release-build gate passed: {path}")
 
@@ -220,9 +234,30 @@ def check_release_workflow(path: Path) -> None:
     ):
         block = job_block(workflow, job_name)
         require_contains(f"{job_name} needs security-gates", block, "needs: security-gates")
-        require_contains(f"{job_name} binary audit", block, "./scripts/security-audit.sh")
-        require_contains(f"{job_name} binary audit", block, "--require-binary")
-        require_contains(f"{job_name} binary audit", block, "--node-bin")
+        if job_name == "build-macos-intel":
+            require_binary_audit(
+                f"{job_name} binary audit",
+                block,
+                "target/x86_64-apple-darwin/release/hegemon-node",
+                "target/x86_64-apple-darwin/release/wallet",
+                "target/x86_64-apple-darwin/release/walletd",
+            )
+        elif job_name == "build-windows":
+            require_binary_audit(
+                f"{job_name} binary audit",
+                block,
+                "target/release/hegemon-node.exe",
+                "target/release/wallet.exe",
+                "target/release/walletd.exe",
+            )
+        else:
+            require_binary_audit(
+                f"{job_name} binary audit",
+                block,
+                "target/release/hegemon-node",
+                "target/release/wallet",
+                "target/release/walletd",
+            )
     print(f"tag release workflow gate passed: {path}")
 
 

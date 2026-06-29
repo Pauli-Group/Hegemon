@@ -13,7 +13,7 @@ use transaction_circuit::p3_verifier::{
     verify_transaction_proof_bytes_p3, verify_transaction_proof_bytes_p3_for_version,
 };
 use transaction_circuit::proof::{
-    prove, prove_with_params, stark_public_inputs_p3,
+    prove, prove_with_params, serialized_stark_inputs_from_witness, stark_public_inputs_p3,
     transaction_public_inputs_digest_from_serialized,
     transaction_statement_hash_from_public_inputs, verify,
 };
@@ -339,8 +339,10 @@ fn verification_fails_for_bad_balance() {
         balance_slots: trace.padded_balance_slots(),
         public_inputs,
         backend: transaction_circuit::TxProofBackend::Plonky3Fri,
-        stark_proof: Vec::new(),
-        stark_public_inputs: None,
+        stark_proof: vec![0],
+        stark_public_inputs: Some(
+            serialized_stark_inputs_from_witness(&witness).expect("serialized public inputs"),
+        ),
     };
     proof.balance_slots[1].delta = 1; // corrupt non-native slot
     let err = verify(&proof, &verifying_key).expect_err("expected failure");

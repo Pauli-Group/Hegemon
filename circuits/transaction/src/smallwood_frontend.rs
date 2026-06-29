@@ -6893,7 +6893,7 @@ mod tests {
                 case.name
             );
             assert_eq!(
-                transcript.len() % 8 == 0,
+                transcript.len().is_multiple_of(8),
                 case.expected_aligned_to_eight,
                 "Lean SmallWood transcript case {} disagreed on eight-byte alignment",
                 case.name
@@ -7127,11 +7127,11 @@ mod tests {
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 295);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 55_285);
-        assert_eq!(statement.lppc_row_count, 55_285);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 66_578);
+        assert_eq!(statement.lppc_row_count, 66_578);
         assert_eq!(statement.lppc_packing_factor, 1);
         assert_eq!(statement.effective_constraint_degree, 8);
     }
@@ -7144,11 +7144,11 @@ mod tests {
         let bridge = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 295);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 92_608);
-        assert_eq!(statement.lppc_row_count, 1_447);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 102_656);
+        assert_eq!(statement.lppc_row_count, 1_604);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7174,11 +7174,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 90_624);
-        assert_eq!(statement.lppc_row_count, 1_416);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 100_672);
+        assert_eq!(statement.lppc_row_count, 1_573);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7198,11 +7198,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 59_520);
-        assert_eq!(statement.lppc_row_count, 3_720);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 74_320);
+        assert_eq!(statement.lppc_row_count, 4_645);
         assert_eq!(statement.lppc_packing_factor, 16);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7222,11 +7222,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 69_888);
-        assert_eq!(statement.lppc_row_count, 2_184);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 87_200);
+        assert_eq!(statement.lppc_row_count, 2_725);
         assert_eq!(statement.lppc_packing_factor, 32);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7246,11 +7246,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 132_096);
-        assert_eq!(statement.lppc_row_count, 1_032);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 152_192);
+        assert_eq!(statement.lppc_row_count, 1_189);
         assert_eq!(statement.lppc_packing_factor, 128);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7270,11 +7270,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 264);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_433);
-        assert_eq!(statement.expanded_witness_len, 88_320);
-        assert_eq!(statement.lppc_row_count, 1_380);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 98_368);
+        assert_eq!(statement.lppc_row_count, 1_537);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7295,11 +7295,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 72);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_433);
-        assert_eq!(statement.expanded_witness_len, 76_032);
-        assert_eq!(statement.lppc_row_count, 1_188);
+        assert_eq!(statement.raw_witness_len, 241);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 86_848);
+        assert_eq!(statement.lppc_row_count, 1_357);
         assert_eq!(statement.lppc_packing_factor, 64);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7320,11 +7320,11 @@ mod tests {
         .unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 72);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_433);
-        assert_eq!(statement.expanded_witness_len, 104_448);
-        assert_eq!(statement.lppc_row_count, 816);
+        assert_eq!(statement.raw_witness_len, 241);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 126_080);
+        assert_eq!(statement.lppc_row_count, 985);
         assert_eq!(statement.lppc_packing_factor, 128);
         assert_eq!(statement.effective_constraint_degree, 8);
         assert_eq!(
@@ -7728,11 +7728,10 @@ mod tests {
         let lane = packed_bridge_permutation_lane(permutation, packing_factor);
         for logical_row in 0..layout.poseidon_rows_per_permutation() {
             let source_row = layout.poseidon_trace_row(logical_row);
-            for limb in 0..POSEIDON2_WIDTH {
+            for (limb, value) in rows[source_row].iter().enumerate() {
                 let row =
                     bridge_poseidon_row(packing_factor, layout, permutation, logical_row, limb);
-                material.packed_expanded_witness[row * packing_factor + lane] =
-                    rows[source_row][limb];
+                material.packed_expanded_witness[row * packing_factor + lane] = *value;
             }
         }
     }
@@ -7840,9 +7839,13 @@ mod tests {
             nullifier,
             &position_traces[0],
         );
-        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+        for (limb, value) in position_nullifier
+            .iter()
+            .enumerate()
+            .take(SMALLWOOD_WORDS_PER_48_BYTES)
+        {
             position_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
-                position_nullifier[limb].as_canonical_u64();
+                value.as_canonical_u64();
         }
         let direction_row = bridge_row_input_direction(layout, 0, 0);
         position_material.packed_expanded_witness
@@ -7873,9 +7876,13 @@ mod tests {
         let (rho_nullifier, rho_traces) =
             trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &nullifier_inputs(prf, &rho_input));
         overwrite_poseidon_permutation_rows(&mut rho_material, layout, nullifier, &rho_traces[0]);
-        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+        for (limb, value) in rho_nullifier
+            .iter()
+            .enumerate()
+            .take(SMALLWOOD_WORDS_PER_48_BYTES)
+        {
             rho_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
-                rho_nullifier[limb].as_canonical_u64();
+                value.as_canonical_u64();
         }
         rho_material.auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
             &witness,
@@ -8324,12 +8331,12 @@ mod tests {
         let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
         let statement = &material.public_statement;
         assert_eq!(statement.public_value_count, 78);
-        assert_eq!(statement.raw_witness_len, 295);
-        assert_eq!(statement.poseidon_permutation_count, 143);
-        assert_eq!(statement.poseidon_state_row_count, 4_576);
-        assert_eq!(statement.expanded_witness_len, 92_608);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 102_656);
         assert_eq!(statement.lppc_packing_factor, 64);
-        assert_eq!(statement.lppc_row_count, 1_447);
+        assert_eq!(statement.lppc_row_count, 1_604);
         assert_eq!(
             material.packed_witness_rows.len(),
             statement.lppc_row_count as usize * statement.lppc_packing_factor as usize

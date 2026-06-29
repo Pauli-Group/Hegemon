@@ -2280,15 +2280,18 @@ mod serde_vec_bytes48 {
         D: Deserializer<'de>,
     {
         let wrapped: Vec<serde_bytes::ByteBuf> = Vec::deserialize(deserializer)?;
-        Ok(wrapped
+        wrapped
             .into_iter()
             .map(|buf| {
                 let data = buf.into_vec();
+                if data.len() != 48 {
+                    return Err(serde::de::Error::custom("expected 48 bytes"));
+                }
                 let mut out = [0u8; 48];
                 out.copy_from_slice(&data);
-                out
+                Ok(out)
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -2754,6 +2757,19 @@ mod tests {
     }
 
     #[test]
+    fn wallet_state_rejects_malformed_commitment_bytes() {
+        #[allow(dead_code)]
+        #[derive(Debug, Deserialize)]
+        struct CommitmentVecProbe(#[serde(with = "serde_vec_bytes48")] Vec<[u8; 48]>);
+
+        let malformed = vec![serde_bytes::ByteBuf::from(vec![0u8; 47])];
+        let bytes = bincode::serialize(&malformed).unwrap();
+        let err = bincode::deserialize::<CommitmentVecProbe>(&bytes)
+            .expect_err("malformed wallet commitments must fail closed");
+        assert!(err.to_string().contains("expected 48 bytes"));
+    }
+
+    #[test]
     fn spendable_notes_filters_spent() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("wallet.dat");
@@ -2898,7 +2914,7 @@ mod tests {
             vec![0xaa],
             vec![],
             vec![commitment],
-            &[ciphertext.clone()],
+            std::slice::from_ref(&ciphertext),
             [0x11; 48],
             [0x22; 64],
             [0, u64::MAX, u64::MAX, u64::MAX],
@@ -2953,7 +2969,7 @@ mod tests {
             vec![0xbb],
             vec![],
             vec![commitment],
-            &[ciphertext.clone()],
+            std::slice::from_ref(&ciphertext),
             [0x66; 48],
             [0x77; 64],
             [0, u64::MAX, u64::MAX, u64::MAX],
@@ -2995,7 +3011,7 @@ mod tests {
             vec![0x31],
             vec![],
             vec![commitment],
-            &[ciphertext.clone()],
+            std::slice::from_ref(&ciphertext),
             [0x32; 48],
             [0x33; 64],
             [0, u64::MAX, u64::MAX, u64::MAX],
@@ -3053,7 +3069,7 @@ mod tests {
             vec![0x34],
             vec![],
             vec![commitment],
-            &[ciphertext.clone()],
+            std::slice::from_ref(&ciphertext),
             [0x35; 48],
             [0x36; 64],
             [0, u64::MAX, u64::MAX, u64::MAX],

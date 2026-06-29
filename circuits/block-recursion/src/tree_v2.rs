@@ -21,7 +21,7 @@ use transaction_circuit::{
 };
 
 pub const RECURSIVE_BLOCK_ARTIFACT_VERSION_V2: u32 = 2;
-pub const RECURSIVE_BLOCK_ARTIFACT_BYTES_V2: usize = 522_159;
+pub const RECURSIVE_BLOCK_ARTIFACT_BYTES_V2: usize = 523_736;
 pub const TREE_RECURSIVE_CHUNK_SIZE_V2: usize = 1000;
 pub const TREE_RECURSIVE_MAX_SUPPORTED_TXS_V2: usize = 1000;
 const TREE_RECURSIVE_WITNESS_ROW_COUNT_V2: usize = 1;
@@ -2320,6 +2320,7 @@ pub fn verify_block_recursive_v2(
     Ok(expected_public.clone())
 }
 
+#[cfg(test)]
 pub(crate) fn verify_block_recursive_v2_with_versioned_artifact_cap(
     artifact: &RecursiveBlockArtifactV2,
     expected_public: &RecursiveBlockPublicV2,

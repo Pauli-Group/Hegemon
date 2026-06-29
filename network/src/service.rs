@@ -1076,10 +1076,10 @@ impl P2PService {
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
                     .collect();
-                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "coordinate addr") {
-                    if self.remember_peer_addresses(sender, addrs.clone()).is_ok() {
-                        self.broadcast_addresses(sender, addrs).await;
-                    }
+                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "coordinate addr")
+                    && self.remember_peer_addresses(sender, addrs.clone()).is_ok()
+                {
+                    self.broadcast_addresses(sender, addrs).await;
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
@@ -1096,10 +1096,9 @@ impl P2PService {
                     .map(|addr| addr.to_socket_addr())
                     .collect();
                 if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "relay registration")
+                    && let Err(err) = self.remember_peer_addresses(sender, addrs)
                 {
-                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
-                        warn!(?err, "failed to persist relay registration addresses");
-                    }
+                    warn!(?err, "failed to persist relay registration addresses");
                 }
             }
             CoordinationMessage::PunchRequest {
@@ -1224,8 +1223,7 @@ impl P2PService {
         }
         peer_cap
             .saturating_mul(RATE_LIMIT_STATE_PEER_MULTIPLIER)
-            .max(64)
-            .min(MAX_RATE_LIMIT_STATE_PEERS)
+            .clamp(64, MAX_RATE_LIMIT_STATE_PEERS)
     }
 
     fn prune_rate_limit_maps_for_peer(&mut self, peer_id: &PeerId) {

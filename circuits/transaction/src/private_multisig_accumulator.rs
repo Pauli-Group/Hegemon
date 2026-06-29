@@ -172,7 +172,7 @@ pub fn policy_well_formed(policy: &PolicyWitness) -> bool {
     if policy.threshold == 0 || policy.threshold as usize > policy.signer_tags.len() {
         return false;
     }
-    if policy.signer_tags.iter().any(|tag| *tag == 0) {
+    if policy.signer_tags.contains(&0) {
         return false;
     }
     for (idx, tag) in policy.signer_tags.iter().enumerate() {

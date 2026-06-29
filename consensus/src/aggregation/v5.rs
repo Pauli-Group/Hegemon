@@ -1181,10 +1181,10 @@ mod tests {
         }
         for boundary in [1usize, 2, 3, 4, 5, 8, 9, 16, 32, 64, 128, 256, 512, len] {
             for delta in [0usize, 1, 2, 3, 7, 8] {
-                if let Some(cut) = boundary.checked_sub(delta) {
-                    if cut <= len {
-                        cuts.insert(cut);
-                    }
+                if let Some(cut) = boundary.checked_sub(delta)
+                    && cut <= len
+                {
+                    cuts.insert(cut);
                 }
                 let cut = boundary.saturating_add(delta);
                 if cut <= len {

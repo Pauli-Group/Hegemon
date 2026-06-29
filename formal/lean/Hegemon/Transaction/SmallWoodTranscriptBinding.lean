@@ -57,7 +57,7 @@ def activeProfile : NoGrindingProfile :=
     decsPowBits := 0 }
 
 def legacyProfile : NoGrindingProfile :=
-  { activeProfile with decsNbOpenedEvals := 24 }
+  { activeProfile with decsNbOpenedEvals := 25 }
 
 def profileForArithmetization (arithmetization : Nat) : NoGrindingProfile :=
   if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
@@ -264,7 +264,7 @@ theorem active_inline_merkle_profile_uses_active_decs_opening_count :
 
 theorem legacy_profile_arithmetizations_use_legacy_decs_opening_count :
     ∀ tag ∈ legacyProfileArithmetizationTags,
-      (profileForArithmetization tag).decsNbOpenedEvals = 24 := by
+      (profileForArithmetization tag).decsNbOpenedEvals = 25 := by
   decide
 
 theorem deployed_smallwood_profile_materials_distinguish_arithmetization_tags :

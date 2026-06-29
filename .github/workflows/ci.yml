@@ -217,8 +217,8 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
-      - name: Release node build
+      - name: Release binary build
         run: ./scripts/check-core.sh build
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd

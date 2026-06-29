@@ -41,7 +41,7 @@ pub fn decode_borrowed<'de, T: Deserialize<'de>>(
     Ok(value)
 }
 
-fn checked_body<'a>(bytes: &'a [u8], max_len: usize) -> Result<&'a [u8], NetworkError> {
+fn checked_body(bytes: &[u8], max_len: usize) -> Result<&[u8], NetworkError> {
     if bytes.len() > max_len {
         return Err(NetworkError::Serialization(format!(
             "encoded frame too large: {} > {max_len}",
@@ -311,13 +311,13 @@ mod tests {
         ] {
             for seed_offset in 0..16u64 {
                 corpus.push(deterministic_frame_noise(
-                    0x4e45_5457_4952_45 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
+                    0x004e_4554_5749_5245 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
                     len,
                 ));
 
                 if len >= magic.len() {
                     let mut marker_prefixed = deterministic_frame_noise(
-                        0x4d41_524b_4e45_54 ^ len as u64 ^ seed_offset.wrapping_mul(0x517c_c1b7),
+                        0x004d_4152_4b4e_4554 ^ len as u64 ^ seed_offset.wrapping_mul(0x517c_c1b7),
                         len,
                     );
                     marker_prefixed[..magic.len()].copy_from_slice(magic);
@@ -389,10 +389,10 @@ mod tests {
         }
         for boundary in [1usize, 2, 3, 4, 5, 8, 16, 32, 64, 128, len] {
             for delta in [0usize, 1, 2, 3] {
-                if let Some(cut) = boundary.checked_sub(delta) {
-                    if cut <= len {
-                        cuts.insert(cut);
-                    }
+                if let Some(cut) = boundary.checked_sub(delta)
+                    && cut <= len
+                {
+                    cuts.insert(cut);
                 }
                 let cut = boundary.saturating_add(delta);
                 if cut <= len {

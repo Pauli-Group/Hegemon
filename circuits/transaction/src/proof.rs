@@ -2077,7 +2077,7 @@ mod tests {
         ] {
             for seed_offset in 0..12u64 {
                 corpus.push(deterministic_proof_wrapper_noise(
-                    0x5458_5052_4f4f_46 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
+                    0x0054_5850_524f_4f46 ^ len as u64 ^ seed_offset.wrapping_mul(0x9e37_79b9),
                     len,
                 ));
             }

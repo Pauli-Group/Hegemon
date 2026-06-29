@@ -63,6 +63,7 @@ Each harness supports `--iterations <N>` and `--prove/--no-prove` toggles for de
 - Only ML-DSA/SLH-DSA signatures and ML-KEM encryption are allowed (see `DESIGN.md §1`).
 - Hash-based commitments and STARK-friendly hashes drive all circuits; never introduce ECC primitives.
 - Default symmetric key sizes are 256-bit to maintain ≥128-bit quantum security after Grover reductions.
+- Native JSON-RPC resource hardening includes the 8 MiB HTTP body cap, 8 in-flight request cap, batch caps, and byte parser caps; keep `native RPC admission` and `native sidecar upload admission` formal-core coverage synchronized when changing those limits.
 - Threat mitigations from `THREAT_MODEL.md` (network DoS budgets, wallet key-rotation cadence, and memory-hard proving limits in the remaining offline circuit tooling) must be satisfied by code and tests.
 
 Document any deviations in both `DESIGN.md` and `METHODS.md` before landing code.

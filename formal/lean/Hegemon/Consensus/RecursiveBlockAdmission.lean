@@ -90,7 +90,7 @@ def evaluateDirectVerifierRejection (_kind : ArtifactKind) : Option DirectVerifi
 
 def recursiveBlockV1ArtifactBytes : Nat := 699452
 
-def recursiveBlockV2ArtifactBytes : Nat := 522159
+def recursiveBlockV2ArtifactBytes : Nat := 523736
 
 theorem artifact_accepts_iff_preconditions (input : ArtifactAdmissionInput) :
     artifactAccepts input = artifactPreconditions input := by

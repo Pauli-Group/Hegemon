@@ -50,7 +50,7 @@ p budgets.
 
 - Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, native node RPC flows, and disclosure tooling.
 - `wallet payment-proof create|verify|purge` generates and verifies proofs of disclosure and manages stored outgoing disclosure records.
-- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets. One-shot commands accept the native node's `http://` JSON-RPC endpoint as well as WebSocket; subscription-backed daemon mode still requires `ws://`/`wss://`.
+- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets. One-shot commands accept the native node's plaintext `http://` JSON-RPC endpoint as well as `ws://`; subscription-backed daemon mode still requires `ws://`. PQ-only release wallets reject `https://` and `wss://`; put remote access behind an external PQ-safe transport or host control plane.
 - Wallet sync falls back to archive providers for ciphertext recovery when hot DA is pruned. Configure `HEGEMON_WALLET_ARCHIVE_WS_URL` or ensure providers are discoverable via `archive_listProviders`.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize proof-of-disclosure packages.
 - `wallet::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
@@ -85,6 +85,10 @@ p budgets.
 ## Node RPC endpoints
 
 Hegemon-specific RPC methods exposed on the native JSON-RPC server:
+
+Native HTTP JSON-RPC rejects request bodies above 8 MiB and caps in-flight RPC
+requests at 8. Chunk DA sidecar staging uploads rather than sending one large
+aggregate JSON body.
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
@@ -213,6 +217,7 @@ Block validity and data-availability RPC methods exposed by the native node:
   - Staged ciphertext bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
 - `da_submitProofs(request: { proofs: Vec<{ binding_hash: String, proof: String }> }) -> Vec<SubmitProofsEntry>`
   - Unsafe-only proposer/local proof staging RPC. Request-count, staged-capacity, proof binding-hash metadata, nonempty proof, and proof byte-cap admission are Lean-conformance-checked against the production native helpers.
+  - Large proof batches must be chunked to stay below the native 8 MiB JSON-RPC request-body cap.
   - This upload path canonicalizes the supplied binding hash and response hash, but it does not verify `tx_leaf` proof bytes at upload time. Consensus validity is enforced later when native block artifact verification decodes the artifact and checks the derived binding against the action/candidate context.
   - Staged proof bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
 - `da_submitWitnesses(...)`

@@ -39,6 +39,7 @@ transaction-core = { path = "../circuits/transaction-core" }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "sync", "time", "signal", "fs"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
+tower = { version = "0.5", features = ["limit"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 transaction_circuit = { path = "../circuits/transaction", package = "transaction-circuit" }

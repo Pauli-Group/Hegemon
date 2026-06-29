@@ -118,8 +118,8 @@ def compactCandidateArtifactResourcePolicy : ResourcePolicy :=
     rawByteCap := 200,
     decodedByteCap := 600000,
     itemCountCap := 32,
-    itemByteCap := 522159,
-    aggregateByteCap := 522159,
+    itemByteCap := 523736,
+    aggregateByteCap := 523736,
     workUnitCap := 1000
   }
 

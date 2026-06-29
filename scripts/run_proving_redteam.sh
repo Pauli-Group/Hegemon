@@ -50,6 +50,28 @@ cargo_test_filter() {
 }
 export -f cargo_test_filter
 
+cargo_test_lib_filter() {
+  local package="$1"
+  local filter="$2"
+  shift 2
+
+  local list
+  if ! list="$(cargo test -p "$package" --lib "$filter" -- --list 2>&1)"; then
+    printf '%s\n' "$list" >&2
+    return 1
+  fi
+
+  local matches
+  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  if [[ "$matches" -eq 0 ]]; then
+    echo "red-team gate matched zero tests: cargo test -p $package --lib $filter" >&2
+    return 97
+  fi
+
+  cargo test -p "$package" --lib "$filter" "$@"
+}
+export -f cargo_test_lib_filter
+
 cargo_test_target() {
   local package="$1"
   local target="$2"
@@ -109,17 +131,17 @@ EOF
       ;;
     recursive-block-mismatch)
       cat <<'EOF'
-cargo_test_filter consensus recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
-cargo_test_filter consensus recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
-cargo_test_filter consensus raw_active_rejects_bad_tx_proof -- --ignored --nocapture
+cargo_test_lib_filter consensus recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
+cargo_test_lib_filter consensus recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
+cargo_test_target consensus raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
 EOF
       ;;
     receipt-root-tamper)
       cat <<'EOF'
-cargo_test_filter consensus parallel_receipt_root_payload_mismatches_reject_before_backend -- --nocapture
-cargo_test_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
-cargo_test_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
-cargo_test_filter consensus receipt_root_ -- --ignored --nocapture
+cargo_test_lib_filter consensus parallel_receipt_root_payload_mismatches_reject_before_backend -- --nocapture
+cargo_test_lib_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
+cargo_test_lib_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
+cargo_test_target consensus raw_active_mode receipt_root_ -- --ignored --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi
@@ -133,11 +155,11 @@ EOF
       ;;
     network-transport-abuse)
       cat <<'EOF'
-cargo_test_filter pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
-cargo_test_filter pq-noise encapsulate_with_seed_consumes_supplied_seed -- --nocapture
-cargo_test_filter network encapsulate_with_seed_consumes_supplied_seed --lib -- --nocapture
+cargo_test_lib_filter pq-noise handshake_does_not_use_public_transcript_as_kem_seed -- --nocapture
+cargo_test_lib_filter pq-noise encapsulate_with_seed_consumes_supplied_seed -- --nocapture
+cargo_test_lib_filter network encapsulate_with_seed_consumes_supplied_seed -- --nocapture
 cargo_test_target network adversarial -- --nocapture
-cargo_test_filter network duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
+cargo_test_target network handshake duplex_stream_handshake_succeeds_and_rejects_tampering -- --nocapture
 EOF
       ;;
     review-package-parity)

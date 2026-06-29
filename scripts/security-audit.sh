@@ -169,6 +169,27 @@ filter_reject_only_matches() {
     done
 }
 
+search_source_pattern() {
+    local pattern="$1"
+
+    if command -v rg >/dev/null 2>&1; then
+        rg -n -i -H --color never --hidden --no-ignore \
+            --glob '*.rs' \
+            --glob '*.toml' \
+            --glob '!target/**' \
+            --glob '!**/target/**' \
+            --glob '!.git/**' \
+            --glob '!**/.git/**' \
+            -- "$pattern" "$PROJECT_ROOT"
+    else
+        grep -rniE "$pattern" \
+            --include="*.rs" --include="*.toml" \
+            "$PROJECT_ROOT" 2>/dev/null \
+            | grep -v "target/" \
+            | grep -v ".git/"
+    fi
+}
+
 # Function to check a single pattern
 check_pattern() {
     local pattern="$1"
@@ -176,12 +197,10 @@ check_pattern() {
     
     printf "Checking for '%s'... " "$pattern"
     
-    # Search in Rust files, excluding target/, .git/, comments, test output, and this audit script
-    raw_matches=$(grep -rniE "$pattern" \
-        --include="*.rs" --include="*.toml" \
-        "$PROJECT_ROOT" 2>/dev/null \
-        | grep -v "target/" \
-        | grep -v ".git/" \
+    # Search in Rust and Cargo files, excluding target/, .git/, comments, test
+    # output, and this audit script. Prefer ripgrep so CI does not repeatedly
+    # traverse generated build artifacts for every forbidden primitive pattern.
+    raw_matches=$(search_source_pattern "$pattern" 2>/dev/null \
         | grep -v "security-audit.sh" \
         | grep -v "FORBIDDEN" \
         | grep -v "# VIOLATION" \

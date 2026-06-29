@@ -8,13 +8,14 @@ use consensus::proof::{
     tx_validity_artifact_from_native_tx_leaf_bytes,
 };
 use consensus::proof_interface::{
-    BlockBackendInputs, ProofVerifier, build_experimental_native_receipt_root_artifact,
+    BlockBackendInputs, HeaderProofExt, ProofVerifier,
+    build_experimental_native_receipt_root_artifact,
     experimental_native_receipt_root_verifier_profile,
 };
 use consensus::types::{
     ConsensusBlock, ProofArtifactKind, ProofEnvelope, ProofVerificationMode, ProvenBatch,
     ProvenBatchMode, ReceiptRootMetadata, ReceiptRootProofPayload, Transaction, TxStatementBinding,
-    TxValidityArtifact, kernel_root_from_shielded_root,
+    TxValidityArtifact, encode_da_blob, kernel_root_from_shielded_root,
 };
 use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
@@ -157,6 +158,12 @@ fn nullifier_root_for_transactions(transactions: &[Transaction]) -> [u8; 48] {
         }
     }
     set.commitment()
+}
+
+fn expected_da_chunk_count(block: &ConsensusBlock) -> u32 {
+    let encoding =
+        encode_da_blob(&block.transactions, block.header.da_params()).expect("fixture DA encoding");
+    u32::try_from(encoding.chunks().len()).expect("fixture DA chunk count fits u32")
 }
 
 fn make_input_note(seed: u8, value: u64, asset_id: u64, pk_auth: [u8; 32]) -> NoteData {
@@ -398,12 +405,13 @@ fn build_raw_active_fixture() -> RawActiveFixture {
 
     let (tx_validity_artifacts, receipt_root, envelope) =
         build_receipt_root_block_artifacts(&[witness_a.clone(), witness_b.clone()]);
+    let da_chunk_count = expected_da_chunk_count(&block);
     block.proven_batch = Some(ProvenBatch {
         version: 2,
         tx_count: block.transactions.len() as u32,
         tx_statements_commitment,
         da_root: block.header.da_root,
-        da_chunk_count: 1,
+        da_chunk_count,
         commitment_proof,
         mode: ProvenBatchMode::ReceiptRoot,
         proof_kind: ProofArtifactKind::ReceiptRoot,
@@ -653,12 +661,13 @@ fn build_upgrade_transition_blocks() -> (
 
     let (first_tx_validity_artifacts, first_receipt_root, first_envelope) =
         build_receipt_root_block_artifacts(&[witness_a.clone(), witness_b.clone()]);
+    let first_da_chunk_count = expected_da_chunk_count(&first_block);
     first_block.proven_batch = Some(ProvenBatch {
         version: 2,
         tx_count: first_block.transactions.len() as u32,
         tx_statements_commitment: first_tx_statements_commitment,
         da_root: first_block.header.da_root,
-        da_chunk_count: 1,
+        da_chunk_count: first_da_chunk_count,
         commitment_proof: first_commitment_proof,
         mode: ProvenBatchMode::ReceiptRoot,
         proof_kind: ProofArtifactKind::ReceiptRoot,
@@ -761,12 +770,13 @@ fn build_upgrade_transition_blocks() -> (
             .expect("second tx statements commitment");
     let (tx_validity_artifacts, receipt_root, envelope) =
         build_receipt_root_block_artifacts(&[witness_c]);
+    let second_da_chunk_count = expected_da_chunk_count(&second_block);
     second_block.proven_batch = Some(ProvenBatch {
         version: 2,
         tx_count: second_block.transactions.len() as u32,
         tx_statements_commitment: second_tx_statements_commitment,
         da_root: second_block.header.da_root,
-        da_chunk_count: 1,
+        da_chunk_count: second_da_chunk_count,
         commitment_proof: second_commitment_proof,
         mode: ProvenBatchMode::ReceiptRoot,
         proof_kind: ProofArtifactKind::ReceiptRoot,
