@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ -d "${HOME:-}/.elan/bin" ]; then
+  export PATH="${HOME}/.elan/bin:$PATH"
+fi
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/check-core.sh [lint|test|build|all]
