@@ -97,6 +97,7 @@ export type NodeSummary = {
   bestNumber: number | null;
   genesisHash: string | null;
   mining: boolean | null;
+  minerAddress: string | null;
   miningThreads: number | null;
   miningSyncGateOpen: boolean | null;
   bootstrapAuthoring: boolean | null;

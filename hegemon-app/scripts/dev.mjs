@@ -36,7 +36,7 @@ const ensureMacDevApp = () => {
   const devDir = join(appRoot, '.electron-vite');
   const legacyDevApp = join(devDir, 'Hegemon.app');
   const devApp = join(devDir, 'Electron Dev Runner.app');
-  const stampPath = join(devDir, 'hegemon-dev-app-stamp.json');
+  const stampPath = join(devDir, 'native-devnet-host-app-stamp.json');
 
   const iconSource = join(appRoot, 'build', 'icon.icns');
   const iconStat = existsSync(iconSource) ? statSync(iconSource) : null;

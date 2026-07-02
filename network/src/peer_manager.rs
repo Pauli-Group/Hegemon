@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 const DEFAULT_MAX_PEERS: usize = 64;
 const MAX_ADDRESS_BOOK_PEERS: usize = 1024;
@@ -188,6 +189,12 @@ impl PeerManager {
     fn try_queue_to_entry(&self, entry: &PeerEntry, msg: WireMessage) {
         let bytes = wire_message_queue_bytes(&msg);
         let Some(permit) = self.outbound_budget.try_acquire(bytes) else {
+            warn!(
+                peer = ?entry.peer_id,
+                addr = %entry.addr,
+                bytes,
+                "dropping outbound peer message over byte queue budget"
+            );
             return;
         };
         if entry
@@ -198,7 +205,12 @@ impl PeerManager {
             })
             .is_err()
         {
-            // Dropping the queued wrapper releases the byte budget.
+            warn!(
+                peer = ?entry.peer_id,
+                addr = %entry.addr,
+                bytes,
+                "dropping outbound peer message because queue is full or closed"
+            );
         }
     }
 

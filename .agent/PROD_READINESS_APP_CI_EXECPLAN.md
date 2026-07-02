@@ -10,14 +10,14 @@ The Hegemon desktop app and native 0.10 stack must be able to run as a real user
 
 - [x] (2026-07-01 00:36Z) Created the active Codex goal for production-readiness hardening across app, node, wallet, formal verification, and CI.
 - [x] (2026-07-01 00:36Z) Refreshed `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, the testnet join skill, CI workflows, the Electron app scripts, and the current native PoW retarget plan.
-- [x] (2026-07-01 00:36Z) Captured the current live evidence: small transactions, consolidation, and transaction-tier 1-of-1 multisig completed on `hegemon-dev`, but block production slowed to multi-minute gaps around difficulty `489471780` with observed hash rate near 1 MH/s.
+- [x] (2026-07-01 00:36Z) Captured the current live evidence: small transactions, consolidation, and transaction-tier 1-of-1 multisig completed on `native-devnet-host`, but block production slowed to multi-minute gaps around difficulty `489471780` with observed hash rate near 1 MH/s.
 - [x] (2026-07-01 00:36Z) Identified the first release blocker: the PoW liveness acceptance gate is too weak. A chain reaching height 1 or confirming isolated transactions is not sufficient; the gate must prove sustained timing across multiple retarget windows.
 - [x] (2026-07-01 00:36Z) Identified the second release blocker: changing mining to 64 reported threads did not materially raise measured hash rate, so mining parallelism needs an implementation fix or a fail-closed operator warning plus regression coverage.
 - [x] (2026-07-01 01:20Z) Patched native mining to batch disjoint nonce ranges per worker, count every attempted hash, and remove the per-round idle gap that made configured thread count misleading under high difficulty.
 - [x] (2026-07-01 01:20Z) Added focused native regressions for mining hash accounting and slow-window retarget recovery; reran existing prepared-work import, pending revalidation, and fast-window stale-bit rejection tests successfully.
-- [x] (2026-07-01 01:02Z) Built the patched Linux release binary on `hegemon-dev`, deployed it to `hegemon-node.service`, set service mining threads to 16, and measured live hash rate around 4.05 MH/s versus about 0.83 MH/s before the patch.
+- [x] (2026-07-01 01:02Z) Built the patched Linux release binary on `native-devnet-host`, deployed it to `hegemon-node.service`, set service mining threads to 16, and measured live hash rate around 4.05 MH/s versus about 0.83 MH/s before the patch.
 - [x] (2026-07-01 01:09Z) Strengthened `scripts/test-node.sh devnet-liveness` from height>1 to a real block-window gate, added `rpc-liveness` for loopback-only live nodes, and passed the local release two-node liveness gate.
-- [x] (2026-07-01 01:18Z) Ran corrected `rpc-liveness` on `hegemon-dev`: start height 193, end height 199, 6 blocks in 395s wall time, chain timestamp average 79.060s, max chain gap 130.655s, 16 threads, hash rate about 4.066 MH/s, pending pool 0.
+- [x] (2026-07-01 01:18Z) Ran corrected `rpc-liveness` on `native-devnet-host`: start height 193, end height 199, 6 blocks in 395s wall time, chain timestamp average 79.060s, max chain gap 130.655s, 16 threads, hash rate about 4.066 MH/s, pending pool 0.
 - [x] (2026-07-01 01:25Z) Updated the Electron node summary and UI to surface mining sync gate, sync target, next difficulty, bootstrap authoring, and pending-pool count; `npm --prefix hegemon-app run typecheck` and `npm --prefix hegemon-app run build` pass.
 - [x] (2026-07-01 01:35Z) Ran focused wallet/native/receipt gates: wallet tx-leaf emission passed, native shielded transfer import passed, coinbase shielded mint/supply passed, canonical transfer ordering passed, `superneo-hegemon receipt_root` passed 18/18 with 1 expected ignored slow lane, and `consensus receipt_root` passed 8/8 with expected ignored heavy integrations.
 - [x] (2026-07-01 01:40Z) `./scripts/check-core.sh lint` passed. `./scripts/dependency-audit-gate.sh` initially failed on unwaived `RUSTSEC-2026-0190` for `anyhow 1.0.100`; updated `Cargo.lock` to `anyhow 1.0.103`, then dependency audit passed with 8 waived and 0 unwaived findings.
@@ -68,24 +68,25 @@ The Hegemon desktop app and native 0.10 stack must be able to run as a real user
 - [x] (2026-07-01 16:44Z) Extended `scripts/live-app-no-ssh-e2e.mjs` to prove the disclosure path on the same no-SSH topology: after a confirmed outgoing transfer, the miner wallet must list the outgoing disclosure record, create a disclosure package, verify that package against the relay RPC, and match recipient address, value, asset id, memo, and commitment.
 - [x] (2026-07-01 16:44Z) Re-ran the disclosure-enhanced no-SSH workflow. `HEGEMON_E2E_KEEP=1 node scripts/live-app-no-ssh-e2e.mjs` passed in 278s with run dir `/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/hegemon-no-ssh-e2e-xkRc8e`, final common height 45, seed pending 0, relay pending 0, restart common height 45, restart pending 0/0, disclosure tx `0x6a8bdb432a39f95b7c5af2d78809337ae4d1674d3ed293ac550b8280f9122a98`, disclosure commitment `0x3f28a9b91c3c85a793e734a90b4cd2347f47459633fe9f2de61f5e2e9fd32424c65594558491e7e3725f66993ac2627b`, consolidation tx `0x493c0969ce6839e089bc51c615b2d5d6c2604f4fcedde2fdb5b94c30b733e243`, and multisig final tx `0x68a97ae02d7855f4edeb514780fac8aa3f9c0a971cbae4c6dc569c21cc8caf22`.
 - [x] (2026-07-01 16:53Z) Found and fixed a real app-launch confusion path: Computer Use was opening the macOS dev bundle at `.electron-vite/Hegemon.app`, which launched Electron's `default_app.asar` placeholder when no app entry was provided. `hegemon-app/scripts/dev.mjs` now pins `ELECTRON_ENTRY` and the Electron Vite root/cwd to `hegemon-app`, so `npm --prefix hegemon-app run dev` cannot silently show Electron's default app.
-- [x] (2026-07-01 19:30Z) Fixed the packaged-app wallet address copy failure by moving wallet/disclosure copy actions from renderer `navigator.clipboard` to a typed Electron preload/main-process clipboard IPC. Copy-address failures now stay local to the address card instead of turning the wallet/nav health red. Re-ran `npm --prefix hegemon-app run lint`, `npm --prefix hegemon-app run check:ui-guards`, `npm --prefix hegemon-app run build`, `npm --prefix hegemon-app run package`, `npm --prefix hegemon-app run check:launch-autostart`, and `git diff --check`; the packaged app relaunched on live hegemon-dev at height 1,576, synced, one peer, mining on, loopback RPC, and seed `devnet.hegemonprotocol.com:30333`.
-- [x] (2026-07-01 16:53Z) Updated the first-viewport app status to make live `hegemon-dev` state unambiguous before wallet unlock: the app now labels the default local connection `hegemon-dev P2P 0.10`, shows the active node's chain spec, genesis, approved seed, height, peer count, mining state, and supply from node RPC, and treats the named `~/.hegemon-node-hegemon-dev-010-dev` base path as a managed 0.10 default for seed/port normalization.
-- [x] (2026-07-01 16:53Z) Rebuilt and relaunched the packaged app with the app-launch/status fixes. Validation passed: `node --check hegemon-app/scripts/dev.mjs`, `npm --prefix hegemon-app run typecheck`, `git diff --check`, and `npm --prefix hegemon-app run package`. The running packaged app then started its managed node on `127.0.0.1:9955`; direct RPC reported height 965, peers 1, `syncing:false`, genesis `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`, base path `/Users/pldd/.hegemon-node-hegemon-dev-010-dev`, and bootstrap seed `hegemon.pauli.group:30333`.
+- [x] (2026-07-01 19:30Z) Fixed the packaged-app wallet address copy failure by moving wallet/disclosure copy actions from renderer `navigator.clipboard` to a typed Electron preload/main-process clipboard IPC. Copy-address failures now stay local to the address card instead of turning the wallet/nav health red. Re-ran `npm --prefix hegemon-app run lint`, `npm --prefix hegemon-app run check:ui-guards`, `npm --prefix hegemon-app run build`, `npm --prefix hegemon-app run package`, `npm --prefix hegemon-app run check:launch-autostart`, and `git diff --check`; the packaged app relaunched on live native-devnet-host at height 1,576, synced, one peer, mining on, loopback RPC, and seed `devnet.hegemonprotocol.com:30333`.
+- [x] (2026-07-02) Promoted mining payout visibility into the Wallet UX. The main process now reports the effective managed `HEGEMON_MINER_ADDRESS` in node summary, the Wallet view compares running payout versus wallet receiving address, the Wallet sidebar turns payout mismatch into an explicit warning, and the wallet offers a direct action to save the wallet address as the next mining payout. The UI guard now requires the Mining rewards section and payout-aware nav status.
+- [x] (2026-07-01 16:53Z) Updated the first-viewport app status to make live `native-devnet-host` state unambiguous before wallet unlock: the app now labels the default local connection `native-devnet-host P2P 0.10`, shows the active node's chain spec, genesis, approved seed, height, peer count, mining state, and supply from node RPC, and treats the named `~/.hegemon-node-native-devnet-host-010-dev` base path as a managed 0.10 default for seed/port normalization.
+- [x] (2026-07-01 16:53Z) Rebuilt and relaunched the packaged app with the app-launch/status fixes. Validation passed: `node --check hegemon-app/scripts/dev.mjs`, `npm --prefix hegemon-app run typecheck`, `git diff --check`, and `npm --prefix hegemon-app run package`. The running packaged app then started its managed node on `127.0.0.1:9955`; direct RPC reported height 965, peers 1, `syncing:false`, genesis `0x506fc2cd5ed367cc68d6d23a987fe6e4a7916fde02a249105ab91884a1e6fa59`, base path `/Users/pldd/.hegemon-node-native-devnet-host-010-dev`, and bootstrap seed `hegemon.pauli.group:30333`.
 - [x] (2026-07-01 20:39Z) Re-ran the native-backend-security CI-equivalent lane on the current tree. The package tests passed for `superneo-backend-lattice`, `native-backend-ref`, `superneo-hegemon`, and `superneo-bench`; native backend reference vectors passed 11/11; timing passed with Welch t-statistic `0.23795013119097172` and relative median delta `0.003910010186996191`; receipt-root scalability passed for 128 leaves and 1024 blocks; fuzz campaigns for `native_tx_leaf_artifact` and `receipt_root_artifact` completed; the review package was regenerated/verified; and `check_native_backend_release_posture.sh` reported `candidate_under_review / structural_candidate`.
 - [x] (2026-07-01 20:39Z) Removed the last app-launch footgun behind the user's ugly/not-connected report. The generated macOS dev helper is now `.electron-vite/Electron Dev Runner.app`, not `.electron-vite/Hegemon.app`, and `scripts/dev.mjs` deletes the legacy generated `Hegemon.app` so Computer Use/Finder cannot open a branded Electron default placeholder as if it were the product.
-- [x] (2026-07-01 20:39Z) Aligned fresh desktop defaults with the validated no-SSH hegemon-dev path: the renderer and Electron node manager now default to loopback RPC port `9955`, the default base path is `~/.hegemon-node-hegemon-dev-010-dev`, and legacy default local profiles on `9944` migrate to the tested `9955` profile when they still point at loopback.
-- [x] (2026-07-01 20:39Z) Reworked the first overview viewport so the app opens with a connection verdict instead of a debug dump. Computer Use verified the rebuilt packaged app shows `Connected to hegemon-dev`, `Live P2P connection`, local RPC `ws://127.0.0.1:9955`, approved seed `hegemon.pauli.group:30333`, peer `51.222.86.107:30333`, synced height/target `1,154`, and managed app node status before wallet unlock.
+- [x] (2026-07-01 20:39Z) Aligned fresh desktop defaults with the validated no-SSH native-devnet-host path: the renderer and Electron node manager now default to loopback RPC port `9955`, the default base path is `~/.hegemon-node-native-devnet-host-010-dev`, and legacy default local profiles on `9944` migrate to the tested `9955` profile when they still point at loopback.
+- [x] (2026-07-01 20:39Z) Reworked the first overview viewport so the app opens with a connection verdict instead of a debug dump. Computer Use verified the rebuilt packaged app shows `Connected to native-devnet-host`, `Live P2P connection`, local RPC `ws://127.0.0.1:9955`, approved seed `hegemon.pauli.group:30333`, peer `51.222.86.107:30333`, synced height/target `1,154`, and managed app node status before wallet unlock.
 - [x] (2026-07-01 20:39Z) Re-ran current app gates after the default/profile/overview patch: `node --check hegemon-app/scripts/dev.mjs`, `npm --prefix hegemon-app run typecheck`, `npm --prefix hegemon-app run lint`, `npm --prefix hegemon-app run package`, `codesign --verify --deep --strict hegemon-app/dist/mac-arm64/Hegemon.app`, `cargo fmt --all --check`, and `git diff --check` passed. `npm --prefix hegemon-app run dist:prod` still fails closed without Apple notarization credentials.
 - [x] (2026-07-01 20:39Z) Re-ran the release-binary no-SSH app workflow on the current tree. `HEGEMON_E2E_KEEP=1 ./scripts/check-app-no-ssh-e2e.sh` passed in 315s with run dir `/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/hegemon-no-ssh-e2e-Usxivb`, final common height 47, restart common height 48, seed pending 0, relay pending 0, three small transfers, disclosure verification, consolidation tx `0x4f9608cced5f9981685aa375d1fabaa24c3ac9934b0643df50c3575707cf32f2`, and multisig final tx `0x06275ea3ebad380ee936491b5d551b81238eebff4336945e4cd07e5aa657ac49`.
 - [x] (2026-07-01 20:39Z) Rechecked the live packaged app after the no-SSH E2E. Direct RPC on `http://127.0.0.1:9955` reported height `1,159`, sync target `1,159`, `syncing:false`, `system_health.isSyncing=false`, one peer, peer list `51.222.86.107:30333`, and best hash `0x00000002f8a09984d1eba336765fa6b2e9373161a9d182e57ab9a2675013349b`.
-- [x] (2026-07-01 20:47Z) Fixed the remaining default-launch product gap: the app no longer opens offline and waits for the user to discover `Start node`. On launch, the renderer auto-starts only the default managed hegemon-dev profile when it is a safe loopback profile on port `9955` with the approved seed and default 0.10 base path; relay profiles require no mining intent, and mining profiles require `Auto-start mining` plus a valid miner address. Manual `Stop node` suppresses auto-restart for that session.
-- [x] (2026-07-01 20:47Z) Verified zero-click launch against the rebuilt packaged app. After quitting `com.hegemon.desktop`, the managed node stopped. Reopening `hegemon-app/dist/mac-arm64/Hegemon.app` brought RPC `127.0.0.1:9955` up in about 4 seconds without clicking `Start node`; it then caught up to height `1,162` / target `1,162` with `syncing:false`, one peer, mining active, sync gate open, 16 threads, and peer `51.222.86.107:30333`. Computer Use confirmed the first viewport showed `Connected to hegemon-dev` and `Live P2P connection`.
+- [x] (2026-07-01 20:47Z) Fixed the remaining default-launch product gap: the app no longer opens offline and waits for the user to discover `Start node`. On launch, the renderer auto-starts only the default managed native-devnet-host profile when it is a safe loopback profile on port `9955` with the approved seed and default 0.10 base path; relay profiles require no mining intent, and mining profiles require `Auto-start mining` plus a valid miner address. Manual `Stop node` suppresses auto-restart for that session.
+- [x] (2026-07-01 20:47Z) Verified zero-click launch against the rebuilt packaged app. After quitting `com.hegemon.desktop`, the managed node stopped. Reopening `hegemon-app/dist/mac-arm64/Hegemon.app` brought RPC `127.0.0.1:9955` up in about 4 seconds without clicking `Start node`; it then caught up to height `1,162` / target `1,162` with `syncing:false`, one peer, mining active, sync gate open, 16 threads, and peer `51.222.86.107:30333`. Computer Use confirmed the first viewport showed `Connected to native-devnet-host` and `Live P2P connection`.
 - [x] (2026-07-01 20:47Z) Re-ran app gates after launch auto-start: `npm --prefix hegemon-app run typecheck`, `npm --prefix hegemon-app run package`, `npm --prefix hegemon-app run lint`, `codesign --verify --deep --strict hegemon-app/dist/mac-arm64/Hegemon.app`, and `git diff --check` passed. `npm --prefix hegemon-app run dist:prod` still fails closed without Apple notarization credentials.
 
 ## Surprises & Discoveries
 
 - Observation: The transaction/proof path can work while the chain is still not production-ready.
-  Evidence: On `hegemon-dev`, three small shielded transfers, consolidation, a 20 HGM transfer, and a 1-of-1 transaction-tier multisig payment all confirmed, yet the same chain later had multi-minute block gaps at difficulty around `489471780`.
+  Evidence: On `native-devnet-host`, three small shielded transfers, consolidation, a 20 HGM transfer, and a 1-of-1 transaction-tier multisig payment all confirmed, yet the same chain later had multi-minute block gaps at difficulty around `489471780`.
 - Observation: The slow part of the multisig test was PoW discovery, not proof verification.
   Evidence: Recent node logs showed one-transaction recursive aggregation verification around 9-13 ms, while pending transactions waited minutes for the next block.
 - Observation: The existing native PoW retarget ExecPlan accepted height-1 app/seed convergence as final live evidence, which is too weak for production readiness.
@@ -93,7 +94,7 @@ The Hegemon desktop app and native 0.10 stack must be able to run as a real user
 - Observation: Runtime mining thread count is not currently enough evidence of actual hash-rate scaling.
   Evidence: `hegemon_startMining` accepted `{"threads":64}` and reported 64 threads, but `hegemon_miningStatus.hash_rate` stayed around 1.0-1.1 MH/s, close to the earlier 16-thread value.
 - Observation: Unit tests now cover slow retarget recovery, but that is not a substitute for live liveness measurement.
-  Evidence: `cargo test -p hegemon-node native_pow_schedule -- --nocapture` passed after adding `native_pow_schedule_recovers_after_slow_window_at_bounded_factor`; the next gate is a release-binary measurement on `hegemon-dev`.
+  Evidence: `cargo test -p hegemon-node native_pow_schedule -- --nocapture` passed after adding `native_pow_schedule_recovers_after_slow_window_at_bounded_factor`; the next gate is a release-binary measurement on `native-devnet-host`.
 - Observation: The original 180-second live max-gap threshold was too strict for a PoW chain with a 60-second average target.
   Evidence: A 44-block timestamp window from heights 150-193 averaged 58.049s with median 24.203s but had a 306.690s outlier; the liveness script now treats max-gap as a stall threshold while reporting average and max chain gaps explicitly.
 - Observation: Formal-core caught stale production-wiring evidence after the mining/app changes.
@@ -128,7 +129,7 @@ The Hegemon desktop app and native 0.10 stack must be able to run as a real user
 
 ## Outcomes & Retrospective
 
-No completion outcome yet. The no-SSH app/wallet/node workflow is green on a release-binary local topology that mirrors the intended product boundary: local unsafe relay RPC plus P2P propagation to a miner, with no SSH and no public unsafe RPC. It now includes same-store relay restart, wallet force-resync, and disclosure list/create/verify coverage after small transfers, consolidation, and transaction-tier multisig. The packaged app auto-starts the default managed `hegemon-dev P2P 0.10` profile on launch, live-connects on the approved seed, catches up to `syncing:false` through its managed local node, and opens with a first-viewport `Connected to hegemon-dev` verdict instead of the dev Electron placeholder, an offline start screen, or raw diagnostics. The app package, formal-core, proving red-team, monorepo CI-equivalent, native-path, dependency-audit, native backend posture, release build, and release binary PQ-audit gates are green after seed-control remediation. The broken Codex Security Deep Scan UI is no longer part of this release gate; it was replaced by the direct manual release audit recorded above. The current source/runtime release surface is a ship candidate; production macOS distribution still requires Apple notarization credentials, and `npm run dist:prod` now fails closed when those credentials are missing.
+No completion outcome yet. The no-SSH app/wallet/node workflow is green on a release-binary local topology that mirrors the intended product boundary: local unsafe relay RPC plus P2P propagation to a miner, with no SSH and no public unsafe RPC. It now includes same-store relay restart, wallet force-resync, and disclosure list/create/verify coverage after small transfers, consolidation, and transaction-tier multisig. The packaged app auto-starts the default managed `native-devnet-host P2P 0.10` profile on launch, live-connects on the approved seed, catches up to `syncing:false` through its managed local node, and opens with a first-viewport `Connected to native-devnet-host` verdict instead of the dev Electron placeholder, an offline start screen, or raw diagnostics. The app package, formal-core, proving red-team, monorepo CI-equivalent, native-path, dependency-audit, native backend posture, release build, and release binary PQ-audit gates are green after seed-control remediation. The broken Codex Security Deep Scan UI is no longer part of this release gate; it was replaced by the direct manual release audit recorded above. The current source/runtime release surface is a ship candidate; production macOS distribution still requires Apple notarization credentials, and `npm run dist:prod` now fails closed when those credentials are missing.
 
 ## Context and Orientation
 
@@ -182,7 +183,7 @@ Start with focused native tests while preserving unrelated dirty work:
     cargo test -p hegemon-node prepared_work_import_survives_action_cache_eviction -- --nocapture
     cargo test -p hegemon-node pending_revalidation -- --nocapture
 
-Then add the missing liveness regressions and run them before changing live `hegemon-dev` again. The test names and exact output must be recorded in this file as they are added.
+Then add the missing liveness regressions and run them before changing live `native-devnet-host` again. The test names and exact output must be recorded in this file as they are added.
 
 For app validation, run:
 
@@ -213,13 +214,13 @@ CI acceptance requires the local CI-equivalent commands to pass. If a CI job can
 
 Do not wipe wallet stores, node base paths, or remote chain state unless the plan explicitly records why a reset is necessary. Prefer new temporary base paths for destructive liveness tests. Preserve unrelated dirty files. If a live transaction is submitted and the script fails before confirmation, check `author_pendingExtrinsics`, wallet pending records, and block height before retrying so duplicate spends are not attempted blindly.
 
-If the remote `hegemon-dev` service is changed, record the service path, binary hash, environment file, base path, and mining status in this plan. Restore any temporary mining-thread changes after measurement unless the new value is an intentional deployment decision.
+If the remote `native-devnet-host` service is changed, record the service path, binary hash, environment file, base path, and mining status in this plan. Restore any temporary mining-thread changes after measurement unless the new value is an intentional deployment decision.
 
 ## Artifacts and Notes
 
 Current live evidence before this plan:
 
-    hegemon-dev height: 143
+    native-devnet-host height: 143
     pending extrinsics: 0
     mining threads restored to: 16
     observed difficulty: 489471780
@@ -228,9 +229,9 @@ Current live evidence before this plan:
 
 Current live evidence after the mining-batch patch:
 
-    hegemon-dev service binary sha256: 343a0a7d5003c423f61dc550b96cb61a059436a27fa83f8aa26d3bb198597e0d
+    native-devnet-host service binary sha256: 343a0a7d5003c423f61dc550b96cb61a059436a27fa83f8aa26d3bb198597e0d
     service path: /home/ubuntu/hegemon-current-retarget2-20260630T183408Z/target/release/hegemon-node
-    base path: /home/ubuntu/hegemon-devnet/native-1m-threads-20260630T213158Z
+    base path: /home/ubuntu/native-devnet/native-1m-threads-20260630T213158Z
     service env: HEGEMON_MINE=1, HEGEMON_MINE_THREADS=16, HEGEMON_BOOTSTRAP_AUTHORING=1, HEGEMON_SEEDS empty for the bootstrap seed
     live rpc-liveness: start 193, end 199, produced 6, elapsed 395s, max wall gap 123s, chain_avg 79.060s, chain_min 11.706s, chain_max 130.655s
     live mining status during pass: 16 threads, hash_rate about 4.066 MH/s, pending extrinsics 0, syncing false
@@ -238,7 +239,7 @@ Current live evidence after the mining-batch patch:
 Known current release blockers and retired gates:
 
     PoW liveness has focused unit retarget regressions, one corrected live rpc-liveness pass, and a current release-binary no-SSH app workflow pass.
-    Mining thread scaling is live-measured on hegemon-dev for 16 threads, but broader host/thread-count benchmarking is not yet part of CI.
+    Mining thread scaling is live-measured on native-devnet-host for 16 threads, but broader host/thread-count benchmarking is not yet part of CI.
     App no-SSH full workflow passed on release binaries in the local two-node topology with wallet sync, small transfers, disclosure list/create/verify, consolidation, private multisig final spend, same-store relay restart, and wallet force-resync through the restarted relay. Latest current-tree run: `/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/hegemon-no-ssh-e2e-xkRc8e`, duration 278s, common height 45, restart common height 45, seed pending 0, relay pending 0.
     Check-core test, formal-core, app typecheck/build/lint/package, focused relay tests, release build, dependency audit, binary security audit, and proving red-team pass after the latest wallet native-nullifier and walletd signer-tag fixes.
     Retired gate: Codex Security Deep Scan is removed from the release gate for now because the app-side Start-scan workflow repeatedly timed out and operator direction was to stop using it. The replacement direct release audit found and fixed Electron shell lockdown, misleading public-RPC copy, and notarization-process gaps.
@@ -269,7 +270,7 @@ Revision note, 2026-07-01 / Codex: the current-tree Codex Security deep scan fou
     bash -n scripts/start-mining.sh scripts/generate-testnet-keys.sh start.sh
     cargo test -p hegemon-node live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring -- --nocapture
 
-Revision note, 2026-07-01 / Codex: packaged macOS app launch/autostart now has a repeatable gate at `scripts/check-app-launch-autostart.mjs`, exposed through `npm --prefix hegemon-app run check:launch-autostart`. The gate quits `com.hegemon.desktop`, requires `127.0.0.1:9955` to stop serving first so stale nodes cannot satisfy the test, reopens `hegemon-app/dist/mac-arm64/Hegemon.app`, and fails unless the packaged app starts a loopback-only managed node that uses the approved seed and reaches live hegemon-dev P2P. Current pass evidence:
+Revision note, 2026-07-01 / Codex: packaged macOS app launch/autostart now has a repeatable gate at `scripts/check-app-launch-autostart.mjs`, exposed through `npm --prefix hegemon-app run check:launch-autostart`. The gate quits `com.hegemon.desktop`, requires `127.0.0.1:9955` to stop serving first so stale nodes cannot satisfy the test, reopens `hegemon-app/dist/mac-arm64/Hegemon.app`, and fails unless the packaged app starts a loopback-only managed node that uses the approved seed and reaches live native-devnet-host P2P. Current pass evidence:
 
     npm --prefix hegemon-app run package
     npm --prefix hegemon-app run check:launch-autostart
@@ -423,7 +424,7 @@ Revision note, 2026-07-01 / Codex: current-tree no-SSH app workflow gate passed 
       approvalTx: 0x2dd3ebc237d62202b9dda4168b4e6eacc1b3f56708e75943cfde887e8505b29c
       finalTx: 0x1f6363624f4fa4c9bc148512d5c98bb41599e274a9d63ae3be7ed3e32da77a68
 
-Revision note, 2026-07-01 / Codex: the packaged app UI was tightened again after live inspection. Positive health/online state now uses Proof Green instead of the cyan action color, the wallet route opens with a live wallet-control strip that shows wallet state, online node state, chain state, loopback RPC posture, balance, wallet sync, sync lag, node height, and peer evidence before setup forms, and wallet diagnostics are collapsed behind a `walletd JSON` details panel. Computer Use inspected the rebuilt packaged overview and wallet routes; the wallet first viewport now shows `Shielded Store`, `Open wallet for hegemon-dev`, node height, one listed peer, loopback RPC, and the store-access workflow without the raw diagnostics block. Final validation bundle checks passed:
+Revision note, 2026-07-01 / Codex: the packaged app UI was tightened again after live inspection. Positive health/online state now uses Proof Green instead of the cyan action color, the wallet route opens with a live wallet-control strip that shows wallet state, online node state, chain state, loopback RPC posture, balance, wallet sync, sync lag, node height, and peer evidence before setup forms, and wallet diagnostics are collapsed behind a `walletd JSON` details panel. Computer Use inspected the rebuilt packaged overview and wallet routes; the wallet first viewport now shows `Shielded Store`, `Open wallet for native-devnet-host`, node height, one listed peer, loopback RPC, and the store-access workflow without the raw diagnostics block. Final validation bundle checks passed:
 
     npm --prefix hegemon-app run typecheck
     git diff --check
@@ -447,7 +448,7 @@ Final rebuilt-app launch evidence:
     rpc_listen_addr: 127.0.0.1:9955
     bootstrap_nodes: hegemon.pauli.group:30333
 
-Revision note, 2026-07-01 / Codex: after the user reported the app still looked disconnected and rough, the packaged Electron UI was tightened again and revalidated live. The overview now makes the first-viewport verdict explicit with `hegemon-dev is live`, the approved seed, peer endpoint, local wallet RPC, unsafe/loopback policy, genesis, height, target, peer count, mining state, and hash rate. The wallet overview and wallet route no longer use `N/A` for a locked wallet; locked state is labeled as `Locked` / `Open wallet` while the node remains visibly live. Computer Use inspected the final packaged overview and confirmed the visible window showed live hegemon-dev state, wallet locked state, approved seed `hegemon.pauli.group:30333`, peer `51.222.86.107:30333`, and loopback RPC.
+Revision note, 2026-07-01 / Codex: after the user reported the app still looked disconnected and rough, the packaged Electron UI was tightened again and revalidated live. The overview now makes the first-viewport verdict explicit with `native-devnet-host is live`, the approved seed, peer endpoint, local wallet RPC, unsafe/loopback policy, genesis, height, target, peer count, mining state, and hash rate. The wallet overview and wallet route no longer use `N/A` for a locked wallet; locked state is labeled as `Locked` / `Open wallet` while the node remains visibly live. Computer Use inspected the final packaged overview and confirmed the visible window showed live native-devnet-host state, wallet locked state, approved seed `hegemon.pauli.group:30333`, peer `51.222.86.107:30333`, and loopback RPC.
 
 Final final-app validation checks passed:
 
@@ -631,7 +632,7 @@ Revision note, 2026-07-01 / Codex: current packaged app bundle was rebuilt and r
       rpc_listen_addr: 127.0.0.1:9955
       bootstrap_nodes: hegemon.pauli.group:30333
 
-Computer Use inspected the relaunched packaged Overview route after autostart. The visible first viewport showed `hegemon-dev is live`, height `1,314`, target `1,313`, one peer `51.222.86.107:30333`, mining `Active`, hash rate `1.53 MH/s`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, seed `hegemon.pauli.group:30333`, genesis `0x506fc2cd...a1e6fa59`, and wallet state `Locked` with `Open wallet` guidance instead of `N/A`.
+Computer Use inspected the relaunched packaged Overview route after autostart. The visible first viewport showed `native-devnet-host is live`, height `1,314`, target `1,313`, one peer `51.222.86.107:30333`, mining `Active`, hash rate `1.53 MH/s`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, seed `hegemon.pauli.group:30333`, genesis `0x506fc2cd...a1e6fa59`, and wallet state `Locked` with `Open wallet` guidance instead of `N/A`.
 
 Revision note, 2026-07-02T00:13:15Z / Codex: current-tree dependency, lint, and broad core-test gates passed after the packaged app live-connection rebuild:
 
@@ -653,7 +654,7 @@ Revision note, 2026-07-02T00:13:15Z / Codex: current-tree dependency, lint, and 
 
 Live packaged-app mining was stopped only during the heavy local CI run to avoid starving the test host, then restarted on the same managed node with `hegemon_startMining` using 16 threads. Immediate restart evidence: height `1327`, sync target `1327`, `syncing:false`, one peer, `is_mining:true`, mining sync gate open, `threads:16`, `blocks_found:3`, difficulty `487666588`, hash rate `422978.6871938576 H/s`. A delayed follow-up after 35 seconds reported height `1330`, sync target `1330`, `syncing:false`, one peer, best hash `0x000000158c5ac28ac4ed9222297afe2cfa85d00e4ef53e350faada75a13f5c5a`, supply digest `664240877590`, `is_mining:true`, mining sync gate open, `threads:16`, `blocks_found:5`, difficulty `488546665`, and hash rate `588304.399899784 H/s`.
 
-Revision note, 2026-07-02T00:21:54Z / Codex: after visual inspection of the rebuilt packaged Overview window, the app status rail was tightened for production readability. The rail no longer forces network, mining, wallet, seed, and peer context into a cramped single desktop row at normal app widths; it stacks until a true wide viewport is available while keeping the four core metrics in a stable grid. This keeps the live hegemon-dev state legible without hiding the approved seed or wallet control-plane context behind ellipses.
+Revision note, 2026-07-02T00:21:54Z / Codex: after visual inspection of the rebuilt packaged Overview window, the app status rail was tightened for production readability. The rail no longer forces network, mining, wallet, seed, and peer context into a cramped single desktop row at normal app widths; it stacks until a true wide viewport is available while keeping the four core metrics in a stable grid. This keeps the live native-devnet-host state legible without hiding the approved seed or wallet control-plane context behind ellipses.
 
 Validation passed after the layout patch:
 
@@ -683,7 +684,7 @@ Validation passed after the layout patch:
       rpc_listen_addr: 127.0.0.1:9955
       bootstrap_nodes: hegemon.pauli.group:30333
 
-The three pending actions in the launch snapshot were verified as transient mined work, not a stuck mempool: a follow-up watch started at height `1340` with pending `3`, then the restarted miner advanced to height `1341` with target `1341`, `syncing:false`, one peer, `is_mining:true`, `blocks_found:1`, hash rate about `2.09 MH/s`, and pending `0`. Computer Use inspected the relaunched rebuilt app afterward; the first viewport showed `hegemon-dev is live`, height `1,341`, target `1,341`, one peer, mining `Active`, hash rate `2.12 MH/s`, pending `0`, loopback RPC, the approved seed `hegemon.pauli.group:30333`, and wallet state `Locked`.
+The three pending actions in the launch snapshot were verified as transient mined work, not a stuck mempool: a follow-up watch started at height `1340` with pending `3`, then the restarted miner advanced to height `1341` with target `1341`, `syncing:false`, one peer, `is_mining:true`, `blocks_found:1`, hash rate about `2.09 MH/s`, and pending `0`. Computer Use inspected the relaunched rebuilt app afterward; the first viewport showed `native-devnet-host is live`, height `1,341`, target `1,341`, one peer, mining `Active`, hash rate `2.12 MH/s`, pending `0`, loopback RPC, the approved seed `hegemon.pauli.group:30333`, and wallet state `Locked`.
 
 Revision note, 2026-07-02T00:28:49Z / Codex: the no-SSH app transaction workflow was re-run after the packaged-app rebuild and status-rail fix. `./scripts/check-app-no-ssh-e2e.sh` passed in 310s with isolated native `--dev` seed and relay nodes, no legacy JSON chain spec, and no `--chain` flag. Run dir: `/var/folders/kk/bqmmc1794slcsjl913bdkqvm0000gn/T/hegemon-no-ssh-e2e-RVOVwB`. Final common height `44`, seed pending `0`, relay pending `0`, miner spendable `21959885815`, recipient spendable `14999997`. Relay restart rejoined at common height `44` with seed pending `0`, relay pending `0`, miner spendable `21959885815`, and recipient spendable `14999997`.
 
@@ -765,9 +766,9 @@ Validation passed after the latest app patch:
       rpc_listen_addr: 127.0.0.1:9955
       bootstrap_nodes: hegemon.pauli.group:30333
 
-Computer Use inspected the freshly relaunched packaged app immediately after autostart. The first Overview paint showed `hegemon-dev is live`, height `1,370`, target `1,370`, one peer `51.222.86.107:30333`, mining `Active`, `Healthy`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, approved seed `hegemon.pauli.group:30333`, and wallet state `Locked`. The Send route showed live chain preflight at node height `1,370`, pending pool `0`, disabled send while locked, and both old `0.9.1` contacts disabled in the selector with `(legacy; recreate for 0.10)`. The Wallet route showed node height `1,370`, peer detail, seed, and loopback wallet RPC. The Node route showed mining node config on `9955/30334`, seed `hegemon.pauli.group:30333`, `Syncing: No`, target `1,370`, sync gate `Open`, mining `Active`, hash rate about `3.68 MH/s`, and pending pool `0`.
+Computer Use inspected the freshly relaunched packaged app immediately after autostart. The first Overview paint showed `native-devnet-host is live`, height `1,370`, target `1,370`, one peer `51.222.86.107:30333`, mining `Active`, `Healthy`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, approved seed `hegemon.pauli.group:30333`, and wallet state `Locked`. The Send route showed live chain preflight at node height `1,370`, pending pool `0`, disabled send while locked, and both old `0.9.1` contacts disabled in the selector with `(legacy; recreate for 0.10)`. The Wallet route showed node height `1,370`, peer detail, seed, and loopback wallet RPC. The Node route showed mining node config on `9955/30334`, seed `hegemon.pauli.group:30333`, `Syncing: No`, target `1,370`, sync gate `Open`, mining `Active`, hash rate about `3.68 MH/s`, and pending pool `0`.
 
-Revision note, 2026-07-02T01:30:00Z / Codex: after the user reported the packaged app still looked rough and disconnected, the live Overview surface was tightened again and revalidated from the installed Electron bundle. The app now opens with `Live on hegemon-dev`, shorter navigation copy, `Desktop node` branding instead of console copy, a Proof Green live rail/verdict, reduced bordered-box density, tabular sans height telemetry, and a direct statement that the local loopback node is synced through `hegemon.pauli.group:30333` while wallet traffic stays on this laptop. The connection state is still sourced from live node summary/RPC, not static labels.
+Revision note, 2026-07-02T01:30:00Z / Codex: after the user reported the packaged app still looked rough and disconnected, the live Overview surface was tightened again and revalidated from the installed Electron bundle. The app now opens with `Live on native-devnet-host`, shorter navigation copy, `Desktop node` branding instead of console copy, a Proof Green live rail/verdict, reduced bordered-box density, tabular sans height telemetry, and a direct statement that the local loopback node is synced through `hegemon.pauli.group:30333` while wallet traffic stays on this laptop. The connection state is still sourced from live node summary/RPC, not static labels.
 
 Validation passed after the final Overview polish:
 
@@ -810,7 +811,7 @@ Validation passed after the final Overview polish:
       rpc_listen_addr: 127.0.0.1:9955
       bootstrap_nodes: hegemon.pauli.group:30333
 
-Computer Use inspected the relaunched packaged Overview route after autostart. The visible first viewport showed `Live on hegemon-dev`, height `1,404`, target `1,404`, one peer `51.222.86.107:30333`, mining `Active`, hash rate `1.55 MH/s`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, approved seed `hegemon.pauli.group:30333`, genesis `0x506fc2cd...a1e6fa59`, wallet state `Locked`, and no SSH/public-RPC dependency.
+Computer Use inspected the relaunched packaged Overview route after autostart. The visible first viewport showed `Live on native-devnet-host`, height `1,404`, target `1,404`, one peer `51.222.86.107:30333`, mining `Active`, hash rate `1.55 MH/s`, local RPC `ws://127.0.0.1:9955`, RPC policy `unsafe / loopback`, approved seed `hegemon.pauli.group:30333`, genesis `0x506fc2cd...a1e6fa59`, wallet state `Locked`, and no SSH/public-RPC dependency.
 
 Revision note, 2026-07-02T01:35:31Z / Codex: the app/no-SSH CI workflow was re-run after the final packaged-app Overview polish and UI guard policy wiring. The release policy checker also passed against generated Lean vectors, the PR/main CI workflow, the tag-release workflow, and the branch-protection ruleset:
 
@@ -934,7 +935,7 @@ Validation passed after this UI/live-connection pass:
         release credentials
     npm --prefix hegemon-app run check:launch-autostart
       result: ok
-      hegemon-dev: height 1548, target 1548, peers 1, syncing false,
+      native-devnet-host: height 1548, target 1548, peers 1, syncing false,
         pending 0, mining true, loopback RPC, seed hegemon.pauli.group:30333
     git diff --check
       result: ok
@@ -958,7 +959,7 @@ Validation passed after this UI/live-connection pass:
         release credentials
     npm --prefix hegemon-app run check:launch-autostart
       result: ok
-      hegemon-dev: height 1554, target 1554, peers 1, syncing false,
+      native-devnet-host: height 1554, target 1554, peers 1, syncing false,
         pending 0, mining true, loopback RPC, seed hegemon.pauli.group:30333
     computer-use packaged visual pass
       result: ok
@@ -992,7 +993,7 @@ Validation passed after this UI/live-connection pass:
         release credentials
     npm --prefix hegemon-app run check:launch-autostart
       result: ok
-      hegemon-dev: height 1560, target 1560, peers 1, syncing false,
+      native-devnet-host: height 1560, target 1560, peers 1, syncing false,
         pending 0, mining true, loopback RPC,
         seed devnet.hegemonprotocol.com:30333
     computer-use packaged visual pass
@@ -1018,7 +1019,7 @@ Validation passed after this UI/live-connection pass:
         release credentials
     npm --prefix hegemon-app run check:launch-autostart
       result: ok
-      hegemon-dev: height 1569, target 1569, peers 1, syncing false,
+      native-devnet-host: height 1569, target 1569, peers 1, syncing false,
         pending 0, mining true, loopback RPC,
         seed devnet.hegemonprotocol.com:30333
     computer-use packaged visual pass
@@ -1122,7 +1123,7 @@ Current packaged app verification:
       rpc_listen_addr: 127.0.0.1:9955
       bootstrap_nodes: hegemon.pauli.group:30333
 
-Computer Use inspected the relaunched packaged Overview route after the rebuild. The visible first viewport showed `Live on hegemon-dev`, `In sync`, local height `1,517`, peer target `1,517`, `1` peer, mining `Active`, hash rate `257 KH/s`, `Loopback RPC`, and collapsed `Connection evidence` reading `Peer, seed, and genesis verified`.
+Computer Use inspected the relaunched packaged Overview route after the rebuild. The visible first viewport showed `Live on native-devnet-host`, `In sync`, local height `1,517`, peer target `1,517`, `1` peer, mining `Active`, hash rate `257 KH/s`, `Loopback RPC`, and collapsed `Connection evidence` reading `Peer, seed, and genesis verified`.
 
 Current app/no-SSH transaction workflow:
 

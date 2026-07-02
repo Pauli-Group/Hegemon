@@ -7,6 +7,7 @@ import {
   rmSync
 } from 'node:fs';
 import http from 'node:http';
+import { randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -15,7 +16,7 @@ import { createInterface } from 'node:readline';
 const ROOT_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const NODE_BIN = process.env.HEGEMON_NODE_BIN ?? path.join(ROOT_DIR, 'target/release/hegemon-node');
 const WALLETD_BIN = process.env.HEGEMON_WALLETD_BIN ?? path.join(ROOT_DIR, 'target/release/walletd');
-const PASSPHRASE = process.env.HEGEMON_E2E_WALLET_PASSPHRASE ?? 'testwallet123';
+const PASSPHRASE = process.env.HEGEMON_E2E_WALLET_PASSPHRASE ?? randomBytes(32).toString('hex');
 const KEEP_TMP = process.env.HEGEMON_E2E_KEEP === '1';
 const SMALL_TX_COUNT = Number.parseInt(process.env.HEGEMON_E2E_SMALL_TX_COUNT ?? '3', 10);
 const REQUEST_TIMEOUT_MS = Number.parseInt(

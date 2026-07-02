@@ -28,7 +28,7 @@ Substrate has been removed, so `hegemon-node` now owns consensus import, persist
 - [x] (2026-04-24T17:41Z) Reran `cargo audit`; it exits successfully with no vulnerability advisories remaining. Only warning-class unmaintained/yanked/unsound entries remain.
 - [x] (2026-04-24T17:55Z) Reran focused and broad local gates after the dependency updates: `cargo fmt --check`, `cargo test -p hegemon-node --lib native:: -- --nocapture`, `cargo test -p network -- --nocapture`, `make check`, `make node`, live `./scripts/smoke-test.sh`, `./scripts/test-node.sh two-node-restart`, `./scripts/test-node.sh wallet-send`, and final `cargo audit`.
 - [x] (2026-04-24T18:56Z) Removed unused direct `atty` dependency from `hegemon-node`, which removed two warning-class audit entries; reran `cargo audit`, `cargo test -p hegemon-node --lib native:: -- --nocapture`, `make node`, and live local `./scripts/smoke-test.sh`.
-- [x] (2026-04-24T19:09Z) Synced the final post-`atty` working tree to `hegemon-dev:/tmp/hegemon-security-review`, built `make node`, passed isolated live smoke on RPC 19944/P2P 31335, passed clean high-port `two-node-restart` on RPC 22945/22946 and P2P 33333/33334, passed remote `wallet-send`, then removed the temporary remote copy.
+- [x] (2026-04-24T19:09Z) Synced the final post-`atty` working tree to `native-devnet-host:/tmp/hegemon-security-review`, built `make node`, passed isolated live smoke on RPC 19944/P2P 31335, passed clean high-port `two-node-restart` on RPC 22945/22946 and P2P 33333/33334, passed remote `wallet-send`, then removed the temporary remote copy.
 - [x] (2026-04-24T19:15Z) Final local `make check` passed on the post-`atty` tree, including native node tests and `security_pipeline`.
 
 ## Surprises & Discoveries
@@ -49,7 +49,7 @@ Substrate has been removed, so `hegemon-node` now owns consensus import, persist
   Evidence: `wallet_commitments`, `wallet_ciphertexts`, and `wallet_nullifiers` took no params and always returned `has_more: false`.
 - Observation: The lockfile still carried vulnerable TLS/QUIC/body dependencies after Substrate removal.
   Evidence: `cargo audit` reported high-severity advisories for `aws-lc-sys` 0.34.0 and `quinn-proto` 0.11.13, plus advisory fixes available for `bytes`, `rustls-webpki`, and `time`.
-- Observation: `hegemon-dev` already had a service bound on the default smoke RPC/P2P ports.
+- Observation: `native-devnet-host` already had a service bound on the default smoke RPC/P2P ports.
   Evidence: A first remote smoke attempt saw height 9110 on `127.0.0.1:9944`, missing `author_pendingExtrinsics`, while the temp node log showed `Address already in use`. Isolated ports passed against the synced temp binary.
 - Observation: `atty` was a direct dependency of `hegemon-node` but had no source use.
   Evidence: `rg` found `atty` only in `node/Cargo.toml`; removing it deleted the `atty` package from `Cargo.lock` and reduced `cargo audit` warning-class entries from 12 to 10.
@@ -80,7 +80,7 @@ Substrate has been removed, so `hegemon-node` now owns consensus import, persist
 
 ## Outcomes & Retrospective
 
-The security review is clear for critical/high findings found in this pass. It closed eight high-severity native-cutover classes: predictable PQ identity keys, unsafe RPC exposure under safe policy, future-dated PoW block import, supply digest advancement without a coinbase note, imported transfer ordering/binding mismatch, unbounded P2P frames, unbounded public wallet archive RPC responses, and vulnerable high-severity dependency versions in the TLS/QUIC graph. Local and `hegemon-dev` validation passed on the final post-`atty` tree. `cargo audit` exits 0 with no vulnerability advisories; 10 warning-class dependency debt entries remain for unmaintained/yanked/unsound transitive crates and should be tracked separately because they are not critical/high in this review.
+The security review is clear for critical/high findings found in this pass. It closed eight high-severity native-cutover classes: predictable PQ identity keys, unsafe RPC exposure under safe policy, future-dated PoW block import, supply digest advancement without a coinbase note, imported transfer ordering/binding mismatch, unbounded P2P frames, unbounded public wallet archive RPC responses, and vulnerable high-severity dependency versions in the TLS/QUIC graph. Local and `native-devnet-host` validation passed on the final post-`atty` tree. `cargo audit` exits 0 with no vulnerability advisories; 10 warning-class dependency debt entries remain for unmaintained/yanked/unsound transitive crates and should be tracked separately because they are not critical/high in this review.
 
 ## Context and Orientation
 

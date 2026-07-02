@@ -117,6 +117,8 @@ const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
+const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
+const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 32;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
@@ -2977,6 +2979,7 @@ pub struct NativeNode {
     mining_hashes: AtomicU64,
     blocks_found: AtomicU64,
     last_announce_height: AtomicU64,
+    pending_action_rebroadcast_cursor: AtomicU64,
     sync_target_height: AtomicU64,
     sync_target_observed: AtomicBool,
     mining_sync_gate_open: AtomicBool,
@@ -3083,6 +3086,7 @@ impl NativeNode {
             mining_hashes: AtomicU64::new(0),
             blocks_found: AtomicU64::new(0),
             last_announce_height: AtomicU64::new(0),
+            pending_action_rebroadcast_cursor: AtomicU64::new(0),
             sync_target_height: AtomicU64::new(0),
             sync_target_observed: AtomicBool::new(initial_mining_sync_gate_open),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
@@ -4073,6 +4077,51 @@ impl NativeNode {
         }
     }
 
+    fn peer_relayable_pending_actions_from(
+        &self,
+        start: usize,
+        limit: usize,
+    ) -> Vec<PendingAction> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let state = self.state.read();
+        let pending = state
+            .pending_actions
+            .values()
+            .filter(|action| pending_action_peer_relayable(action))
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        let count = limit.min(pending.len());
+        let start = start % pending.len();
+        (0..count)
+            .map(|offset| pending[(start + offset) % pending.len()].clone())
+            .collect()
+    }
+
+    fn rebroadcast_peer_relayable_pending_actions(&self) {
+        let start = self.pending_action_rebroadcast_cursor.fetch_add(
+            NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT as u64,
+            Ordering::Relaxed,
+        ) as usize;
+        let actions = self.peer_relayable_pending_actions_from(
+            start,
+            NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT,
+        );
+        if actions.is_empty() {
+            return;
+        }
+        debug!(
+            action_count = actions.len(),
+            "rebroadcasting native pending actions to peers"
+        );
+        for action in actions {
+            self.broadcast_pending_action(&action);
+        }
+    }
+
     fn broadcast_pending_action(&self, action: &PendingAction) {
         if !pending_action_peer_relayable(action) {
             return;
@@ -4112,7 +4161,7 @@ impl NativeNode {
             },
         };
         if let Err(err) = sync_tx.try_send(message) {
-            debug!(
+            warn!(
                 tx_hash = %hex32(&action.tx_hash),
                 error = %err,
                 "failed to queue native pending action relay"
@@ -5928,12 +5977,18 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
     let sync_tx = handle.sender();
     let mut best_announce = interval(NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL);
     best_announce.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let mut pending_rebroadcast = interval(NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL);
+    pending_rebroadcast.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     loop {
         let Some((peer_id, msg)) = (tokio::select! {
             maybe_msg = handle.recv() => maybe_msg,
             _ = best_announce.tick() => {
                 queue_native_best_sync_announce(&node, &sync_tx);
+                continue;
+            }
+            _ = pending_rebroadcast.tick() => {
+                node.rebroadcast_peer_relayable_pending_actions();
                 continue;
             }
         }) else {
@@ -19150,6 +19205,83 @@ mod tests {
         assert!(
             err.to_string().contains("hash binding mismatch"),
             "unexpected hash binding error: {err}"
+        );
+    }
+
+    #[test]
+    fn peer_relayable_pending_action_rebroadcast_batch_excludes_miner_local_artifacts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer_a = test_inline_transfer_action(anchor, [94u8; 48], [95u8; 48], 0);
+        let transfer_b = test_inline_transfer_action(anchor, [96u8; 48], [97u8; 48], 0);
+        let coinbase = test_coinbase_action(43);
+        let candidate = test_candidate_artifact_action(1, 98);
+        {
+            let mut state = node.state.write();
+            for action in [transfer_a.clone(), transfer_b.clone(), coinbase, candidate] {
+                state.pending_actions.insert(action.tx_hash, action);
+            }
+        }
+
+        let rebroadcast = node.peer_relayable_pending_actions_from(0, 8);
+        let rebroadcast_hashes = rebroadcast
+            .iter()
+            .map(|action| action.tx_hash)
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(rebroadcast.len(), 2);
+        assert!(rebroadcast_hashes.contains(&transfer_a.tx_hash));
+        assert!(rebroadcast_hashes.contains(&transfer_b.tx_hash));
+    }
+
+    #[test]
+    fn peer_relayable_pending_action_rebroadcast_batch_rotates_with_limit() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let actions = (0..4u8)
+            .map(|offset| {
+                test_inline_transfer_action(
+                    anchor,
+                    [100u8.saturating_add(offset); 48],
+                    [110u8.saturating_add(offset); 48],
+                    0,
+                )
+            })
+            .collect::<Vec<_>>();
+        {
+            let mut state = node.state.write();
+            for action in actions {
+                state.pending_actions.insert(action.tx_hash, action);
+            }
+        }
+        let ordered_hashes = node
+            .state
+            .read()
+            .pending_actions
+            .values()
+            .map(|action| action.tx_hash)
+            .collect::<Vec<_>>();
+
+        let first = node.peer_relayable_pending_actions_from(0, 2);
+        let rotated = node.peer_relayable_pending_actions_from(2, 2);
+
+        assert_eq!(
+            first
+                .iter()
+                .map(|action| action.tx_hash)
+                .collect::<Vec<_>>(),
+            ordered_hashes[0..2]
+        );
+        assert_eq!(
+            rotated
+                .iter()
+                .map(|action| action.tx_hash)
+                .collect::<Vec<_>>(),
+            ordered_hashes[2..4]
         );
     }
 

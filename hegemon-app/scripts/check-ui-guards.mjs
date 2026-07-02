@@ -11,6 +11,8 @@ const modulePath = resolve(here, '../src/appGuards.ts');
 const source = readFileSync(modulePath, 'utf8');
 const appPath = resolve(here, '../src/App.tsx');
 const appSource = readFileSync(appPath, 'utf8');
+const nodeManagerPath = resolve(here, '../electron/nodeManager.ts');
+const nodeManagerSource = readFileSync(nodeManagerPath, 'utf8');
 const compiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.CommonJS,
@@ -46,7 +48,7 @@ const currentContact = {
   name: 'Current test wallet',
   address: 'shca1...',
   verified: true,
-  notes: 'Verified on hegemon-dev',
+  notes: 'Verified on 0.10 devnet',
   protocolVersion: '0.10'
 };
 
@@ -129,6 +131,18 @@ assert.equal(
   appSource.includes("setWalletError('Failed to copy address."),
   false,
   'Copy-address failures must not mark the wallet itself unhealthy.'
+);
+assert.match(appSource, /Mining rewards/);
+assert.match(appSource, /miningPayoutMismatch/);
+assert.match(
+  appSource,
+  /statusLabel: walletNavLabel/,
+  'Wallet navigation must use the payout-aware status label.'
+);
+assert.equal(
+  nodeManagerSource.includes('process.env.HEGEMON_MINER_ADDRESS'),
+  false,
+  'Managed desktop mining must not inherit a hidden parent HEGEMON_MINER_ADDRESS.'
 );
 
 console.log('app UI guard checks passed');

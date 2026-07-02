@@ -286,7 +286,7 @@ async function main() {
     return await rpcReachable();
   });
 
-  const liveSnapshot = await waitFor('packaged app to reach live hegemon-dev P2P state', LIVE_TIMEOUT_MS, async () => {
+  const liveSnapshot = await waitFor('packaged app to reach live 0.10 devnet P2P state', LIVE_TIMEOUT_MS, async () => {
     const snapshot = await readSnapshot();
     const lag = Math.max(0, snapshot.target - snapshot.height);
     const healthy =
@@ -300,7 +300,7 @@ async function main() {
   });
 
   const summary = summarizeSnapshot(liveSnapshot);
-  log('PASS packaged app autostarted a local loopback node and reached live hegemon-dev P2P');
+  log('PASS packaged app autostarted a local loopback node and reached live 0.10 devnet P2P');
   console.log(JSON.stringify(summary, null, 2));
 }
 

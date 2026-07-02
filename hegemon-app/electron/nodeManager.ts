@@ -11,7 +11,6 @@ const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
 const APPROVED_SEEDS = 'devnet.hegemonprotocol.com:30333';
 const LEGACY_SEED_ALIASES: Record<string, string> = {
-  'hegemon-dev:30333': APPROVED_SEEDS,
   'hegemon.pauli.group:31333': APPROVED_SEEDS,
   'hegemon.pauli.group:30333': APPROVED_SEEDS,
   '158.69.222.121:31333': APPROVED_SEEDS,
@@ -20,7 +19,7 @@ const LEGACY_SEED_ALIASES: Record<string, string> = {
   '51.222.86.107:30333': APPROVED_SEEDS
 };
 const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
-const DEFAULT_DEV_010_BASE_PATH = '~/.hegemon-node-hegemon-dev-010-dev';
+const DEFAULT_DEV_010_BASE_PATH = '~/.hegemon-node-native-010-dev';
 const DEFAULT_TESTNET_BASE_PATH = '~/.hegemon-node-testnet';
 const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
   // Desktop operators prioritize confirmation liveness over throughput.
@@ -154,6 +153,7 @@ export class NodeManager extends EventEmitter {
   private logs: string[] = [];
   private requestId = 0;
   private managedConnectionId: string | null = null;
+  private managedMinerAddress: string | null = null;
   private stopping = false;
 
   getLogs(): string[] {
@@ -251,7 +251,8 @@ export class NodeManager extends EventEmitter {
     const mineFlag = normalizedOptions.mineOnStart ? '1' : '0';
     const env = createBaseChildEnv();
     copyParentEnv(env, NODE_ENV_PASSTHROUGH);
-    setEnvValue(env, 'HEGEMON_MINER_ADDRESS', normalizedOptions.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS);
+    const effectiveMinerAddress = normalizedOptions.minerAddress ?? null;
+    setEnvValue(env, 'HEGEMON_MINER_ADDRESS', effectiveMinerAddress);
     setEnvValue(env, 'HEGEMON_SEEDS', normalizedOptions.seeds ?? process.env.HEGEMON_SEEDS);
     setEnvValue(
       env,
@@ -289,6 +290,7 @@ export class NodeManager extends EventEmitter {
 
     this.process = spawn(nodePath, args, { env });
     this.managedConnectionId = normalizedOptions.connectionId ?? null;
+    this.managedMinerAddress = effectiveMinerAddress;
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
@@ -300,11 +302,13 @@ export class NodeManager extends EventEmitter {
       this.appendLogs(message);
       this.process = null;
       this.managedConnectionId = null;
+      this.managedMinerAddress = null;
     });
     this.process.on('exit', (code) => {
       this.appendLogs(`Node exited with code ${code ?? 'unknown'}`);
       this.process = null;
       this.managedConnectionId = null;
+      this.managedMinerAddress = null;
     });
   }
 
@@ -372,6 +376,7 @@ export class NodeManager extends EventEmitter {
         bestNumber: null,
         genesisHash: null,
         mining: null,
+        minerAddress: null,
         miningThreads: null,
         miningSyncGateOpen: null,
         bootstrapAuthoring: null,
@@ -406,6 +411,7 @@ export class NodeManager extends EventEmitter {
         bestNumber: null,
         genesisHash: null,
         mining: null,
+        minerAddress: null,
         miningThreads: null,
         miningSyncGateOpen: null,
         bootstrapAuthoring: null,
@@ -472,6 +478,7 @@ export class NodeManager extends EventEmitter {
       bestNumber,
       genesisHash: genesisHash ?? null,
       mining: mining ? Boolean(mining.is_mining) : null,
+      minerAddress: this.managedConnectionId === request.connectionId ? this.managedMinerAddress : null,
       miningThreads: mining?.threads ?? null,
       miningSyncGateOpen,
       bootstrapAuthoring:

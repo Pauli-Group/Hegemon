@@ -64,7 +64,7 @@ pq-identity.seed
 out.txt
 
 # Local dev node logs
-hegemon-dev-node*.log
+hegemon-*-node*.log
 
 # Local LaTeX build artifacts (prover architecture doc)
 PROVER_ARCHITECTURE_CONSTRAINTS.pdf

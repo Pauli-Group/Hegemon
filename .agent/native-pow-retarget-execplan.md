@@ -14,12 +14,12 @@ The native 0.10 node must not mine a shared devnet at fixed easy difficulty whil
 - [x] (2026-06-30 17:43Z) Patched native work construction and metadata verification to compute expected child `pow_bits` from stored parent metadata.
 - [x] (2026-06-30 17:44Z) Added focused tests for fast-block retargeting, stale fixed-difficulty rejection, and explicit light-client expected-bits verification.
 - [x] (2026-06-30 17:50Z) Rebuilt release `hegemon-node`/`walletd`, packaged `hegemon-app/dist/mac-arm64/Hegemon.app`, and left local mining stopped.
-- [x] (2026-06-30 17:54Z) Stopped the still-running remote `hegemon-dev` miner after confirming it was extending the tainted chain.
+- [x] (2026-06-30 17:54Z) Stopped the still-running remote `native-devnet-host` miner after confirming it was extending the tainted chain.
 - [x] (2026-06-30 18:21Z) Stopped the second reset after live laptop mining proved the first retarget boundary was still using the fixed genesis timestamp as a stale timing anchor.
 - [x] (2026-06-30 18:27Z) Patched the schedule to defer the genesis-anchored retarget boundary and tightened the native regression so fast windows must lower the target, not merely change compact bits.
-- [x] (2026-06-30 19:18Z) Rejected the 500k consensus default for `hegemon-dev`; it mined the first windows too fast for a one-minute target.
+- [x] (2026-06-30 19:18Z) Rejected the 500k consensus default for `native-devnet-host`; it mined the first windows too fast for a one-minute target.
 - [x] (2026-06-30 19:32Z) Rejected the 60M launch target as too conservative for quick two-node devnet feedback after only one block arrived in the bounded sample.
-- [x] (2026-06-30 19:55Z) Deployed the final 30M launch target (`0x1d8f2a63`) to `hegemon-dev`, reset the laptop base path, and verified the packaged app joined the seed, mined/imported block 1, and stayed on the same chain.
+- [x] (2026-06-30 19:55Z) Deployed the final 30M launch target (`0x1d8f2a63`) to `native-devnet-host`, reset the laptop base path, and verified the packaged app joined the seed, mined/imported block 1, and stayed on the same chain.
 
 ## Surprises & Discoveries
 
@@ -30,7 +30,7 @@ The native 0.10 node must not mine a shared devnet at fixed easy difficulty whil
 - Observation: A scheduled retarget chain cannot use a genesis timestamp of zero.
   Evidence: the first retarget window would otherwise compare the parent timestamp against Unix epoch instead of a launch/reset time, producing the wrong direction for the first difficulty adjustment.
 - Observation: The old native devnet launch bits were already far too easy before retargeting.
-  Evidence: remote `hegemon-dev` reported about 43.7 kH/s; `0x1f00ffff` expects about 65k hashes per block, or roughly 1.5 seconds at that rate.
+  Evidence: remote `native-devnet-host` reported about 43.7 kH/s; `0x1f00ffff` expects about 65k hashes per block, or roughly 1.5 seconds at that rate.
 - Observation: The first scheduled retarget cannot use the fixed genesis timestamp as a timing anchor.
   Evidence: live reset mining reached height 10 with `next_difficulty = 504994176` (`0x1e199980`), which eased difficulty after fast laptop-mined blocks because the window measured from the fixed genesis timestamp instead of a mined block timestamp.
 - Observation: The app-path native miner reports about 470-480 kH/s per one-thread node on this hardware.
@@ -64,7 +64,7 @@ The native 0.10 node must not mine a shared devnet at fixed easy difficulty whil
 
 ## Outcomes & Retrospective
 
-Native app-path PoW now retargets and enforces scheduled `pow_bits` for work templates, mined-block import, announced-block import, replay, and sync metadata projection. The schedule no longer retargets from the fixed genesis timestamp, and the launch bits are calibrated to a canonical 30M expected-hash target for the current two-node devnet. The old fixed-difficulty and intermediate reset chains are invalid for the corrected native genesis/schedule; any shared `hegemon-dev` reset must wipe old native node base paths and restart all miners from the same seed list and current binaries. Final live evidence reached height 1 on both the public seed and packaged laptop app with matching genesis `0x7bf6cfff5292bc4b5f41c1469b54780c0269f27fae73e11ccaaf725a80fd119c`, matching `pow_bits = 495921763`, active mining, and no observed fork.
+Native app-path PoW now retargets and enforces scheduled `pow_bits` for work templates, mined-block import, announced-block import, replay, and sync metadata projection. The schedule no longer retargets from the fixed genesis timestamp, and the launch bits are calibrated to a canonical 30M expected-hash target for the current two-node devnet. The old fixed-difficulty and intermediate reset chains are invalid for the corrected native genesis/schedule; any shared `native-devnet-host` reset must wipe old native node base paths and restart all miners from the same seed list and current binaries. Final live evidence reached height 1 on both the public seed and packaged laptop app with matching genesis `0x7bf6cfff5292bc4b5f41c1469b54780c0269f27fae73e11ccaaf725a80fd119c`, matching `pow_bits = 495921763`, active mining, and no observed fork.
 
 ## Context and Orientation
 

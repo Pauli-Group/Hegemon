@@ -6,7 +6,7 @@ This document follows `.agent/PLANS.md`. It is self-contained so a contributor w
 
 ## Purpose / Big Picture
 
-The goal is to attack Hegemon as if trying to steal funds, forge shielded transactions, split the chain, crash peers, or smuggle invalid proofs through consensus. After this work, critical and high severity issues found in the local hostile review are fixed, regression tests prove the fixes, the existing adversarial suites return clean, and both the local laptop and the remote `hegemon-dev` host can still mine and process transactions.
+The goal is to attack Hegemon as if trying to steal funds, forge shielded transactions, split the chain, crash peers, or smuggle invalid proofs through consensus. After this work, critical and high severity issues found in the local hostile review are fixed, regression tests prove the fixes, the existing adversarial suites return clean, and both the local laptop and the remote `native-devnet-host` host can still mine and process transactions.
 
 ## Progress
 
@@ -18,7 +18,7 @@ The goal is to attack Hegemon as if trying to steal funds, forge shielded transa
 - [x] (2026-04-23T20:02:00Z) Patched confirmed critical/high issues with regression tests covering PoW miner signatures, exact difficulty binding, proof-verification downgrade, and legacy handshake rekeying.
 - [x] (2026-04-23T20:27:00Z) Re-ran hostile proving review until clean: `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` passed all campaigns under `output/proving-redteam/20260423T195636Z/`.
 - [ ] Validate local laptop behavior: build, tests, mining, and transaction flow.
-- [ ] Validate remote `hegemon-dev` behavior through SSH: build or deploy patched tree, mining, and transaction flow.
+- [ ] Validate remote `native-devnet-host` behavior through SSH: build or deploy patched tree, mining, and transaction flow.
 - [ ] Update `DESIGN.md`, `METHODS.md`, `docs/SECURITY_REVIEWS.md`, and runbooks only if the architecture, methods, or operator security guidance changes.
 
 ## Surprises & Discoveries
@@ -81,7 +81,7 @@ Third, write exploit-shaped tests before or alongside each fix. A useful test de
 
 Fourth, re-run the hostile suite. Repeat manual review on any changed path until the critical/high finding list is empty. Medium and low issues may be documented if they do not block the user's request, but critical and high issues must be fixed.
 
-Finally, validate operation from both environments. On the laptop, run build/tests, start a dev node with mining, and submit or exercise a shielded transaction flow. On `hegemon-dev`, use `ssh hegemon-dev` to confirm the host can run the patched node, mine, and process transactions or the available smoke-test equivalent. Record exact command summaries and outcomes here.
+Finally, validate operation from both environments. On the laptop, run build/tests, start a dev node with mining, and submit or exercise a shielded transaction flow. On `native-devnet-host`, use `ssh native-devnet-host` to confirm the host can run the patched node, mine, and process transactions or the available smoke-test equivalent. Record exact command summaries and outcomes here.
 
 ## Concrete Steps
 
@@ -106,7 +106,7 @@ For local mining and transaction validation, prefer the project runbooks and scr
 
 For remote validation:
 
-    ssh hegemon-dev
+    ssh native-devnet-host
 
 Then locate or clone the Hegemon tree on the remote host, update it to the patched branch or transfer the patch, build the node, run mining, and run the same smoke or shielded e2e script available on that host.
 
@@ -118,12 +118,12 @@ The review is accepted only when:
 2. Each patch has a regression test or an existing hostile campaign that fails without the fix and passes with it.
 3. `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` returns overall pass, or any remaining failure is proven unrelated infrastructure noise and documented with evidence.
 4. Local laptop validation shows the node still builds, mines, and processes transactions through the available project smoke tests.
-5. Remote `hegemon-dev` validation shows the same for the patched build.
+5. Remote `native-devnet-host` validation shows the same for the patched build.
 6. `git diff` contains only deliberate code, test, and documentation changes.
 
 ## Idempotence and Recovery
 
-Most commands are safe to repeat. Dev nodes should use `--tmp` or a disposable base path unless deliberately testing persistent sync. Do not delete user data or reset the repository. If a local node remains running, stop it cleanly before starting a new one on the same ports. If remote validation requires deployment, use a separate checkout or branch on `hegemon-dev` rather than mutating an unknown production directory.
+Most commands are safe to repeat. Dev nodes should use `--tmp` or a disposable base path unless deliberately testing persistent sync. Do not delete user data or reset the repository. If a local node remains running, stop it cleanly before starting a new one on the same ports. If remote validation requires deployment, use a separate checkout or branch on `native-devnet-host` rather than mutating an unknown production directory.
 
 ## Artifacts and Notes
 

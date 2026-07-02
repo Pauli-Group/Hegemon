@@ -19,18 +19,17 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 import { computeNodeDisplayState, legacyContactWarning } from './appGuards';
 
-const defaultStorePath = '~/.hegemon-wallet-hegemon-dev-010';
+const defaultStorePath = '~/.hegemon-wallet-native-010';
 const canonicalTestnetP2pPort = 30333;
 const shieldedAddressPrefix = 'shca1';
 const shieldedAddressLength = 2634;
 const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
 const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
 const approvedSeeds = 'devnet.hegemonprotocol.com:30333';
-const defaultDevConnectionLabel = 'hegemon-dev P2P 0.10';
-const defaultDevBasePath = '~/.hegemon-node-hegemon-dev-010-dev';
+const defaultDevConnectionLabel = 'Native 0.10 devnet';
+const defaultDevBasePath = '~/.hegemon-node-native-010-dev';
 const legacyDesktopRpcPort = 9944;
 const legacySeedAliases: Record<string, string> = {
-  'hegemon-dev:30333': approvedSeeds,
   'hegemon.pauli.group:31333': approvedSeeds,
   'hegemon.pauli.group:30333': approvedSeeds,
   '158.69.222.121:31333': approvedSeeds,
@@ -895,7 +894,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     hasDefaultLocalLabel &&
     (!sanitizedConnection.basePath ||
       sanitizedConnection.basePath === '~/.hegemon-node' ||
-      sanitizedConnection.basePath === '~/.hegemon-node-hegemon-dev-010-dev');
+      sanitizedConnection.basePath === defaultDevBasePath);
   const isDefaultTestnet =
     sanitizedConnection.mode === 'local' &&
     sanitizedConnection.label === 'Testnet node' &&
@@ -1018,6 +1017,7 @@ export default function App() {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [addressCopyError, setAddressCopyError] = useState<string | null>(null);
+  const [miningPayoutNotice, setMiningPayoutNotice] = useState<string | null>(null);
   const [disclosureCopied, setDisclosureCopied] = useState(false);
   const [disclosureCopyError, setDisclosureCopyError] = useState<string | null>(null);
 
@@ -1418,6 +1418,7 @@ export default function App() {
             bestNumber: null,
             genesisHash: null,
             mining: null,
+            minerAddress: null,
             miningThreads: null,
             miningSyncGateOpen: null,
             bootstrapAuthoring: null,
@@ -1937,6 +1938,24 @@ export default function App() {
     }
   };
 
+  const handleUseWalletAddressForMining = () => {
+    if (!activeConnection || !walletStatus?.primaryAddress) {
+      return;
+    }
+    const payoutAddress = normalizeShieldedAddressInput(walletStatus.primaryAddress);
+    updateActiveConnection((connection) => ({
+      participationRole: 'authoring_pool',
+      minerAddress: payoutAddress,
+      mineThreads: connection.mineThreads || defaultMineThreads,
+      miningIntent: connection.miningIntent || activeSummary?.mining === true
+    }));
+    setMiningPayoutNotice(
+      activeSummary?.reachable
+        ? 'Saved. Restart the node to apply this mining payout address.'
+        : 'Saved for the next node start.'
+    );
+  };
+
   const handleWalletSync = async (forceOverride?: boolean) => {
     setWalletError(null);
     const targetWs = wsUrl.trim();
@@ -2429,12 +2448,12 @@ export default function App() {
   const liveEnvironmentLabel = activeSummary?.config?.chainSpecName || defaultDevConnectionLabel;
   const liveHeadline =
     nodeStartupPending
-      ? 'Starting hegemon-dev'
+      ? 'Starting 0.10 devnet'
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Live on hegemon-dev'
+      ? 'Live on 0.10 devnet'
       : activeNodeLive
-        ? 'hegemon-dev node is online'
-        : 'Connect to hegemon-dev';
+        ? '0.10 devnet node is online'
+        : 'Connect to 0.10 devnet';
   const liveHeightSummary =
     activeHeightRelation === 'aligned'
       ? `Local tip and peer target are ${activeHeightLabel}`
@@ -2449,14 +2468,14 @@ export default function App() {
     ? `${liveHeightSummary} on ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
     : nodeStartupPending
       ? `Opening ${formatEndpoint(activeConnection?.wsUrl)} and joining ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
-      : 'Start the managed local node to join hegemon-dev with no SSH tunnel.';
+      : 'Start the managed local node to join the 0.10 devnet with no SSH tunnel.';
   const liveVerdictTone: 'ok' | 'warn' | 'neutral' =
     nodeStartupPending ? 'warn' : activeNodeLive && activePeerCount !== null && activePeerCount > 0 ? 'ok' : activeNodeLive ? 'warn' : 'neutral';
   const liveVerdictLabel =
     nodeStartupPending
       ? 'Local node is starting'
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Connected to hegemon-dev'
+      ? 'Connected to 0.10 devnet'
       : activeNodeLive
         ? 'Node online, waiting for peers'
         : 'Not connected';
@@ -2554,15 +2573,15 @@ export default function App() {
       ? Math.max(0, walletSummary.bestNumber - walletStatus.lastSyncedHeight)
       : null;
   const walletHeroTitle = walletReady
-    ? 'Wallet ready on hegemon-dev'
+    ? 'Wallet ready on 0.10 devnet'
     : activeNodeLive
       ? 'Node live; unlock wallet'
-      : 'Open wallet for hegemon-dev';
+      : 'Open wallet for 0.10 devnet';
   const walletHeroDetail = walletReady
     ? `${formatCompactPath(storePath)} · synced ${formatNumber(walletStatus?.lastSyncedHeight)} · ${peerEvidenceLabel}`
     : activeNodeLive
-      ? `${formatCompactPath(storePath)} · hegemon-dev height ${activeHeightLabel} · ${peerEvidenceLabel}`
-      : `${formatCompactPath(storePath)} · start the local node to join hegemon-dev`;
+      ? `${formatCompactPath(storePath)} · 0.10 devnet height ${activeHeightLabel} · ${peerEvidenceLabel}`
+      : `${formatCompactPath(storePath)} · start the local node to join the 0.10 devnet`;
   const walletBalanceDisplay = walletReady ? hgmBalanceLabel : 'Locked';
   const walletSyncDisplay = walletReady ? formatNumber(walletStatus?.lastSyncedHeight) : 'Locked';
   const walletLagDisplay = walletReady ? (walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)) : 'Open wallet';
@@ -2574,6 +2593,65 @@ export default function App() {
     : 'Open wallet to inspect inputs';
   const primaryAddress = walletStatus?.primaryAddress ?? '';
   const primaryAddressLabel = primaryAddress ? formatAddress(primaryAddress) : walletReady ? 'N/A' : 'Locked';
+  const normalizedPrimaryAddress = normalizeShieldedAddressInput(primaryAddress);
+  const runningMinerAddress = normalizeShieldedAddressInput(activeSummary?.minerAddress ?? '');
+  const savedMinerAddress = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '');
+  const effectiveMinerPayoutAddress = runningMinerAddress || savedMinerAddress;
+  const effectiveMinerPayoutLabel = effectiveMinerPayoutAddress
+    ? formatAddress(effectiveMinerPayoutAddress)
+    : activeSummary?.mining
+      ? 'No payout address'
+      : 'Not mining';
+  const savedMinerPayoutLabel = savedMinerAddress ? formatAddress(savedMinerAddress) : 'Not set';
+  const miningPayoutMatchesWallet = Boolean(
+    walletReady &&
+      normalizedPrimaryAddress &&
+      effectiveMinerPayoutAddress &&
+      normalizedPrimaryAddress === effectiveMinerPayoutAddress
+  );
+  const savedMiningPayoutMatchesWallet = Boolean(
+    walletReady && normalizedPrimaryAddress && savedMinerAddress && normalizedPrimaryAddress === savedMinerAddress
+  );
+  const miningPayoutPendingRestart = Boolean(
+    runningMinerAddress && savedMinerAddress && runningMinerAddress !== savedMinerAddress
+  );
+  const miningPayoutMismatch = Boolean(
+    walletReady &&
+      activeSummary?.mining === true &&
+      effectiveMinerPayoutAddress &&
+      !miningPayoutMatchesWallet
+  );
+  const miningPayoutMissing = activeSummary?.mining === true && !effectiveMinerPayoutAddress;
+  const miningPayoutTone: UiTone =
+    miningPayoutMissing || miningPayoutMismatch
+      ? 'error'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'ok'
+        : savedMinerAddress
+          ? 'warn'
+          : 'neutral';
+  const miningPayoutLabel = miningPayoutMissing
+    ? 'No payout'
+    : miningPayoutMismatch
+      ? 'Different address'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'To this wallet'
+        : activeSummary?.mining === true && effectiveMinerPayoutAddress
+          ? 'Payout set'
+        : savedMinerAddress
+          ? 'Configured'
+          : 'Not set';
+  const miningPayoutDetail = miningPayoutMissing
+    ? 'Mining is active, but the app cannot see a payout address.'
+    : miningPayoutMismatch
+      ? 'Local block rewards are not going to the displayed receiving address.'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'Local block rewards pay the wallet address shown above.'
+        : activeSummary?.mining === true && effectiveMinerPayoutAddress
+          ? 'Mining is active. Unlock the wallet to compare this payout with the receiving address.'
+        : savedMinerAddress
+          ? 'This address will be used when local mining starts.'
+          : 'Set this wallet address before enabling local mining.';
   const recipientAddressError = recipientAddress
     ? validateShieldedAddressInput(recipientAddress, 'Recipient address')
     : null;
@@ -2812,7 +2890,13 @@ export default function App() {
           ? `${activeHeightLabel} synced`
           : syncAlignmentLabel
         : 'Start local node';
-  const walletNavDescription = walletReady ? hgmBalanceLabel : `${displayedWalletConnectionLabel} · loopback`;
+  const walletNavDescription = miningPayoutMismatch
+    ? 'Mining payout mismatch'
+    : walletReady
+      ? hgmBalanceLabel
+      : `${displayedWalletConnectionLabel} · loopback`;
+  const walletNavLabel = miningPayoutMismatch ? 'Payout' : walletStateLabel;
+  const walletNavTone = miningPayoutMismatch ? 'error' : walletTone;
   const consoleErrorCount = logEntries.filter((entry) => entry.level === 'error').length;
 
   const navItems: Array<{
@@ -2840,8 +2924,8 @@ export default function App() {
       path: '/wallet',
       label: 'Wallet',
       description: walletNavDescription,
-      statusLabel: walletStateLabel,
-      statusTone: walletTone
+      statusLabel: walletNavLabel,
+      statusTone: walletNavTone
     },
     {
       path: '/send',
@@ -2887,45 +2971,74 @@ export default function App() {
     <div className="overview-shell">
       {GenesisMismatchBanner}
 
-      <section className="live-hero">
-        <div className="live-hero-main">
-          <div className="hero-kicker">
-            <span className={`status-pill ${displayedChainTone}`}>{displayedChainLabel}</span>
-            {!nodeStartupPending ? <span className={`status-pill ${syncAlignmentTone}`}>{syncAlignmentLabel}</span> : null}
-            <span className="badge">{appControlLabel}</span>
-            <span className="badge">{noSshStatusLabel}</span>
+      <section className="overview-dashboard">
+        <div className="overview-command-card">
+          <div className="overview-command-top">
+            <div className="hero-kicker">
+              <span className={`status-pill ${displayedChainTone}`}>{displayedChainLabel}</span>
+              {!nodeStartupPending ? <span className={`status-pill ${syncAlignmentTone}`}>{syncAlignmentLabel}</span> : null}
+              <span className="badge">{appControlLabel}</span>
+              <span className="badge">{noSshStatusLabel}</span>
+            </div>
+            <span className={`status-pill ${displayedHealthTone}`}>{displayedHealthLabel}</span>
           </div>
-          <div className="live-heading">
-            <p className="label">{liveEnvironmentLabel}</p>
-            <h1 className="live-title">{liveHeadline}</h1>
-            <p className="live-subtitle">{liveSubheadline}</p>
-          </div>
-          <div className="live-verdict">
-            <div className="live-verdict-copy">
-              <span className={`status-dot ${liveVerdictTone}`} />
-              <div>
-                <strong>{liveVerdictLabel}</strong>
-                <span>{liveVerdictDetail}</span>
-              </div>
+
+          <div className="overview-command-main">
+            <div>
+              <p className="label">{liveEnvironmentLabel}</p>
+              <h1>{liveHeadline}</h1>
+              <p>{liveSubheadline}</p>
+            </div>
+            <div className="overview-actions">
+              {walletReady ? (
+                <button className="primary" onClick={() => handleWalletSync()} disabled={walletBusy}>
+                  {walletSyncActionLabel}
+                </button>
+              ) : (
+                <Link className="action-link primary" to="/wallet">
+                  Open wallet
+                </Link>
+              )}
+              <Link className="action-link secondary" to="/send">
+                Send
+              </Link>
+              <button className={nodeToggleClass} onClick={handleNodeToggle} disabled={nodeToggleDisabled}>
+                {nodeToggleLabel}
+              </button>
             </div>
           </div>
-          <div className="live-command-row">
-            {walletReady ? (
-              <button className="primary" onClick={() => handleWalletSync()} disabled={walletBusy}>
-                Sync wallet
-              </button>
-            ) : (
-              <Link className="action-link primary" to="/wallet">
-                Open wallet
-              </Link>
-            )}
-            <Link className="action-link secondary" to="/send">
-              Send
-            </Link>
-            <Link className="action-link secondary" to="/node">
-              Node
-            </Link>
+
+          <div className={`overview-verdict ${liveVerdictTone}`}>
+            <span className={`status-dot ${liveVerdictTone}`} />
+            <div>
+              <strong>{liveVerdictLabel}</strong>
+              <span>{liveVerdictDetail}</span>
+            </div>
           </div>
+
+          <div className="overview-signal-grid">
+            <div className="overview-signal featured">
+              <span>Local height</span>
+              <strong>{formatNumber(activeSummary?.bestNumber)}</strong>
+              <em>{syncStateLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Wallet</span>
+              <strong>{walletBalanceDisplay}</strong>
+              <em>{walletReady ? `${walletLagDisplay} block lag` : displayedWalletConnectionLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Mining</span>
+              <strong>{miningStatusLabel}</strong>
+              <em>{miningHashRateLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Send queue</span>
+              <strong>{failedActivityCount ? `${failedActivityCount} failed` : pendingActivityCount ? `${pendingActivityCount} pending` : 'Clear'}</strong>
+              <em>{sendBlockedReason ?? 'Ready'}</em>
+            </div>
+          </div>
+
           <details className="connection-evidence">
             <summary>
               <span>Connection evidence</span>
@@ -2940,7 +3053,7 @@ export default function App() {
               <div className="proof-row">
                 <span>Seed</span>
                 <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
-                <em>approved hegemon-dev seed</em>
+                <em>approved 0.10 devnet seed</em>
               </div>
               <div className="proof-row">
                 <span>Peer</span>
@@ -2956,27 +3069,42 @@ export default function App() {
           </details>
         </div>
 
-        <aside className="live-chain-panel">
-          <div className="flex items-start justify-between gap-3">
+        <aside className="overview-side-card">
+          <div className="overview-side-header">
             <div>
-              <p className="label">Local height</p>
-              <p className="text-xs text-surfaceMuted/75">{syncStateLabel}</p>
+              <p className="label">Network</p>
+              <h2>{activeChainSpecLabel}</h2>
             </div>
-            <span className={`status-pill ${displayedHealthTone}`}>{displayedHealthLabel}</span>
+            <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
           </div>
-          <div className="live-height-stack">
-            <div className="live-height">{formatNumber(activeSummary?.bestNumber)}</div>
-            <p>{syncAlignmentLabel}</p>
-          </div>
-          <div className="live-chain-grid">
+          <div className="overview-side-grid">
             <p><span>Peer target</span><strong>{formatNumber(activeDisplaySyncTargetHeight)}</strong></p>
             <p><span>Peers</span><strong>{formatNumber(activeSummary?.peers)}</strong></p>
-            <p><span>Mining</span><strong>{miningStatusLabel}</strong></p>
-            <p><span>Hash rate</span><strong>{miningHashRateLabel}</strong></p>
+            <p><span>Payout</span><strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong></p>
+            <p><span>Spendable notes</span><strong>{spendableNotesDisplay}</strong></p>
           </div>
-          <div className="live-peer-note">
+          <div className="overview-peer-note">
             <span className="status-dot ok" />
             <p title={p2pListenLabel}>{p2pListenLabel}</p>
+          </div>
+          <div className="overview-events-compact">
+            <div className="overview-events-heading">
+              <span>Latest events</span>
+              <strong>{overviewHighlights.length ? `${overviewHighlights.length} signals` : 'Quiet'}</strong>
+            </div>
+            {overviewHighlights.slice(0, 3).map((entry) => (
+              <div key={entry.id} className="overview-event-line">
+                <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                <p>{entry.message}</p>
+              </div>
+            ))}
+            {!overviewHighlights.length ? (
+              <p className="overview-empty-line">
+                {overviewWarningCount
+                  ? `${overviewWarningCount} retry warnings are available in Console.`
+                  : 'Critical chain and wallet events will appear here.'}
+              </p>
+            ) : null}
           </div>
         </aside>
       </section>
@@ -3022,8 +3150,8 @@ export default function App() {
     <details className="card diagnostic-details">
       <summary>
         <div>
-          <p className="label">Node</p>
-          <h2 className="text-title font-semibold">Connection settings</h2>
+          <p className="label">Configuration</p>
+          <h2 className="text-title font-semibold">Connection profile</h2>
           <p className="text-sm text-surfaceMuted/80">Profiles, ports, storage, and mining startup options.</p>
         </div>
         <span className="badge">
@@ -3420,33 +3548,33 @@ export default function App() {
   );
 
   const NodeOperationsSection = (
-    <section className="card space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <section className="node-control-card">
+      <div className="node-control-header">
         <div>
-          <p className="label">Node</p>
+          <p className="label">Active profile</p>
           <h2 className="text-title font-semibold">{activeConnection?.label ?? 'Current node'}</h2>
           <p className="text-sm text-surfaceMuted/80 mt-1">
             {syncStateLabel} · {peerEvidenceLabel} · Updated {updatedAtLabel}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-          <span className="badge">{loopbackControlLabel}</span>
+        <div className="node-control-actions">
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+            <span className="badge">{loopbackControlLabel}</span>
+          </div>
+          <button
+            className={nodeToggleClass}
+            onClick={handleNodeToggle}
+            disabled={nodeToggleDisabled}
+          >
+            {nodeToggleLabel}
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          className={nodeToggleClass}
-          onClick={handleNodeToggle}
-          disabled={nodeToggleDisabled}
-        >
-          {nodeToggleLabel}
-        </button>
-      </div>
-      <p className="text-sm text-surfaceMuted">{miningHint}</p>
+      <p className="node-hint">{miningHint}</p>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="node-metric-grid">
         <div className="panel">
           <p className="label">Role</p>
           <p className="text-lg font-medium">{participationRoleLabels[activeParticipationRole]}</p>
@@ -3491,6 +3619,9 @@ export default function App() {
           <p className="label">Mining</p>
           <p className="text-lg font-medium">{miningStatusLabel}</p>
           <p className="text-xs text-surfaceMuted">Hash rate: {miningHashRateLabel}</p>
+          <p className="text-xs text-surfaceMuted mono truncate" title={effectiveMinerPayoutAddress}>
+            {effectiveMinerPayoutLabel}
+          </p>
         </div>
         <div className="panel">
           <p className="label">Storage</p>
@@ -3643,8 +3774,8 @@ export default function App() {
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="label">Console</p>
-          <h2 className="text-title font-semibold">Node Console</h2>
+          <p className="label">Logs</p>
+          <h2 className="text-title font-semibold">Diagnostics timeline</h2>
           <p className="text-sm text-surfaceMuted/80 mt-1">
             Structured logs and milestone events for the active connection.
           </p>
@@ -3761,15 +3892,15 @@ export default function App() {
   );
 
   const WalletStoreSection = (
-    <section className="card space-y-6">
+    <section className={`card wallet-main-card ${walletReady ? 'wallet-ready' : 'wallet-locked'}`}>
       <details className="wallet-access-details" open={!walletReady}>
         <summary>
           <div>
-            <p className="label">Wallet</p>
-            <h2 className="text-title font-semibold">{walletReady ? 'Store and session' : 'Open wallet'}</h2>
+            <p className="label">{walletReady ? 'Controls' : 'Wallet access'}</p>
+            <h2 className="text-title font-semibold">{walletReady ? 'Store/session controls' : 'Open wallet'}</h2>
             <p className="text-sm text-surfaceMuted/80">
               {walletReady
-                ? 'Wallet is open. Store path, sync target, and auto-lock controls are available here.'
+                ? 'Store path, sync target, and lock settings.'
                 : 'Open or create a local wallet store before sending.'}
             </p>
           </div>
@@ -3933,12 +4064,6 @@ export default function App() {
         </div>
         </div>
       </details>
-      {!walletReady && (
-        <p className="text-sm text-surfaceMuted">
-          Open or init a wallet to enable sync and transfers.
-        </p>
-      )}
-
       {GenesisMismatchBanner}
 
       <div className="wallet-surface">
@@ -3974,6 +4099,51 @@ export default function App() {
             </details>
           ) : null}
           {addressCopyError ? <p className="wallet-inline-error">{addressCopyError}</p> : null}
+        </div>
+
+        <div className={`mining-payout-panel ${miningPayoutTone}`}>
+          <div className="mining-payout-header">
+            <div>
+              <p className="label">Mining rewards</p>
+              <h3>{miningPayoutLabel}</h3>
+              <p>{miningPayoutDetail}</p>
+            </div>
+            <span className={`status-pill ${miningPayoutTone}`}>{miningPayoutLabel}</span>
+          </div>
+          <div className="mining-payout-grid">
+            <div>
+              <span>Running payout</span>
+              <strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong>
+            </div>
+            <div>
+              <span>Wallet address</span>
+              <strong title={primaryAddress}>{primaryAddressLabel}</strong>
+            </div>
+            {miningPayoutPendingRestart ? (
+              <div>
+                <span>Saved next start</span>
+                <strong title={savedMinerAddress}>{savedMinerPayoutLabel}</strong>
+              </div>
+            ) : null}
+          </div>
+          <div className="mining-payout-actions">
+            <button
+              className="secondary"
+              type="button"
+              onClick={handleUseWalletAddressForMining}
+              disabled={!primaryAddress || savedMiningPayoutMatchesWallet}
+            >
+              Use wallet address
+            </button>
+            <span>
+              {miningPayoutPendingRestart
+                ? 'Restart the node to apply the saved address.'
+                : activeSummary?.reachable
+                  ? 'Payout changes apply when the node restarts.'
+                  : 'Saved payout is used on node start.'}
+            </span>
+          </div>
+          {miningPayoutNotice ? <p className="mining-payout-notice">{miningPayoutNotice}</p> : null}
         </div>
 
         <div className="kpi-grid">
@@ -4057,7 +4227,7 @@ export default function App() {
             </p>
           )}
         </div>
-        <div>
+        <div className="wallet-notes-panel">
           <details className="wallet-notes-details rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm text-surfaceMuted">
               <span className="label">All notes</span>
@@ -4222,8 +4392,8 @@ export default function App() {
     <details className="card diagnostic-details">
       <summary>
         <div>
-          <p className="label">Send</p>
-          <h2 className="text-title font-semibold">Preflight details</h2>
+          <p className="label">Checks</p>
+          <h2 className="text-title font-semibold">Readiness</h2>
           <p className="text-sm text-surfaceMuted/80">Wallet, chain, and note context.</p>
         </div>
         <span className={`status-pill ${sendBlockedReason ? 'error' : 'ok'}`}>
@@ -4276,8 +4446,8 @@ export default function App() {
   const SendSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Send</p>
-        <h2 className="text-title font-semibold">Shielded Transfer</h2>
+        <p className="label">Transfer</p>
+        <h2 className="text-title font-semibold">New shielded transaction</h2>
       </div>
       <div className="send-context-strip">
         <p>
@@ -4525,8 +4695,8 @@ export default function App() {
     <details className="card diagnostic-details">
       <summary>
         <div>
-          <p className="label">Address book</p>
-          <h2 className="text-title font-semibold">Contacts</h2>
+          <p className="label">Recipients</p>
+          <h2 className="text-title font-semibold">Address book</h2>
         </div>
         <span className="badge">{contacts.length} saved</span>
       </summary>
@@ -4618,10 +4788,10 @@ export default function App() {
   );
 
   const DisclosureRecordsSection = (
-    <section className="card flex flex-col gap-4 min-h-0 h-full">
+    <section className="card flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="label">Disclosure</p>
+          <p className="label">Records</p>
           <h2 className="text-title font-semibold">Outgoing outputs</h2>
           <p className="text-sm text-surfaceMuted/80">
             Select a transaction output to generate a disclosure package.
@@ -4698,8 +4868,8 @@ export default function App() {
   const DisclosureGenerateSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Disclosure</p>
-        <h2 className="text-title font-semibold">Generate proof</h2>
+        <p className="label">Create</p>
+        <h2 className="text-title font-semibold">Disclosure package</h2>
       </div>
       <div className="grid gap-4">
         {selectedDisclosure ? (
@@ -4759,7 +4929,7 @@ export default function App() {
   const DisclosureVerifySection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Disclosure</p>
+        <p className="label">Verify</p>
         <h2 className="text-title font-semibold">Verify proof</h2>
       </div>
       <label className="space-y-2">
@@ -4777,42 +4947,26 @@ export default function App() {
   );
 
   const NodeWorkspace = (
-    <div className="mx-auto w-full max-w-7xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Node</p>
-        <h1 className="text-headline font-semibold tracking-normal">Node</h1>
-        <p className="text-surfaceMuted max-w-2xl">
-          Start, stop, and monitor the local hegemon-dev node.
-        </p>
-      </header>
+    <div className="workspace-view max-w-7xl">
       {NodeOperationsSection}
       {NodeConnectionsSection}
     </div>
   );
 
   const WalletWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="workspace-header">
-        <p className="label">Wallet</p>
-        <h1 className="text-headline font-semibold tracking-normal">Wallet</h1>
-      </header>
+    <div className="workspace-view max-w-7xl">
       {WalletStoreSection}
       {WalletOutputSection}
     </div>
   );
 
   const SendWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Send</p>
-        <h1 className="text-headline font-semibold tracking-normal">Send</h1>
-        <p className="text-surfaceMuted max-w-2xl">Create a shielded transfer from the open wallet.</p>
-      </header>
-      <div className="grid gap-6 xl:grid-cols-2">
+    <div className="workspace-view max-w-7xl">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)]">
         {SendSection}
         {TransactionActivitySection}
       </div>
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         {SendPreflightSection}
         {ContactsSection}
       </div>
@@ -4820,15 +4974,10 @@ export default function App() {
   );
 
   const DisclosureWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Disclosure</p>
-        <h1 className="text-headline font-semibold tracking-normal">Audit Packages</h1>
-        <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
-      </header>
-      <div className="grid gap-6 xl:grid-cols-2 items-stretch">
+    <div className="workspace-view max-w-7xl">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)] items-start">
         {DisclosureRecordsSection}
-        <div className="space-y-6">
+        <div className="space-y-5">
           {DisclosureGenerateSection}
           {DisclosureVerifySection}
         </div>
@@ -4837,12 +4986,7 @@ export default function App() {
   );
 
   const ConsoleWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Console</p>
-        <h1 className="text-headline font-semibold tracking-normal">Diagnostics Timeline</h1>
-        <p className="text-surfaceMuted max-w-2xl">Track events, search logs, and investigate anomalies.</p>
-      </header>
+    <div className="workspace-view max-w-7xl">
       {NodeConsoleSection}
     </div>
   );

@@ -18,7 +18,7 @@ Hegemon already has a private shielded accumulator multisig path, but the curren
 - [x] (2026-06-26) Focused checks passed: `cargo fmt --check`, `cargo test -p transaction-circuit universal_auth --lib -- --nocapture`, `cargo test -p transaction-circuit private_multisig_accumulator --lib -- --nocapture`, `cargo test -p wallet --lib multisig -- --nocapture`, and `cargo test -p walletd multisig -- --nocapture`.
 - [x] (2026-06-26) Full `bash scripts/check_formal_core.sh` passed, including `private_multisig_accumulator_matches_lean_vectors` and the final `=== Hegemon formal-core gate passed ===` marker.
 - [x] (2026-06-26) Fixed a live handoff bug where wallet rescan preserved private local openings but failed to rehydrate accumulator notes whose ciphertexts are not decryptable by the importing signer; regression `local_accumulator_opening_rehydrates_after_rescan_without_decryptable_ciphertext` passed.
-- [x] (2026-06-26) Laptop-to-`hegemon-dev` live validation passed on isolated remote node `mslive-1782477119-66287`: Bob funding tx `0x10db41f5cd0a1c51d28eee57e136276c4a355491bba409892bdf104fe8d5bb22`, setup tx `0xe832742697194c3a4846e27c2739fa9f821889876b52247968288012c3e46f26`, Alice approval tx `0xc36925309acfe78aecb7af75624a0d9e849c60c73d5e5dd5628a6b2fb1759933`, Bob approval tx `0xff7a730a7f44be6bfc947c77df2ae626b9e3f85cd8ec469e3f8053515492224e`, final tx `0x6d4311d7126affe860ff5f52b77decb3c5eb0f5c4d0653740ff110c61c1b4fe9`, and Carol recovered the final `1000000` native output at commitment `0x40bcd13e8875d224b703bf88d790e0cfeacbc266a840edf2acac73836760580b40665bc8dfc0ee9660940010de5fd409`.
+- [x] (2026-06-26) Laptop-to-`native-devnet-host` live validation passed on isolated remote node `mslive-1782477119-66287`: Bob funding tx `0x10db41f5cd0a1c51d28eee57e136276c4a355491bba409892bdf104fe8d5bb22`, setup tx `0xe832742697194c3a4846e27c2739fa9f821889876b52247968288012c3e46f26`, Alice approval tx `0xc36925309acfe78aecb7af75624a0d9e849c60c73d5e5dd5628a6b2fb1759933`, Bob approval tx `0xff7a730a7f44be6bfc947c77df2ae626b9e3f85cd8ec469e3f8053515492224e`, final tx `0x6d4311d7126affe860ff5f52b77decb3c5eb0f5c4d0653740ff110c61c1b4fe9`, and Carol recovered the final `1000000` native output at commitment `0x40bcd13e8875d224b703bf88d790e0cfeacbc266a840edf2acac73836760580b40665bc8dfc0ee9660940010de5fd409`.
 - [x] (2026-06-26) Reran full `bash scripts/check_formal_core.sh` after the live handoff fix and the sparse-cursor bookkeeping guard; the gate passed with the final `=== Hegemon formal-core gate passed ===` marker.
 - [x] (2026-06-26) Commit and push branch `codex/private-predicate-threshold-spend`.
 
@@ -67,7 +67,7 @@ Second, update wallet state and walletd parameters from fixed arrays of two sign
 
 Third, update Lean pure accumulator semantics to model arbitrary finite signer lists and add cases for malformed policy rejection, duplicate signer rejection, wrong policy, wrong intent, forged signer tag, below-threshold final spend, exact-threshold final spend, and final intent mismatch. Regenerate or directly compare vectors through the existing Rust test.
 
-Fourth, update docs and run validation. Focused checks are the transaction-circuit private auth tests, wallet multisig tests, walletd multisig tests, Lean build for the accumulator modules, and `bash scripts/check_formal_core.sh`. Live validation must use laptop walletd against an isolated `hegemon-dev` native node and confirm setup, approval, and final transactions.
+Fourth, update docs and run validation. Focused checks are the transaction-circuit private auth tests, wallet multisig tests, walletd multisig tests, Lean build for the accumulator modules, and `bash scripts/check_formal_core.sh`. Live validation must use laptop walletd against an isolated `native-devnet-host` native node and confirm setup, approval, and final transactions.
 
 ## Concrete Steps
 
@@ -80,11 +80,11 @@ Run all commands from `/Users/pldd/Projects/Reflexivity/Hegemon`.
     (cd formal/lean && lake build Hegemon.Transaction.PrivateMultisigAccumulator Hegemon.Transaction.GeneratePrivateMultisigAccumulatorVectors)
     bash scripts/check_formal_core.sh
 
-The live validation step should start an isolated native node on `hegemon-dev` using an unused RPC and P2P port, tunnel it to the laptop, drive walletd through setup/approval/final submit, wait for the final transaction to confirm, then kill the isolated node and tunnel.
+The live validation step should start an isolated native node on `native-devnet-host` using an unused RPC and P2P port, tunnel it to the laptop, drive walletd through setup/approval/final submit, wait for the final transaction to confirm, then kill the isolated node and tunnel.
 
 ## Validation and Acceptance
 
-The feature is accepted only when a hidden policy with more than two signers can be created by walletd, approval transactions advance the hidden accumulator one signer at a time, duplicate approval fails, final spend fails before threshold, final spend succeeds at threshold, full formal-core passes, and a live laptop-to-`hegemon-dev` isolated-node transaction flow confirms on chain. The public transaction shape and public account response must not contain signer tags, threshold, signer count, policy root, approval count, or approved slots.
+The feature is accepted only when a hidden policy with more than two signers can be created by walletd, approval transactions advance the hidden accumulator one signer at a time, duplicate approval fails, final spend fails before threshold, final spend succeeds at threshold, full formal-core passes, and a live laptop-to-`native-devnet-host` isolated-node transaction flow confirms on chain. The public transaction shape and public account response must not contain signer tags, threshold, signer count, policy root, approval count, or approved slots.
 
 ## Idempotence and Recovery
 

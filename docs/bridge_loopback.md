@@ -73,7 +73,7 @@ RISC0_SKIP_BUILD_KERNELS=1 cargo run \
   -- --proof-file /tmp/hegemon-long-range-proof.hex
 ```
 
-On `hegemon-dev`, a 9951-byte live long-range proof currently executes in 962524 RISC Zero guest cycles. Cached release proving measured 8m37s for a 492158-byte composite receipt envelope and 10m46s for a 224508-byte succinct receipt envelope. These remain offline measurements; do not use Groth16/KZG wrapping or any verifier stack that links classical curve/SNARK code into the PQ bridge path.
+On `native-devnet-host`, a 9951-byte live long-range proof currently executes in 962524 RISC Zero guest cycles. Cached release proving measured 8m37s for a 492158-byte composite receipt envelope and 10m46s for a 224508-byte succinct receipt envelope. These remain offline measurements; do not use Groth16/KZG wrapping or any verifier stack that links classical curve/SNARK code into the PQ bridge path.
 
 ```bash
 cargo run -p hegemon-node --example hegemon_loopback_bridge -- \

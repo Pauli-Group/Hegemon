@@ -36,9 +36,9 @@
   "last_hegemon_dev_validation": {
     "date": "2026-06-19T06:11:00Z",
     "commit": "a6de4a24",
-    "status": "passed after applying the local branch to hegemon-dev by git bundle without a GitHub push, running the new remote Lean-generated sidecar raw JSON conformance gate, rebuilding the release node, restarting systemd, validating live RPC/mining, wallet transaction submission, malformed sidecar-upload RPC rejection, process sanity, and NTP check",
+    "status": "passed after applying the local branch to native-devnet-host by git bundle without a GitHub push, running the new remote Lean-generated sidecar raw JSON conformance gate, rebuilding the release node, restarting systemd, validating live RPC/mining, wallet transaction submission, malformed sidecar-upload RPC rejection, process sanity, and NTP check",
     "checks": [
-      "applied local commit a6de4a24 to /home/ubuntu/hegemon-current-4c4ea6d3 by git bundle without pushing GitHub; remote branch codex/superneo-formal-verification is ahead 18 with only the pre-existing untracked .hegemon-dev-deploy-status left untouched",
+      "applied local commit a6de4a24 to /home/ubuntu/hegemon-current-4c4ea6d3 by git bundle without pushing GitHub; remote branch codex/superneo-formal-verification is ahead 18 with only the pre-existing untracked .native-devnet-host-deploy-status left untouched",
       "remote focused sidecar raw JSON formal gate passed: lake exe gen_sidecar_upload_raw_json_projection_vectors generated valid JSON and HEGEMON_LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS drove native::tests::lean_generated_sidecar_upload_raw_json_projection_vectors_match_production to ok",
       "make node rebuilt target/release/hegemon-node successfully in release mode",
       "restarted hegemon-node.service from the rebuilt binary; after startup replay RPC health reported syncing=false, peers=0, shouldHavePeers=false",
@@ -52,10 +52,10 @@
       "timedatectl reported NTP synchronization active",
       "service environment had HEGEMON_MINE=1, HEGEMON_MINE_THREADS=1, HEGEMON_PQ_STRICT_COMPATIBILITY=1, and a configured HEGEMON_MINER_ADDRESS"
     ],
-    "runtime_note": "This slice changed native DA sidecar upload decoding before staging. hegemon-dev was rebuilt and restarted from target/release/hegemon-node so the service path matched the deployed branch; the rebuilt service opened storage after replay, listened on RPC/P2P, mined blocks, accepted the wallet transaction compatibility path, and rejected malformed sidecar-upload RPC requests before staging.",
+    "runtime_note": "This slice changed native DA sidecar upload decoding before staging. native-devnet-host was rebuilt and restarted from target/release/hegemon-node so the service path matched the deployed branch; the rebuilt service opened storage after replay, listened on RPC/P2P, mined blocks, accepted the wallet transaction compatibility path, and rejected malformed sidecar-upload RPC requests before staging.",
     "known_limitations": [
       "The live dev node intentionally had zero external peers during validation, so live sync health was checked as syncing=false with peers=0; peer catch-up/restart reload was exercised on disposable two-node dev instances.",
-      "The service environment logged HEGEMON_SEEDS= for this isolated hegemon-dev branch-test node; shared mining and testnet operators must use the approved common seed list and NTP/chrony to avoid partitions, forks, and future-skew timestamp rejection.",
+      "The service environment logged HEGEMON_SEEDS= for this isolated native-devnet-host branch-test node; shared mining and testnet operators must use the approved common seed list and NTP/chrony to avoid partitions, forks, and future-skew timestamp rejection.",
       "Primitive hash/crypto assumptions, proof-system soundness assumptions, external bridge proof soundness, advisory database/scanner completeness, DA retention, storage hardware semantics, and complete native-node equivalence remain explicit external assumptions in the 100% certificate."
     ]
   },
@@ -105,7 +105,7 @@
       "status": "targeted Lean builds, generated-vector JSON validation, wallet output-batch Rust conformance, CI release workflow policy conformance, cargo fmt/check, metadata gates, axiom audit, and full formal-core passed locally."
     },
     "known_limitations": [
-      "This slice changes wallet transaction construction and release tooling, not the shipped live node service path. hegemon-dev still must fast-forward, run remote formal-core or targeted gates, smoke, wallet-send, mining, service health, and NTP checks."
+      "This slice changes wallet transaction construction and release tooling, not the shipped live node service path. native-devnet-host still must fast-forward, run remote formal-core or targeted gates, smoke, wallet-send, mining, service health, and NTP checks."
     ]
   },
   "last_implementation_equivalence_checker_slice": {
@@ -145,7 +145,7 @@
       "Hegemon.Native.BridgeMintPayloadRawAdmission.raw_trailing_bytes_precede_payload_hash"
     ],
     "validation": {
-      "status": "Targeted Lean build, generated-vector JSON validation, decoded and raw Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally. hegemon-dev at fdbc885f passed the raw bridge mint-payload Lean-vector conformance gate; RPC was healthy, NTP synchronized, and miningStatus reported active mining at about 11 kH/s."
+      "status": "Targeted Lean build, generated-vector JSON validation, decoded and raw Rust generated-vector conformance, verified receipt handoff regressions, malformed-payload and invalid-field regressions, and rustfmt passed locally. native-devnet-host at fdbc885f passed the raw bridge mint-payload Lean-vector conformance gate; RPC was healthy, NTP synchronized, and miningStatus reported active mining at about 11 kH/s."
     },
     "known_limitations": [
       "This narrows the bridge mechanized-refinement gap at the mint payload boundary. It does not enable positive bridge minting, prove external receipt soundness, prove SCALE implementation correctness for all arbitrary bytes, or replace the required future PQ-clean receipt verifier and authorization story."
@@ -414,7 +414,7 @@
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean proves concrete public native-delta, selected-stablecoin-delta, disabled-stablecoin-zero, non-selected non-native zero, and signed-magnitude canonicality facts for the SmallWood balance/public-field verifier-surface target",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean models the deployed P3 final-row public balance equations for native value-balance authorization, selected stablecoin issuance authorization, non-selected non-native zero, disabled stablecoin metadata/slot zeroing, and selector asset binding",
         "formal/lean/Hegemon/Transaction/GenerateAirBalanceBoundaryVectors.lean emits default and stablecoin P3 final-row surfaces plus native-delta, selected-delta, selector-asset, disabled-metadata, nonselected-delta, and boolean rejection cases checked against production P3 trace/public-input extraction by lean_generated_air_balance_boundary_vectors_match_production",
-        "hegemon-dev at 247638ff passed lake exe gen_air_balance_boundary_vectors plus cargo test -p transaction-circuit lean_generated_air_balance_boundary_vectors_match_production --lib -- --nocapture",
+        "native-devnet-host at 247638ff passed lake exe gen_air_balance_boundary_vectors plus cargo test -p transaction-circuit lean_generated_air_balance_boundary_vectors_match_production --lib -- --nocapture",
         "p3_air_balance_public_field_mutations_rejected builds a valid stablecoin P3 proof and requires verifier-facing value-balance and stablecoin issuance public-field mutations to fail verification",
         "packed SmallWood inline-Merkle public balance/stablecoin mutation gates reject tampered public fields even when auxiliary Merkle rows are recomputed from the tampered public values",
         "public input shape and binding gates",
@@ -626,7 +626,7 @@
         "circuits/transaction/src/smallwood_frontend.rs now enforces inactive public-nullifier zero constraints and active nullifier-rho linkage inside the deployed inline-Merkle SmallWood verifier surface",
         "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean narrows the balance/public-field deployed-verifier target to concrete P3 final-row AIR equations for value-balance, stablecoin issuance, selector asset binding, disabled metadata, and non-selected slot zeroing",
         "formal/lean/Hegemon/Transaction/GenerateAirBalanceBoundaryVectors.lean and the production gate lean_generated_air_balance_boundary_vectors_match_production bind those AIR final-row equations to real P3 trace/public-input extraction for default and stablecoin witnesses plus representative rejection surfaces",
-        "hegemon-dev at 247638ff passed the generated AIR balance vector gate against the VPS checkout",
+        "native-devnet-host at 247638ff passed the generated AIR balance vector gate against the VPS checkout",
         "circuits/transaction/src/p3_prover.rs p3_air_balance_public_field_mutations_rejected proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean models the SmallWood transcript/profile byte boundary and proves the transcript starts with the domain, includes verifier profile material, uses the active 23-DECS-opening profile only for the shipped inline-Merkle arithmetization, uses the legacy 25-opening profile for the legacy family, distinguishes every production-recognized arithmetization tag, includes serialized statement bytes, and pads to eight-byte alignment",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean emits transcript/profile vectors checked by circuits/transaction/src/smallwood_frontend.rs so production transcript binding includes domain, profile material, every deployed/legacy arithmetization label/profile split, serialized statement bytes, and padding exactly as modeled",
@@ -1294,7 +1294,7 @@
       "remaining_work": [],
       "explicit_external_assumptions": [
         "Add benchmark-backed per-family cost budgets beyond the current explicit 22-family public-input coverage certificate.",
-        "Benchmark any new runtime check on hegemon-dev or local release builds.",
+        "Benchmark any new runtime check on native-devnet-host or local release builds.",
         "Bind the remaining consensus-facing parser families beyond native block actions, inbound sync response counts, outbound sync response ranges, candidate-artifact resource projection, inline transfer ciphertext resource projection, bridge action receipt/payload resource projection, recursive_block_v1/v2 parser-oracle coverage, native tx-leaf/receipt-root parser-oracle coverage, and network queue byte caps to deeper parser-internal proofs or benchmark-backed cost budgets.",
         "Full parser implementation proofs, RPC authentication/deployment exposure, OS/network scheduling DoS, and complete native-node refinement remain explicit residuals."
       ]

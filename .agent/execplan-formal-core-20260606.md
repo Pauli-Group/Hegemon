@@ -8,7 +8,7 @@ This document follows `.agent/PLANS.md` from the repository root. It is intentio
 
 Hegemon should become a proof-carrying protocol rather than only an audited Rust codebase. In practical terms, this first milestone gives operators and reviewers one command that checks the highest-value formal-security promises that are ready to be enforced now: consensus-critical claims are recorded in a machine-readable ledger, the formal model inventory is checked, and an independent reference tool verifies bridge message canonical encoding, message roots, and replay-key vectors without calling production protocol helpers.
 
-After this change, a contributor can run `bash scripts/check_formal_core.sh` from the repository root and see a concise pass/fail report. CI and release workflows will run the same gate. The branch will then be deployed to `hegemon-dev`, where the normal node binary, PQ audit, mining, action inclusion, and bridge witness smoke will still pass.
+After this change, a contributor can run `bash scripts/check_formal_core.sh` from the repository root and see a concise pass/fail report. CI and release workflows will run the same gate. The branch will then be deployed to `native-devnet-host`, where the normal node binary, PQ audit, mining, action inclusion, and bridge witness smoke will still pass.
 
 ## Progress
 
@@ -24,7 +24,7 @@ After this change, a contributor can run `bash scripts/check_formal_core.sh` fro
 - [x] (2026-06-06T05:20:47Z) Ran `bash scripts/check_formal_core.sh`; it passed as an 8-step gate, including standalone checker dependency audit, 2 bridge vectors, and 11 native backend vectors.
 - [x] (2026-06-06T05:20:47Z) Ran local formal-core, Rust, dependency, PQ, native review package, release posture, and CI-mode red-team gates. All passed.
 - [x] (2026-06-06T05:35:41Z) Committed and pushed `codex/formal-verification-core` to origin.
-- [x] (2026-06-06T05:35:41Z) Deployed commit `c2988b23` to `hegemon-dev`, built with `make setup && make node`, ran remote formal/security gates, restarted systemd from `/home/ubuntu/hegemon-current-c2988b23`, and verified mining plus outbound bridge action inclusion and witness export.
+- [x] (2026-06-06T05:35:41Z) Deployed commit `c2988b23` to `native-devnet-host`, built with `make setup && make node`, ran remote formal/security gates, restarted systemd from `/home/ubuntu/hegemon-current-c2988b23`, and verified mining plus outbound bridge action inclusion and witness export.
 
 ## Surprises & Discoveries
 
@@ -68,9 +68,9 @@ After this change, a contributor can run `bash scripts/check_formal_core.sh` fro
 
 ## Outcomes & Retrospective
 
-Local and `hegemon-dev` validation are complete. The branch now has a machine-readable formal-security claims ledger, a standalone independent bridge-vector checker, a mandatory checker dependency audit, CI/release wiring, corrected formal/security docs, a refreshed native backend review package, a passing CI-mode proving red-team report, and a live `hegemon-dev` deployment.
+Local and `native-devnet-host` validation are complete. The branch now has a machine-readable formal-security claims ledger, a standalone independent bridge-vector checker, a mandatory checker dependency audit, CI/release wiring, corrected formal/security docs, a refreshed native backend review package, a passing CI-mode proving red-team report, and a live `native-devnet-host` deployment.
 
-The deployed node is running from `/home/ubuntu/hegemon-current-c2988b23` with `HEGEMON_MINE=1`, one mining thread, RPC on `127.0.0.1:9944`, P2P on `0.0.0.0:30333`, and NTP synchronized. The unit backup is `/home/ubuntu/hegemon-devnet/deploy-backups/hegemon-node.service.20260606T053252Z`.
+The deployed node is running from `/home/ubuntu/hegemon-current-c2988b23` with `HEGEMON_MINE=1`, one mining thread, RPC on `127.0.0.1:9944`, P2P on `0.0.0.0:30333`, and NTP synchronized. The unit backup is `/home/ubuntu/native-devnet/deploy-backups/hegemon-node.service.20260606T053252Z`.
 
 ## Context and Orientation
 
@@ -114,7 +114,7 @@ If time and resources allow, also run the CI-mode red-team suite before deployme
 
     HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
 
-Seventh, push the branch and deploy to `hegemon-dev` from a fresh release directory. Preserve the systemd backup pattern under `/home/ubuntu/hegemon-devnet/deploy-backups/`, restart `hegemon-node.service`, and verify the service runs from the new release path. Then run PQ audit on the VPS, confirm mining is active, submit a real bridge outbound action, wait for inclusion, confirm pending clears, and export a bridge witness for the submitted payload.
+Seventh, push the branch and deploy to `native-devnet-host` from a fresh release directory. Preserve the systemd backup pattern under `/home/ubuntu/native-devnet/deploy-backups/`, restart `hegemon-node.service`, and verify the service runs from the new release path. Then run PQ audit on the VPS, confirm mining is active, submit a real bridge outbound action, wait for inclusion, confirm pending clears, and export a bridge witness for the submitted payload.
 
 ## Concrete Steps
 
@@ -172,21 +172,21 @@ Clean native review package regeneration:
     head_commit=9b43cbbbafd90834424c0e1a54c32bf54e35c649
     dirty=false
 
-Remote `hegemon-dev` evidence:
+Remote `native-devnet-host` evidence:
 
-    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; make setup; make node'
+    ssh native-devnet-host 'cd /home/ubuntu/hegemon-current-c2988b23; make setup; make node'
     Finished `release` profile [optimized] target(s) in 1m 55s
 
-    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/check_formal_core.sh'
+    ssh native-devnet-host 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/check_formal_core.sh'
     === Hegemon formal-core gate passed ===
 
-    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/dependency-audit-gate.sh'
+    ssh native-devnet-host 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/dependency-audit-gate.sh'
     dependency audit findings: 8 total, 8 waived, 0 unwaived
 
-    ssh hegemon-dev 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/security-audit.sh --quick'
+    ssh native-devnet-host 'cd /home/ubuntu/hegemon-current-c2988b23; bash scripts/security-audit.sh --quick'
     AUDIT PASSED
 
-    ssh hegemon-dev 'systemctl show -p MainPID -p ActiveState -p SubState hegemon-node.service'
+    ssh native-devnet-host 'systemctl show -p MainPID -p ActiveState -p SubState hegemon-node.service'
     MainPID=634215
     ActiveState=active
     SubState=running
@@ -213,17 +213,17 @@ The branch is accepted when:
 3. CI and release workflow files contain the formal-core gate.
 4. `DESIGN.md`, `METHODS.md`, and `docs/SECURITY_REVIEWS.md` describe the formal-core gate as part of the release standard.
 5. Dependency and PQ audits still pass locally.
-6. `hegemon-dev` runs from the new branch release path, mining is active, a real outbound bridge action is accepted and mined, pending actions clear, and `hegemon_exportBridgeWitness` returns a witness for the submitted payload.
+6. `native-devnet-host` runs from the new branch release path, mining is active, a real outbound bridge action is accepted and mined, pending actions clear, and `hegemon_exportBridgeWitness` returns a witness for the submitted payload.
 
 ## Idempotence and Recovery
 
 The local checker is read-only and safe to run repeatedly. The bridge-vector file is static. If the checker reports a mismatch, do not update expected hashes blindly; first inspect whether the independent encoding or production semantics changed. If production bridge semantics changed intentionally, update `DESIGN.md`, `METHODS.md`, the vector file, and the claim ledger together.
 
-Remote deployment must use a new release directory instead of editing the running checkout. Before systemd changes, copy `/etc/systemd/system/hegemon-node.service` to `/home/ubuntu/hegemon-devnet/deploy-backups/`. If the new service fails, restore the backed-up unit, run `sudo systemctl daemon-reload`, and restart `hegemon-node.service`.
+Remote deployment must use a new release directory instead of editing the running checkout. Before systemd changes, copy `/etc/systemd/system/hegemon-node.service` to `/home/ubuntu/native-devnet/deploy-backups/`. If the new service fails, restore the backed-up unit, run `sudo systemctl daemon-reload`, and restart `hegemon-node.service`.
 
 ## Artifacts and Notes
 
-This plan is the first artifact. Command transcripts and the final `hegemon-dev` smoke evidence will be added as the work proceeds.
+This plan is the first artifact. Command transcripts and the final `native-devnet-host` smoke evidence will be added as the work proceeds.
 
 ## Interfaces and Dependencies
 
@@ -245,4 +245,4 @@ Revision note 2026-06-06T04:24:00Z: Recorded the implemented standalone formal-c
 
 Revision note 2026-06-06T05:20:47Z: Recorded the mandatory formal-core checker dependency audit, local release/security gate results, CI-mode red-team pass, and review-package artifact handling.
 
-Revision note 2026-06-06T05:35:41Z: Recorded the clean native review package regeneration, pushed commits, `hegemon-dev` deployment, remote gates, mining status, action inclusion, and bridge witness smoke evidence.
+Revision note 2026-06-06T05:35:41Z: Recorded the clean native review package regeneration, pushed commits, `native-devnet-host` deployment, remote gates, mining status, action inclusion, and bridge witness smoke evidence.

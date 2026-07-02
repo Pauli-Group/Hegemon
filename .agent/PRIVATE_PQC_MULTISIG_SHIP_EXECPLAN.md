@@ -34,7 +34,7 @@ The user-visible result is not a wallet-only cosigning wrapper. It is a proof-na
 - [ ] Update Lean/formal targets to match the implemented path, including public-leak sentinels and exact statement-hash binding.
 - [ ] Run focused Rust and Lean checks.
 - [ ] Run the full formal-core gate.
-- [ ] Validate live transactions/mining between the laptop and `hegemon-dev`.
+- [ ] Validate live transactions/mining between the laptop and `native-devnet-host`.
 - [ ] Commit and push only after the implementation is coherent and verified.
 
 ## Surprises & Discoveries
