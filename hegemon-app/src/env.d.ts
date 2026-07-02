@@ -62,6 +62,9 @@ export type HegemonApi = {
   dialog: {
     openPath: (options: DialogOpenOptions) => Promise<string | null>;
   };
+  clipboard: {
+    writeText: (text: string) => Promise<void>;
+  };
 };
 
 declare global {

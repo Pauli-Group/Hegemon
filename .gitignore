@@ -49,6 +49,11 @@ test-logs/
 output/proving-redteam/
 .ops-local/
 
+# cargo-fuzz writes minimized corpus discoveries during local/red-team runs.
+# Keep existing tracked seeds, but do not let generated discoveries dirty release worktrees.
+fuzz/corpus/native_tx_leaf_artifact/*
+fuzz/corpus/receipt_root_artifact/*
+
 # Node data directories
 data/
 

@@ -813,6 +813,14 @@ pub fn verify_pow_header(
     parent: &TrustedCheckpointV1,
     header: &PowHeaderV1,
 ) -> Result<Hash32, LightClientError> {
+    verify_pow_header_with_expected_bits(parent, header, parent.pow_bits)
+}
+
+pub fn verify_pow_header_with_expected_bits(
+    parent: &TrustedCheckpointV1,
+    header: &PowHeaderV1,
+    expected_pow_bits: u32,
+) -> Result<Hash32, LightClientError> {
     if header.chain_id != parent.chain_id {
         return Err(LightClientError::ChainIdMismatch);
     }
@@ -828,7 +836,7 @@ pub fn verify_pow_header(
     if header.timestamp_ms <= parent.timestamp_ms {
         return Err(LightClientError::TimestampDidNotAdvance);
     }
-    if header.pow_bits != parent.pow_bits {
+    if header.pow_bits != expected_pow_bits {
         return Err(LightClientError::PowBitsMismatch);
     }
     let target = compact_to_target(header.pow_bits)?;
@@ -3193,6 +3201,24 @@ mod tests {
         assert_eq!(
             verify_pow_header(&parent, &child),
             Err(LightClientError::CumulativeWorkMismatch)
+        );
+    }
+
+    #[test]
+    fn pow_header_accepts_explicit_expected_bits_for_retargeted_child() {
+        let parent = checkpoint(0x207f_ffff);
+        let expected_bits = 0x2070_ffff;
+        let child = mine_child(&parent, expected_bits);
+
+        assert_eq!(
+            verify_pow_header(&parent, &child),
+            Err(LightClientError::PowBitsMismatch)
+        );
+        let hash = verify_pow_header_with_expected_bits(&parent, &child, expected_bits).unwrap();
+        assert_eq!(hash, child.pow_hash());
+        assert_eq!(
+            verify_pow_header_with_expected_bits(&parent, &child, parent.pow_bits),
+            Err(LightClientError::PowBitsMismatch)
         );
     }
 

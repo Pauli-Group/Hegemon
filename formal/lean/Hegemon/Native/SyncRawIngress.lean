@@ -13,12 +13,14 @@ open Hegemon.Native.SyncResponseImport
 inductive SyncRawIngressKind where
   | request
   | response
+  | pendingAction
   | decodeError
 deriving DecidableEq, Repr
 
 inductive SyncRawIngressReject where
   | wireDecodeRejected
   | responseBlockCountTooLarge
+  | pendingActionDecodeRejected
 deriving DecidableEq, Repr
 
 structure SyncRawIngressCase where
@@ -51,6 +53,9 @@ def syncRequestWire (fromHeight toHeight : Nat) : List Byte :=
 def syncEmptyResponseWire (bestHeight : Nat) : List Byte :=
   networkWireMagic ++ [2, byte bestHeight, 0]
 
+def syncPendingActionWire (actionBytes : List Byte) : List Byte :=
+  networkWireMagic ++ [3, byte actionBytes.length] ++ actionBytes
+
 def requestRangeInput (case : SyncRawIngressCase) :
     SyncResponseRangeInput :=
   {
@@ -77,6 +82,9 @@ def syncRawIngressCaseMatches (case : SyncRawIngressCase) : Bool :=
   | some SyncRawIngressReject.responseBlockCountTooLarge, SyncRawIngressKind.response =>
       evaluateSyncResponseImportRejection (responseImportInput case) =
         some SyncResponseImportReject.responseBlockCountTooLarge
+  | some SyncRawIngressReject.pendingActionDecodeRejected,
+      SyncRawIngressKind.pendingAction =>
+      true
   | none, SyncRawIngressKind.request =>
       responseRange (requestRangeInput case) = case.expectedRange
   | none, SyncRawIngressKind.response =>
@@ -125,10 +133,17 @@ def missingMarkerRawRequest : SyncRawIngressCase :=
 
 def unknownVariantRawMessage : SyncRawIngressCase :=
   { validRawRequest with
-    rawBytes := networkWireMagic ++ [3],
+    rawBytes := networkWireMagic ++ [4],
     kind := SyncRawIngressKind.decodeError,
     expectedRange := none,
     expectedReject := some SyncRawIngressReject.wireDecodeRejected }
+
+def emptyPendingActionRelay : SyncRawIngressCase :=
+  { validRawRequest with
+    rawBytes := syncPendingActionWire [],
+    kind := SyncRawIngressKind.pendingAction,
+    expectedRange := none,
+    expectedReject := some SyncRawIngressReject.pendingActionDecodeRejected }
 
 def validEmptyRawResponse : SyncRawIngressCase := {
   rawBytes := syncEmptyResponseWire 11,
@@ -161,6 +176,8 @@ theorem sync_raw_ingress_case_matches_expected
           SyncRawIngressKind.response =>
           evaluateSyncResponseImportRejection (responseImportInput case) =
             some SyncResponseImportReject.responseBlockCountTooLarge
+      | some SyncRawIngressReject.pendingActionDecodeRejected,
+          SyncRawIngressKind.pendingAction => True
       | none, SyncRawIngressKind.request =>
           responseRange (requestRangeInput case) = case.expectedRange
       | none, SyncRawIngressKind.response =>
@@ -199,6 +216,10 @@ theorem raw_sync_missing_marker_rejects :
 
 theorem raw_sync_unknown_variant_rejects :
     syncRawIngressCaseMatches unknownVariantRawMessage = true := by
+  decide
+
+theorem raw_sync_empty_pending_action_relay_rejects :
+    syncRawIngressCaseMatches emptyPendingActionRelay = true := by
   decide
 
 theorem valid_raw_empty_sync_response_accepts :

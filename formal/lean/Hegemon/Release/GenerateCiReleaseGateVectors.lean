@@ -17,6 +17,8 @@ def rejectionJson : Option CiReleaseGateReject -> String
       "\"security_adversarial_missing\""
   | some CiReleaseGateReject.nativeBackendSecurityMissing =>
       "\"native_backend_security_missing\""
+  | some CiReleaseGateReject.appNoSshE2eMissing =>
+      "\"app_no_ssh_e2e_missing\""
   | some CiReleaseGateReject.releaseBuildMissing =>
       "\"release_build_missing\""
   | some CiReleaseGateReject.releaseBuildDependencyMissing =>
@@ -27,6 +29,9 @@ def rejectionJson : Option CiReleaseGateReject -> String
   | some
       CiReleaseGateReject.releaseBuildNativeBackendSecurityDependencyMissing =>
       "\"release_build_native_backend_security_dependency_missing\""
+  | some
+      CiReleaseGateReject.releaseBuildAppNoSshE2eDependencyMissing =>
+      "\"release_build_app_no_ssh_e2e_dependency_missing\""
   | some CiReleaseGateReject.nonReleaseJobContentsWrite =>
       "\"non_release_job_contents_write\""
   | some CiReleaseGateReject.releaseBinaryAuditMissing =>
@@ -35,6 +40,8 @@ def rejectionJson : Option CiReleaseGateReject -> String
       "\"tag_release_native_backend_review_missing\""
   | some CiReleaseGateReject.tagReleaseNativeBackendPostureMissing =>
       "\"tag_release_native_backend_posture_missing\""
+  | some CiReleaseGateReject.appUiGuardMissing =>
+      "\"app_ui_guard_missing\""
   | some CiReleaseGateReject.branchProtectionRulesetMissing =>
       "\"branch_protection_ruleset_missing\""
 
@@ -53,6 +60,8 @@ def ciReleaseGateCaseJson
     ++ boolJson input.securityAdversarialJob ++ ",\n"
     ++ "      \"native_backend_security_job\": "
     ++ boolJson input.nativeBackendSecurityJob ++ ",\n"
+    ++ "      \"app_no_ssh_e2e_job\": "
+    ++ boolJson input.appNoSshE2eJob ++ ",\n"
     ++ "      \"release_build_job\": "
     ++ boolJson input.releaseBuildJob ++ ",\n"
     ++ "      \"release_build_needs_security_gates\": "
@@ -61,6 +70,8 @@ def ciReleaseGateCaseJson
     ++ boolJson input.releaseBuildNeedsSecurityAdversarial ++ ",\n"
     ++ "      \"release_build_needs_native_backend_security\": "
     ++ boolJson input.releaseBuildNeedsNativeBackendSecurity ++ ",\n"
+    ++ "      \"release_build_needs_app_no_ssh_e2e\": "
+    ++ boolJson input.releaseBuildNeedsAppNoSshE2e ++ ",\n"
     ++ "      \"non_release_jobs_no_contents_write\": "
     ++ boolJson input.nonReleaseJobsNoContentsWrite ++ ",\n"
     ++ "      \"release_binary_audit_step\": "
@@ -69,6 +80,8 @@ def ciReleaseGateCaseJson
     ++ boolJson input.tagReleaseNativeBackendReviewStep ++ ",\n"
     ++ "      \"tag_release_native_backend_posture_step\": "
     ++ boolJson input.tagReleaseNativeBackendPostureStep ++ ",\n"
+    ++ "      \"app_ui_guard_step\": "
+    ++ boolJson input.appUiGuardStep ++ ",\n"
     ++ "      \"branch_protection_ruleset_evidence\": "
     ++ boolJson input.branchProtectionRulesetEvidence ++ ",\n"
     ++ "      \"expected_valid\": "
@@ -94,6 +107,8 @@ def vectorJson : String :=
       missingSecurityAdversarialJob ++ ",\n"
     ++ ciReleaseGateCaseJson "native-backend-security-missing-rejects"
       missingNativeBackendSecurityJob ++ ",\n"
+    ++ ciReleaseGateCaseJson "app-no-ssh-e2e-missing-rejects"
+      missingAppNoSshE2eJob ++ ",\n"
     ++ ciReleaseGateCaseJson "release-build-missing-rejects"
       missingReleaseBuildJob ++ ",\n"
     ++ ciReleaseGateCaseJson "release-build-dependency-missing-rejects"
@@ -104,6 +119,9 @@ def vectorJson : String :=
     ++ ciReleaseGateCaseJson
       "release-build-native-backend-security-dependency-missing-rejects"
       missingReleaseBuildNativeBackendSecurityDependency ++ ",\n"
+    ++ ciReleaseGateCaseJson
+      "release-build-app-no-ssh-e2e-dependency-missing-rejects"
+      missingReleaseBuildAppNoSshE2eDependency ++ ",\n"
     ++ ciReleaseGateCaseJson
       "non-release-job-contents-write-rejects"
       nonReleaseJobContentsWrite ++ ",\n"
@@ -116,6 +134,9 @@ def vectorJson : String :=
       "tag-release-native-backend-posture-missing-rejects"
       missingTagReleaseNativeBackendPostureStep ++ ",\n"
     ++ ciReleaseGateCaseJson
+      "app-ui-guard-missing-rejects"
+      missingAppUiGuardStep ++ ",\n"
+    ++ ciReleaseGateCaseJson
       "branch-protection-ruleset-missing-rejects"
       missingBranchProtectionRulesetEvidence ++ ",\n"
     ++ ciReleaseGateCaseJson "dependency-audit-precedes-all-missing"
@@ -125,14 +146,17 @@ def vectorJson : String :=
         formalCoreJob := false,
         securityAdversarialJob := false,
         nativeBackendSecurityJob := false,
+        appNoSshE2eJob := false,
         releaseBuildJob := false,
         releaseBuildNeedsSecurityGates := false,
         releaseBuildNeedsSecurityAdversarial := false,
         releaseBuildNeedsNativeBackendSecurity := false,
+        releaseBuildNeedsAppNoSshE2e := false,
         nonReleaseJobsNoContentsWrite := false,
         releaseBinaryAuditStep := false,
         tagReleaseNativeBackendReviewStep := false,
         tagReleaseNativeBackendPostureStep := false,
+        appUiGuardStep := false,
         branchProtectionRulesetEvidence := false
       } ++ "\n"
     ++ "  ]\n"

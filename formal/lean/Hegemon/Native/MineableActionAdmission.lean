@@ -207,6 +207,19 @@ def selectionActionAccepts
   else
     true
 
+def pendingTransferPresent : List MineableSelectionAction -> Bool
+  | [] => false
+  | action :: rest =>
+      action.transferRoute || pendingTransferPresent rest
+
+def survivesCandidatePruneWhenTransfersPending
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction) : Bool :=
+  if pendingTransferPresent actions && action.candidateArtifactRoute then
+    false
+  else
+    true
+
 structure MineableSelectionFacts
     (actions : List MineableSelectionAction) where
   transferCount : Nat
@@ -292,6 +305,31 @@ theorem selection_accepts_plain_action
     selectionActionAccepts actions action = true := by
   unfold selectionActionAccepts
   simp [notCandidate, notTransfer]
+
+theorem candidate_prune_drops_candidates_when_transfer_pending
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (pendingTransfer : pendingTransferPresent actions = true)
+    (candidate : action.candidateArtifactRoute = true) :
+    survivesCandidatePruneWhenTransfersPending actions action = false := by
+  unfold survivesCandidatePruneWhenTransfersPending
+  simp [pendingTransfer, candidate]
+
+theorem candidate_prune_keeps_non_candidates
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (notCandidate : action.candidateArtifactRoute = false) :
+    survivesCandidatePruneWhenTransfersPending actions action = true := by
+  unfold survivesCandidatePruneWhenTransfersPending
+  simp [notCandidate]
+
+theorem candidate_prune_keeps_candidates_without_transfer
+    (actions : List MineableSelectionAction)
+    (action : MineableSelectionAction)
+    (noPendingTransfer : pendingTransferPresent actions = false) :
+    survivesCandidatePruneWhenTransfersPending actions action = true := by
+  unfold survivesCandidatePruneWhenTransfersPending
+  simp [noPendingTransfer]
 
 def ordered_mineable_selection_facts
     (actions : List MineableSelectionAction) :

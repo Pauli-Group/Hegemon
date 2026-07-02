@@ -34,7 +34,8 @@ const ensureMacDevApp = () => {
   const electronVersion = JSON.parse(readFileSync(electronPackageJson, 'utf-8')).version;
 
   const devDir = join(appRoot, '.electron-vite');
-  const devApp = join(devDir, 'Hegemon.app');
+  const legacyDevApp = join(devDir, 'Hegemon.app');
+  const devApp = join(devDir, 'Electron Dev Runner.app');
   const stampPath = join(devDir, 'hegemon-dev-app-stamp.json');
 
   const iconSource = join(appRoot, 'build', 'icon.icns');
@@ -42,8 +43,8 @@ const ensureMacDevApp = () => {
 
   const desiredStamp = {
     electronVersion,
-    appName: 'Hegemon',
-    bundleId: 'com.hegemon.desktop.dev',
+    appName: 'Electron Dev Runner',
+    bundleId: 'com.hegemon.desktop.dev-runner',
     iconFile: 'icon.icns',
     iconMtimeMs: iconStat?.mtimeMs ?? null,
     iconSize: iconStat?.size ?? null
@@ -51,6 +52,8 @@ const ensureMacDevApp = () => {
 
   const existingStamp = readJsonIfExists(stampPath);
   const needsElectronCopy = !existsSync(devApp) || existingStamp?.electronVersion !== electronVersion;
+
+  rmSync(legacyDevApp, { recursive: true, force: true });
 
   if (needsElectronCopy) {
     rmSync(devApp, { recursive: true, force: true });
@@ -97,6 +100,7 @@ if (process.platform === 'darwin') {
   }
 }
 
-const args = process.argv.slice(2);
-exec(process.execPath, [electronViteCli, 'dev', ...args], { env });
+env.ELECTRON_ENTRY = appRoot;
 
+const args = process.argv.slice(2);
+exec(process.execPath, [electronViteCli, '--entry', appRoot, 'dev', appRoot, ...args], { env, cwd: appRoot });

@@ -9,7 +9,7 @@ use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
 use crate::proof_interface::{ProofVerifier, verify_commitments};
 use crate::reward::{
-    MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy,
+    GENESIS_BITS, MAX_FUTURE_SKEW_MS, MEDIAN_TIME_WINDOW, RETARGET_WINDOW, block_subsidy,
     expected_supply_after_transition, retarget_target,
 };
 use crate::types::{
@@ -24,9 +24,9 @@ use num_bigint::BigUint;
 use num_traits::{One, Zero};
 
 const GENESIS_HASH: [u8; 32] = [0u8; 32];
-// Genesis difficulty for 100 kH/s @ 5 second blocks = 500,000 expected hashes
-// 0x1e218def encodes target = MAX_U256 / 500,000
-pub const DEFAULT_GENESIS_POW_BITS: u32 = 0x1e21_8def;
+// Devnet genesis starts conservatively and the retarget schedule moves toward
+// the one-minute protocol target after live blocks exist.
+pub const DEFAULT_GENESIS_POW_BITS: u32 = GENESIS_BITS;
 
 #[derive(Clone)]
 struct PowNode {
@@ -219,11 +219,14 @@ fn validate_pow_block_versions(
         })
 }
 
-fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
+pub fn pow_retarget_anchor_steps(parent_height: u64, new_height: u64) -> Option<u64> {
     if new_height == 0 {
         return None;
     }
     if RETARGET_WINDOW == 0 || !new_height.is_multiple_of(RETARGET_WINDOW) {
+        return None;
+    }
+    if new_height <= RETARGET_WINDOW {
         return None;
     }
     if parent_height
@@ -254,6 +257,25 @@ fn evaluate_pow_bits_schedule(
         .map_err(|_| PowBitsScheduleRejection::InvalidCompactTarget)?;
     let new_target = retarget_target(&prev_target, actual_timespan);
     Ok(target_to_compact(&new_target))
+}
+
+pub fn expected_pow_bits_from_schedule(
+    genesis_pow_bits: u32,
+    parent_pow_bits: u32,
+    parent_height: u64,
+    new_height: u64,
+    parent_timestamp_ms: u64,
+    anchor_timestamp_ms: Option<u64>,
+) -> Result<u32, ConsensusError> {
+    evaluate_pow_bits_schedule(PowBitsScheduleInput {
+        genesis_pow_bits,
+        parent_pow_bits,
+        parent_height,
+        new_height,
+        parent_timestamp_ms,
+        anchor_timestamp_ms,
+    })
+    .map_err(pow_bits_schedule_rejection_to_error)
 }
 
 fn pow_next_height(parent_height: u64) -> Option<u64> {
@@ -831,6 +853,31 @@ mod tests {
         genesis_state_root: [u8; 48],
         genesis_nullifier_root: [u8; 48],
         genesis_supply: SupplyDigest,
+    }
+
+    #[test]
+    fn pow_retarget_defers_the_genesis_anchored_boundary() {
+        assert_eq!(
+            pow_retarget_anchor_steps(RETARGET_WINDOW - 1, RETARGET_WINDOW),
+            None,
+            "the first retarget boundary must not treat genesis as a mined timing sample"
+        );
+        assert_eq!(
+            pow_retarget_anchor_steps((RETARGET_WINDOW * 2) - 1, RETARGET_WINDOW * 2),
+            Some(RETARGET_WINDOW - 1),
+            "the second boundary has enough non-genesis history to retarget"
+        );
+
+        let first_boundary = evaluate_pow_bits_schedule(PowBitsScheduleInput {
+            genesis_pow_bits: EASY_TEST_POW_BITS,
+            parent_pow_bits: EASY_TEST_POW_BITS,
+            parent_height: RETARGET_WINDOW - 1,
+            new_height: RETARGET_WINDOW,
+            parent_timestamp_ms: crate::reward::RETARGET_TIMESPAN_MS * 8,
+            anchor_timestamp_ms: Some(0),
+        })
+        .expect("first boundary schedule evaluates");
+        assert_eq!(first_boundary, EASY_TEST_POW_BITS);
     }
 
     #[test]

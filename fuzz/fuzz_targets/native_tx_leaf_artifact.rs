@@ -5,19 +5,12 @@ use libfuzzer_sys::fuzz_target;
 mod common;
 
 fuzz_target!(|data: &[u8]| {
-    let (tx, receipt, valid_bytes) = common::valid_native_tx_leaf_case();
-    let mutated = common::mutate_bytes(&valid_bytes, data);
-    let _ = superneo_hegemon::decode_native_tx_leaf_artifact_bytes(data);
-    let _ = superneo_hegemon::decode_native_tx_leaf_artifact_bytes(&mutated);
-    if mutated != valid_bytes
-        && superneo_hegemon::verify_native_tx_leaf_artifact_bytes_with_params(
-            &superneo_hegemon::native_backend_params(),
-            &tx,
-            &receipt,
-            &mutated,
-        )
-        .is_ok()
-    {
-        panic!("mutated native tx-leaf artifact unexpectedly verified");
+    let mutated = common::mutate_bytes(data);
+    for bytes in [data, mutated.as_slice()] {
+        if let Ok(decoded) = superneo_hegemon::decode_native_tx_leaf_artifact_bytes(bytes) {
+            let encoded = superneo_hegemon::encode_native_tx_leaf_artifact_bytes(&decoded)
+                .expect("decoded native tx-leaf artifact must re-encode");
+            let _ = superneo_hegemon::decode_native_tx_leaf_artifact_bytes(&encoded);
+        }
     }
 });

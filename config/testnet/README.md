@@ -125,7 +125,7 @@ The soak test monitors:
 To connect an external node to the testnet:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333" \
+HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333" \
 hegemon-node \
     --dev \
     --base-path=/data/hegemon \

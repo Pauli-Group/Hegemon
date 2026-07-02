@@ -32,6 +32,9 @@
             "context": "native-backend-security"
           },
           {
+            "context": "app-no-ssh-e2e"
+          },
+          {
             "context": "release-build"
           }
         ]

@@ -11,7 +11,8 @@ use disclosure_circuit::{
     PaymentDisclosureProofBundle, PaymentDisclosureWitness,
 };
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeSeq;
+use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
@@ -45,6 +46,88 @@ const MAX_DISCLOSURE_PACKAGE_JSON_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DISCLOSURE_PROOF_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DISCLOSURE_PROOF_BASE64_BYTES: usize = ((MAX_DISCLOSURE_PROOF_BYTES + 2) / 3) * 4;
 const DISCLOSURE_MERKLE_DEPTH: usize = transaction_circuit::note::MERKLE_TREE_DEPTH as usize;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WalletdSmallwoodSignerTag(transaction_circuit::SmallwoodSignerTag);
+
+impl WalletdSmallwoodSignerTag {
+    fn into_inner(self) -> transaction_circuit::SmallwoodSignerTag {
+        self.0
+    }
+}
+
+impl Serialize for WalletdSmallwoodSignerTag {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for limb in self.0 {
+            seq.serialize_element(&format!("0x{limb:016x}"))?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for WalletdSmallwoodSignerTag {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SignerTagVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for SignerTagVisitor {
+            type Value = WalletdSmallwoodSignerTag;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a five-limb Smallwood signer tag")
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut limbs = [0u64; 5];
+                for (idx, limb) in limbs.iter_mut().enumerate() {
+                    let value = seq
+                        .next_element::<serde_json::Value>()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(idx, &self))?;
+                    *limb =
+                        parse_walletd_signer_tag_limb(value).map_err(serde::de::Error::custom)?;
+                }
+                if seq.next_element::<serde_json::Value>()?.is_some() {
+                    return Err(serde::de::Error::invalid_length(6, &self));
+                }
+                Ok(WalletdSmallwoodSignerTag(limbs))
+            }
+        }
+
+        deserializer.deserialize_seq(SignerTagVisitor)
+    }
+}
+
+fn parse_walletd_signer_tag_limb(value: serde_json::Value) -> Result<u64> {
+    match value {
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .ok_or_else(|| anyhow!("signer tag limb must be a u64")),
+        serde_json::Value::String(raw) => {
+            let trimmed = raw.trim();
+            if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                u64::from_str_radix(hex, 16)
+                    .map_err(|err| anyhow!("invalid hex signer tag limb: {err}"))
+            } else {
+                trimmed
+                    .parse::<u64>()
+                    .map_err(|err| anyhow!("invalid decimal signer tag limb: {err}"))
+            }
+        }
+        _ => anyhow::bail!("signer tag limb must be a u64 number or string"),
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WalletdMode {
@@ -319,7 +402,7 @@ struct DisclosureVerifyResponse {
 #[serde(rename_all = "camelCase")]
 struct MultisigAccountCreateParams {
     threshold: u64,
-    policy_signer_tags: Vec<transaction_circuit::SmallwoodSignerTag>,
+    policy_signer_tags: Vec<WalletdSmallwoodSignerTag>,
 }
 
 #[derive(Serialize)]
@@ -409,7 +492,7 @@ struct MultisigNoteListResponse {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct MultisigLocalSignerResponse {
-    signer_tag: transaction_circuit::SmallwoodSignerTag,
+    signer_tag: WalletdSmallwoodSignerTag,
 }
 
 #[derive(Deserialize)]
@@ -1091,7 +1174,14 @@ fn multisig_account_create(
         ));
     }
     let public = store
-        .create_multisig_account(params.threshold, params.policy_signer_tags)
+        .create_multisig_account(
+            params.threshold,
+            params
+                .policy_signer_tags
+                .into_iter()
+                .map(WalletdSmallwoodSignerTag::into_inner)
+                .collect(),
+        )
         .map_err(|err| WalletdError::new(WalletdErrorCode::InvalidParams, err.to_string()))?;
     Ok(render_multisig_account(&public))
 }
@@ -1218,7 +1308,9 @@ fn multisig_local_signer_tag(
     let signer_tag = store
         .local_multisig_signer_tag()
         .map_err(WalletdError::internal)?;
-    Ok(MultisigLocalSignerResponse { signer_tag })
+    Ok(MultisigLocalSignerResponse {
+        signer_tag: WalletdSmallwoodSignerTag(signer_tag),
+    })
 }
 
 fn multisig_final_plan(
@@ -2911,6 +3003,33 @@ mod tests {
             walletd_submission_failure_policy(&bad_proof),
             WalletdSubmissionFailurePolicy::UnlockSpentNotes
         );
+    }
+
+    #[test]
+    fn walletd_multisig_signer_tag_json_uses_lossless_strings() {
+        let tag = WalletdSmallwoodSignerTag([u64::MAX, 1, 2, 3, 4]);
+        let encoded = serde_json::to_value(tag).unwrap();
+        assert_eq!(
+            encoded,
+            json!([
+                "0xffffffffffffffff",
+                "0x0000000000000001",
+                "0x0000000000000002",
+                "0x0000000000000003",
+                "0x0000000000000004"
+            ])
+        );
+
+        let decoded: WalletdSmallwoodSignerTag = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded, tag);
+
+        let legacy_numeric: WalletdSmallwoodSignerTag =
+            serde_json::from_value(json!([11, 12, 13, 14, 15])).unwrap();
+        assert_eq!(legacy_numeric.0, [11, 12, 13, 14, 15]);
+
+        let decimal_strings: WalletdSmallwoodSignerTag =
+            serde_json::from_value(json!(["18446744073709551615", "1", "2", "3", "4"])).unwrap();
+        assert_eq!(decimal_strings, tag);
     }
 
     #[test]

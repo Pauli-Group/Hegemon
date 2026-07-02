@@ -51,11 +51,15 @@ pub const RETARGET_TIMESPAN_MS: u64 = RETARGET_WINDOW * TARGET_BLOCK_INTERVAL_MS
 /// Maximum adjustment factor per retarget (4x up or down).
 pub const MAX_ADJUSTMENT_FACTOR: u64 = 4;
 
-/// Genesis difficulty: ~100 kH/s * 60 seconds = 6,000,000 expected hashes per block.
-pub const GENESIS_DIFFICULTY: u128 = 6_000_000;
+/// Bootstrap CPU-devnet launch difficulty: 1,000,000 expected hashes per block.
+///
+/// The protocol target remains 60 seconds via retargeting. The launch target is
+/// deliberately conservative so a fresh two-node devnet proves liveness before
+/// the retarget schedule tightens difficulty.
+pub const GENESIS_DIFFICULTY: u128 = 1_000_000;
 
-/// Genesis compact bits: 0x1e218def encodes target = MAX_U256 / 500,000.
-pub const GENESIS_BITS: u32 = 0x1e21_8def;
+/// Genesis compact bits: 0x1e10c6f7 encodes target ~= MAX_U256 / 1,000,000.
+pub const GENESIS_BITS: u32 = 0x1e10_c6f7;
 
 /// Minimum difficulty to prevent divide-by-zero.
 pub const MIN_DIFFICULTY: u128 = 1;

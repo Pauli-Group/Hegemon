@@ -23,7 +23,7 @@ use consensus_light_client::{
     compare_work, cumulative_work_after, decode_risc0_bridge_journal, empty_header_mmr_root,
     flyclient_sample_indices, hash_meets_target, header_mmr_append_peaks,
     header_mmr_opening_from_hashes, header_mmr_peaks_from_hashes, header_mmr_root_from_hashes,
-    header_mmr_root_from_peaks, pow_hash_from_pre_hash, verify_pow_header,
+    header_mmr_root_from_peaks, pow_hash_from_pre_hash, verify_pow_header_with_expected_bits,
     BridgeCheckpointOutputV1, BridgeMessageV1, Hash32, HeaderMmrLeafWitnessV1,
     HegemonLightClientProofReceiptV1, HegemonLongRangeProofV1, PowHeaderV1,
     RiscZeroBridgeReceiptV1, TrustedCheckpointV1, HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1,
@@ -36,7 +36,8 @@ use crypto::ml_dsa::{
 };
 use crypto::traits::{Signature, SigningKey, VerifyKey};
 use network::{
-    service::{DirectedProtocolMessage, ProtocolSender},
+    p2p::WireMessage,
+    service::{ConnectedPeerSnapshot, DirectedProtocolMessage, ProtocolSender},
     wire, GossipRouter, NatTraversalConfig, P2PService, PeerId, PeerIdentity, PeerStore,
     PeerStoreConfig, ProtocolHandle, ProtocolId, ProtocolMessage, RelayConfig,
 };
@@ -75,8 +76,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -89,8 +90,10 @@ use wallet::{NoteCiphertext, NotePlaintext, ShieldedAddress};
 
 const META_BEST_KEY: &[u8] = b"best";
 const META_GENESIS_KEY: &[u8] = b"genesis";
-const NATIVE_DEV_POW_BITS: u32 = 0x1f00_ffff;
+const NATIVE_DEV_POW_BITS: u32 = consensus::reward::GENESIS_BITS;
+const NATIVE_GENESIS_TIMESTAMP_MS: u64 = 1_782_840_600_000;
 const HASHES_PER_ROUND: u64 = 16_384;
+const MINING_ROUNDS_PER_WORK: u64 = 16;
 const DEFAULT_DA_CHUNK_SIZE: u32 = 1024;
 const DEFAULT_DA_SAMPLE_COUNT: u32 = 4;
 const DEFAULT_BRIDGE_FLYCLIENT_SAMPLE_COUNT: u32 = HEGEMON_BRIDGE_LONG_RANGE_MIN_SAMPLE_COUNT_V1;
@@ -110,7 +113,7 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 2048;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
@@ -120,6 +123,8 @@ const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(1
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
+const APPROVED_PUBLIC_JOIN_SEEDS: &str = "hegemon.pauli.group:30333";
+const AES_GCM_TAG_BYTES: usize = 16;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
 const MINER_IDENTITY_SEED_FILE: &str = "miner-identity.seed";
@@ -146,6 +151,7 @@ const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
 const MAX_NATIVE_BLOCK_META_BYTES: usize =
     MAX_NATIVE_BLOCK_ACTION_BYTES + (MAX_NATIVE_BLOCK_ACTIONS * 32) + 1024 * 1024;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
+const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
@@ -251,7 +257,8 @@ impl NativeConfig {
         let bootstrap_mining_authoring = env_bool("HEGEMON_BOOTSTRAP_AUTHORING");
         if mine && !cli.dev && seeds.is_empty() && !bootstrap_mining_authoring {
             return Err(anyhow!(
-                "refusing live mining with empty HEGEMON_SEEDS; set HEGEMON_SEEDS=\"hegemon.pauli.group:30333\" or explicitly set HEGEMON_BOOTSTRAP_AUTHORING=1 for a deliberate first-author bootstrap"
+                "refusing live mining with empty HEGEMON_SEEDS; set HEGEMON_SEEDS=\"{}\" or explicitly set HEGEMON_BOOTSTRAP_AUTHORING=1 for a deliberate first-author bootstrap",
+                APPROVED_PUBLIC_JOIN_SEEDS
             ));
         }
         let miner_address = std::env::var("HEGEMON_MINER_ADDRESS")
@@ -411,12 +418,19 @@ struct NativeWork {
     tx_count: u32,
     timestamp_ms: u64,
     pow_bits: u32,
+    prepared_actions: Option<Arc<Vec<PendingAction>>>,
 }
 
 #[derive(Clone, Debug)]
 struct NativeSeal {
     nonce: [u8; 32],
     work_hash: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+struct NativeMiningRoundResult {
+    seal: Option<NativeSeal>,
+    hashes: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -429,6 +443,9 @@ enum NativeSyncMessage {
     Response {
         best_height: u64,
         blocks: Vec<NativeBlockMeta>,
+    },
+    PendingAction {
+        action: Vec<u8>,
     },
 }
 
@@ -2961,9 +2978,13 @@ pub struct NativeNode {
     blocks_found: AtomicU64,
     last_announce_height: AtomicU64,
     sync_target_height: AtomicU64,
+    sync_target_observed: AtomicBool,
     mining_sync_gate_open: AtomicBool,
+    network_peer_count: Arc<AtomicUsize>,
+    network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
+    network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
-    mining_task: Mutex<Option<JoinHandle<()>>>,
+    mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
     miner_identity: NativeMinerIdentity,
     prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
@@ -3010,6 +3031,7 @@ impl NativeNode {
             config.pow_bits,
         )?;
         let pending_actions = load_pending_actions(&action_tree)?;
+        let prune_persisted_coinbase_actions = config.miner_address.is_some();
         let nullifiers = load_nullifiers(&nullifier_tree)?;
         let commitment_state = load_commitment_tree(&commitment_tree)?;
         validate_loaded_canonical_state(&best, &commitment_state, &nullifiers)?;
@@ -3029,6 +3051,7 @@ impl NativeNode {
             consumed_bridge_messages,
             staged_ciphertexts,
             staged_proofs,
+            prune_persisted_coinbase_actions,
         )?;
         let miner_identity = load_native_miner_identity(&config)?;
         info!(
@@ -3061,9 +3084,13 @@ impl NativeNode {
             blocks_found: AtomicU64::new(0),
             last_announce_height: AtomicU64::new(0),
             sync_target_height: AtomicU64::new(0),
+            sync_target_observed: AtomicBool::new(initial_mining_sync_gate_open),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
+            network_peer_count: Arc::new(AtomicUsize::new(0)),
+            network_local_peer_id: Arc::new(StdRwLock::new(None)),
+            network_peer_snapshot: Arc::new(StdRwLock::new(Vec::new())),
             sync_request_rate_limits: Mutex::new(BTreeMap::new()),
-            mining_task: Mutex::new(None),
+            mining_tasks: Mutex::new(Vec::new()),
             sync_tx: Mutex::new(None),
             miner_identity,
             prepared_mining_actions: Mutex::new(BTreeMap::new()),
@@ -3077,7 +3104,33 @@ impl NativeNode {
         *self.sync_tx.lock() = Some(sync_tx);
     }
 
+    fn network_peer_count(&self) -> u32 {
+        let count = self.network_peer_count.load(Ordering::Relaxed);
+        count.min(u32::MAX as usize) as u32
+    }
+
+    fn set_network_local_peer_id(&self, peer_id: PeerId) {
+        if let Ok(mut current) = self.network_local_peer_id.write() {
+            *current = Some(peer_id);
+        }
+    }
+
+    fn network_local_peer_id(&self) -> Option<PeerId> {
+        self.network_local_peer_id
+            .read()
+            .ok()
+            .and_then(|current| *current)
+    }
+
+    fn network_peer_snapshot(&self) -> Vec<ConnectedPeerSnapshot> {
+        self.network_peer_snapshot
+            .read()
+            .map(|snapshot| snapshot.clone())
+            .unwrap_or_default()
+    }
+
     fn observe_verified_sync_peer_height(&self, peer_best_height: u64) {
+        self.sync_target_observed.store(true, Ordering::SeqCst);
         self.sync_target_height
             .fetch_max(peer_best_height, Ordering::Relaxed);
         self.refresh_mining_sync_gate();
@@ -3177,10 +3230,10 @@ impl NativeNode {
                 .store(self.config.permits_empty_seed_authoring(), Ordering::SeqCst);
             return;
         }
-        let target = self.sync_target_height.load(Ordering::Relaxed);
-        if target == 0 {
+        if !self.sync_target_observed.load(Ordering::SeqCst) {
             return;
         }
+        let target = self.sync_target_height.load(Ordering::Relaxed);
         self.mining_sync_gate_open
             .store(self.best_meta().height >= target, Ordering::SeqCst);
     }
@@ -3196,21 +3249,31 @@ impl NativeNode {
 
     fn sync_status_fields(&self) -> (bool, u64) {
         let target = self.sync_target_height.load(Ordering::Relaxed);
+        let observed = self.sync_target_observed.load(Ordering::SeqCst);
         let syncing = !self.config.seeds.is_empty()
-            && (!self.mining_sync_gate_open.load(Ordering::SeqCst)
+            && (!observed
+                || !self.mining_sync_gate_open.load(Ordering::SeqCst)
                 || (target > 0 && self.best_meta().height < target));
         (syncing, target)
     }
 
     fn start_mining(self: &Arc<Self>, threads: u32) {
         let threads = threads.max(1);
-        self.mining_threads.store(threads, Ordering::Relaxed);
         self.mining.store(true, Ordering::SeqCst);
 
-        let mut task = self.mining_task.lock();
-        if task.is_none() || task.as_ref().is_some_and(JoinHandle::is_finished) {
+        let mut tasks = self.mining_tasks.lock();
+        tasks.retain(|task| !task.is_finished());
+        if tasks.len() == threads as usize {
+            self.mining_threads.store(threads, Ordering::Relaxed);
+            return;
+        }
+        for task in tasks.drain(..) {
+            task.abort();
+        }
+        self.mining_threads.store(threads, Ordering::Relaxed);
+        for _ in 0..threads {
             let node = Arc::clone(self);
-            *task = Some(tokio::spawn(async move {
+            tasks.push(tokio::spawn(async move {
                 mining_loop(node).await;
             }));
         }
@@ -3219,8 +3282,9 @@ impl NativeNode {
     fn stop_mining(&self) {
         self.mining.store(false, Ordering::SeqCst);
         self.mining_threads.store(0, Ordering::Relaxed);
-        if let Some(handle) = self.mining_task.lock().take() {
-            handle.abort();
+        let mut tasks = self.mining_tasks.lock();
+        for task in tasks.drain(..) {
+            task.abort();
         }
     }
 
@@ -3510,6 +3574,11 @@ impl NativeNode {
         if work.tx_count == 0 {
             return Vec::new();
         }
+        if let Some(actions) = work.prepared_actions.as_ref() {
+            if prepared_mining_actions_match_state(state, actions) {
+                return actions.as_ref().clone();
+            }
+        }
         if let Some(actions) = self.prepared_mining_actions_for_work(work) {
             if prepared_mining_actions_match_state(state, &actions) {
                 return actions;
@@ -3525,7 +3594,13 @@ impl NativeNode {
         if self.config.miner_address.is_some() {
             pending_actions.retain(|action| !is_coinbase_action(action));
         }
-        let cumulative_work = cumulative_work_after(&best.cumulative_work, self.config.pow_bits)
+        if native_work_template_next_height(best.height).is_none() {
+            return Err(native_work_template_admission_error(
+                NativeWorkTemplateAdmissionRejection::HeightNotNext,
+            ));
+        }
+        let pow_bits = self.expected_child_pow_bits(&best)?;
+        let cumulative_work = cumulative_work_after(&best.cumulative_work, pow_bits)
             .map_err(|_| NativeWorkTemplateAdmissionRejection::CumulativeWorkOverflow);
         let height = evaluate_native_work_template_admission(NativeWorkTemplateAdmissionInput {
             best_height: best.height,
@@ -3631,7 +3706,7 @@ impl NativeNode {
             height,
             timestamp_ms,
             best.hash,
-            self.config.pow_bits,
+            pow_bits,
             [0u8; 32],
             cumulative_work,
             &state_root,
@@ -3665,7 +3740,8 @@ impl NativeNode {
             supply_digest,
             tx_count,
             timestamp_ms,
-            pow_bits: self.config.pow_bits,
+            pow_bits,
+            prepared_actions: Some(Arc::new(actions)),
         })
     }
 
@@ -3681,6 +3757,15 @@ impl NativeNode {
         ))
         .is_err()
         {
+            return Ok(None);
+        }
+        let expected_pow_bits = self.expected_child_pow_bits(&state.best)?;
+        if work.pow_bits != expected_pow_bits {
+            debug!(
+                expected_pow_bits,
+                observed_pow_bits = work.pow_bits,
+                "native mined work no longer matches scheduled PoW bits"
+            );
             return Ok(None);
         }
 
@@ -3778,7 +3863,7 @@ impl NativeNode {
             miner_signature: Vec::new(),
         };
         sign_native_block_meta(&mut meta, &self.miner_identity);
-        verify_native_pow_meta(&state.best, &meta)?;
+        verify_native_pow_meta(&state.best, &meta, expected_pow_bits)?;
 
         validate_block_actions_locked(&state, &actions)?;
         verify_native_block_artifacts_locked(self, &state, &actions, &meta)?;
@@ -3801,6 +3886,10 @@ impl NativeNode {
         self.forget_prepared_mining_actions(work);
         next_state.header_mmr_peaks = append_header_mmr_peak_state(&state, &meta)?;
         next_state.best = meta.clone();
+        self.prune_invalid_pending_actions_after_state_advance(
+            &mut next_state,
+            "native mined block pending action repair",
+        )?;
         publish_mined_state(&mut state, next_state);
         self.blocks_found.fetch_add(1, Ordering::Relaxed);
         self.broadcast_block_announce(&meta);
@@ -3821,7 +3910,8 @@ impl NativeNode {
             return Ok(false);
         };
         self.validate_stored_block_meta_parent_chain(&parent)?;
-        validate_announced_block(&parent, &meta)?;
+        let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
+        validate_announced_block(&parent, &meta, expected_pow_bits)?;
         let (expected_header_mmr_root, expected_header_mmr_len) = if parent.hash == state.best.hash
         {
             (
@@ -3925,7 +4015,7 @@ impl NativeNode {
 
     fn validate_stored_block_meta_parent_chain(&self, meta: &NativeBlockMeta) -> Result<()> {
         if meta.height == 0 {
-            return verify_native_block_meta_projection(None, meta).with_context(|| {
+            return verify_native_block_meta_projection(None, meta, None).with_context(|| {
                 format!(
                     "validate stored native parent metadata at genesis ({})",
                     hex32(&meta.hash)
@@ -3935,13 +4025,15 @@ impl NativeNode {
         let parent = self
             .header_by_hash(&meta.parent_hash)?
             .ok_or_else(|| anyhow!("missing stored native parent for {}", hex32(&meta.hash)))?;
-        verify_native_block_meta_projection(Some(&parent), meta).with_context(|| {
-            format!(
-                "validate stored native parent metadata at height {} ({})",
-                meta.height,
-                hex32(&meta.hash)
-            )
-        })
+        let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
+        verify_native_block_meta_projection(Some(&parent), meta, Some(expected_pow_bits))
+            .with_context(|| {
+                format!(
+                    "validate stored native parent metadata at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            })
     }
 
     fn flush_native_durability_barrier(
@@ -3978,6 +4070,53 @@ impl NativeNode {
         };
         if let Err(err) = sync_tx.try_send(message) {
             debug!(error = %err, "failed to queue native block announce");
+        }
+    }
+
+    fn broadcast_pending_action(&self, action: &PendingAction) {
+        if !pending_action_peer_relayable(action) {
+            return;
+        }
+        let action_bytes = action.encode();
+        if action_bytes.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+            warn!(
+                tx_hash = %hex32(&action.tx_hash),
+                action_bytes = action_bytes.len(),
+                max_bytes = MAX_NATIVE_SYNC_PENDING_ACTION_BYTES,
+                "refusing to relay oversized native pending action"
+            );
+            return;
+        }
+        let Some(sync_tx) = self.sync_tx.lock().clone() else {
+            return;
+        };
+        let relay = NativeSyncMessage::PendingAction {
+            action: action_bytes,
+        };
+        let payload = match encode_sync_message(&relay) {
+            Ok(payload) => payload,
+            Err(err) => {
+                warn!(
+                    tx_hash = %hex32(&action.tx_hash),
+                    error = %err,
+                    "failed to encode native pending action relay"
+                );
+                return;
+            }
+        };
+        let message = DirectedProtocolMessage {
+            target: None,
+            message: ProtocolMessage {
+                protocol: NATIVE_SYNC_PROTOCOL_ID,
+                payload,
+            },
+        };
+        if let Err(err) = sync_tx.try_send(message) {
+            debug!(
+                tx_hash = %hex32(&action.tx_hash),
+                error = %err,
+                "failed to queue native pending action relay"
+            );
         }
     }
 
@@ -4065,18 +4204,20 @@ impl NativeNode {
     fn load_canonical_sync_block_at_height(&self, height: u64) -> Result<NativeBlockMeta> {
         let meta = self.load_canonical_block_at_height_unverified(height)?;
         if meta.height == 0 {
-            verify_native_block_meta_projection(None, &meta)
+            verify_native_block_meta_projection(None, &meta, None)
                 .context("validate genesis native sync block metadata")?;
         } else {
             let parent =
                 self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
-            verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
-                format!(
-                    "validate canonical native sync block metadata at height {} ({})",
-                    meta.height,
-                    hex32(&meta.hash)
-                )
-            })?;
+            let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
+            verify_native_block_meta_projection(Some(&parent), &meta, Some(expected_pow_bits))
+                .with_context(|| {
+                    format!(
+                        "validate canonical native sync block metadata at height {} ({})",
+                        meta.height,
+                        hex32(&meta.hash)
+                    )
+                })?;
             verify_canonical_sync_block_body(&meta).with_context(|| {
                 format!(
                     "validate canonical native sync block body at height {} ({})",
@@ -4138,6 +4279,33 @@ impl NativeNode {
             .collect())
     }
 
+    fn expected_child_pow_bits(&self, parent: &NativeBlockMeta) -> Result<u32> {
+        let chain = self.chain_to_hash(parent.hash)?;
+        let Some(chain_parent) = chain.last() else {
+            return Err(anyhow!(
+                "native PoW schedule cannot evaluate an empty parent chain"
+            ));
+        };
+        if chain_parent.height != parent.height
+            || chain_parent.hash != parent.hash
+            || chain_parent.pow_bits != parent.pow_bits
+            || chain_parent.timestamp_ms != parent.timestamp_ms
+        {
+            return Err(anyhow!(
+                "native PoW schedule parent chain ended at height {} hash {} bits {} timestamp {}, expected height {} hash {} bits {} timestamp {}",
+                chain_parent.height,
+                hex32(&chain_parent.hash),
+                chain_parent.pow_bits,
+                chain_parent.timestamp_ms,
+                parent.height,
+                hex32(&parent.hash),
+                parent.pow_bits,
+                parent.timestamp_ms
+            ));
+        }
+        native_expected_child_pow_bits_from_chain(&chain, self.config.pow_bits)
+    }
+
     fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
         let chain = self.chain_to_hash(hash)?;
         self.replay_chain_state(&chain)
@@ -4159,14 +4327,21 @@ impl NativeNode {
             staged_ciphertexts: BTreeMap::new(),
             staged_proofs: BTreeMap::new(),
         };
-        for meta in chain.iter().skip(1).cloned() {
-            verify_native_block_meta_projection(Some(&state.best), &meta).with_context(|| {
-                format!(
-                    "replay stored native block metadata at height {} ({})",
-                    meta.height,
-                    hex32(&meta.hash)
-                )
-            })?;
+        for (index, meta) in chain.iter().enumerate().skip(1) {
+            let meta = meta.clone();
+            let expected_pow_bits = native_expected_child_pow_bits_for_chain_index(
+                chain,
+                index - 1,
+                self.config.pow_bits,
+            )?;
+            verify_native_block_meta_projection(Some(&state.best), &meta, Some(expected_pow_bits))
+                .with_context(|| {
+                    format!(
+                        "replay stored native block metadata at height {} ({})",
+                        meta.height,
+                        hex32(&meta.hash)
+                    )
+                })?;
             let actions = decode_block_actions(&meta)?;
             verify_decoded_action_root(&actions, &meta, "native replay action root")?;
             validate_block_actions_locked(&state, &actions)?;
@@ -4321,7 +4496,65 @@ impl NativeNode {
 
         next_state.header_mmr_peaks = append_header_mmr_peak_state(state, meta)?;
         next_state.best = meta.clone();
+        self.prune_invalid_pending_actions_after_state_advance(
+            &mut next_state,
+            "native announced block pending action repair",
+        )?;
         publish_mined_state(state, next_state);
+        Ok(())
+    }
+
+    fn prune_invalid_pending_actions_after_state_advance(
+        &self,
+        state: &mut NativeState,
+        context: &'static str,
+    ) -> Result<()> {
+        if state.pending_actions.is_empty() {
+            return Ok(());
+        }
+
+        let original_pending = std::mem::take(&mut state.pending_actions);
+        let original_hashes = original_pending.keys().copied().collect::<BTreeSet<_>>();
+        let retained = revalidate_pending_actions_after_state_advance(state, original_pending);
+        let retained_hashes = retained.keys().copied().collect::<BTreeSet<_>>();
+        let mut dropped = original_hashes
+            .difference(&retained_hashes)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        state.pending_actions = retained;
+        if self.config.miner_address.is_some() {
+            let pending_before_coinbase_prune =
+                state.pending_actions.keys().copied().collect::<Vec<_>>();
+            prune_auto_coinbase_actions_from_pending(state, context);
+            for hash in pending_before_coinbase_prune {
+                if !state.pending_actions.contains_key(&hash) {
+                    dropped.insert(hash);
+                }
+            }
+        }
+
+        if dropped.is_empty() {
+            return Ok(());
+        }
+
+        let dropped = dropped.into_iter().collect::<Vec<_>>();
+        for hash in &dropped {
+            self.action_tree.remove(hash.as_slice()).with_context(|| {
+                format!(
+                    "remove invalid pending action after state advance {}",
+                    hex32(hash)
+                )
+            })?;
+        }
+        self.flush_native_durability_barrier(
+            context,
+            NativeStorageDurabilityOperation::StartupPendingActionRepair,
+        )?;
+        info!(
+            context,
+            dropped_count = dropped.len(),
+            "pruned native pending actions after canonical state advance"
+        );
         Ok(())
     }
 
@@ -4846,12 +5079,14 @@ impl NativeNode {
     fn mining_status(&self) -> Value {
         let best = self.best_meta();
         let (syncing, sync_target_height) = self.sync_status_fields();
+        let next_pow_bits = self.expected_child_pow_bits(&best).ok();
         json!({
             "is_mining": self.mining.load(Ordering::SeqCst),
             "threads": self.mining_threads.load(Ordering::Relaxed),
             "hash_rate": self.hash_rate(),
             "blocks_found": self.blocks_found.load(Ordering::Relaxed),
-            "difficulty": self.config.pow_bits,
+            "difficulty": best.pow_bits,
+            "next_difficulty": next_pow_bits,
             "block_height": best.height,
             "syncing": syncing,
             "sync_target_height": sync_target_height,
@@ -4871,7 +5106,7 @@ impl NativeNode {
             "supply_digest": best.supply_digest,
             "syncing": syncing,
             "sync_target_height": sync_target_height,
-            "peers": 0,
+            "peers": self.network_peer_count(),
         })
     }
 
@@ -5066,21 +5301,24 @@ impl NativeNode {
     }
 
     fn submit_action(&self, request: Value) -> Value {
-        match self.validate_and_stage_action(request) {
-            Ok(action) => {
-                let tx_hash = hex32(&action.tx_hash);
-                json!({
-                    "success": true,
-                    "tx_hash": tx_hash,
-                    "error": null,
-                })
-            }
-            Err(err) => json!({
+        let action = match self.validate_and_stage_action(request) {
+            Ok(action) => action,
+            Err(err) => {
+                return json!({
                 "success": false,
                 "tx_hash": null,
                 "error": err.to_string(),
-            }),
-        }
+                });
+            }
+        };
+
+        let tx_hash = hex32(&action.tx_hash);
+        self.broadcast_pending_action(&action);
+        json!({
+            "success": true,
+            "tx_hash": tx_hash,
+            "error": null,
+        })
     }
 
     fn validate_and_stage_action(&self, request: Value) -> Result<PendingAction> {
@@ -5278,6 +5516,16 @@ impl NativeNode {
                 return Err(anyhow!("duplicate semantic pending action"));
             }
             validate_pending_action_against_mempool_state(&state, &pending)?;
+            if is_candidate_artifact_action(&pending)
+                && state
+                    .pending_actions
+                    .values()
+                    .any(is_shielded_transfer_action)
+            {
+                return Err(anyhow!(
+                    "candidate artifact submissions are disabled while shielded transfers are pending; native block templates build same-block candidates locally"
+                ));
+            }
             if let Some((binding_hash, proof)) = &consumed_staged_proof {
                 let proof_key = hex64(binding_hash);
                 match state.staged_proofs.get(&proof_key) {
@@ -5295,9 +5543,17 @@ impl NativeNode {
                 }
             }
             let pending_encoded = pending.encode();
+            let dropped_candidates = if is_shielded_transfer_action(&pending) {
+                pending_candidate_artifact_hashes(&state)
+            } else {
+                Vec::new()
+            };
             let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
                 (&self.action_tree, &self.da_proof_tree).transaction(
                     |(action_tree, da_proof_tree)| {
+                        for hash in &dropped_candidates {
+                            action_tree.remove(hash.as_slice())?;
+                        }
                         action_tree.insert(pending.tx_hash.as_slice(), pending_encoded.clone())?;
                         if let Some((binding_hash, _)) = &consumed_staged_proof {
                             da_proof_tree.remove(binding_hash.to_vec())?;
@@ -5314,12 +5570,87 @@ impl NativeNode {
             if let Some((binding_hash, _)) = &consumed_staged_proof {
                 state.staged_proofs.remove(&hex64(binding_hash));
             }
+            for hash in &dropped_candidates {
+                debug!(
+                    tx_hash = %hex32(hash),
+                    "dropping pending candidate artifact before staging shielded transfer"
+                );
+                state.pending_actions.remove(hash);
+            }
             state
                 .pending_actions
                 .insert(pending.tx_hash, pending.clone());
         }
 
         Ok(pending)
+    }
+
+    fn stage_relayed_pending_action(
+        &self,
+        pending: PendingAction,
+    ) -> Result<Option<PendingAction>> {
+        if !pending_action_peer_relayable(&pending) {
+            return Err(anyhow!("native pending action route is not peer-relayable"));
+        }
+        if pending.tx_hash != pending_action_hash(&pending) {
+            return Err(anyhow!("native pending action hash binding mismatch"));
+        }
+        if pending_action_mempool_bytes(&pending) > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+            return Err(anyhow!(
+                "native pending action exceeds peer relay limit of {MAX_NATIVE_SYNC_PENDING_ACTION_BYTES} bytes"
+            ));
+        }
+        let pending_encoded = pending.encode();
+        let staged = {
+            let mut state = self.state.write();
+            if state.pending_actions.len() >= MAX_NATIVE_MEMPOOL_ACTIONS {
+                return Err(anyhow!("native mempool full"));
+            }
+            validate_mempool_byte_budget(
+                &state.pending_actions,
+                &pending,
+                MAX_NATIVE_MEMPOOL_ACTION_BYTES,
+            )?;
+            if state.pending_actions.contains_key(&pending.tx_hash) {
+                return Ok(None);
+            }
+            if pending_action_semantic_duplicate_exists(&state.pending_actions, &pending) {
+                return Ok(None);
+            }
+            validate_pending_action_against_mempool_state(&state, &pending)?;
+            let dropped_candidates = if is_shielded_transfer_action(&pending) {
+                pending_candidate_artifact_hashes(&state)
+            } else {
+                Vec::new()
+            };
+            let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+                self.action_tree.transaction(|action_tree| {
+                    for hash in &dropped_candidates {
+                        action_tree.remove(hash.as_slice())?;
+                    }
+                    action_tree.insert(pending.tx_hash.as_slice(), pending_encoded.clone())?;
+                    Ok(())
+                });
+            stage_result.map_err(|err| {
+                anyhow!("atomic native relayed pending action stage failed: {err}")
+            })?;
+            self.flush_native_durability_barrier(
+                "native relayed pending action stage",
+                NativeStorageDurabilityOperation::PendingActionStage,
+            )?;
+            for hash in &dropped_candidates {
+                debug!(
+                    tx_hash = %hex32(hash),
+                    "dropping pending candidate artifact before staging relayed shielded transfer"
+                );
+                state.pending_actions.remove(hash);
+            }
+            state
+                .pending_actions
+                .insert(pending.tx_hash, pending.clone());
+            pending
+        };
+        Ok(Some(staged))
     }
 
     fn validate_action_state(&self, action: &PendingAction) -> Result<()> {
@@ -5544,8 +5875,10 @@ fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> 
         config.base_path.join("pq-peers.bin"),
     ));
     let identity_seed = load_native_identity_seed(config)?;
+    let identity = PeerIdentity::generate(&identity_seed);
+    node.set_network_local_peer_id(identity.peer_id());
     let mut service = P2PService::new(
-        PeerIdentity::generate(&identity_seed),
+        identity,
         listen_addr,
         config.seeds.clone(),
         Vec::new(),
@@ -5556,6 +5889,8 @@ fn start_native_p2p(node: Arc<NativeNode>, config: &NativeConfig) -> Result<()> 
         NatTraversalConfig::disabled(listen_addr),
     );
     let sync_handle = service.register_protocol(NATIVE_SYNC_PROTOCOL_ID);
+    service.set_peer_count_observer(Arc::clone(&node.network_peer_count));
+    service.set_peer_snapshot_observer(Arc::clone(&node.network_peer_snapshot));
     node.set_sync_sender(sync_handle.sender());
 
     tokio::spawn(async move {
@@ -5619,6 +5954,12 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             NativeSyncMessage::Announce(meta) => {
                 let meta = *meta;
                 let announced_height = meta.height;
+                info!(
+                    peer = %hex32(&peer_id),
+                    height = announced_height,
+                    hash = %hex32(&meta.hash),
+                    "received native sync announce"
+                );
                 match node.import_announced_block(meta.clone()) {
                     Ok(true) => {
                         node.observe_verified_sync_peer_height(announced_height);
@@ -5668,6 +6009,12 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 from_height,
                 to_height,
             } => {
+                info!(
+                    peer = %hex32(&peer_id),
+                    from_height,
+                    to_height,
+                    "received native sync request"
+                );
                 if to_height < from_height {
                     continue;
                 }
@@ -5715,6 +6062,12 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 best_height,
                 mut blocks,
             } => {
+                info!(
+                    peer = %hex32(&peer_id),
+                    best_height,
+                    block_count = blocks.len(),
+                    "received native sync response"
+                );
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
                     &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
@@ -5776,6 +6129,58 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 } else {
                     node.refresh_mining_sync_gate();
                 }
+            }
+            NativeSyncMessage::PendingAction { action } => {
+                if action.len() > MAX_NATIVE_SYNC_PENDING_ACTION_BYTES {
+                    warn!(
+                        peer = %hex32(&peer_id),
+                        action_bytes = action.len(),
+                        max_bytes = MAX_NATIVE_SYNC_PENDING_ACTION_BYTES,
+                        "rejecting oversized native pending action relay"
+                    );
+                    continue;
+                }
+                let pending = match decode_scale_exact::<PendingAction>(
+                    &action,
+                    "native pending action relay",
+                ) {
+                    Ok(pending) => pending,
+                    Err(err) => {
+                        warn!(
+                            peer = %hex32(&peer_id),
+                            error = %err,
+                            "rejecting malformed native pending action relay"
+                        );
+                        continue;
+                    }
+                };
+                let tx_hash = pending.tx_hash;
+                let staged = match stage_relayed_pending_action(node.as_ref(), pending) {
+                    Ok(Some(staged)) => staged,
+                    Ok(None) => {
+                        debug!(
+                            peer = %hex32(&peer_id),
+                            tx_hash = %hex32(&tx_hash),
+                            "ignored duplicate native pending action relay"
+                        );
+                        continue;
+                    }
+                    Err(err) => {
+                        warn!(
+                            peer = %hex32(&peer_id),
+                            tx_hash = %hex32(&tx_hash),
+                            error = %err,
+                            "rejecting invalid native pending action relay"
+                        );
+                        continue;
+                    }
+                };
+                info!(
+                    peer = %hex32(&peer_id),
+                    tx_hash = %hex32(&tx_hash),
+                    "staged native pending action from peer relay"
+                );
+                node.broadcast_pending_action(&staged);
             }
         }
     }
@@ -5843,6 +6248,12 @@ fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) 
             error = %err,
             "failed to queue native best sync announce"
         );
+    } else {
+        info!(
+            height = meta.height,
+            hash = %hex32(&meta.hash),
+            "queued native best sync announce"
+        );
     }
 }
 
@@ -5885,6 +6296,7 @@ async fn request_missing_blocks(
 }
 
 async fn send_sync_message(handle: &ProtocolHandle, peer_id: PeerId, message: NativeSyncMessage) {
+    let label = native_sync_message_label(&message);
     let payload = match encode_sync_message(&message) {
         Ok(payload) => payload,
         Err(err) => {
@@ -5894,6 +6306,12 @@ async fn send_sync_message(handle: &ProtocolHandle, peer_id: PeerId, message: Na
     };
     if let Err(err) = handle.send_to(peer_id, payload).await {
         warn!(error = %err, "failed to send native sync message");
+    } else {
+        info!(
+            peer = %hex32(&peer_id),
+            message = label,
+            "queued native sync message"
+        );
     }
 }
 
@@ -5920,6 +6338,21 @@ async fn send_sync_response(
     };
     if let Err(err) = handle.send_to(peer_id, payload).await {
         warn!(error = %err, "failed to send native sync response");
+    } else {
+        info!(
+            peer = %hex32(&peer_id),
+            best_height,
+            "queued native sync response"
+        );
+    }
+}
+
+fn native_sync_message_label(message: &NativeSyncMessage) -> &'static str {
+    match message {
+        NativeSyncMessage::Announce(_) => "announce",
+        NativeSyncMessage::Request { .. } => "request",
+        NativeSyncMessage::Response { .. } => "response",
+        NativeSyncMessage::PendingAction { .. } => "pending_action",
     }
 }
 
@@ -5931,7 +6364,22 @@ fn admit_native_sync_response_wire_budget(
         best_height,
         blocks: blocks.to_vec(),
     };
-    encode_sync_message(&response).map(|_| ())
+    let payload = encode_sync_message(&response)?;
+    let wire_message = WireMessage::Proto(ProtocolMessage {
+        protocol: NATIVE_SYNC_PROTOCOL_ID,
+        payload,
+    });
+    let frame = wire::encode(&wire_message, wire::MAX_WIRE_FRAME_LEN)
+        .context("encode native sync protocol wire message")?;
+    if frame.len().saturating_add(AES_GCM_TAG_BYTES) > wire::MAX_WIRE_FRAME_LEN {
+        return Err(anyhow!(
+            "native sync protocol wire frame would exceed encrypted transport cap: frame_bytes={} tag_bytes={} max_bytes={}",
+            frame.len(),
+            AES_GCM_TAG_BYTES,
+            wire::MAX_WIRE_FRAME_LEN
+        ));
+    }
+    Ok(())
 }
 
 fn encode_sync_message(message: &NativeSyncMessage) -> Result<Vec<u8>> {
@@ -6037,12 +6485,15 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         "rpc_methods" => Ok(json!({
             "methods": native_rpc_methods(node.rpc_policy()?),
         })),
-        "system_health" => Ok(json!({
-            "isSyncing": false,
-            "peers": 0u32,
-            "shouldHavePeers": !node.config.seeds.is_empty(),
-        })),
-        "system_peers" => Ok(Value::Array(Vec::new())),
+        "system_health" => {
+            let (syncing, _) = node.sync_status_fields();
+            Ok(json!({
+                "isSyncing": syncing,
+                "peers": node.network_peer_count(),
+                "shouldHavePeers": !node.config.seeds.is_empty(),
+            }))
+        }
+        "system_peers" => Ok(system_peers_snapshot(node)),
         "system_version" => Ok(json!(format!(
             "Hegemon Native Node {}",
             env!("CARGO_PKG_VERSION")
@@ -6098,12 +6549,8 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         "hegemon_nodeConfig" => Ok(node.node_config_snapshot(node.rpc_policy()?)),
         "hegemon_blockTimestamps" => block_timestamps(node, params, false),
         "hegemon_minedBlockTimestamps" => block_timestamps(node, Value::Array(vec![]), true),
-        "hegemon_peerList" => Ok(Value::Array(Vec::new())),
-        "hegemon_peerGraph" => Ok(json!({
-            "local_peer_id": "",
-            "peers": [],
-            "reports": [],
-        })),
+        "hegemon_peerList" => Ok(hegemon_peer_list_snapshot(node)),
+        "hegemon_peerGraph" => Ok(hegemon_peer_graph_snapshot(node)),
         "hegemon_submitAction" => {
             Ok(node.submit_action(first_param(&params).cloned().unwrap_or(params)))
         }
@@ -6128,7 +6575,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_difficulty": node.config.pow_bits,
+            "network_difficulty": node.best_meta().pow_bits,
             "share_difficulty": null,
             "reason": "native pool RPC is not enabled in milestone 1",
         })),
@@ -6138,7 +6585,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
             "height": null,
             "pre_hash": null,
             "parent_hash": null,
-            "network_bits": node.config.pow_bits,
+            "network_bits": node.best_meta().pow_bits,
             "share_bits": null,
             "reason": "native compact-job RPC is not enabled in milestone 1",
         })),
@@ -6154,7 +6601,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
         })),
         "hegemon_poolStatus" => Ok(json!({
             "available": false,
-            "network_difficulty": node.config.pow_bits,
+            "network_difficulty": node.best_meta().pow_bits,
             "share_difficulty": null,
             "accepted_shares": 0u64,
             "rejected_shares": 0u64,
@@ -6405,13 +6852,15 @@ fn export_bridge_witness(node: &NativeNode, params: Value) -> Result<Value> {
         .cloned()
         .expect("bridge witness admission ensures message index is in bounds");
     let parent = parent.expect("bridge witness admission ensures parent exists");
-    verify_native_block_meta_projection(Some(&parent), &meta).with_context(|| {
-        format!(
-            "validate bridge witness native block metadata at height {} ({})",
-            meta.height,
-            hex32(&meta.hash)
-        )
-    })?;
+    let expected_pow_bits = node.expected_child_pow_bits(&parent)?;
+    verify_native_block_meta_projection(Some(&parent), &meta, Some(expected_pow_bits))
+        .with_context(|| {
+            format!(
+                "validate bridge witness native block metadata at height {} ({})",
+                meta.height,
+                hex32(&meta.hash)
+            )
+        })?;
     let header = pow_header_from_meta(&meta);
     let parent_checkpoint = checkpoint_from_meta(&parent);
     let long_range_trusted_checkpoint = if best.height > meta.height {
@@ -6559,7 +7008,7 @@ fn latest_bridge_message_block_hash(node: &NativeNode, message_index: usize) -> 
                 return Err(anyhow!(
                     "bridge witness backscan block action decode failed ({})",
                     NativeBridgeWitnessBackscanRejection::BlockActionsDecodeFailed.label()
-                ))
+                ));
             }
             Err(NativeBridgeWitnessBackscanRejection::NoBridgeMessageInBackscan) => {}
         }
@@ -6762,23 +7211,26 @@ async fn mining_loop(node: Arc<NativeNode>) {
                 continue;
             }
         };
-        let start_round = node.mining_round.fetch_add(1, Ordering::Relaxed);
+        let start_round = node
+            .mining_round
+            .fetch_add(MINING_ROUNDS_PER_WORK, Ordering::Relaxed);
         let work_for_task = work.clone();
 
-        let mined =
-            tokio::task::spawn_blocking(move || mine_native_round(work_for_task, start_round))
-                .await;
+        let mined = tokio::task::spawn_blocking(move || {
+            mine_native_rounds(work_for_task, start_round, MINING_ROUNDS_PER_WORK)
+        })
+        .await;
 
         match mined {
-            Ok(Some(seal)) => {
+            Ok(result) => {
+                node.mining_hashes
+                    .fetch_add(result.hashes, Ordering::Relaxed);
+                let Some(seal) = result.seal else {
+                    continue;
+                };
                 if let Err(err) = node.import_mined_block(&work, seal) {
                     warn!(error = %err, "failed to import native mined block");
                 }
-            }
-            Ok(None) => {
-                node.mining_hashes
-                    .fetch_add(HASHES_PER_ROUND, Ordering::Relaxed);
-                tokio::time::sleep(Duration::from_millis(10)).await;
             }
             Err(err) => {
                 warn!(error = %err, "native mining task failed");
@@ -6788,12 +7240,33 @@ async fn mining_loop(node: Arc<NativeNode>) {
     }
 }
 
+#[cfg(test)]
 fn mine_native_round(work: NativeWork, round: u64) -> Option<NativeSeal> {
+    mine_native_rounds(work, round, 1).seal
+}
+
+fn mine_native_rounds(work: NativeWork, start_round: u64, rounds: u64) -> NativeMiningRoundResult {
+    let rounds = rounds.max(1);
+    let mut hashes = 0u64;
+    for offset in 0..rounds {
+        let round = start_round.saturating_add(offset);
+        if let Some(seal) = mine_native_round_inner(&work, round, &mut hashes) {
+            return NativeMiningRoundResult {
+                seal: Some(seal),
+                hashes,
+            };
+        }
+    }
+    NativeMiningRoundResult { seal: None, hashes }
+}
+
+fn mine_native_round_inner(work: &NativeWork, round: u64, hashes: &mut u64) -> Option<NativeSeal> {
     let start = round.saturating_mul(HASHES_PER_ROUND);
     let end = start.saturating_add(HASHES_PER_ROUND);
     for counter in start..end {
         let nonce = nonce_from_counter(counter);
         let work_hash = native_pow_work_hash(&work.pre_hash, nonce);
+        *hashes = (*hashes).saturating_add(1);
         if native_seal_meets_target(&work_hash, work.pow_bits) {
             debug!(height = work.height, counter, "native PoW seal found");
             return Some(NativeSeal { nonce, work_hash });
@@ -6885,7 +7358,7 @@ fn genesis_meta(pow_bits: u32) -> Result<NativeBlockMeta> {
     let state_root = CommitmentTreeState::default().root();
     let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
     let nullifier_root = nullifier_root_from_set(&BTreeSet::new());
-    let timestamp_ms = 0;
+    let timestamp_ms = NATIVE_GENESIS_TIMESTAMP_MS;
     let extrinsics_root = empty_extrinsics_root(0);
     let message_root = empty_bridge_message_root();
     let hash = hash32_with_parts(&[
@@ -7466,13 +7939,24 @@ fn validate_loaded_block_indexes(
             chain.get(index - 1)
         };
         let meta = &chain[index];
-        verify_native_block_meta_projection(parent, meta).with_context(|| {
-            format!(
-                "validate stored canonical native block metadata at height {} ({})",
-                meta.height,
-                hex32(&meta.hash)
-            )
-        })?;
+        let expected_pow_bits = if index == 0 {
+            None
+        } else {
+            Some(native_expected_child_pow_bits_for_chain_index(
+                &chain,
+                index - 1,
+                pow_bits,
+            )?)
+        };
+        verify_native_block_meta_projection(parent, meta, expected_pow_bits).with_context(
+            || {
+                format!(
+                    "validate stored canonical native block metadata at height {} ({})",
+                    meta.height,
+                    hex32(&meta.hash)
+                )
+            },
+        )?;
     }
 
     Ok(())
@@ -7767,6 +8251,7 @@ fn build_validated_startup_state(
     consumed_bridge_messages: BTreeSet<[u8; 48]>,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
+    prune_persisted_coinbase_actions: bool,
 ) -> Result<NativeState> {
     build_validated_startup_state_with_limits(
         db,
@@ -7779,6 +8264,7 @@ fn build_validated_startup_state(
         consumed_bridge_messages,
         staged_ciphertexts,
         staged_proofs,
+        prune_persisted_coinbase_actions,
         MAX_NATIVE_MEMPOOL_ACTIONS,
         MAX_NATIVE_MEMPOOL_ACTION_BYTES,
     )
@@ -7795,6 +8281,7 @@ fn build_validated_startup_state_with_limits(
     consumed_bridge_messages: BTreeSet<[u8; 48]>,
     staged_ciphertexts: BTreeMap<String, u32>,
     staged_proofs: BTreeMap<String, Vec<u8>>,
+    prune_persisted_coinbase_actions: bool,
     max_pending_actions: usize,
     max_pending_action_bytes: usize,
 ) -> Result<NativeState> {
@@ -7838,6 +8325,31 @@ fn build_validated_startup_state_with_limits(
             continue;
         }
         state.pending_actions.insert(hash, action);
+    }
+    let pending_before_transfer_candidate_prune =
+        state.pending_actions.keys().copied().collect::<Vec<_>>();
+    prune_candidate_artifacts_when_transfers_pending(&mut state, "startup");
+    for hash in pending_before_transfer_candidate_prune {
+        if !state.pending_actions.contains_key(&hash) {
+            dropped_pending.push(hash);
+        }
+    }
+    let pending_before_candidate_prune = state.pending_actions.keys().copied().collect::<Vec<_>>();
+    prune_unselected_candidate_artifacts_from_pending(&mut state, "startup");
+    for hash in pending_before_candidate_prune {
+        if !state.pending_actions.contains_key(&hash) {
+            dropped_pending.push(hash);
+        }
+    }
+    if prune_persisted_coinbase_actions {
+        let pending_before_coinbase_prune =
+            state.pending_actions.keys().copied().collect::<Vec<_>>();
+        prune_auto_coinbase_actions_from_pending(&mut state, "startup");
+        for hash in pending_before_coinbase_prune {
+            if !state.pending_actions.contains_key(&hash) {
+                dropped_pending.push(hash);
+            }
+        }
     }
     if !dropped_pending.is_empty() {
         for hash in dropped_pending {
@@ -10391,6 +10903,17 @@ fn is_candidate_artifact_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_SUBMIT_CANDIDATE_ARTIFACT
 }
 
+fn pending_action_peer_relayable(action: &PendingAction) -> bool {
+    !is_coinbase_action(action) && !is_candidate_artifact_action(action)
+}
+
+fn stage_relayed_pending_action(
+    node: &NativeNode,
+    pending: PendingAction,
+) -> Result<Option<PendingAction>> {
+    node.stage_relayed_pending_action(pending)
+}
+
 fn action_order_key_preimage(action: &PendingAction) -> Vec<u8> {
     let mut preimage = Vec::new();
     match (action.family_id, action.action_id) {
@@ -11033,16 +11556,28 @@ fn native_bridge_mint_replay_policy_error(
             rejection.label()
         ),
         NativeBridgeMintReplayPolicyRejection::ReceiptEnvelopeMissing => {
-            anyhow!("inbound bridge receipt envelope missing ({})", rejection.label())
+            anyhow!(
+                "inbound bridge receipt envelope missing ({})",
+                rejection.label()
+            )
         }
         NativeBridgeMintReplayPolicyRejection::ReceiptNotVerified => {
-            anyhow!("inbound bridge receipt is not verified ({})", rejection.label())
+            anyhow!(
+                "inbound bridge receipt is not verified ({})",
+                rejection.label()
+            )
         }
         NativeBridgeMintReplayPolicyRejection::ReceiptPayloadMismatch => {
-            anyhow!("inbound bridge receipt payload mismatch ({})", rejection.label())
+            anyhow!(
+                "inbound bridge receipt payload mismatch ({})",
+                rejection.label()
+            )
         }
         NativeBridgeMintReplayPolicyRejection::ReplayAlreadyConsumed => {
-            anyhow!("inbound bridge message already consumed ({})", rejection.label())
+            anyhow!(
+                "inbound bridge message already consumed ({})",
+                rejection.label()
+            )
         }
         NativeBridgeMintReplayPolicyRejection::MintNotAuthorized => anyhow!(
             "inbound bridge mint authorization is disabled until a PQ-clean bridge mint decoder and verifier are production-bound ({})",
@@ -11053,7 +11588,10 @@ fn native_bridge_mint_replay_policy_error(
             rejection.label()
         ),
         NativeBridgeMintReplayPolicyRejection::AmountOutOfBounds => {
-            anyhow!("inbound bridge mint amount out of bounds ({})", rejection.label())
+            anyhow!(
+                "inbound bridge mint amount out of bounds ({})",
+                rejection.label()
+            )
         }
     }
 }
@@ -13333,6 +13871,27 @@ fn revalidate_reorg_pending_actions(
     existing_pending: BTreeMap<[u8; 32], PendingAction>,
     orphaned_actions: Vec<PendingAction>,
 ) -> BTreeMap<[u8; 32], PendingAction> {
+    revalidate_pending_actions(canonical_state, existing_pending, orphaned_actions, "reorg")
+}
+
+fn revalidate_pending_actions_after_state_advance(
+    canonical_state: &NativeState,
+    existing_pending: BTreeMap<[u8; 32], PendingAction>,
+) -> BTreeMap<[u8; 32], PendingAction> {
+    revalidate_pending_actions(
+        canonical_state,
+        existing_pending,
+        Vec::new(),
+        "state_advance",
+    )
+}
+
+fn revalidate_pending_actions(
+    canonical_state: &NativeState,
+    existing_pending: BTreeMap<[u8; 32], PendingAction>,
+    orphaned_actions: Vec<PendingAction>,
+    context: &'static str,
+) -> BTreeMap<[u8; 32], PendingAction> {
     let mut staged_state = NativeState {
         best: canonical_state.best.clone(),
         header_mmr_peaks: canonical_state.header_mmr_peaks.clone(),
@@ -13346,30 +13905,115 @@ fn revalidate_reorg_pending_actions(
     };
 
     for (hash, action) in existing_pending {
-        stage_reorg_pending_action(&mut staged_state, hash, action, "existing");
+        stage_revalidated_pending_action(&mut staged_state, hash, action, "existing", context);
     }
     for action in orphaned_actions {
         let hash = action.tx_hash;
         if staged_state.pending_actions.contains_key(&hash) {
             continue;
         }
-        stage_reorg_pending_action(&mut staged_state, hash, action, "orphaned");
+        stage_revalidated_pending_action(&mut staged_state, hash, action, "orphaned", context);
     }
+    prune_candidate_artifacts_when_transfers_pending(&mut staged_state, context);
+    prune_unselected_candidate_artifacts_from_pending(&mut staged_state, context);
 
     staged_state.pending_actions
 }
 
-fn stage_reorg_pending_action(
+fn pending_candidate_artifact_hashes(staged_state: &NativeState) -> Vec<[u8; 32]> {
+    staged_state
+        .pending_actions
+        .iter()
+        .filter_map(|(hash, action)| is_candidate_artifact_action(action).then_some(*hash))
+        .collect()
+}
+
+fn prune_candidate_artifacts_when_transfers_pending(
+    staged_state: &mut NativeState,
+    context: &'static str,
+) {
+    if !staged_state
+        .pending_actions
+        .values()
+        .any(is_shielded_transfer_action)
+    {
+        return;
+    }
+    let dropped = pending_candidate_artifact_hashes(staged_state);
+    for hash in dropped {
+        debug!(
+            tx_hash = %hex32(&hash),
+            context,
+            "dropping candidate artifact while shielded transfers are pending"
+        );
+        staged_state.pending_actions.remove(&hash);
+    }
+}
+
+fn prune_unselected_candidate_artifacts_from_pending(
+    staged_state: &mut NativeState,
+    context: &'static str,
+) {
+    if !staged_state
+        .pending_actions
+        .values()
+        .any(is_candidate_artifact_action)
+    {
+        return;
+    }
+
+    let selected_candidates = select_mineable_actions(staged_state)
+        .into_iter()
+        .filter(is_candidate_artifact_action)
+        .map(|action| action.tx_hash)
+        .collect::<BTreeSet<_>>();
+    let dropped = staged_state
+        .pending_actions
+        .iter()
+        .filter_map(|(hash, action)| {
+            (is_candidate_artifact_action(action) && !selected_candidates.contains(hash))
+                .then_some(*hash)
+        })
+        .collect::<Vec<_>>();
+    for hash in dropped {
+        debug!(
+            tx_hash = %hex32(&hash),
+            context,
+            "dropping unselected candidate artifact during mempool revalidation"
+        );
+        staged_state.pending_actions.remove(&hash);
+    }
+}
+
+fn prune_auto_coinbase_actions_from_pending(staged_state: &mut NativeState, context: &'static str) {
+    let dropped = staged_state
+        .pending_actions
+        .iter()
+        .filter_map(|(hash, action)| is_coinbase_action(action).then_some(*hash))
+        .collect::<Vec<_>>();
+    for hash in dropped {
+        debug!(
+            tx_hash = %hex32(&hash),
+            context,
+            "dropping persisted coinbase action during auto-coinbase mempool revalidation"
+        );
+        staged_state.pending_actions.remove(&hash);
+    }
+}
+
+fn stage_revalidated_pending_action(
     staged_state: &mut NativeState,
     hash: [u8; 32],
     action: PendingAction,
     source: &'static str,
+    context: &'static str,
 ) {
     if staged_state.pending_actions.len() >= MAX_NATIVE_MEMPOOL_ACTIONS {
         debug!(
             tx_hash = %hex32(&hash),
             source,
-            "dropping reorg pending action over mempool action cap"
+            context,
+            "dropping pending action over mempool action cap during revalidation"
         );
         return;
     }
@@ -13377,8 +14021,9 @@ fn stage_reorg_pending_action(
         debug!(
             tx_hash = %hex32(&hash),
             source,
+            context,
             error = %err,
-            "dropping semantically invalid pending action during reorg"
+            "dropping semantically invalid pending action during mempool revalidation"
         );
         return;
     }
@@ -13390,8 +14035,9 @@ fn stage_reorg_pending_action(
         debug!(
             tx_hash = %hex32(&hash),
             source,
+            context,
             error = %err,
-            "dropping over-budget pending action during reorg"
+            "dropping over-budget pending action during mempool revalidation"
         );
         return;
     }
@@ -14473,14 +15119,18 @@ fn native_announced_block_admission_error(
     }
 }
 
-fn validate_announced_block(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> Result<()> {
+fn validate_announced_block(
+    parent: &NativeBlockMeta,
+    meta: &NativeBlockMeta,
+    expected_pow_bits: u32,
+) -> Result<()> {
     evaluate_native_announced_block_admission(native_announced_block_admission_input(
         parent,
         meta,
         current_time_ms(),
     ))
     .map_err(native_announced_block_admission_error)?;
-    verify_native_block_meta_projection(Some(parent), meta)
+    verify_native_block_meta_projection(Some(parent), meta, Some(expected_pow_bits))
 }
 
 fn native_pow_header_from_parts(
@@ -14635,14 +15285,30 @@ fn verify_native_miner_identity(meta: &NativeBlockMeta) -> Result<()> {
     )
 }
 
-fn verify_native_pow_meta(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> Result<()> {
+fn verify_native_pow_meta(
+    parent: &NativeBlockMeta,
+    meta: &NativeBlockMeta,
+    expected_pow_bits: u32,
+) -> Result<()> {
     verify_native_miner_identity(meta)?;
     if meta.hash != meta.work_hash {
         return Err(anyhow!("native block hash must equal work hash"));
     }
+    if meta.pow_bits != expected_pow_bits {
+        return Err(anyhow!(
+            "native block PoW bits mismatch at height {}: expected {}, got {}",
+            meta.height,
+            expected_pow_bits,
+            meta.pow_bits
+        ));
+    }
     let header = pow_header_from_meta(meta);
-    let work_hash = verify_pow_header(&checkpoint_from_meta(parent), &header)
-        .map_err(|err| anyhow!("native light-client header verification failed: {err:?}"))?;
+    let work_hash = verify_pow_header_with_expected_bits(
+        &checkpoint_from_meta(parent),
+        &header,
+        expected_pow_bits,
+    )
+    .map_err(|err| anyhow!("native light-client header verification failed: {err:?}"))?;
     if work_hash != meta.hash {
         return Err(anyhow!("native block work hash mismatch"));
     }
@@ -14652,6 +15318,7 @@ fn verify_native_pow_meta(parent: &NativeBlockMeta, meta: &NativeBlockMeta) -> R
 fn verify_native_block_meta_projection(
     parent: Option<&NativeBlockMeta>,
     meta: &NativeBlockMeta,
+    expected_pow_bits: Option<u32>,
 ) -> Result<()> {
     if meta.height == 0 {
         verify_native_miner_identity(meta)?;
@@ -14672,7 +15339,14 @@ fn verify_native_block_meta_projection(
             hex32(&meta.parent_hash)
         ));
     }
-    verify_native_pow_meta(parent, meta)
+    let expected_pow_bits = expected_pow_bits.ok_or_else(|| {
+        anyhow!(
+            "missing native expected PoW bits for metadata projection at height {} ({})",
+            meta.height,
+            hex32(&meta.hash)
+        )
+    })?;
+    verify_native_pow_meta(parent, meta, expected_pow_bits)
 }
 
 fn empty_extrinsics_root(pending_count: u32) -> [u8; 32] {
@@ -14691,6 +15365,55 @@ fn native_pow_work_hash(pre_hash: &[u8; 32], nonce: [u8; 32]) -> [u8; 32] {
 
 fn native_seal_meets_target(work_hash: &[u8; 32], pow_bits: u32) -> bool {
     hash_meets_target(work_hash, pow_bits).unwrap_or(false)
+}
+
+fn native_expected_child_pow_bits_from_chain(
+    chain_to_parent: &[NativeBlockMeta],
+    genesis_pow_bits: u32,
+) -> Result<u32> {
+    let parent = chain_to_parent
+        .last()
+        .ok_or_else(|| anyhow!("native PoW schedule cannot evaluate an empty parent chain"))?;
+    let new_height = parent
+        .height
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+    let anchor_timestamp_ms = if let Some(anchor_steps) =
+        consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
+    {
+        let anchor_steps = usize::try_from(anchor_steps)
+            .map_err(|_| anyhow!("native PoW retarget anchor step overflow"))?;
+        if anchor_steps >= chain_to_parent.len() {
+            return Err(anyhow!(
+                "native PoW retarget missing anchor history at parent height {}",
+                parent.height
+            ));
+        }
+        let anchor_index = chain_to_parent.len() - 1 - anchor_steps;
+        Some(chain_to_parent[anchor_index].timestamp_ms)
+    } else {
+        None
+    };
+    consensus::pow::expected_pow_bits_from_schedule(
+        genesis_pow_bits,
+        parent.pow_bits,
+        parent.height,
+        new_height,
+        parent.timestamp_ms,
+        anchor_timestamp_ms,
+    )
+    .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
+}
+
+fn native_expected_child_pow_bits_for_chain_index(
+    chain: &[NativeBlockMeta],
+    parent_index: usize,
+    genesis_pow_bits: u32,
+) -> Result<u32> {
+    let parent_chain = chain
+        .get(..=parent_index)
+        .ok_or_else(|| anyhow!("native PoW schedule parent index out of range"))?;
+    native_expected_child_pow_bits_from_chain(parent_chain, genesis_pow_bits)
 }
 
 fn native_meta_better_than(candidate: &NativeBlockMeta, current: &NativeBlockMeta) -> bool {
@@ -15124,16 +15847,18 @@ fn bincode_deserialize_native_block_meta_exact(
         MAX_NATIVE_BLOCK_META_BYTES,
     ) {
         Ok(meta) => Ok(meta),
-        Err(current_error) => match bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
-            bytes,
-            &format!("legacy {label}"),
-            MAX_NATIVE_BLOCK_META_BYTES,
-        ) {
-            Ok(meta) => Ok(meta.into()),
-            Err(legacy_error) => Err(anyhow!(
-                "{label} did not decode as current or legacy native metadata: current={current_error}; legacy={legacy_error}"
-            )),
-        },
+        Err(current_error) => {
+            match bincode_deserialize_exact_with_limit::<LegacyNativeBlockMetaV1>(
+                bytes,
+                &format!("legacy {label}"),
+                MAX_NATIVE_BLOCK_META_BYTES,
+            ) {
+                Ok(meta) => Ok(meta.into()),
+                Err(legacy_error) => Err(anyhow!(
+                    "{label} did not decode as current or legacy native metadata: current={current_error}; legacy={legacy_error}"
+                )),
+            }
+        }
     }
 }
 
@@ -15474,6 +16199,73 @@ fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         methods.retain(|method| !is_unsafe_rpc_method(method));
     }
     methods
+}
+
+fn system_peers_snapshot(node: &NativeNode) -> Value {
+    Value::Array(
+        node.network_peer_snapshot()
+            .into_iter()
+            .map(|peer| {
+                json!({
+                    "peerId": hex32(&peer.peer_id),
+                    "roles": "FULL",
+                    "protocolVersion": 10u32,
+                    "bestHash": null,
+                    "bestNumber": null,
+                    "endpoint": peer.addr.to_string(),
+                    "connected": true,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn hegemon_peer_list_snapshot(node: &NativeNode) -> Value {
+    Value::Array(
+        node.network_peer_snapshot()
+            .into_iter()
+            .map(|peer| {
+                json!({
+                    "peer_id": hex32(&peer.peer_id),
+                    "addr": peer.addr.to_string(),
+                    "connected": true,
+                    "protocols": [NATIVE_SYNC_PROTOCOL_ID],
+                })
+            })
+            .collect(),
+    )
+}
+
+fn hegemon_peer_graph_snapshot(node: &NativeNode) -> Value {
+    let local_peer_id = node.network_local_peer_id().map(|peer_id| hex32(&peer_id));
+    let peers = node.network_peer_snapshot();
+    let peer_rows: Vec<Value> = peers
+        .iter()
+        .map(|peer| {
+            json!({
+                "peer_id": hex32(&peer.peer_id),
+                "addr": peer.addr.to_string(),
+                "connected": true,
+            })
+        })
+        .collect();
+    let links: Vec<Value> = peers
+        .iter()
+        .map(|peer| {
+            json!({
+                "from": local_peer_id.clone().unwrap_or_default(),
+                "to": hex32(&peer.peer_id),
+                "addr": peer.addr.to_string(),
+            })
+        })
+        .collect();
+
+    json!({
+        "local_peer_id": local_peer_id.unwrap_or_default(),
+        "peers": peer_rows,
+        "links": links,
+        "reports": [],
+    })
 }
 
 mod serde_array48 {
@@ -17109,6 +17901,8 @@ mod tests {
         mineable_action_admission_cases: Vec<LeanMineableActionAdmissionCase>,
         #[serde(default)]
         mineable_selection_cases: Vec<LeanMineableSelectionCase>,
+        #[serde(default)]
+        pending_candidate_prune_cases: Vec<LeanPendingCandidatePruneCase>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17146,6 +17940,25 @@ mod tests {
         candidate_tx_count: usize,
         expected_selected: bool,
         expected_accepted: bool,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingCandidatePruneCase {
+        name: String,
+        transfer_pending: bool,
+        actions: Vec<LeanPendingCandidatePruneAction>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanPendingCandidatePruneAction {
+        label: String,
+        fixture: String,
+        action_id: usize,
+        transfer_route: bool,
+        candidate_artifact_route: bool,
+        expected_survives_after_transfer_prune: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -17983,6 +18796,54 @@ mod tests {
         assert_eq!(a.height, 0);
     }
 
+    fn mining_test_work(pow_bits: u32) -> NativeWork {
+        NativeWork {
+            height: 1,
+            parent_hash: [0u8; 32],
+            pre_hash: [0u8; 32],
+            state_root: [0u8; 48],
+            kernel_root: [0u8; 48],
+            nullifier_root: [0u8; 48],
+            extrinsics_root: [0u8; 32],
+            message_root: [0u8; 48],
+            message_count: 0,
+            header_mmr_root: [0u8; 32],
+            header_mmr_len: 1,
+            cumulative_work: [0u8; 48],
+            supply_digest: 0,
+            tx_count: 0,
+            timestamp_ms: 1,
+            pow_bits,
+            prepared_actions: None,
+        }
+    }
+
+    #[test]
+    fn native_mining_rounds_count_all_attempted_hashes_without_sleep_gap() {
+        let work = mining_test_work(0);
+        let rounds = 3;
+        let result = mine_native_rounds(work, 7, rounds);
+
+        assert!(result.seal.is_none());
+        assert_eq!(result.hashes, rounds * HASHES_PER_ROUND);
+    }
+
+    #[test]
+    fn native_mining_rounds_count_until_found_seal() {
+        let work = mining_test_work(0x207f_ffff);
+        let result = mine_native_rounds(work.clone(), 0, MINING_ROUNDS_PER_WORK);
+        let seal = result.seal.expect("easy test target should find a seal");
+        let counter = u64::from_le_bytes(
+            seal.nonce[..8]
+                .try_into()
+                .expect("nonce counter prefix has 8 bytes"),
+        );
+
+        assert!(native_seal_meets_target(&seal.work_hash, work.pow_bits));
+        assert_eq!(result.hashes, counter + 1);
+        assert!(result.hashes <= MINING_ROUNDS_PER_WORK * HASHES_PER_ROUND);
+    }
+
     #[test]
     fn parse_block_hash_height_params() {
         assert_eq!(parse_height("15"), Some(15));
@@ -18095,7 +18956,7 @@ mod tests {
             }),
         };
         let candidate_args = SubmitCandidateArtifactArgs { payload: candidate };
-        node.validate_and_stage_action(json!({
+        let err = node.validate_and_stage_action(json!({
             "binding_circuit": protocol_versioning::DEFAULT_VERSION_BINDING.circuit,
             "binding_crypto": protocol_versioning::DEFAULT_VERSION_BINDING.crypto,
             "family_id": FAMILY_SHIELDED_POOL,
@@ -18103,21 +18964,193 @@ mod tests {
             "new_nullifiers": [],
             "public_args": base64::engine::general_purpose::STANDARD.encode(candidate_args.encode()),
         }))
-        .expect("stage candidate artifact");
+        .expect_err("candidate artifacts must not be user-staged while transfers are pending");
+        assert!(
+            err.to_string()
+                .contains("candidate artifact submissions are disabled"),
+            "unexpected candidate staging error: {err}"
+        );
 
         let work = node.prepare_work().expect("prepare native work");
-        let seal = mine_native_round(work.clone(), 0).expect("test seal");
-        let err = node
-            .import_mined_block(&work, seal)
-            .expect_err("invalid recursive artifacts must be rejected");
-        let err_text = err.to_string();
-        assert!(
-            err_text.contains("candidate artifact"),
-            "unexpected import rejection: {err_text}"
+        assert_eq!(
+            work.tx_count, 0,
+            "synthetic transfer fixture must not be mined without a valid recursive candidate"
         );
-        assert_eq!(node.state.read().pending_actions.len(), 2);
+        let seal = mine_native_round(work.clone(), 0).expect("test seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("empty fallback block should import")
+            .expect("empty fallback block");
+        assert_eq!(imported.tx_count, 0);
+        assert_eq!(node.state.read().pending_actions.len(), 1);
         assert!(!node.state.read().nullifiers.contains(&action.nullifiers[0]));
         assert_eq!(node.state.read().commitment_tree.leaf_count(), 0);
+    }
+
+    #[test]
+    fn submit_transfer_evicts_stale_candidate_artifact_from_mempool() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let stale_candidate = test_candidate_artifact_action(1, 82);
+        node.action_tree
+            .insert(stale_candidate.tx_hash.as_slice(), stale_candidate.encode())
+            .expect("persist stale candidate");
+        node.action_tree.flush().expect("flush stale candidate");
+        node.state
+            .write()
+            .pending_actions
+            .insert(stale_candidate.tx_hash, stale_candidate.clone());
+
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_inline_transfer_action(anchor, [83u8; 48], [84u8; 48], 0);
+        let staged = node
+            .validate_and_stage_action(action_request_projection_request_from_action(&transfer))
+            .expect("stage transfer");
+        assert_eq!(staged.nullifiers, transfer.nullifiers);
+        assert_eq!(staged.commitments, transfer.commitments);
+        let staged_transfer_hash = staged.tx_hash;
+
+        let state = node.state.read();
+        assert!(state.pending_actions.contains_key(&staged_transfer_hash));
+        assert!(!state.pending_actions.contains_key(&stale_candidate.tx_hash));
+        assert_eq!(state.pending_actions.len(), 1);
+        drop(state);
+        assert!(node
+            .action_tree
+            .get(stale_candidate.tx_hash.as_slice())
+            .expect("read stale candidate")
+            .is_none());
+        assert!(node
+            .action_tree
+            .get(staged_transfer_hash.as_slice())
+            .expect("read staged transfer")
+            .is_some());
+
+        let fresh_candidate = test_candidate_artifact_action(1, 85);
+        let err = node
+            .validate_and_stage_action(action_request_projection_request_from_action(
+                &fresh_candidate,
+            ))
+            .expect_err("candidate artifact submissions must stay disabled while transfer pending");
+        assert!(
+            err.to_string()
+                .contains("candidate artifact submissions are disabled"),
+            "unexpected candidate staging error: {err}"
+        );
+    }
+
+    #[test]
+    fn relayed_pending_action_stages_persists_and_deduplicates_inline_transfer() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let action = test_inline_transfer_action(anchor, [86u8; 48], [87u8; 48], 3);
+        let staged = node
+            .stage_relayed_pending_action(action.clone())
+            .expect("stage relayed action")
+            .expect("new relayed action");
+        assert_eq!(staged.tx_hash, action.tx_hash);
+
+        let state = node.state.read();
+        assert!(state.pending_actions.contains_key(&action.tx_hash));
+        assert_eq!(state.pending_actions.len(), 1);
+        drop(state);
+        assert!(node
+            .action_tree
+            .get(action.tx_hash.as_slice())
+            .expect("read relayed action")
+            .is_some());
+
+        assert!(node
+            .stage_relayed_pending_action(action.clone())
+            .expect("duplicate hash relay should be ignored")
+            .is_none());
+
+        let mut semantic_duplicate = action.clone();
+        semantic_duplicate.received_ms = semantic_duplicate.received_ms.saturating_add(1);
+        semantic_duplicate.tx_hash = pending_action_hash(&semantic_duplicate);
+        assert!(node
+            .stage_relayed_pending_action(semantic_duplicate)
+            .expect("semantic duplicate relay should be ignored")
+            .is_none());
+        assert_eq!(node.state.read().pending_actions.len(), 1);
+    }
+
+    #[test]
+    fn relayed_transfer_evicts_stale_candidate_artifact_from_mempool() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let stale_candidate = test_candidate_artifact_action(1, 88);
+        node.action_tree
+            .insert(stale_candidate.tx_hash.as_slice(), stale_candidate.encode())
+            .expect("persist stale candidate");
+        node.action_tree.flush().expect("flush stale candidate");
+        node.state
+            .write()
+            .pending_actions
+            .insert(stale_candidate.tx_hash, stale_candidate.clone());
+
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_inline_transfer_action(anchor, [89u8; 48], [90u8; 48], 0);
+        node.stage_relayed_pending_action(transfer.clone())
+            .expect("stage relayed transfer")
+            .expect("new relayed transfer");
+
+        let state = node.state.read();
+        assert!(state.pending_actions.contains_key(&transfer.tx_hash));
+        assert!(!state.pending_actions.contains_key(&stale_candidate.tx_hash));
+        assert_eq!(state.pending_actions.len(), 1);
+        drop(state);
+        assert!(node
+            .action_tree
+            .get(stale_candidate.tx_hash.as_slice())
+            .expect("read stale candidate")
+            .is_none());
+    }
+
+    #[test]
+    fn relayed_pending_action_rejects_miner_local_artifacts() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+
+        let candidate = test_candidate_artifact_action(1, 91);
+        let err = node
+            .stage_relayed_pending_action(candidate)
+            .expect_err("candidate artifacts must not be peer-relayed");
+        assert!(
+            err.to_string().contains("not peer-relayable"),
+            "unexpected candidate relay error: {err}"
+        );
+
+        let coinbase = test_coinbase_action(42);
+        let err = node
+            .stage_relayed_pending_action(coinbase)
+            .expect_err("coinbase actions must not be peer-relayed");
+        assert!(
+            err.to_string().contains("not peer-relayable"),
+            "unexpected coinbase relay error: {err}"
+        );
+    }
+
+    #[test]
+    fn relayed_pending_action_rejects_hash_binding_mismatch() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let mut action = test_inline_transfer_action(anchor, [92u8; 48], [93u8; 48], 0);
+        action.received_ms = action.received_ms.saturating_add(1);
+        let err = node
+            .stage_relayed_pending_action(action)
+            .expect_err("relay must reject stale embedded tx hash");
+        assert!(
+            err.to_string().contains("hash binding mismatch"),
+            "unexpected hash binding error: {err}"
+        );
     }
 
     #[test]
@@ -19038,6 +20071,76 @@ mod tests {
     }
 
     #[test]
+    fn post_block_pending_revalidation_drops_now_spent_nullifier_sibling() {
+        let test_pow_bits = 0x207f_ffff;
+        let mut canonical_state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
+        let anchor = canonical_state.commitment_tree.root();
+        let mined = test_inline_transfer_action(anchor, [76u8; 48], [77u8; 48], 0);
+        let stale = test_inline_transfer_action(anchor, [76u8; 48], [78u8; 48], 0);
+        let fresh = test_inline_transfer_action(anchor, [79u8; 48], [80u8; 48], 0);
+        let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
+
+        apply_actions_to_memory(
+            &da_ciphertext_tree,
+            &mut canonical_state,
+            std::slice::from_ref(&mined),
+        )
+        .expect("mined action should advance canonical state");
+
+        let mut existing_pending = BTreeMap::new();
+        existing_pending.insert(stale.tx_hash, stale.clone());
+        existing_pending.insert(fresh.tx_hash, fresh.clone());
+        let revalidated =
+            revalidate_pending_actions_after_state_advance(&canonical_state, existing_pending);
+
+        assert!(
+            !revalidated.contains_key(&stale.tx_hash),
+            "pending action spending a now-spent nullifier must be pruned"
+        );
+        assert!(
+            revalidated.contains_key(&fresh.tx_hash),
+            "unrelated pending action should survive post-block revalidation"
+        );
+        assert_eq!(revalidated.len(), 1);
+    }
+
+    #[test]
+    fn post_block_pending_revalidation_drops_orphan_candidate_artifact() {
+        let test_pow_bits = 0x207f_ffff;
+        let canonical_state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
+        let candidate = test_candidate_artifact_action(1, 81);
+
+        let mut existing_pending = BTreeMap::new();
+        existing_pending.insert(candidate.tx_hash, candidate.clone());
+        let revalidated =
+            revalidate_pending_actions_after_state_advance(&canonical_state, existing_pending);
+
+        assert!(
+            !revalidated.contains_key(&candidate.tx_hash),
+            "candidate artifact without matching transfers must be pruned"
+        );
+        assert!(revalidated.is_empty());
+    }
+
+    #[test]
+    fn auto_coinbase_prune_drops_persisted_coinbase_action() {
+        let test_pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(test_pow_bits).expect("genesis"));
+        let coinbase = test_coinbase_action(42);
+        state
+            .pending_actions
+            .insert(coinbase.tx_hash, coinbase.clone());
+
+        prune_auto_coinbase_actions_from_pending(&mut state, "test");
+
+        assert!(
+            !state.pending_actions.contains_key(&coinbase.tx_hash),
+            "auto-coinbase nodes must not keep persisted coinbase actions in the mempool"
+        );
+        assert!(state.pending_actions.is_empty());
+    }
+
+    #[test]
     fn reorg_rebuild_failure_preserves_canonical_indexes() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -19212,6 +20315,33 @@ mod tests {
         assert_eq!(recovered.value, reward);
         assert_eq!(recovered.asset_id, 0);
         assert_eq!(recovered.memo.as_bytes(), b"");
+    }
+
+    #[test]
+    fn prepared_work_import_survives_action_cache_eviction() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let keys = wallet::RootSecret::from_bytes([9u8; 32]).derive();
+        let material = keys.address(0).expect("address material");
+        let address = material.shielded_address();
+        let mut config = test_config(tmp.path(), pow_bits, "unsafe", false);
+        config.miner_address = Some(address.encode().expect("encode miner address"));
+        let node = NativeNode::open(config).expect("node");
+
+        let work = node.prepare_work().expect("prepare native work");
+        assert_eq!(work.tx_count, 1);
+        node.prepared_mining_actions.lock().clear();
+
+        let seal = mine_native_round(work.clone(), 0).expect("auto coinbase seal");
+        let imported = node
+            .import_mined_block(&work, seal)
+            .expect("prepared work import")
+            .expect("prepared work block");
+
+        let actions = decode_block_actions(&imported).expect("decode imported actions");
+        assert_eq!(actions.len(), 1);
+        assert!(is_coinbase_action(&actions[0]));
+        assert_eq!(node.state.read().commitment_tree.leaf_count(), 1);
     }
 
     #[test]
@@ -20123,6 +21253,159 @@ mod tests {
     }
 
     #[test]
+    fn native_pow_schedule_retargets_fast_window_and_rejects_stale_bits() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let mut chain = vec![node.best_meta()];
+        let genesis_timestamp = chain[0].timestamp_ms;
+
+        for height in 1..consensus::reward::RETARGET_WINDOW {
+            let parent = chain.last().expect("parent").clone();
+            let timestamp_ms = genesis_timestamp + height * 1_000;
+            let child = mined_empty_child_at(&parent, height, pow_bits, height, timestamp_ms);
+            persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+                .expect("persist deterministic fast child");
+            chain.push(child);
+        }
+        node.state.write().best = chain.last().expect("fast parent").clone();
+
+        let first_boundary_bits =
+            native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
+        assert_eq!(
+            first_boundary_bits, pow_bits,
+            "the first retarget boundary must not use genesis as a stale timing anchor"
+        );
+
+        for height in consensus::reward::RETARGET_WINDOW..(consensus::reward::RETARGET_WINDOW * 2) {
+            let parent = chain.last().expect("parent").clone();
+            let timestamp_ms = parent.timestamp_ms.saturating_add(1_000);
+            let child = mined_empty_child_at(&parent, height, pow_bits, height, timestamp_ms);
+            persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+                .expect("persist deterministic fast child");
+            chain.push(child);
+        }
+        node.state.write().best = chain.last().expect("fast parent").clone();
+
+        let expected_bits =
+            native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
+        let expected_target = consensus_light_client::compact_to_target(expected_bits)
+            .expect("scheduled compact target decodes");
+        let stale_target = consensus_light_client::compact_to_target(pow_bits)
+            .expect("stale compact target decodes");
+        assert!(
+            expected_target < stale_target,
+            "a fast retarget window must lower the target instead of easing difficulty"
+        );
+
+        let work = node.prepare_work().expect("prepare retargeted work");
+        assert_eq!(work.height, consensus::reward::RETARGET_WINDOW * 2);
+        assert_eq!(work.pow_bits, expected_bits);
+
+        let parent = chain.last().expect("fast parent");
+        let stale = mined_empty_child_at(
+            parent,
+            consensus::reward::RETARGET_WINDOW * 2,
+            pow_bits,
+            consensus::reward::RETARGET_WINDOW * 2,
+            parent.timestamp_ms.saturating_add(1_000),
+        );
+        let err = validate_announced_block(parent, &stale, expected_bits)
+            .expect_err("stale fixed-difficulty child must reject at retarget");
+        assert!(err.to_string().contains("PoW bits mismatch"), "{err:?}");
+    }
+
+    #[test]
+    fn native_pow_schedule_recovers_after_slow_window_at_bounded_factor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let node =
+            NativeNode::open(test_config(tmp.path(), pow_bits, "unsafe", false)).expect("node");
+        let mut chain = vec![node.best_meta()];
+        let genesis_timestamp = chain[0].timestamp_ms;
+
+        for height in 1..consensus::reward::RETARGET_WINDOW {
+            let parent = chain.last().expect("parent").clone();
+            let timestamp_ms = genesis_timestamp + height * 1_000;
+            let child = mined_empty_child_at(&parent, height, pow_bits, height, timestamp_ms);
+            persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+                .expect("persist deterministic bootstrap child");
+            chain.push(child);
+        }
+
+        for height in consensus::reward::RETARGET_WINDOW..(consensus::reward::RETARGET_WINDOW * 2) {
+            let parent = chain.last().expect("parent").clone();
+            let timestamp_ms = parent.timestamp_ms.saturating_add(1_000);
+            let child = mined_empty_child_at(&parent, height, pow_bits, height, timestamp_ms);
+            persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+                .expect("persist deterministic fast child");
+            chain.push(child);
+        }
+
+        let tightened_bits =
+            native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
+        let initial_target = consensus_light_client::compact_to_target(pow_bits)
+            .expect("initial compact target decodes");
+        let tightened_target = consensus_light_client::compact_to_target(tightened_bits)
+            .expect("tightened compact target decodes");
+        assert!(
+            tightened_target < initial_target,
+            "fast window must tighten before the recovery window"
+        );
+
+        let slow_delta_ms = consensus::reward::TARGET_BLOCK_INTERVAL_MS
+            * consensus::reward::MAX_ADJUSTMENT_FACTOR
+            * 2;
+        for height in
+            (consensus::reward::RETARGET_WINDOW * 2)..(consensus::reward::RETARGET_WINDOW * 3)
+        {
+            let parent = chain.last().expect("parent").clone();
+            let timestamp_ms = parent.timestamp_ms.saturating_add(slow_delta_ms);
+            let child = mined_empty_child_at(
+                &parent,
+                height,
+                tightened_bits,
+                height.saturating_add(100),
+                timestamp_ms,
+            );
+            persist_block(&node.meta_tree, &node.height_tree, &node.block_tree, &child)
+                .expect("persist deterministic slow child");
+            chain.push(child);
+        }
+        node.state.write().best = chain.last().expect("slow parent").clone();
+
+        let loosened_bits =
+            native_expected_child_pow_bits_from_chain(&chain, pow_bits).expect("scheduled bits");
+        let loosened_target = consensus_light_client::compact_to_target(loosened_bits)
+            .expect("loosened compact target decodes");
+        assert!(
+            loosened_target > tightened_target,
+            "a slow retarget window must ease difficulty instead of staying pinned"
+        );
+        assert!(
+            loosened_target <= initial_target,
+            "recovery must remain bounded by the maximum retarget factor"
+        );
+
+        let work = node.prepare_work().expect("prepare recovered work");
+        assert_eq!(work.height, consensus::reward::RETARGET_WINDOW * 3);
+        assert_eq!(work.pow_bits, loosened_bits);
+
+        let parent = chain.last().expect("slow parent");
+        let stale = mined_empty_child_at(
+            parent,
+            consensus::reward::RETARGET_WINDOW * 3,
+            tightened_bits,
+            consensus::reward::RETARGET_WINDOW * 3,
+            parent.timestamp_ms.saturating_add(slow_delta_ms),
+        );
+        let err = validate_announced_block(parent, &stale, loosened_bits)
+            .expect_err("stale tightened child must reject after slow retarget recovery");
+        assert!(err.to_string().contains("PoW bits mismatch"), "{err:?}");
+    }
+
+    #[test]
     fn native_miner_identity_rejects_unsigned_non_genesis() {
         let pow_bits = 0x207f_ffff;
         let parent = genesis_meta(pow_bits).expect("genesis");
@@ -20131,7 +21414,7 @@ mod tests {
         block.miner_signature.clear();
         block.miner_commitment = [0u8; 48];
 
-        let err = validate_announced_block(&parent, &block)
+        let err = validate_announced_block(&parent, &block, pow_bits)
             .expect_err("unsigned non-genesis announced block must reject");
         assert!(
             err.to_string().contains("invalid_miner_public_key_length"),
@@ -20148,13 +21431,13 @@ mod tests {
 
         let mut bad_commitment = block.clone();
         bad_commitment.miner_commitment[0] ^= 1;
-        let err = validate_announced_block(&parent, &bad_commitment)
+        let err = validate_announced_block(&parent, &bad_commitment, pow_bits)
             .expect_err("miner commitment mismatch must reject");
         assert!(err.to_string().contains("miner_commitment_mismatch"));
 
         let mut bad_nonce = block.clone();
         bad_nonce.nonce[0] ^= 1;
-        let err = validate_announced_block(&parent, &bad_nonce)
+        let err = validate_announced_block(&parent, &bad_nonce, pow_bits)
             .expect_err("nonce tamper must invalidate miner signature before PoW");
         assert!(err
             .to_string()
@@ -20163,7 +21446,7 @@ mod tests {
         let mut bad_work_hash = block.clone();
         bad_work_hash.work_hash[0] ^= 1;
         bad_work_hash.hash = bad_work_hash.work_hash;
-        let err = validate_announced_block(&parent, &bad_work_hash)
+        let err = validate_announced_block(&parent, &bad_work_hash, pow_bits)
             .expect_err("work-hash tamper must invalidate miner signature before PoW");
         assert!(err
             .to_string()
@@ -20179,7 +21462,7 @@ mod tests {
         block.miner_public_key = other.public_key.to_bytes();
         block.miner_commitment = native_miner_commitment(&block.miner_public_key);
 
-        let err = validate_announced_block(&parent, &block)
+        let err = validate_announced_block(&parent, &block, pow_bits)
             .expect_err("wrong public key must fail signature verification");
         assert!(err
             .to_string()
@@ -20261,7 +21544,7 @@ mod tests {
             current_time_ms().saturating_add(consensus::reward::MAX_FUTURE_SKEW_MS + 10_000);
         let future = mined_empty_child_at(&parent, 1, pow_bits, 0, timestamp_ms);
 
-        let err = validate_announced_block(&parent, &future)
+        let err = validate_announced_block(&parent, &future, pow_bits)
             .expect_err("future-dated block should be rejected");
         assert!(err.to_string().contains("future skew"));
     }
@@ -20279,7 +21562,7 @@ mod tests {
         announced.hash = [4u8; 32];
         announced.work_hash = announced.hash;
 
-        let err = validate_announced_block(&parent, &announced)
+        let err = validate_announced_block(&parent, &announced, pow_bits)
             .expect_err("height overflow must fail closed");
         assert!(err.to_string().contains("height_not_next"));
     }
@@ -20315,6 +21598,7 @@ mod tests {
             tx_count: 0,
             timestamp_ms: best.timestamp_ms.saturating_add(1),
             pow_bits,
+            prepared_actions: None,
         };
         let imported = node
             .import_mined_block(
@@ -20453,6 +21737,7 @@ mod tests {
             tx_count: block.tx_count,
             timestamp_ms: block.timestamp_ms,
             pow_bits: block.pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, 1).expect("reseal mutated announced block");
         block.hash = seal.work_hash;
@@ -20518,6 +21803,7 @@ mod tests {
             tx_count: block.tx_count,
             timestamp_ms: block.timestamp_ms,
             pow_bits: block.pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, 2).expect("reseal action-root mutation");
         block.hash = seal.work_hash;
@@ -20655,6 +21941,70 @@ mod tests {
         assert!(unsafe_methods.contains(&"hegemon_submitAction"));
         assert!(unsafe_methods.contains(&"hegemon_peerGraph"));
         assert!(unsafe_methods.contains(&"hegemon_exportBridgeWitness"));
+    }
+
+    #[test]
+    fn unsafe_peer_topology_rpc_exposes_connected_peer_snapshot() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let local_peer_id = [9u8; 32];
+        let remote_peer_id = [7u8; 32];
+        let remote_addr: SocketAddr = "198.51.100.7:30333".parse().expect("addr");
+        node.set_network_local_peer_id(local_peer_id);
+        node.network_peer_count.store(1, Ordering::Relaxed);
+        *node
+            .network_peer_snapshot
+            .write()
+            .expect("peer snapshot write") = vec![ConnectedPeerSnapshot {
+            peer_id: remote_peer_id,
+            addr: remote_addr,
+        }];
+
+        let health = dispatch_rpc_method(&node, "system_health", Value::Array(Vec::new()))
+            .expect("system health");
+        assert_eq!(health.get("peers"), Some(&json!(1)));
+
+        let system_peers = dispatch_rpc_method(&node, "system_peers", Value::Array(Vec::new()))
+            .expect("system peers");
+        let system_peers = system_peers.as_array().expect("system peers array");
+        assert_eq!(system_peers.len(), 1);
+        assert_eq!(
+            system_peers[0].get("peerId"),
+            Some(&json!(hex32(&remote_peer_id)))
+        );
+        assert_eq!(
+            system_peers[0].get("endpoint"),
+            Some(&json!(remote_addr.to_string()))
+        );
+
+        let peer_list = dispatch_rpc_method(&node, "hegemon_peerList", Value::Array(Vec::new()))
+            .expect("peer list");
+        let peer_list = peer_list.as_array().expect("peer list array");
+        assert_eq!(peer_list.len(), 1);
+        assert_eq!(
+            peer_list[0].get("peer_id"),
+            Some(&json!(hex32(&remote_peer_id)))
+        );
+        assert_eq!(
+            peer_list[0].get("addr"),
+            Some(&json!(remote_addr.to_string()))
+        );
+
+        let graph = dispatch_rpc_method(&node, "hegemon_peerGraph", Value::Array(Vec::new()))
+            .expect("peer graph");
+        assert_eq!(
+            graph.get("local_peer_id"),
+            Some(&json!(hex32(&local_peer_id)))
+        );
+        assert_eq!(
+            graph.get("peers").and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(
+            graph.get("links").and_then(Value::as_array).map(Vec::len),
+            Some(1)
+        );
     }
 
     #[test]
@@ -21081,6 +22431,30 @@ mod tests {
             "unexpected start-mining RPC error: {message}"
         );
         assert!(!node.mining.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn start_mining_spawns_requested_task_count() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "unsafe", false);
+        config.seeds = vec!["127.0.0.1:1".to_string()];
+        let node = NativeNode::open(config).expect("node");
+
+        node.start_mining(3);
+        tokio::task::yield_now().await;
+        assert!(node.mining.load(Ordering::SeqCst));
+        assert_eq!(node.mining_threads.load(Ordering::Relaxed), 3);
+        assert_eq!(node.mining_tasks.lock().len(), 3);
+
+        node.start_mining(2);
+        tokio::task::yield_now().await;
+        assert_eq!(node.mining_threads.load(Ordering::Relaxed), 2);
+        assert_eq!(node.mining_tasks.lock().len(), 2);
+
+        node.stop_mining();
+        assert!(!node.mining.load(Ordering::SeqCst));
+        assert_eq!(node.mining_threads.load(Ordering::Relaxed), 0);
+        assert!(node.mining_tasks.lock().is_empty());
     }
 
     #[test]
@@ -28404,7 +29778,7 @@ mod tests {
             .expect("read generated Lean mineable action admission vectors");
         let vectors: LeanMineableActionAdmissionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean mineable action admission vectors");
-        assert_eq!(vectors.schema_version, 2);
+        assert_eq!(vectors.schema_version, 3);
         assert!(
             !vectors.mineable_action_admission_cases.is_empty(),
             "Lean mineable action admission cases must not be empty"
@@ -28412,6 +29786,10 @@ mod tests {
         assert!(
             !vectors.mineable_selection_cases.is_empty(),
             "Lean mineable selection cases must not be empty"
+        );
+        assert!(
+            !vectors.pending_candidate_prune_cases.is_empty(),
+            "Lean pending-candidate prune cases must not be empty"
         );
 
         let mut names = BTreeSet::new();
@@ -28422,6 +29800,10 @@ mod tests {
         for case in &vectors.mineable_selection_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_mineable_selection_case(case);
+        }
+        for case in &vectors.pending_candidate_prune_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_lean_pending_candidate_prune_case(case);
         }
     }
 
@@ -28595,7 +29977,87 @@ mod tests {
         action_case: &LeanMineableSelectionAction,
         anchor: [u8; 48],
     ) -> PendingAction {
-        match action_case.fixture.as_str() {
+        lean_mineable_fixture_action(&action_case.fixture, anchor)
+    }
+
+    fn verify_lean_pending_candidate_prune_case(case: &LeanPendingCandidatePruneCase) {
+        let pow_bits = 0x207f_ffff;
+        let mut state = test_state(genesis_meta(pow_bits).expect("genesis"));
+        let anchor = state.commitment_tree.root();
+        let mut label_by_hash = BTreeMap::<[u8; 32], String>::new();
+        let mut label_by_action_id = BTreeMap::<usize, String>::new();
+
+        for action_case in &case.actions {
+            let action = lean_mineable_fixture_action(&action_case.fixture, anchor);
+            assert_eq!(
+                is_shielded_transfer_action(&action),
+                action_case.transfer_route,
+                "{} {} transfer-route fixture drifted from Lean prune spec",
+                case.name,
+                action_case.label
+            );
+            assert_eq!(
+                is_candidate_artifact_action(&action),
+                action_case.candidate_artifact_route,
+                "{} {} candidate-route fixture drifted from Lean prune spec",
+                case.name,
+                action_case.label
+            );
+            assert!(
+                label_by_hash
+                    .insert(action.tx_hash, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate fixture tx_hash for {}",
+                case.name,
+                action_case.label
+            );
+            assert!(
+                label_by_action_id
+                    .insert(action_case.action_id, action_case.label.clone())
+                    .is_none(),
+                "{} duplicate Lean prune action_id {}",
+                case.name,
+                action_case.action_id
+            );
+            state.pending_actions.insert(action.tx_hash, action);
+        }
+
+        let transfer_pending = state
+            .pending_actions
+            .values()
+            .any(is_shielded_transfer_action);
+        assert_eq!(
+            transfer_pending, case.transfer_pending,
+            "{} transfer-pending predicate drifted from Lean prune spec",
+            case.name
+        );
+
+        prune_candidate_artifacts_when_transfers_pending(&mut state, "lean vector");
+        let actual_labels = state
+            .pending_actions
+            .keys()
+            .map(|hash| {
+                label_by_hash
+                    .get(hash)
+                    .unwrap_or_else(|| panic!("{} survivor has unknown hash", case.name))
+                    .clone()
+            })
+            .collect::<BTreeSet<_>>();
+        let expected_labels = case
+            .actions
+            .iter()
+            .filter(|action| action.expected_survives_after_transfer_prune)
+            .map(|action| action.label.clone())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            actual_labels, expected_labels,
+            "{} pending-candidate prune survivor set drifted from Lean spec",
+            case.name
+        );
+    }
+
+    fn lean_mineable_fixture_action(fixture: &str, anchor: [u8; 48]) -> PendingAction {
+        match fixture {
             "inline-a" => test_inline_transfer_action(anchor, [161u8; 48], [162u8; 48], 0),
             "sidecar-a" => test_sidecar_transfer_action(anchor, [163u8; 48], [164u8; 48], 0),
             "sidecar-missing" => test_sidecar_transfer_action(anchor, [165u8; 48], [166u8; 48], 0),
@@ -31655,6 +33117,26 @@ mod tests {
                 );
                 None
             }
+            Ok(NativeSyncMessage::PendingAction { action }) => {
+                assert_eq!(
+                    case.expected_kind, "pending_action",
+                    "{} decoded to pending action relay but Lean expected {}",
+                    case.name, case.expected_kind
+                );
+                let canonical = encode_sync_message(&NativeSyncMessage::PendingAction {
+                    action: action.clone(),
+                })
+                .expect("re-encode decoded sync pending action");
+                assert_eq!(
+                    canonical, case.raw_bytes,
+                    "{} raw sync pending action bytes are not canonical production bytes",
+                    case.name
+                );
+                match decode_scale_exact::<PendingAction>(&action, "Lean pending action relay") {
+                    Ok(_) => None,
+                    Err(_) => Some("pending_action_decode_rejected".to_owned()),
+                }
+            }
         };
         assert_eq!(
             actual.is_none(),
@@ -32094,10 +33576,10 @@ mod tests {
         assert!(bootstrap.bootstrap_mining_authoring);
 
         std::env::remove_var("HEGEMON_BOOTSTRAP_AUTHORING");
-        std::env::set_var("HEGEMON_SEEDS", "hegemon.pauli.group:30333");
+        std::env::set_var("HEGEMON_SEEDS", APPROVED_PUBLIC_JOIN_SEEDS);
         let seeded = NativeConfig::from_cli(cli(tmp.path().join("seeded")))
             .expect("seeded live mining is admitted");
-        assert_eq!(seeded.seeds, vec!["hegemon.pauli.group:30333"]);
+        assert_eq!(seeded.seeds, vec![APPROVED_PUBLIC_JOIN_SEEDS]);
 
         match saved_mine {
             Some(value) => std::env::set_var("HEGEMON_MINE", value),
@@ -32130,6 +33612,22 @@ mod tests {
         }
         node.refresh_mining_sync_gate();
         assert!(node.mining_sync_gate_allows_work());
+    }
+
+    #[test]
+    fn seeded_mining_gate_opens_on_verified_genesis_sync_evidence() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+
+        assert!(!node.mining_sync_gate_allows_work());
+        node.observe_verified_sync_peer_height(0);
+        assert_eq!(node.sync_target_height.load(Ordering::Relaxed), 0);
+        assert!(node.mining_sync_gate_allows_work());
+        let (syncing, target) = node.sync_status_fields();
+        assert!(!syncing);
+        assert_eq!(target, 0);
     }
 
     #[test]
@@ -33604,6 +35102,38 @@ mod tests {
     }
 
     #[test]
+    fn pending_action_startup_keeps_transfer_and_drops_stale_candidate_on_open() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pow_bits = 0x207f_ffff;
+        let config = test_config(tmp.path(), pow_bits, "safe", false);
+        let node = NativeNode::open(config.clone()).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let transfer = test_inline_transfer_action(anchor, [110u8; 48], [111u8; 48], 0);
+        let candidate = test_candidate_artifact_action(1, 112);
+        persist_pending_action_for_startup(&node, &candidate);
+        persist_pending_action_for_startup(&node, &transfer);
+        drop(node);
+
+        let reopened = NativeNode::open(config)
+            .expect("startup should quarantine stale candidates but keep transfers");
+        let state = reopened.state.read();
+        assert!(state.pending_actions.contains_key(&transfer.tx_hash));
+        assert!(!state.pending_actions.contains_key(&candidate.tx_hash));
+        assert_eq!(state.pending_actions.len(), 1);
+        drop(state);
+        assert!(reopened
+            .action_tree
+            .get(candidate.tx_hash.as_slice())
+            .expect("read candidate action")
+            .is_none());
+        assert!(reopened
+            .action_tree
+            .get(transfer.tx_hash.as_slice())
+            .expect("read transfer action")
+            .is_some());
+    }
+
+    #[test]
     fn pending_action_startup_drops_mempool_byte_budget_with_small_limit() {
         let pow_bits = 0x207f_ffff;
         let state = test_state(genesis_meta(pow_bits).expect("genesis"));
@@ -33624,6 +35154,7 @@ mod tests {
             state.consumed_bridge_messages,
             state.staged_ciphertexts,
             state.staged_proofs,
+            false,
             MAX_NATIVE_MEMPOOL_ACTIONS,
             max_bytes,
         )
@@ -33653,6 +35184,7 @@ mod tests {
             state.consumed_bridge_messages,
             state.staged_ciphertexts,
             state.staged_proofs,
+            false,
             0,
             MAX_NATIVE_MEMPOOL_ACTION_BYTES,
         )
@@ -37403,6 +38935,7 @@ mod tests {
             tx_count,
             timestamp_ms,
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, 0).expect("malformed announced bridge seal");
         let meta = signed_test_block_meta(NativeBlockMeta {
@@ -37520,6 +39053,7 @@ mod tests {
             tx_count: 0,
             timestamp_ms: parent.timestamp_ms.saturating_add(1),
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work.clone(), 0).expect("phantom bridge seal");
 
@@ -37862,6 +39396,7 @@ mod tests {
             tx_count,
             timestamp_ms,
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, 0).expect("malformed bridge child seal");
         let malformed_meta = signed_test_block_meta(NativeBlockMeta {
@@ -38170,6 +39705,7 @@ mod tests {
             tx_count: 0,
             timestamp_ms,
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, round).expect("side seal");
         signed_test_block_meta(NativeBlockMeta {
@@ -38284,6 +39820,7 @@ mod tests {
             tx_count: 0,
             timestamp_ms,
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, round).expect("mutated seal");
         signed_test_block_meta(NativeBlockMeta {
@@ -38383,6 +39920,7 @@ mod tests {
             tx_count,
             timestamp_ms: parent.timestamp_ms.saturating_add(1),
             pow_bits,
+            prepared_actions: None,
         };
         let seal = mine_native_round(work, round).expect("action child seal");
         signed_test_block_meta(NativeBlockMeta {

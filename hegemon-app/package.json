@@ -2,6 +2,8 @@
   "name": "hegemon-app",
   "private": true,
   "version": "0.10.0",
+  "description": "Desktop wallet and node console for the Hegemon 0.10 network.",
+  "author": "Hegemon",
   "type": "module",
   "main": "out/main/main.cjs",
   "scripts": {
@@ -9,8 +11,11 @@
     "build": "electron-vite build",
     "package": "electron-vite build && electron-builder --dir",
     "dist": "electron-vite build && electron-builder",
+    "dist:prod": "node scripts/require-prod-release-env.cjs && electron-vite build && electron-builder",
+    "check:launch-autostart": "node ../scripts/check-app-launch-autostart.mjs",
+    "check:ui-guards": "node scripts/check-ui-guards.mjs",
     "preview": "electron-vite preview",
-    "lint": "eslint .",
+    "lint": "npm run typecheck",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -20,6 +25,7 @@
     "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@types/node": "^20.17.30",
     "@types/react": "^18.3.20",
     "@types/react-dom": "^18.3.5",
@@ -36,6 +42,8 @@
   "build": {
     "appId": "com.hegemon.desktop",
     "productName": "Hegemon",
+    "afterPack": "scripts/after-pack.cjs",
+    "afterSign": "scripts/after-sign.cjs",
     "directories": {
       "buildResources": "build"
     },
@@ -72,7 +80,32 @@
         "dmg",
         "zip"
       ],
-      "category": "public.app-category.finance"
+      "category": "public.app-category.finance",
+      "extendInfo": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": false,
+          "NSAllowsLocalNetworking": true,
+          "NSExceptionDomains": {
+            "127.0.0.1": {
+              "NSIncludesSubdomains": false,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+              "NSTemporaryExceptionAllowsInsecureHTTPSLoads": false,
+              "NSTemporaryExceptionRequiresForwardSecrecy": false
+            },
+            "localhost": {
+              "NSIncludesSubdomains": false,
+              "NSTemporaryExceptionAllowsInsecureHTTPLoads": true,
+              "NSTemporaryExceptionAllowsInsecureHTTPSLoads": false,
+              "NSTemporaryExceptionRequiresForwardSecrecy": false
+            }
+          }
+        },
+        "NSAudioCaptureUsageDescription": "Hegemon does not use audio capture.",
+        "NSBluetoothAlwaysUsageDescription": "Hegemon does not use Bluetooth.",
+        "NSBluetoothPeripheralUsageDescription": "Hegemon does not use Bluetooth.",
+        "NSCameraUsageDescription": "Hegemon does not use camera access.",
+        "NSMicrophoneUsageDescription": "Hegemon does not use microphone access."
+      }
     },
     "win": {
       "icon": "build/icon.ico",

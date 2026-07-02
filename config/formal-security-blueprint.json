@@ -113,8 +113,8 @@
       "id": "release.ci-release-gate",
       "claim_id": "release.ci-release-gate",
       "kind": "target_claim",
-      "formal_statement": "The checked-in CI/release workflow gate is accepted only when dependency-audit, the dependency-audit job's explicit waiver gate, formal-core, security-adversarial, native-backend-security, release-build, release-build dependencies on those security gates, release binary PQ audit wiring, tag-release native backend review/posture gates, and branch-protection/ruleset evidence requiring those release checks are present.",
-      "informal_argument": "The Lean theorem `Hegemon.Release.CiReleaseGate.accepts_iff_ci_release_gate_preconditions` pins the workflow decision table, companion theorems pin rejection precedence including `dependency_audit_waiver_gate_missing_rejects_after_job` and `branch_protection_ruleset_missing_rejects`, generated vectors are checked by `scripts/check_ci_release_gate_policy.py`, and the same checker inspects `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/rulesets/hegemon-release-required-checks.json` so the PR/main release build, tag release builds, and checked branch ruleset evidence cannot drop dependency-audit, the dependency-audit job's `./scripts/dependency-audit-gate.sh` waiver gate, formal-core, security-adversarial, native-backend-security, hegemon-node/wallet/walletd binary PQ audit, native backend review/posture, required release-build security dependencies, or required ruleset status-check contexts without failing formal-core. `Hegemon.Release.CiReleaseGate.accepted_ci_release_gate_exposes_required_policy_facts` now exposes every required CI job, the dependency-audit waiver-gate step, release-build dependency edge, all-binary release audit, tag-release backend gate, and branch-protection/ruleset evidence from an accepted policy result, while `accepted_ci_release_gate_depends_on_dependency_audit_policy` exposes dependency-audit job, waiver-gate, release-build, and release-build security dependency facts as one downstream-consumable projection. The release posture certificate composes those CI facts with dependency, PQ binary audit, and native-backend release-posture acceptance. `Hegemon.Release.ReleasePostureCertificate.accepted_release_posture_with_native_accepted_mode_yields_production_gate_certificate` composes accepted CI release-gate facts with dependency waivers, PQ scan facts, and accepted-mode native backend release posture in one production release surface, and `production_release_gate_certificate_exposes_dependency_audit_ci_binding` exposes the accepted dependency audit plus accepted CI dependency-gate binding from that production certificate.",
+      "formal_statement": "The checked-in CI/release workflow gate is accepted only when dependency-audit, the dependency-audit job's explicit waiver gate, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, release-build, release-build dependencies on those security and no-SSH gates, release binary PQ audit wiring, tag-release native backend review/posture gates, and branch-protection/ruleset evidence requiring those release checks are present.",
+      "informal_argument": "The Lean theorem `Hegemon.Release.CiReleaseGate.accepts_iff_ci_release_gate_preconditions` pins the workflow decision table, companion theorems pin rejection precedence including `dependency_audit_waiver_gate_missing_rejects_after_job`, `app_no_ssh_e2e_missing_rejects_after_native_backend_security`, `release_build_app_no_ssh_e2e_dependency_missing_rejects`, and `branch_protection_ruleset_missing_rejects`, generated vectors are checked by `scripts/check_ci_release_gate_policy.py`, and the same checker inspects `.github/workflows/ci.yml`, `.github/workflows/release.yml`, and `.github/rulesets/hegemon-release-required-checks.json` so the PR/main release build, tag release builds, and checked branch ruleset evidence cannot drop dependency-audit, the dependency-audit job's `./scripts/dependency-audit-gate.sh` waiver gate, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, hegemon-node/wallet/walletd binary PQ audit, native backend review/posture, required release-build security/no-SSH dependencies, or required ruleset status-check contexts without failing formal-core. `Hegemon.Release.CiReleaseGate.accepted_ci_release_gate_exposes_required_policy_facts` now exposes every required CI job, the dependency-audit waiver-gate step, release-build dependency edge, all-binary release audit, tag-release backend gate, app no-SSH E2E gate, and branch-protection/ruleset evidence from an accepted policy result, while `accepted_ci_release_gate_depends_on_dependency_audit_policy` exposes dependency-audit job, waiver-gate, release-build, and release-build security dependency facts as one downstream-consumable projection. The release posture certificate composes those CI facts with dependency, PQ binary audit, and native-backend release-posture acceptance. `Hegemon.Release.ReleasePostureCertificate.accepted_release_posture_with_native_accepted_mode_yields_production_gate_certificate` composes accepted CI release-gate facts with dependency waivers, PQ scan facts, and accepted-mode native backend release posture in one production release surface, and `production_release_gate_certificate_exposes_dependency_audit_ci_binding` exposes the accepted dependency audit plus accepted CI dependency-gate binding from that production certificate.",
       "depends_on": [
         "release.dependency-waivers",
         "release.pq-binary"
@@ -155,7 +155,12 @@
         },
         {
           "id": "ci-release-build-security-needs-missing",
-          "description": "Removing release-build dependency on dependency-audit, formal-core, security-adversarial, or native-backend-security must fail the workflow gate.",
+          "description": "Removing release-build dependency on dependency-audit, formal-core, security-adversarial, native-backend-security, or app-no-ssh-e2e must fail the workflow gate.",
+          "gate": "python3 scripts/check_ci_release_gate_policy.py <generated-json> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml --ruleset-export .github/rulesets/hegemon-release-required-checks.json"
+        },
+        {
+          "id": "ci-app-no-ssh-e2e-missing",
+          "description": "Removing the app-no-ssh-e2e job or its `./scripts/check-app-no-ssh-e2e.sh` command must fail the workflow gate.",
           "gate": "python3 scripts/check_ci_release_gate_policy.py <generated-json> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml --ruleset-export .github/rulesets/hegemon-release-required-checks.json"
         },
         {
@@ -165,11 +170,11 @@
         },
         {
           "id": "branch-protection-ruleset-required-check-missing",
-          "description": "Removing dependency-audit, formal-core, security-adversarial, native-backend-security, or release-build from the checked ruleset export must fail the release gate.",
+          "description": "Removing dependency-audit, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, or release-build from the checked ruleset export must fail the release gate.",
           "gate": "python3 scripts/check_ci_release_gate_policy.py <generated-json> --ci-workflow .github/workflows/ci.yml --release-workflow .github/workflows/release.yml --ruleset-export .github/rulesets/hegemon-release-required-checks.json"
         }
       ],
-      "scope_boundary": "This node proves and checks repository workflow wiring, including that the dependency-audit CI job runs the explicit waiver gate, and checks a repository-local active branch ruleset export for required release/security status checks. It does not prove GitHub runner integrity, live remote branch-protection enforcement, scanner completeness, or future advisory database completeness."
+      "scope_boundary": "This node proves and checks repository workflow wiring, including that the dependency-audit CI job runs the explicit waiver gate and the app no-SSH E2E job runs its local P2P relay workflow command, and checks a repository-local active branch ruleset export for required release/security/no-SSH status checks. It does not prove GitHub runner integrity, live remote branch-protection enforcement, scanner completeness, future advisory database completeness, or network liveness beyond the executable E2E job."
     },
     {
       "id": "formal.highest-standard-completion-certificate",
@@ -5503,8 +5508,8 @@
       "id": "native.sync-admission",
       "claim_id": "native.sync-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native sync admission, raw-ingress, block-range publication, request-rate, and response-import predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; every accepted response range exposes generic bounded-request item-count facts for the served block count. Per-peer sync requests are rejected when their unelapsed rate window is full or the cap is zero, and elapsed windows reset the admission counter. Representative raw sync wire bytes are Lean-owned for canonical request and empty-response messages plus trailing-byte, missing-marker, and unknown-variant rejection, and production must drive those bytes through `decode_sync_message` before applying the existing request-range or response-import helpers. Published sync block ranges additionally accept only when an admitted range produced a matching served count, matching first and last heights, contiguous heights, a verified previous-parent anchor for non-genesis starts, contiguous served parent hashes, verified canonical rows, and verified non-genesis action bodies. Missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Accepted inbound response imports expose count-before-sort/import admission, deterministic sorted response heights, import-attempt and imported-block counts bounded by the response, stop-on-first-error behavior, and continuation requests only when the accepted response was nonempty and the peer remains ahead. Blueprint implementation bindings require sync request-rate admission to run before block loading and response encoding, require inbound response-count admission to call the generic bounded-request helper with the sync response count as item count, require native_sync_loop to route response blocks through the admission/sort helper before progress tracking or import, require that helper to call the count gate before sort, require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response, require non-genesis sync rows to decode their native action bodies and verify the decoded action root before that materializer returns, and require `NativeNode::block_range` to evaluate the sync block-range publication table before returning rows.",
-      "informal_argument": "The Lean theorems in Hegemon.Native.SyncAdmission prove the executable native sync range and count-admission behavior plus bounded-request item-count facts for accepted outbound response ranges. `request_rate_accepts_when_window_elapsed` and `request_rate_rejects_full_unelapsed_window` pin the per-peer request-rate gate that now runs before production block loading and response encoding. Hegemon.Native.SyncRawIngress adds a representative byte-level ingress corpus over the shared `HNW1` network marker and postcard sync enum body: a canonical request, canonical empty response, request trailing byte, missing marker, and unsupported variant. The generated Rust gate feeds those bytes to production `decode_sync_message`, checks canonical request/response bytes against `encode_sync_message`, and then routes decoded requests to `native_sync_response_range` and decoded responses to `admit_and_sort_native_sync_response_blocks` plus `NativeSyncResponseImportProgress`. Hegemon.Native.SyncBlockRangePublicationAdmission adds the peer-visible outbound publication table: accepted publication carries admitted-range, served-count, first/last-height, height-continuity, previous-parent-anchor, parent-continuity, canonical-row verification, and action-body verification facts, with generated vectors for each rejection and precedence case. Hegemon.Native.SyncResponseImport adds the inbound response-import control-flow proof: accepted imports have response counts within the cap, impossible outcome traces longer than the response reject, import attempts and imported counts are bounded, first import error stops the suffix, sorted heights are deterministic, and follow-up requests require both a nonempty response and a still-ahead peer. gen_sync_admission_vectors, gen_sync_raw_ingress_vectors, gen_sync_block_range_publication_admission_vectors, and gen_sync_response_import_vectors emit Lean-derived normal, capped, empty, zero-cap, request-rate, saturating-u64, exact-limit, over-limit, raw-byte, served-row drift, previous-parent drift, unverified-row, unsorted, error-stop, empty-ahead, peer-caught-up, and impossible-outcome examples; formal-core checks them against production helpers used by NativeNode::block_range, request_missing_blocks, per-peer sync request-rate admission, outbound block-range publication admission, raw sync wire decode, native_sync_loop response handling, admit_and_sort_native_sync_response_blocks, and NativeSyncResponseImportProgress. Production request-rate admission runs before native_sync_loop calls block_range for a requesting peer. Production inbound response-count admission constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and the sync response count as item count; the admitted response path now calls admit_and_sort_native_sync_response_blocks before allocating import progress or invoking import_announced_block, and the helper calls evaluate_native_sync_response_count_admission before blocks.sort_by_key. Production outbound block_range serving uses the same capped response-range helper before canonical row materialization and response-row publication, then evaluates `evaluate_native_sync_block_range_publication_admission` before returning blocks; focused regressions corrupt local canonical indexes and canonical action bodies to prove an admitted range errors instead of returning a truncated prefix, mismatched row, or forged body commitment.",
+      "formal_statement": "For the executable Lean native sync admission, raw-ingress, block-range publication, request-rate, and response-import predicates, response ranges are empty when the max-block cap is zero or the requested start is beyond the capped end, otherwise they serve only from the requested start through the minimum of requested end, local best height, and max response window; every accepted response range exposes generic bounded-request item-count facts for the served block count. Per-peer sync requests are rejected when their unelapsed rate window is full or the cap is zero, and elapsed windows reset the admission counter. Representative raw sync wire bytes are Lean-owned for canonical request, empty-response, and pending-action relay messages plus trailing-byte, missing-marker, and unknown-variant rejection, and production must drive those bytes through `decode_sync_message` before applying the existing request-range, response-import, or pending-action relay decode helpers. Published sync block ranges additionally accept only when an admitted range produced a matching served count, matching first and last heights, contiguous heights, a verified previous-parent anchor for non-genesis starts, contiguous served parent hashes, verified canonical rows, and verified non-genesis action bodies. Missing-block requests are empty when max-blocks is zero or the peer is not ahead, otherwise they request from local best plus one through the minimum of peer best and the capped window; inbound response block counts accept iff they are within the configured maximum. Accepted inbound response imports expose count-before-sort/import admission, deterministic sorted response heights, import-attempt and imported-block counts bounded by the response, stop-on-first-error behavior, and continuation requests only when the accepted response was nonempty and the peer remains ahead. Blueprint implementation bindings require sync request-rate admission to run before block loading and response encoding, require inbound response-count admission to call the generic bounded-request helper with the sync response count as item count, require native_sync_loop to route response blocks through the admission/sort helper before progress tracking or import, require that helper to call the count gate before sort, require admitted sync response ranges to materialize canonical block rows through a propagated helper before any block is pushed into a peer response, require non-genesis sync rows to decode their native action bodies and verify the decoded action root before that materializer returns, require `NativeNode::block_range` to evaluate the sync block-range publication table before returning rows, require local submit staging to precede local pending-action broadcast, and require peer-relay staging to precede peer rebroadcast.",
+      "informal_argument": "The Lean theorems in Hegemon.Native.SyncAdmission prove the executable native sync range and count-admission behavior plus bounded-request item-count facts for accepted outbound response ranges. `request_rate_accepts_when_window_elapsed` and `request_rate_rejects_full_unelapsed_window` pin the per-peer request-rate gate that now runs before production block loading and response encoding. Hegemon.Native.SyncRawIngress adds a representative byte-level ingress corpus over the shared `HNW1` network marker and postcard sync enum body: a canonical request, canonical empty response, malformed empty pending-action relay, request trailing byte, missing marker, and unsupported variant. The generated Rust gate feeds those bytes to production `decode_sync_message`, checks canonical request/response/pending-action bytes against `encode_sync_message`, routes decoded requests to `native_sync_response_range`, decoded responses to `admit_and_sort_native_sync_response_blocks` plus `NativeSyncResponseImportProgress`, and rejects the malformed pending-action relay before peer action staging. Hegemon.Native.SyncBlockRangePublicationAdmission adds the peer-visible outbound publication table: accepted publication carries admitted-range, served-count, first/last-height, height-continuity, previous-parent-anchor, parent-continuity, canonical-row verification, and action-body verification facts, with generated vectors for each rejection and precedence case. Hegemon.Native.SyncResponseImport adds the inbound response-import control-flow proof: accepted imports have response counts within the cap, impossible outcome traces longer than the response reject, import attempts and imported counts are bounded, first import error stops the suffix, sorted heights are deterministic, and follow-up requests require both a nonempty response and a still-ahead peer. gen_sync_admission_vectors, gen_sync_raw_ingress_vectors, gen_sync_block_range_publication_admission_vectors, and gen_sync_response_import_vectors emit Lean-derived normal, capped, empty, zero-cap, request-rate, saturating-u64, exact-limit, over-limit, raw-byte, malformed pending-action, served-row drift, previous-parent drift, unverified-row, unsorted, error-stop, empty-ahead, peer-caught-up, and impossible-outcome examples; formal-core checks them against production helpers used by NativeNode::block_range, request_missing_blocks, per-peer sync request-rate admission, outbound block-range publication admission, raw sync wire decode, native_sync_loop response handling, pending-action relay ingress, admit_and_sort_native_sync_response_blocks, and NativeSyncResponseImportProgress. Production request-rate admission runs before native_sync_loop calls block_range for a requesting peer. Production inbound response-count admission constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and the sync response count as item count; the admitted response path now calls admit_and_sort_native_sync_response_blocks before allocating import progress or invoking import_announced_block, and the helper calls evaluate_native_sync_response_count_admission before blocks.sort_by_key. Production outbound block_range serving uses the same capped response-range helper before canonical row materialization and response-row publication, then evaluates `evaluate_native_sync_block_range_publication_admission` before returning blocks; focused regressions corrupt local canonical indexes and canonical action bodies to prove an admitted range errors instead of returning a truncated prefix, mismatched row, or forged body commitment. Production pending-action relay focused regressions prove that newly relayed user actions stage durably, duplicate raw and semantic actions do not propagate further, miner-local candidate/coinbase artifacts are rejected, stale hash bindings reject, and shielded-transfer relay evicts stale candidate artifacts like local RPC submission.",
       "depends_on": [
         "native.codec-admission",
         "network.pq-noise-key-schedule",
@@ -5889,6 +5894,54 @@
               ]
             }
           ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "validate_and_stage_action",
+          "required_callers": [
+            "NativeNode::submit_action"
+          ],
+          "result_obligation": "must_check_result_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "NativeNode::submit_action",
+              "callee_must_precede": [
+                "self.broadcast_pending_action"
+              ],
+              "must_dominate_successors": true,
+              "lean_theorems": [
+                "Hegemon.Native.SyncRawIngress.raw_sync_empty_pending_action_relay_rejects"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "stage_relayed_pending_action",
+          "required_callers": [
+            "native_sync_loop"
+          ],
+          "result_obligation": "must_check_result_loop_skip_fail_closed",
+          "call_order_constraints": [
+            {
+              "caller": "native_sync_loop",
+              "callee_must_precede": [
+                "node.broadcast_pending_action"
+              ],
+              "must_dominate_successors": true,
+              "lean_theorems": [
+                "Hegemon.Native.SyncRawIngress.raw_sync_empty_pending_action_relay_rejects"
+              ]
+            }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "pending_action_peer_relayable",
+          "required_callers": [
+            "NativeNode::stage_relayed_pending_action",
+            "NativeNode::broadcast_pending_action"
+          ]
         }
       ],
       "evidence_paths": [
@@ -5899,6 +5952,8 @@
         "node/src/native/mod.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
+        "formal/lean/Hegemon/Native/SyncRawIngress.lean",
+        "formal/lean/Hegemon/Native/GenerateSyncRawIngressVectors.lean",
         "formal/lean/Hegemon/Native/SyncResponseImport.lean",
         "formal/lean/Hegemon/Native/GenerateSyncResponseImportVectors.lean"
       ],
@@ -5906,7 +5961,7 @@
         "status": "accepted",
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-08",
-        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, raw sync request/empty-response ingress bytes, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, bounded-request item-count facts for accepted outbound response ranges, and served block_range publication facts. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication, non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication, and the final peer-visible range to pass the served-count/height/previous-parent/parent/verification table. Scope is representative raw-byte ingress, semantic sync admission, and canonical row materialization after decode, not full postcard parser correctness, full block validity, or network liveness."
+        "notes": "Accepted as real Lean theorem evidence plus generated Rust conformance vectors for native sync response range, raw sync request/empty-response/pending-action ingress bytes, missing-block request range, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, bounded-request item-count facts for accepted outbound response ranges, and served block_range publication facts. Additional implementation bindings and regressions require overwide block_range serving to remain capped before response publication, non-genesis canonical sync rows to decode action bodies and verify decoded action roots before publication, the final peer-visible range to pass the served-count/height/previous-parent/parent/verification table, local submit staging to precede pending-action broadcast, and peer-relay staging to precede rebroadcast. Focused regressions cover durable relay staging, deduplication, miner-local artifact rejection, stale hash binding rejection, and stale candidate eviction. Scope is representative raw-byte ingress, semantic sync admission, peer relay staging gates, and canonical row materialization after decode, not full postcard parser correctness, full block validity, transaction propagation liveness, or network liveness."
       },
       "falsification_cases": [
         {
@@ -5926,8 +5981,13 @@
         },
         {
           "id": "lean-generated-sync-raw-ingress-conformance",
-          "description": "Changing production sync wire decode, canonical request/empty-response encoding, request-range handoff, or empty-response import handoff away from the Lean-owned raw-byte corpus must fail generated-vector conformance.",
+          "description": "Changing production sync wire decode, canonical request/empty-response/pending-action encoding, request-range handoff, pending-action malformed-relay rejection, or empty-response import handoff away from the Lean-owned raw-byte corpus must fail generated-vector conformance.",
           "gate": "HEGEMON_LEAN_SYNC_RAW_INGRESS_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_sync_raw_ingress_vectors_match_production --lib --no-default-features -- --nocapture"
+        },
+        {
+          "id": "native-pending-action-peer-relay",
+          "description": "Peer-relayed user pending actions must stage durably, deduplicate, reject miner-local artifacts, reject stale hash bindings, and evict stale candidate artifacts before mining selection.",
+          "gate": "cargo test -p hegemon-node relayed_pending_action --lib --no-default-features -- --nocapture && cargo test -p hegemon-node relayed_transfer --lib --no-default-features -- --nocapture"
         },
         {
           "id": "lean-generated-sync-block-range-publication-conformance",
@@ -5981,8 +6041,8 @@
       "id": "native.mineable-action-admission",
       "claim_id": "native.mineable-action-admission",
       "kind": "target_claim",
-      "formal_statement": "For the executable Lean native mineable-action admission and ordered-selection predicates, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate for the canonical ordered mineable-transfer count; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. The selection theorems `selected_candidate_none_when_no_mineable_transfers`, `first_matching_candidate_head_matches`, `first_matching_candidate_skips_nonmatching_head`, `selection_accepts_candidate_iff_selected`, `selection_accepts_transfer_iff_mineable`, and `selection_accepts_plain_action` prove the ordered candidate-selection table over a canonical action list: zero mineable transfers select no candidate, transfers are accepted iff mineable, plain actions pass, and only the first candidate with tx_count equal to the mineable transfer count is selected. `gen_mineable_action_admission_vectors` emits schema-v2 Lean-derived accept/reject and selection examples, and the formal-core gate checks them against production `evaluate_native_mineable_action_admission` plus `select_mineable_actions` before `prepare_work` and mined-block import recovery. The generated selection vectors cover zero-transfer rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from the transfer count, and canonical-order first matching candidate selection.",
+      "formal_statement": "For the executable Lean native mineable-action admission, ordered-selection, and pending-candidate-prune predicates, a candidate artifact action is accepted for block-template construction only when it is the selected same-block candidate for the canonical ordered mineable-transfer count, and persisted/revalidated candidate artifacts do not survive whenever a shielded transfer is pending; a sidecar transfer action is accepted only when its local staged ciphertext metadata is present and size metadata agrees; non-candidate, non-sidecar actions are unaffected by sidecar metadata.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions` proves the complete executable block-template action admission predicate, with companion theorems for selected candidate acceptance, valid sidecar transfer acceptance, plain action acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, and candidate-before-sidecar precedence. The selection theorems `selected_candidate_none_when_no_mineable_transfers`, `first_matching_candidate_head_matches`, `first_matching_candidate_skips_nonmatching_head`, `selection_accepts_candidate_iff_selected`, `selection_accepts_transfer_iff_mineable`, and `selection_accepts_plain_action` prove the ordered candidate-selection table over a canonical action list: zero mineable transfers select no candidate, transfers are accepted iff mineable, plain actions pass, and only the first candidate with tx_count equal to the mineable transfer count is selected. The pruning theorems `candidate_prune_drops_candidates_when_transfer_pending`, `candidate_prune_keeps_non_candidates`, and `candidate_prune_keeps_candidates_without_transfer` prove the pending-candidate cleanup rule used by startup reload and post-block pending-action revalidation. `gen_mineable_action_admission_vectors` emits schema-v3 Lean-derived accept/reject, selection, and pending-candidate-prune examples, and the formal-core gate checks them against production `evaluate_native_mineable_action_admission`, `select_mineable_actions`, and `prune_candidate_artifacts_when_transfers_pending` before `prepare_work`, startup pending-action repair, and mined-block import recovery. The generated vectors cover zero-transfer rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from the transfer count, canonical-order first matching candidate selection, no-transfer candidate survival, transfer-driven candidate pruning, and multiple-candidate pruning.",
       "depends_on": [
         "native.action-scope-admission",
         "native.transfer-action-payload-admission",
@@ -6029,6 +6089,9 @@
               "must_dominate_successors": true,
               "lean_theorems": [
                 "Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_drops_candidates_when_transfer_pending",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_candidates_without_transfer",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_non_candidates",
                 "Hegemon.Native.MineableActionAdmission.candidate_precedes_sidecar_ciphertext_missing",
                 "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
                 "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
@@ -6067,6 +6130,9 @@
               ],
               "lean_theorems": [
                 "Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_drops_candidates_when_transfer_pending",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_candidates_without_transfer",
+                "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_non_candidates",
                 "Hegemon.Native.MineableActionAdmission.candidate_precedes_sidecar_ciphertext_missing",
                 "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
                 "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
@@ -6084,6 +6150,14 @@
                 "Hegemon.Native.MineableActionAdmission.valid_sidecar_transfer_accepts"
               ]
             }
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
+          "callee": "prune_candidate_artifacts_when_transfers_pending",
+          "required_callers": [
+            "build_validated_startup_state_with_limits",
+            "revalidate_pending_actions"
           ]
         },
         {
@@ -6121,7 +6195,7 @@
         },
         {
           "id": "lean-generated-mineable-selection-conformance",
-          "description": "Changing production `select_mineable_actions` so candidate selection uses insertion order, arrival metadata, or a nonmatching transfer count must fail the schema-v2 generated-vector conformance step.",
+          "description": "Changing production `select_mineable_actions` so candidate selection uses insertion order, arrival metadata, or a nonmatching transfer count, or changing pending-candidate cleanup so candidate artifacts survive while transfers are pending, must fail the schema-v3 generated-vector conformance step.",
           "gate": "HEGEMON_LEAN_MINEABLE_ACTION_ADMISSION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_mineable_action_admission_vectors_match_production --lib --no-default-features -- --nocapture"
         },
         {
@@ -6142,7 +6216,7 @@
       "claim_id": "native.miner-identity",
       "kind": "target_claim",
       "formal_statement": "For the executable Lean native miner-identity transition, a non-genesis native block can be accepted or projected from storage only when its ML-DSA public-key length and parsing are valid, its 48-byte miner commitment matches that public key, its ML-DSA signature length and parsing are valid, and signature verification succeeds over the native signature message; genesis is exempt.",
-      "informal_argument": "The Lean theorem `Hegemon.Native.MinerIdentity.accepts_iff_native_miner_identity_preconditions` proves the executable native miner-identity table, with concrete theorem facts for valid non-genesis admission, genesis-without-identity admission, public-key length and parse failures, miner-commitment mismatch, signature length and parse failures, signature-verification failure, and rejection precedence. `gen_native_miner_identity_vectors` emits Lean-derived examples checked against the production `evaluate_native_miner_identity_admission` helper. The blueprint also requires newly mined native blocks to call `sign_native_block_meta` before PoW metadata verification, atomic commit, state publication, or broadcast; requires storage/projection callers to route through `verify_native_block_meta_projection` before trusting startup canonical metadata, serving canonical sync rows, or exporting bridge witness light-client material; requires `verify_native_pow_meta` to propagate `verify_native_miner_identity` before light-client PoW verification; and requires the signing and verification paths to share `native_miner_signature_message`, whose Rust regressions bind nonce and work hash.",
+      "informal_argument": "The Lean theorem `Hegemon.Native.MinerIdentity.accepts_iff_native_miner_identity_preconditions` proves the executable native miner-identity table, with concrete theorem facts for valid non-genesis admission, genesis-without-identity admission, public-key length and parse failures, miner-commitment mismatch, signature length and parse failures, signature-verification failure, and rejection precedence. `gen_native_miner_identity_vectors` emits Lean-derived examples checked against the production `evaluate_native_miner_identity_admission` helper. The blueprint also requires newly mined native blocks to call `sign_native_block_meta` before PoW metadata verification, atomic commit, state publication, or broadcast; requires storage/projection callers to route through `verify_native_block_meta_projection` before trusting startup canonical metadata, serving canonical sync rows, or exporting bridge witness light-client material; requires `verify_native_pow_meta` to propagate `verify_native_miner_identity` before the expected-bits light-client PoW verification helper; and requires the signing and verification paths to share `native_miner_signature_message`, whose Rust regressions bind nonce and work hash.",
       "depends_on": [
         "consensus.header-preimage-binding",
         "release.pq-binary",
@@ -6182,7 +6256,7 @@
             {
               "caller": "verify_native_pow_meta",
               "callee_must_precede": [
-                "verify_pow_header"
+                "verify_pow_header_with_expected_bits"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -8011,16 +8085,23 @@
         },
         {
           "path": "node/src/native/mod.rs",
-          "callee": "stage_reorg_pending_action",
+          "callee": "revalidate_pending_actions",
           "required_callers": [
             "revalidate_reorg_pending_actions"
           ]
         },
         {
           "path": "node/src/native/mod.rs",
+          "callee": "stage_revalidated_pending_action",
+          "required_callers": [
+            "revalidate_pending_actions"
+          ]
+        },
+        {
+          "path": "node/src/native/mod.rs",
           "callee": "validate_pending_action_against_mempool_state",
           "required_callers": [
-            "stage_reorg_pending_action"
+            "stage_revalidated_pending_action"
           ],
           "result_obligation": "must_check_result_fail_closed"
         },
@@ -8028,7 +8109,7 @@
           "path": "node/src/native/mod.rs",
           "callee": "validate_mempool_byte_budget",
           "required_callers": [
-            "stage_reorg_pending_action"
+            "stage_revalidated_pending_action"
           ],
           "result_obligation": "must_check_result_fail_closed"
         }

@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: setup fmt lint test check bench wallet-demo quickstart node
+.PHONY: setup fmt lint test check bench wallet-demo quickstart node app-no-ssh-e2e
 
 setup:
 	./scripts/dev-setup.sh
@@ -27,3 +27,6 @@ wallet-demo:
 # Build the native operator node binary.
 node:
 	cargo build -p hegemon-node --bin hegemon-node --no-default-features --release
+
+app-no-ssh-e2e:
+	./scripts/check-app-no-ssh-e2e.sh

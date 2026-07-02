@@ -46,6 +46,19 @@ use crate::notes::NoteCiphertext;
 use crate::rpc::TransactionBundle;
 use transaction_circuit::StablecoinPolicyBinding;
 
+fn is_method_unavailable(error: &WalletError, method: &str) -> bool {
+    let WalletError::Rpc(message) = error else {
+        return false;
+    };
+    let lower = message.to_ascii_lowercase();
+    let method = method.to_ascii_lowercase();
+    (lower.contains("method not found")
+        || lower.contains("unknown method")
+        || lower.contains("unsupported method")
+        || lower.contains("not supported"))
+        && lower.contains(&method)
+}
+
 /// Configuration for the native node RPC client.
 #[derive(Clone, Debug)]
 pub struct NodeRpcConfig {
@@ -1194,19 +1207,24 @@ impl NodeRpcClient {
         )
     }
 
-    /// Check if a nullifier has been spent on-chain
+    /// Check if a nullifier has been spent on-chain.
     ///
-    /// Queries the ShieldedPool.Nullifiers storage to check if a nullifier exists.
-    /// Uses state_getStorage RPC with proper storage key construction.
-    ///
-    /// # Arguments
-    ///
-    /// * `nullifier` - 48-byte nullifier to check
-    ///
-    /// # Returns
-    ///
-    /// `true` if the nullifier is in the spent set, `false` otherwise.
+    /// Native 0.10 nodes expose the spent set through `hegemon_walletNullifiers`.
+    /// Legacy/Substrate-compatible nodes may still answer `state_getStorage`, so
+    /// use that only when the native wallet method is not available.
     pub async fn is_nullifier_spent(&self, nullifier: &[u8; 48]) -> Result<bool, WalletError> {
+        match self.nullifiers().await {
+            Ok(spent) => return Ok(spent.contains(nullifier)),
+            Err(err) if is_method_unavailable(&err, "hegemon_walletNullifiers") => {}
+            Err(err) => return Err(err),
+        }
+        self.is_nullifier_spent_via_storage(nullifier).await
+    }
+
+    async fn is_nullifier_spent_via_storage(
+        &self,
+        nullifier: &[u8; 48],
+    ) -> Result<bool, WalletError> {
         self.ensure_connected().await?;
         let client = self.client.read().await;
 
@@ -1225,24 +1243,24 @@ impl NodeRpcClient {
         Ok(result.is_some())
     }
 
-    /// Check multiple nullifiers for spent status
-    ///
-    /// Batch version of is_nullifier_spent for efficiency.
-    ///
-    /// # Arguments
-    ///
-    /// * `nullifiers` - Slice of 48-byte nullifiers to check
-    ///
-    /// # Returns
-    ///
-    /// Vector of booleans, one per nullifier. `true` means spent.
+    /// Check multiple nullifiers for spent status.
     pub async fn check_nullifiers_spent(
         &self,
         nullifiers: &[[u8; 48]],
     ) -> Result<Vec<bool>, WalletError> {
+        match self.nullifiers().await {
+            Ok(spent) => {
+                return Ok(nullifiers
+                    .iter()
+                    .map(|nullifier| spent.contains(nullifier))
+                    .collect())
+            }
+            Err(err) if is_method_unavailable(&err, "hegemon_walletNullifiers") => {}
+            Err(err) => return Err(err),
+        }
         let mut results = Vec::with_capacity(nullifiers.len());
         for nullifier in nullifiers {
-            results.push(self.is_nullifier_spent(nullifier).await?);
+            results.push(self.is_nullifier_spent_via_storage(nullifier).await?);
         }
         Ok(results)
     }

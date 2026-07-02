@@ -13,14 +13,20 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{error, info, warn};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConnectedPeerSnapshot {
+    pub peer_id: PeerId,
+    pub addr: SocketAddr,
+}
 
 pub struct ProtocolHandle {
     protocol_id: ProtocolId,
@@ -334,6 +340,9 @@ pub struct P2PService {
     last_punch_request: HashMap<PeerId, Instant>,
     seen_gossip: SeenGossipCache,
     inbound_message_budget: ByteBudget,
+    persistent_dial_addresses: HashSet<SocketAddr>,
+    peer_count_observer: Option<Arc<AtomicUsize>>,
+    peer_snapshot_observer: Option<Arc<RwLock<Vec<ConnectedPeerSnapshot>>>>,
 }
 
 impl P2PService {
@@ -368,11 +377,48 @@ impl P2PService {
             last_punch_request: HashMap::new(),
             seen_gossip: SeenGossipCache::default(),
             inbound_message_budget: ByteBudget::new(MAX_P2P_COMMAND_QUEUE_BYTES),
+            persistent_dial_addresses: HashSet::new(),
+            peer_count_observer: None,
+            peer_snapshot_observer: None,
         }
     }
 
     pub fn register_protocol(&mut self, protocol_id: ProtocolId) -> ProtocolHandle {
         self.protocol_mux.register(protocol_id)
+    }
+
+    pub fn set_peer_count_observer(&mut self, observer: Arc<AtomicUsize>) {
+        observer.store(self.peer_manager.peer_count(), Ordering::Relaxed);
+        self.peer_count_observer = Some(observer);
+    }
+
+    pub fn set_peer_snapshot_observer(
+        &mut self,
+        observer: Arc<RwLock<Vec<ConnectedPeerSnapshot>>>,
+    ) {
+        if let Ok(mut snapshot) = observer.write() {
+            *snapshot = self.connected_peer_snapshots();
+        }
+        self.peer_snapshot_observer = Some(observer);
+    }
+
+    fn connected_peer_snapshots(&self) -> Vec<ConnectedPeerSnapshot> {
+        self.peer_manager
+            .connected_peers()
+            .into_iter()
+            .map(|(peer_id, addr)| ConnectedPeerSnapshot { peer_id, addr })
+            .collect()
+    }
+
+    fn publish_peer_state(&self) {
+        if let Some(observer) = &self.peer_count_observer {
+            observer.store(self.peer_manager.peer_count(), Ordering::Relaxed);
+        }
+        if let Some(observer) = &self.peer_snapshot_observer
+            && let Ok(mut snapshot) = observer.write()
+        {
+            *snapshot = self.connected_peer_snapshots();
+        }
     }
 
     pub async fn run(mut self) -> Result<(), NetworkError> {
@@ -435,6 +481,7 @@ impl P2PService {
         let connected = self.peer_manager.connected_addresses();
         let initial_targets = self.startup_targets(imported_peers, resolved_seeds, &connected)?;
         for addr in initial_targets {
+            self.persistent_dial_addresses.insert(addr);
             self.spawn_connect(addr, self.identity.clone(), cmd_tx.clone());
         }
 
@@ -525,9 +572,11 @@ impl P2PService {
                                         "rejecting peer over live-session cap"
                                     );
                                     let _ = admit.send(false);
+                                    self.publish_peer_state();
                                     continue;
                                 }
                             }
+                            self.publish_peer_state();
                             if !inbound && is_dialable_addr(addr) {
                                 self.peer_store.record_connected(addr)?;
                                 self.learned_addresses.insert(addr);
@@ -575,6 +624,7 @@ impl P2PService {
                                     "ignored disconnect from inactive peer session"
                                 );
                             }
+                            self.publish_peer_state();
                         }
                         P2PCommand::Message {
                             queued,
@@ -626,6 +676,12 @@ impl P2PService {
                                         .await;
                                 }
                                 WireMessage::Proto(proto_msg) => {
+                                    info!(
+                                        protocol = proto_msg.protocol,
+                                        peer = ?peer_id,
+                                        payload_bytes = proto_msg.payload.len(),
+                                        "dispatching inbound protocol message"
+                                    );
                                     self.protocol_mux
                                         .dispatch_inbound(peer_id, proto_msg)
                                         .await;
@@ -647,6 +703,12 @@ impl P2PService {
                 // Handle protocol messages from registered components
                 Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
                     let outbound = outbound.message;
+                    info!(
+                        protocol = outbound.message.protocol,
+                        target = ?outbound.target,
+                        payload_bytes = outbound.message.payload.len(),
+                        "queueing outbound protocol message"
+                    );
                     match outbound.target {
                         Some(peer_id) => {
                             self
@@ -662,15 +724,22 @@ impl P2PService {
 
                 _ = heartbeat.tick() => {
                     self.peer_manager.ping_all().await;
-                    for (peer_id, addr) in self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT) {
+                    let stale_peers = self.peer_manager.prune_stale(HEARTBEAT_TIMEOUT);
+                    let pruned_any = !stale_peers.is_empty();
+                    for (peer_id, addr) in stale_peers {
                         warn!("peer timed out: {} ({:?})", addr, peer_id);
                         self.peer_store.record_disconnected(addr)?;
                     }
+                    if pruned_any {
+                        self.publish_peer_state();
+                    }
                     let connected = self.peer_manager.connected_addresses();
                     if self.peer_manager.peer_count() < self.peer_manager.max_peers() {
+                        let mut excluded = connected;
+                        excluded.extend(self.persistent_dial_addresses.iter().copied());
                         let candidates = self.peer_manager.address_candidates(
                             self.addr,
-                            &connected,
+                            &excluded,
                             OPPORTUNISTIC_BATCH,
                         );
                         for addr in candidates {
@@ -1439,15 +1508,11 @@ impl P2PService {
 
             match lookup_host((seed.as_str(), default_port)).await {
                 Ok(addrs) => {
-                    for addr in addrs {
-                        resolved.push(addr);
-                    }
+                    resolved.extend(prefer_ipv4_seed_addrs(addrs.collect()));
                 }
                 Err(e) => match lookup_host(seed.as_str()).await {
                     Ok(addrs) => {
-                        for addr in addrs {
-                            resolved.push(addr);
-                        }
+                        resolved.extend(prefer_ipv4_seed_addrs(addrs.collect()));
                     }
                     Err(host_port_err) => {
                         warn!(
@@ -1603,6 +1668,17 @@ fn ipv6_is_documentation(ip: Ipv6Addr) -> bool {
     ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
 }
 
+fn prefer_ipv4_seed_addrs(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
+    if addrs.iter().any(|addr| addr.ip().is_ipv4()) {
+        addrs
+            .into_iter()
+            .filter(|addr| addr.ip().is_ipv4())
+            .collect()
+    } else {
+        addrs
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1631,6 +1707,33 @@ mod tests {
             RelayConfig::default(),
             NatTraversalConfig::disabled(addr),
         )
+    }
+
+    #[test]
+    fn peer_snapshot_observer_tracks_connected_peers() {
+        let mut service = test_service("peer-snapshot-observer", 8);
+        let peer: PeerId = [42u8; 32];
+        let addr: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        let observer = Arc::new(RwLock::new(Vec::new()));
+
+        service.set_peer_snapshot_observer(Arc::clone(&observer));
+        assert!(observer.read().expect("snapshot read").is_empty());
+
+        assert_eq!(
+            service.peer_manager.try_add_peer(peer, addr, tx, 1, true),
+            AddPeerResult::Accepted
+        );
+        service.publish_peer_state();
+
+        let snapshot = observer.read().expect("snapshot read").clone();
+        assert_eq!(
+            snapshot,
+            vec![ConnectedPeerSnapshot {
+                peer_id: peer,
+                addr,
+            }]
+        );
     }
 
     #[test]
@@ -1949,6 +2052,22 @@ mod tests {
             resolved.iter().any(|addr| addr.port() == 34567),
             "hostname:port seeds must preserve the explicit port: {resolved:?}"
         );
+    }
+
+    #[test]
+    fn seed_resolution_prefers_ipv4_when_hostname_is_dual_stack() {
+        let addrs = prefer_ipv4_seed_addrs(vec![
+            "[2607:5300:205:200::8d62]:30333".parse().unwrap(),
+            "158.69.222.121:30333".parse().unwrap(),
+        ]);
+
+        assert_eq!(addrs, vec!["158.69.222.121:30333".parse().unwrap()]);
+    }
+
+    #[test]
+    fn seed_resolution_keeps_ipv6_when_no_ipv4_exists() {
+        let ipv6: SocketAddr = "[2607:5300:205:200::17c1]:30333".parse().unwrap();
+        assert_eq!(prefer_ipv4_seed_addrs(vec![ipv6]), vec![ipv6]);
     }
 
     #[test]

@@ -90,6 +90,35 @@ def selectionCaseJson
     ++ "      ]\n"
     ++ "    }"
 
+def pruneActionJson
+    (actions : List MineableSelectionAction)
+    (entry : MineableSelectionVectorAction) : String :=
+  "        {\n"
+    ++ "          \"label\": \"" ++ entry.label ++ "\",\n"
+    ++ "          \"fixture\": \"" ++ entry.fixture ++ "\",\n"
+    ++ "          \"action_id\": " ++ toString entry.action.actionId ++ ",\n"
+    ++ "          \"transfer_route\": "
+      ++ boolJson entry.action.transferRoute ++ ",\n"
+    ++ "          \"candidate_artifact_route\": "
+      ++ boolJson entry.action.candidateArtifactRoute ++ ",\n"
+    ++ "          \"expected_survives_after_transfer_prune\": "
+      ++ boolJson
+        (survivesCandidatePruneWhenTransfersPending actions entry.action) ++ "\n"
+    ++ "        }"
+
+def pruneCaseJson
+    (name : String)
+    (entries : List MineableSelectionVectorAction) : String :=
+  let actions := entries.map (fun entry => entry.action)
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"transfer_pending\": "
+      ++ boolJson (pendingTransferPresent actions) ++ ",\n"
+    ++ "      \"actions\": [\n"
+    ++ joinJsonObjects (entries.map (pruneActionJson actions)) ++ "\n"
+    ++ "      ]\n"
+    ++ "    }"
+
 def inlineA : MineableSelectionVectorAction :=
   {
     label := "inline-a",
@@ -183,7 +212,7 @@ def bridgeA : MineableSelectionVectorAction :=
 
 def vectorJson : String :=
   "{\n"
-    ++ "  \"schema_version\": 2,\n"
+    ++ "  \"schema_version\": 3,\n"
     ++ "  \"mineable_action_admission_cases\": [\n"
     ++ mineableActionCaseJson "plain-action-accepts" plainAction ++ ",\n"
     ++ mineableActionCaseJson "selected-candidate-accepts"
@@ -221,6 +250,14 @@ def vectorJson : String :=
       [sidecarMissing, candidateOneA, bridgeA] ++ ",\n"
     ++ selectionCaseJson "first-matching-candidate-wins"
       [inlineA, candidateOneB, candidateOneA, bridgeA] ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"pending_candidate_prune_cases\": [\n"
+    ++ pruneCaseJson "no-transfer-keeps-candidate"
+      [candidateOneA, bridgeA] ++ ",\n"
+    ++ pruneCaseJson "transfer-prunes-candidate"
+      [inlineA, candidateOneA, bridgeA] ++ ",\n"
+    ++ pruneCaseJson "transfer-prunes-multiple-candidates"
+      [inlineA, candidateOneA, candidateOneB, candidateTwo, bridgeA] ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

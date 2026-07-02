@@ -40,8 +40,8 @@ module.exports = {
       },
       fontSize: {
         '2xs': ['0.625rem', { lineHeight: '0.875rem' }],
-        'headline': ['1.75rem', { lineHeight: '2rem', letterSpacing: '-0.01em' }],
-        'title': ['1.25rem', { lineHeight: '1.5rem', letterSpacing: '-0.005em' }]
+        'headline': ['1.75rem', { lineHeight: '2rem', letterSpacing: '0' }],
+        'title': ['1.25rem', { lineHeight: '1.5rem', letterSpacing: '0' }]
       },
       spacing: {
         '18': '4.5rem',

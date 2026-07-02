@@ -5,7 +5,7 @@ set -euo pipefail
 
 KEYS_DIR="${KEYS_DIR:-./keys}"
 NODE_COUNT="${NODE_COUNT:-3}"
-APPROVED_SEEDS="${HEGEMON_SEEDS:-hegemon.pauli.group:30333}"
+APPROVED_SEEDS="${HEGEMON_SEEDS:-devnet.hegemonprotocol.com:30333}"
 
 mkdir -p "$KEYS_DIR"
 

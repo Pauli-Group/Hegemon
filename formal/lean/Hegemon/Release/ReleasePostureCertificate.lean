@@ -60,6 +60,8 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.securityAdversarialJob = true
   nativeBackendSecurityJob :
     surface.ciReleaseGate.nativeBackendSecurityJob = true
+  appNoSshE2eJob :
+    surface.ciReleaseGate.appNoSshE2eJob = true
   releaseBuildJob :
     surface.ciReleaseGate.releaseBuildJob = true
   releaseBuildNeedsSecurityGates :
@@ -68,6 +70,8 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.releaseBuildNeedsSecurityAdversarial = true
   releaseBuildNeedsNativeBackendSecurity :
     surface.ciReleaseGate.releaseBuildNeedsNativeBackendSecurity = true
+  releaseBuildNeedsAppNoSshE2e :
+    surface.ciReleaseGate.releaseBuildNeedsAppNoSshE2e = true
   nonReleaseJobsNoContentsWrite :
     surface.ciReleaseGate.nonReleaseJobsNoContentsWrite = true
   releaseBinaryAuditStep :
@@ -76,6 +80,8 @@ structure AcceptedReleasePostureFacts
     surface.ciReleaseGate.tagReleaseNativeBackendReviewStep = true
   tagReleaseNativeBackendPostureStep :
     surface.ciReleaseGate.tagReleaseNativeBackendPostureStep = true
+  appUiGuardStep :
+    surface.ciReleaseGate.appUiGuardStep = true
   branchProtectionRulesetEvidence :
     surface.ciReleaseGate.branchProtectionRulesetEvidence = true
   nativeBackendPostureAccepted :
@@ -220,11 +226,13 @@ theorem accepted_release_posture_exposes_all_release_gates
       accepted.ciReleaseGateAccepted
   rcases ciFacts with
     ⟨dependencyAuditJob, dependencyAuditWaiverGateStep, formalCoreJob,
-      securityAdversarialJob, nativeBackendSecurityJob, releaseBuildJob,
+      securityAdversarialJob, nativeBackendSecurityJob, appNoSshE2eJob,
+      releaseBuildJob,
       releaseBuildNeedsSecurityGates, releaseBuildNeedsSecurityAdversarial,
-      releaseBuildNeedsNativeBackendSecurity, nonReleaseJobsNoContentsWrite,
-      releaseBinaryAuditStep, tagReleaseNativeBackendReviewStep,
-      tagReleaseNativeBackendPostureStep, branchProtectionRulesetEvidence⟩
+      releaseBuildNeedsNativeBackendSecurity, releaseBuildNeedsAppNoSshE2e,
+      nonReleaseJobsNoContentsWrite, releaseBinaryAuditStep,
+      tagReleaseNativeBackendReviewStep, tagReleaseNativeBackendPostureStep,
+      appUiGuardStep, branchProtectionRulesetEvidence⟩
   have nativeBackendPostureFacts :=
     accepted_native_backend_release_posture_exposes_preconditions
       accepted.nativeBackendPostureAccepted
@@ -243,14 +251,17 @@ theorem accepted_release_posture_exposes_all_release_gates
     formalCoreJob := formalCoreJob,
     securityAdversarialJob := securityAdversarialJob,
     nativeBackendSecurityJob := nativeBackendSecurityJob,
+    appNoSshE2eJob := appNoSshE2eJob,
     releaseBuildJob := releaseBuildJob,
     releaseBuildNeedsSecurityGates := releaseBuildNeedsSecurityGates,
     releaseBuildNeedsSecurityAdversarial := releaseBuildNeedsSecurityAdversarial,
     releaseBuildNeedsNativeBackendSecurity := releaseBuildNeedsNativeBackendSecurity,
+    releaseBuildNeedsAppNoSshE2e := releaseBuildNeedsAppNoSshE2e,
     nonReleaseJobsNoContentsWrite := nonReleaseJobsNoContentsWrite,
     releaseBinaryAuditStep := releaseBinaryAuditStep,
     tagReleaseNativeBackendReviewStep := tagReleaseNativeBackendReviewStep,
     tagReleaseNativeBackendPostureStep := tagReleaseNativeBackendPostureStep,
+    appUiGuardStep := appUiGuardStep,
     branchProtectionRulesetEvidence := branchProtectionRulesetEvidence,
     nativeBackendPostureAccepted :=
       accepted.nativeBackendPostureAccepted,

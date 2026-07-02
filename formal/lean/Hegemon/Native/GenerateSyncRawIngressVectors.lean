@@ -18,6 +18,7 @@ def optionNatJson : Option Nat -> String
 def kindJson : SyncRawIngressKind -> String
   | SyncRawIngressKind.request => "\"request\""
   | SyncRawIngressKind.response => "\"response\""
+  | SyncRawIngressKind.pendingAction => "\"pending_action\""
   | SyncRawIngressKind.decodeError => "\"decode_error\""
 
 def rejectionJson : Option SyncRawIngressReject -> String
@@ -25,6 +26,8 @@ def rejectionJson : Option SyncRawIngressReject -> String
   | some SyncRawIngressReject.wireDecodeRejected => "\"wire_decode_rejected\""
   | some SyncRawIngressReject.responseBlockCountTooLarge =>
       "\"response_block_count_too_large\""
+  | some SyncRawIngressReject.pendingActionDecodeRejected =>
+      "\"pending_action_decode_rejected\""
 
 def outcomeJson : SyncResponseImportOutcome -> String
   | SyncResponseImportOutcome.imported => "\"imported\""
@@ -89,6 +92,8 @@ def vectorJson : String :=
       missingMarkerRawRequest ++ ",\n"
     ++ caseJson "raw-sync-unknown-variant-rejected"
       unknownVariantRawMessage ++ ",\n"
+    ++ caseJson "raw-sync-empty-pending-action-rejected"
+      emptyPendingActionRelay ++ ",\n"
     ++ caseJson "valid-empty-raw-sync-response" validEmptyRawResponse ++ "\n"
     ++ "  ]\n"
     ++ "}\n"

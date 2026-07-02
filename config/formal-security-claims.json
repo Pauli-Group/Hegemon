@@ -50,7 +50,7 @@
       "id": "release.ci-release-gate",
       "component": "GitHub CI and tag-release gate wiring",
       "claim_class": "lean_theorem",
-      "summary": "The Lean CI release-gate policy proves release-build acceptance requires a dependency-audit job, that job's explicit dependency-audit waiver gate, formal-core, security-adversarial, native-backend-security, a release-build job, release-build dependency on those security gates, a hegemon-node/wallet/walletd release binary audit step, tag-release native backend review/posture gates, and checked branch-protection/ruleset evidence for the required release checks; generated vectors plus a workflow/ruleset checker bind that policy to the checked-in PR/main workflow, tag-release workflow, and active ruleset export. The accepted CI release-gate projection now exposes dependency-audit, dependency-waiver gate, release-build, and release-build security dependency facts together. The release posture certificate packages those CI facts with accepted dependency-audit waiver accounting, clean PQ source/dependency/binary scans, and native-backend posture preconditions. The production release gate certificate now composes the accepted CI release-gate facts with dependency waivers, PQ scan facts, and accepted-mode native backend posture in one release surface.",
+      "summary": "The Lean CI release-gate policy proves release-build acceptance requires a dependency-audit job, that job's explicit dependency-audit waiver gate, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, a release-build job, release-build dependency on those security and no-SSH gates, a hegemon-node/wallet/walletd release binary audit step, tag-release native backend review/posture gates, the app UI guard gate, and checked branch-protection/ruleset evidence for the required release checks; generated vectors plus a workflow/ruleset checker bind that policy to the checked-in PR/main workflow, tag-release workflow, and active ruleset export. The accepted CI release-gate projection now exposes dependency-audit, dependency-waiver gate, release-build, and release-build security/no-SSH dependency facts together. The release posture certificate packages those CI facts with accepted dependency-audit waiver accounting, clean PQ source/dependency/binary scans, and native-backend posture preconditions. The production release gate certificate now composes the accepted CI release-gate facts with dependency waivers, PQ scan facts, and accepted-mode native backend posture in one release surface.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_policy_vectors_and_workflow_wiring_checker",
       "production_eligible": true,
@@ -61,13 +61,16 @@
         "Hegemon.Release.CiReleaseGate.dependency_audit_waiver_gate_missing_rejects_after_job",
         "Hegemon.Release.CiReleaseGate.dependency_audit_precedes_all_missing",
         "Hegemon.Release.CiReleaseGate.formal_core_missing_rejects_after_dependency_audit",
+        "Hegemon.Release.CiReleaseGate.app_no_ssh_e2e_missing_rejects_after_native_backend_security",
         "Hegemon.Release.CiReleaseGate.native_backend_security_missing_rejects_after_adversarial",
         "Hegemon.Release.CiReleaseGate.release_binary_audit_missing_rejects_after_security_jobs",
+        "Hegemon.Release.CiReleaseGate.release_build_app_no_ssh_e2e_dependency_missing_rejects",
         "Hegemon.Release.CiReleaseGate.release_build_dependency_missing_rejects_after_jobs",
         "Hegemon.Release.CiReleaseGate.release_build_missing_rejects_after_security_jobs",
         "Hegemon.Release.CiReleaseGate.release_build_native_backend_security_dependency_missing_rejects",
         "Hegemon.Release.CiReleaseGate.release_build_security_adversarial_dependency_missing_rejects",
         "Hegemon.Release.CiReleaseGate.security_adversarial_missing_rejects_after_formal_core",
+        "Hegemon.Release.CiReleaseGate.app_ui_guard_missing_rejects",
         "Hegemon.Release.CiReleaseGate.branch_protection_ruleset_missing_rejects",
         "Hegemon.Release.CiReleaseGate.tag_release_native_backend_posture_missing_rejects",
         "Hegemon.Release.CiReleaseGate.tag_release_native_backend_review_missing_rejects",
@@ -81,7 +84,7 @@
       ],
       "assumptions": [
         "GitHub branch protection or merge policy marks the checked workflow jobs as required for protected release branches.",
-        "The workflow checker validates the checked-in workflow text, including the explicit dependency-audit waiver gate command in the dependency-audit job, and validates the checked-in active branch ruleset export for required dependency-audit, formal-core, security-adversarial, native-backend-security, and release-build status checks. GitHub-hosted runner integrity and live repository settings remain external operational controls.",
+        "The workflow checker validates the checked-in workflow text, including the explicit dependency-audit waiver gate command in the dependency-audit job and the app no-SSH E2E command/dependency, and validates the checked-in active branch ruleset export for required dependency-audit, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, and release-build status checks. GitHub-hosted runner integrity and live repository settings remain external operational controls.",
         "The actual binary scanner semantics are the release.pq-binary claim; this claim binds that scanner into CI/release workflow wiring.",
         "The production release gate certificate requires CI release-gate facts when accepted native-backend mode is requested; repository branch protection and runner integrity remain operational assumptions."
       ],
@@ -3518,7 +3521,7 @@
       "id": "native.sync-admission",
       "component": "native sync semantic admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean native sync admission, raw-ingress, block-range publication, response-import, and per-peer sync-request-rate kernels prove deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, accepted outbound response ranges exposing bounded-request item-count facts, served block-range publication count/height/previous-parent/parent/verification facts, and inbound response import control flow: count admission before sort/import, deterministic sorted-height order, import/attempt counters bounded by the response, stop-on-first-error behavior, and continuation-request decisions only for nonempty responses when the peer remains ahead. The raw-ingress slice adds Lean-owned `HNW1` postcard sync request/empty-response/trailing/missing-marker/unknown-variant byte vectors and checks them through production `decode_sync_message` before existing request-range or response-import helpers run. Generated Lean vectors are checked against the production native sync helpers used by block-range serving, per-peer request-rate admission before block loading, missing-block requests, outbound block-range publication admission, inbound response handling, raw sync wire decoding, and the shared sync-response import helper. Production inbound response-count admission routes through the generic bounded-request helper with the sync block cap as the item-count cap, and `NativeNode::block_range` now checks the generated publication admission table before returning blocks to peers. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
+      "summary": "The Lean native sync admission, raw-ingress, block-range publication, response-import, and per-peer sync-request-rate kernels prove deterministic capped response ranges, missing-block request windows, zero-cap fail-closed behavior, saturating u64 edges, inbound response block-count rejection, accepted outbound response ranges exposing bounded-request item-count facts, served block-range publication count/height/previous-parent/parent/verification facts, and inbound response import control flow: count admission before sort/import, deterministic sorted-height order, import/attempt counters bounded by the response, stop-on-first-error behavior, and continuation-request decisions only for nonempty responses when the peer remains ahead. The raw-ingress slice adds Lean-owned `HNW1` postcard sync request/empty-response/pending-action/trailing/missing-marker/unknown-variant byte vectors and checks them through production `decode_sync_message` before existing request-range, response-import, or pending-action relay decode helpers run. Generated Lean vectors are checked against the production native sync helpers used by block-range serving, per-peer request-rate admission before block loading, missing-block requests, outbound block-range publication admission, inbound response handling, raw sync wire decoding, pending-action relay ingress, and the shared sync-response import helper. Production inbound response-count admission routes through the generic bounded-request helper with the sync block cap as the item-count cap, `NativeNode::block_range` checks the generated publication admission table before returning blocks to peers, and focused Rust regressions require peer-relayed user pending actions to stage durably, deduplicate, reject miner-local artifacts, reject stale hash bindings, and evict stale candidate artifacts like the local submit path. Blueprint bindings and regressions additionally require non-genesis canonical rows served over sync to decode native action bodies and verify the decoded action root before response publication.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3563,6 +3566,7 @@
         "Hegemon.Native.SyncRawIngress.raw_sync_request_trailing_rejects",
         "Hegemon.Native.SyncRawIngress.raw_sync_missing_marker_rejects",
         "Hegemon.Native.SyncRawIngress.raw_sync_unknown_variant_rejects",
+        "Hegemon.Native.SyncRawIngress.raw_sync_empty_pending_action_relay_rejects",
         "Hegemon.Native.SyncRawIngress.valid_raw_empty_sync_response_accepts",
         "Hegemon.Native.SyncRawIngress.raw_empty_sync_response_never_requests_more",
         "Hegemon.Native.SyncBlockRangePublicationAdmission.accepts_iff_sync_block_range_publication_preconditions",
@@ -3587,11 +3591,11 @@
       ],
       "assumptions": [
         "The Lean model represents decoded native sync semantic admission after bounded wire decoding, with peer identity, message framing, and block validity represented outside this predicate.",
-        "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, exact/over-limit inbound response counts, representative raw sync wire bytes for canonical request/empty-response plus trailing-byte, missing-marker, and unknown-variant rejection, and per-peer request-rate cases for under-limit, full unelapsed window, elapsed-window reset, and zero-cap fail-closed behavior.",
+        "Generated Lean conformance vectors cover requested response ranges, caps at local best height, caps at max response blocks, empty from/to ranges, zero max-block fail-closed behavior, u64 saturating edges, missing-block request no-ops, capped request windows, exact/over-limit inbound response counts, representative raw sync wire bytes for canonical request/empty-response/pending-action relay plus trailing-byte, missing-marker, and unknown-variant rejection, and per-peer request-rate cases for under-limit, full unelapsed window, elapsed-window reset, and zero-cap fail-closed behavior.",
         "The production inbound response-count helper constructs a generic bounded-request input with zero raw/decoded/per-item/aggregate/work dimensions and maps the sync response block count to the bounded-request item count.",
         "Accepted outbound response ranges construct a generic bounded-request fact package in Lean with zero raw/decoded/per-item/aggregate/work dimensions and the served range length as item count; the production binding now also evaluates a generated block-range publication table over served-count, first/last-height, height-continuity, previous-parent-anchor, parent-continuity, canonical-row verification, and body-verification facts before returning blocks to peers.",
         "Generated sync block-range publication conformance vectors cover valid publication, no admitted range, served-count mismatch, first/last-height mismatch, height continuity mismatch, previous-parent-anchor mismatch, parent continuity mismatch, unverified canonical rows, unverified action bodies, and rejection precedence.",
-        "The theorem covers executable native sync range, response-count admission, and response-import control flow only; body/root materialization is a production-binding and regression obligation over existing codec and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, storage durability, or complete native-node equivalence."
+        "The theorem covers executable native sync range, response-count admission, response-import control flow, and representative pending-action relay wire ingress only; body/root materialization and full peer-relayed mempool staging are production-binding and regression obligations over existing codec, mempool, and block-commitment helpers. It does not prove SCALE codec correctness, PQ Noise transport security, full PoW/header validity beyond the metadata projection helper, fork-choice convergence, peer honesty, network liveness, transaction propagation liveness, storage durability, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/SyncAdmission.lean",
@@ -3618,6 +3622,8 @@
         "cargo test -p hegemon-node block_range_caps_overwide_response_with_bounded_request_item_facts --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node native_sync_ranges_fail_closed_when_cap_zero --lib --no-default-features -- --nocapture",
         "cargo test -p hegemon-node block_range_rejects_corrupt_canonical_action_body_inside_admitted_range --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node relayed_pending_action --lib --no-default-features -- --nocapture",
+        "cargo test -p hegemon-node relayed_transfer --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh",
         "cargo test -p hegemon-node native_sync_request_rate_admission_limits_peer_requests_per_window --lib --no-default-features -- --nocapture"
       ],
@@ -3627,12 +3633,15 @@
       "id": "native.mineable-action-admission",
       "component": "native block-template action selection admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean mineable-action admission kernel proves the executable native block-template selection table for selected candidate artifacts, unselected candidate rejection, locally staged sidecar-transfer ciphertext metadata, and ordered candidate-artifact selection from the mineable transfer count; generated Lean vectors are checked against the production helper used before native mining work and mined-block pending-action replay.",
+      "summary": "The Lean mineable-action admission kernel proves the executable native block-template selection table for selected candidate artifacts, unselected candidate rejection, locally staged sidecar-transfer ciphertext metadata, ordered candidate-artifact selection from the mineable transfer count, and pending-candidate pruning when shielded transfers are pending; generated Lean vectors are checked against the production helpers used before native mining work, startup pending-action repair, and mined-block pending-action replay.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Native.MineableActionAdmission.accepts_iff_mineable_preconditions",
+        "Hegemon.Native.MineableActionAdmission.candidate_prune_drops_candidates_when_transfer_pending",
+        "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_candidates_without_transfer",
+        "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_non_candidates",
         "Hegemon.Native.MineableActionAdmission.candidate_precedes_sidecar_ciphertext_missing",
         "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
         "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
@@ -3650,9 +3659,9 @@
         "Hegemon.Native.MineableActionAdmission.valid_sidecar_transfer_accepts"
       ],
       "assumptions": [
-        "The Lean model treats candidate-artifact route identity, sidecar transfer identity, staged ciphertext lookup results, and the already canonical pending-action order as production-derived predicates; it proves the executable admission table, rejection precedence, and ordered candidate selection by mineable transfer count.",
-        "Generated Lean conformance vectors cover plain action acceptance, selected candidate acceptance, valid sidecar transfer acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, precedence when candidate and sidecar predicates conflict, zero-transfer candidate rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from transfer count, and canonical-order first matching candidate selection.",
-        "The theorem covers executable native block-template action admission and candidate selection over the production canonical order only. It does not prove ciphertext hash cryptographic security or implementation equivalence, sled/BTreeMap consistency, DA durability, recursive proof soundness, native tx-leaf proof soundness, global miner fairness, or complete native-node equivalence."
+        "The Lean model treats candidate-artifact route identity, sidecar transfer identity, staged ciphertext lookup results, pending-transfer presence, and the already canonical pending-action order as production-derived predicates; it proves the executable admission table, rejection precedence, ordered candidate selection by mineable transfer count, and the pending-candidate cleanup rule.",
+        "Generated Lean conformance vectors cover plain action acceptance, selected candidate acceptance, valid sidecar transfer acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, precedence when candidate and sidecar predicates conflict, zero-transfer candidate rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from transfer count, canonical-order first matching candidate selection, no-transfer candidate survival, transfer-driven candidate pruning, and multiple-candidate pruning.",
+        "The theorem covers executable native block-template action admission, candidate selection over the production canonical order, and candidate cleanup for persisted/revalidated pending sets. It does not prove ciphertext hash cryptographic security or implementation equivalence, sled/BTreeMap consistency, DA durability, recursive proof soundness, native tx-leaf proof soundness, global miner fairness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MineableActionAdmission.lean",

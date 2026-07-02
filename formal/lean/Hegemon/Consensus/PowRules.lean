@@ -118,6 +118,8 @@ def retargetAnchorSteps (parentHeight newHeight : Nat) : Option Nat :=
     none
   else if retargetWindow = 0 ∨ newHeight % retargetWindow ≠ 0 then
     none
+  else if newHeight <= retargetWindow then
+    none
   else
     match checkedNextU64 parentHeight with
     | some nextHeight =>
@@ -265,8 +267,12 @@ theorem retargetAnchorSteps_early_boundary_none :
     retargetAnchorSteps 0 retargetWindow = none := by
   decide
 
+theorem retargetAnchorSteps_first_boundary_none :
+    retargetAnchorSteps 9 retargetWindow = none := by
+  decide
+
 theorem retargetAnchorSteps_boundary_requires_window :
-    retargetAnchorSteps 9 retargetWindow = some (retargetWindow - 1) := by
+    retargetAnchorSteps 19 (retargetWindow * 2) = some (retargetWindow - 1) := by
   decide
 
 theorem expectedPowBitsSchedule_genesis_uses_genesis :
@@ -278,22 +284,22 @@ theorem expectedPowBitsSchedule_non_boundary_inherits_parent :
   rfl
 
 theorem expectedPowBitsSchedule_missing_history_rejects :
-    expectedPowBitsSchedule 123 545259519 9 retargetWindow retargetTimespanMs none =
+    expectedPowBitsSchedule 123 545259519 19 (retargetWindow * 2) retargetTimespanMs none =
       Except.error PowBitsScheduleReject.insufficientHistory := by
   rfl
 
 theorem expectedPowBitsSchedule_expected_timespan_keeps_bits :
-    expectedPowBitsSchedule 123 545259519 9 retargetWindow retargetTimespanMs (some 0) =
+    expectedPowBitsSchedule 123 545259519 19 (retargetWindow * 2) retargetTimespanMs (some 0) =
       Except.ok 545259519 := by
   rfl
 
 theorem expectedPowBitsSchedule_invalid_previous_bits_rejects :
-    expectedPowBitsSchedule 123 16777217 9 retargetWindow retargetTimespanMs (some 0) =
+    expectedPowBitsSchedule 123 16777217 19 (retargetWindow * 2) retargetTimespanMs (some 0) =
       Except.error PowBitsScheduleReject.invalidCompactTarget := by
   rfl
 
 theorem expectedPowBitsSchedule_reversed_timestamp_saturates :
-    expectedPowBitsSchedule 123 545259519 9 retargetWindow 100 (some 200) =
+    expectedPowBitsSchedule 123 545259519 19 (retargetWindow * 2) 100 (some 200) =
       Except.ok 538968063 := by
   rfl
 

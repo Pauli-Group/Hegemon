@@ -15,6 +15,7 @@ import type {
   WalletSyncResult
 } from '../src/types';
 import { resolveBinaryPath } from './binPaths';
+import { applyEnvDefaults, copyParentEnv, createBaseChildEnv } from './childProcessEnv';
 
 type PendingRequest = {
   resolve: (value: any) => void;
@@ -38,6 +39,24 @@ const WALLETD_ENV_DEFAULTS: Record<string, string> = {
   HEGEMON_WALLET_PROOF_SIDECAR: '0',
   HEGEMON_WALLET_TRY_SIGNED_SUBMIT: '0'
 };
+const WALLETD_ENV_PASSTHROUGH = [
+  'HEGEMON_WALLET_DA_SIDECAR',
+  'HEGEMON_WALLET_PROOF_SIDECAR',
+  'HEGEMON_WALLET_TRY_SIGNED_SUBMIT',
+  'HEGEMON_WALLET_CONSOLIDATION_DA_SIDECAR',
+  'HEGEMON_WALLET_CONSOLIDATION_PROOF_SIDECAR',
+  'HEGEMON_WALLET_CONSOLIDATION_MAX_TXS_PER_BATCH',
+  'HEGEMON_WALLET_CONSOLIDATION_MAX_BATCH_BYTES',
+  'HEGEMON_MAX_SHIELDED_TRANSFERS_PER_BLOCK',
+  'HEGEMON_MAX_BLOCK_TXS',
+  'HEGEMON_WALLET_MAX_NULLIFIERS',
+  'HEGEMON_WALLET_RPC_CONNECT_TIMEOUT_SECS',
+  'HEGEMON_WALLET_RPC_REQUEST_TIMEOUT_SECS',
+  'HEGEMON_WALLET_RPC_RECONNECT_ATTEMPTS',
+  'HEGEMON_WALLET_RPC_RECONNECT_DELAY_SECS',
+  'WALLET_PENDING_TIMEOUT_SECS',
+  'WALLET_CONSOLIDATION_PENDING_TIMEOUT_SECS'
+] as const;
 
 function rejectLineDelimitedPassphrase(passphrase: string): void {
   if (passphrase.includes('\n') || passphrase.includes('\r')) {
@@ -46,13 +65,9 @@ function rejectLineDelimitedPassphrase(passphrase: string): void {
 }
 
 function walletdSpawnEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const [key, value] of Object.entries(WALLETD_ENV_DEFAULTS)) {
-    const current = env[key];
-    if (current === undefined || current.trim() === '') {
-      env[key] = value;
-    }
-  }
+  const env = createBaseChildEnv();
+  copyParentEnv(env, WALLETD_ENV_PASSTHROUGH);
+  applyEnvDefaults(env, WALLETD_ENV_DEFAULTS);
   return env;
 }
 

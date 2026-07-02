@@ -14,14 +14,17 @@ REJECTION_NAMES = {
     "formal_core_missing",
     "security_adversarial_missing",
     "native_backend_security_missing",
+    "app_no_ssh_e2e_missing",
     "release_build_missing",
     "release_build_dependency_missing",
     "release_build_security_adversarial_dependency_missing",
     "release_build_native_backend_security_dependency_missing",
+    "release_build_app_no_ssh_e2e_dependency_missing",
     "non_release_job_contents_write",
     "release_binary_audit_missing",
     "tag_release_native_backend_review_missing",
     "tag_release_native_backend_posture_missing",
+    "app_ui_guard_missing",
     "branch_protection_ruleset_missing",
 }
 
@@ -30,6 +33,7 @@ REQUIRED_RULESET_CHECKS = {
     "formal-core",
     "security-adversarial",
     "native-backend-security",
+    "app-no-ssh-e2e",
     "release-build",
 }
 
@@ -45,6 +49,8 @@ def evaluate(case: dict) -> tuple[bool, str | None]:
         return False, "security_adversarial_missing"
     if not case["native_backend_security_job"]:
         return False, "native_backend_security_missing"
+    if not case["app_no_ssh_e2e_job"]:
+        return False, "app_no_ssh_e2e_missing"
     if not case["release_build_job"]:
         return False, "release_build_missing"
     if not case["release_build_needs_security_gates"]:
@@ -53,6 +59,8 @@ def evaluate(case: dict) -> tuple[bool, str | None]:
         return False, "release_build_security_adversarial_dependency_missing"
     if not case["release_build_needs_native_backend_security"]:
         return False, "release_build_native_backend_security_dependency_missing"
+    if not case["release_build_needs_app_no_ssh_e2e"]:
+        return False, "release_build_app_no_ssh_e2e_dependency_missing"
     if not case["non_release_jobs_no_contents_write"]:
         return False, "non_release_job_contents_write"
     if not case["release_binary_audit_step"]:
@@ -61,6 +69,8 @@ def evaluate(case: dict) -> tuple[bool, str | None]:
         return False, "tag_release_native_backend_review_missing"
     if not case["tag_release_native_backend_posture_step"]:
         return False, "tag_release_native_backend_posture_missing"
+    if not case["app_ui_guard_step"]:
+        return False, "app_ui_guard_missing"
     if not case["branch_protection_ruleset_evidence"]:
         return False, "branch_protection_ruleset_missing"
     return True, None
@@ -81,14 +91,17 @@ def check_vectors(path: Path) -> None:
             "formal_core_job",
             "security_adversarial_job",
             "native_backend_security_job",
+            "app_no_ssh_e2e_job",
             "release_build_job",
             "release_build_needs_security_gates",
             "release_build_needs_security_adversarial",
             "release_build_needs_native_backend_security",
+            "release_build_needs_app_no_ssh_e2e",
             "non_release_jobs_no_contents_write",
             "release_binary_audit_step",
             "tag_release_native_backend_review_step",
             "tag_release_native_backend_posture_step",
+            "app_ui_guard_step",
             "branch_protection_ruleset_evidence",
             "expected_valid",
         ):
@@ -145,10 +158,22 @@ def check_ci_workflow(path: Path) -> None:
     job_block(workflow, "formal-core")
     job_block(workflow, "security-adversarial")
     job_block(workflow, "native-backend-security")
+    app_no_ssh = job_block(workflow, "app-no-ssh-e2e")
     require_contains(
         "dependency-audit waiver gate",
         dependency_audit,
         "./scripts/dependency-audit-gate.sh",
+    )
+    require_contains(
+        "app no-SSH E2E gate",
+        app_no_ssh,
+        "./scripts/check-app-no-ssh-e2e.sh",
+    )
+    require_contains("app UI guard install", app_no_ssh, "npm ci --prefix hegemon-app")
+    require_contains(
+        "app UI guard gate",
+        app_no_ssh,
+        "npm --prefix hegemon-app run check:ui-guards",
     )
     require_contains("release-build needs dependency-audit", release_build, "- dependency-audit")
     require_contains("release-build needs formal-core", release_build, "- formal-core")
@@ -161,6 +186,11 @@ def check_ci_workflow(path: Path) -> None:
         "release-build needs native-backend-security",
         release_build,
         "- native-backend-security",
+    )
+    require_contains(
+        "release-build needs app-no-SSH E2E",
+        release_build,
+        "- app-no-ssh-e2e",
     )
     require_contains("release-build build command", release_build, "./scripts/check-core.sh build")
     require_binary_audit(
@@ -180,6 +210,7 @@ def check_release_workflow(path: Path) -> None:
     if not re.search(r"(?m)^permissions:\n\s+contents:\s+read\b", workflow):
         raise SystemExit("release workflow must default to workflow-wide contents: read")
     security_gates = job_block(workflow, "security-gates")
+    app_no_ssh = job_block(workflow, "app-no-ssh-e2e")
     create_release = job_block(workflow, "create-release")
     if not re.search(r"(?m)^    permissions:\n\s+contents:\s+write\b", create_release):
         raise SystemExit("create-release job must carry the only contents: write permission")
@@ -226,6 +257,18 @@ def check_release_workflow(path: Path) -> None:
         security_gates,
         "./scripts/check_native_backend_release_posture.sh",
     )
+    require_contains("release app no-SSH needs", app_no_ssh, "needs: security-gates")
+    require_contains(
+        "release app no-SSH gate",
+        app_no_ssh,
+        "./scripts/check-app-no-ssh-e2e.sh",
+    )
+    require_contains("release app UI guard install", app_no_ssh, "npm ci --prefix hegemon-app")
+    require_contains(
+        "release app UI guard gate",
+        app_no_ssh,
+        "npm --prefix hegemon-app run check:ui-guards",
+    )
     for job_name in (
         "build-linux",
         "build-macos-intel",
@@ -233,7 +276,8 @@ def check_release_workflow(path: Path) -> None:
         "build-windows",
     ):
         block = job_block(workflow, job_name)
-        require_contains(f"{job_name} needs security-gates", block, "needs: security-gates")
+        require_contains(f"{job_name} needs security-gates", block, "security-gates")
+        require_contains(f"{job_name} needs app-no-SSH E2E", block, "app-no-ssh-e2e")
         if job_name == "build-macos-intel":
             require_binary_audit(
                 f"{job_name} binary audit",

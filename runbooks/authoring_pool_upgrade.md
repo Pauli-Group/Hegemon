@@ -21,7 +21,7 @@ Before doing any server work, follow [config/testnet-initialization.md](/Users/p
 All mining hosts must share the same approved bootstrap seeds:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333"
+HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"
 ```
 
 If you are bringing up the first public authoring node after a full reset, do not seed it to itself. Start that first node with `HEGEMON_SEEDS` unset only when `HEGEMON_BOOTSTRAP_AUTHORING=1` is also set, then remove the bootstrap override and use the approved public join seed list on every other miner and relay.
@@ -56,8 +56,8 @@ Recommended operator checks:
 
 For this version, the desktop should expose only:
 
-- **Full node**
-- **Authoring node**
+- **Relay node**
+- **Mining node**
 
 Ordinary users should not be pointed at pooled hashing or private prover roles. Those are not part of the current shipped topology.
 

@@ -215,6 +215,26 @@ Operators follow [runbooks/security_testing.md](runbooks/security_testing.md) wh
 
 For multi-node setups, see [runbooks/two_node_remote_setup.md](runbooks/two_node_remote_setup.md). For VPS deployments, follow [runbooks/p2p_node_vps.md](runbooks/p2p_node_vps.md).
 
+### Building the Desktop App
+
+The desktop app uses bundled release binaries and talks only to localhost RPC. Renderer code reaches privileged desktop actions, including clipboard writes, through the typed Electron preload bridge. For a local ad-hoc bundle:
+
+```bash
+cargo build --release -p hegemon-node -p walletd
+npm --prefix hegemon-app run package
+```
+
+For a production macOS release, use the fail-closed notarization path:
+
+```bash
+APPLE_ID="<apple-id>" \
+APPLE_APP_SPECIFIC_PASSWORD="<app-password>" \
+APPLE_TEAM_ID="<team-id>" \
+npm --prefix hegemon-app run dist:prod
+```
+
+API-key notarization is also supported with `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. Without one complete credential set, `dist:prod` exits before packaging.
+
 ### Node CLI Options
 
 ```bash
@@ -227,7 +247,7 @@ Key options:
 - `--base-path <PATH>` - Persistent database location
 - `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
 - `--port <PORT>` - P2P port (default: 30333)
-- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333"`, to avoid forks.
+- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"`, to avoid forks.
 
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining
