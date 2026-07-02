@@ -266,8 +266,22 @@ async fn block_gossip_is_imported_and_relayed_to_non_origin() {
 
     let payload = b"block-gossip-regossip".to_vec();
     let handle_a = router_a.handle();
+    let handle_b = router_b.handle();
     let mut rx_b = router_b.handle().subscribe();
     let mut rx_c = router_c.handle().subscribe();
+    let ready_payload = b"block-gossip-b-c-ready".to_vec();
+
+    retry_broadcast_until(
+        || {
+            handle_b
+                .broadcast_transaction(ready_payload.clone())
+                .is_ok()
+        },
+        &mut rx_c,
+        |message| matches!(message, GossipMessage::Transaction(bytes) if bytes == &ready_payload),
+        "node C to receive readiness message from node B",
+    )
+    .await;
 
     retry_broadcast_until(
         || handle_a.broadcast_block(payload.clone()).is_ok(),
