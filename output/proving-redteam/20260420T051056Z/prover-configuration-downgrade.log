@@ -1,0 +1,99 @@
+# mode: ci
+# campaign: prover-configuration-downgrade
+# started_at_utc: 2026-04-20T05:23:03Z
+# command_script:
+cargo test -p wallet test_fast_config_is_clamped_without_explicit_override -- --nocapture
+cargo test -p wallet test_fast_config_requires_explicit_override_to_weaken_floor -- --nocapture
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/wallet-d6a514947952994b)
+
+running 1 test
+test prover::tests::test_fast_config_is_clamped_without_explicit_override ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.00s
+
+     Running unittests src/bin/wallet.rs (target/debug/deps/wallet-5de4856b6c9cc582)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/address_fuzz.rs (target/debug/deps/address_fuzz-fb1cbf1d223566a2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-1a60d78becbfeb40)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/disclosure_package.rs (target/debug/deps/disclosure_package-9ae87a7c186b537b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/memo_randomization.rs (target/debug/deps/memo_randomization-1fdd8360106f10df)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/substrate_rpc.rs (target/debug/deps/substrate_rpc-4ea8998d2352ea75)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.70s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/wallet-d6a514947952994b)
+
+running 1 test
+test prover::tests::test_fast_config_requires_explicit_override_to_weaken_floor ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.00s
+
+     Running unittests src/bin/wallet.rs (target/debug/deps/wallet-5de4856b6c9cc582)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/address_fuzz.rs (target/debug/deps/address_fuzz-fb1cbf1d223566a2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (target/debug/deps/cli-1a60d78becbfeb40)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/disclosure_package.rs (target/debug/deps/disclosure_package-9ae87a7c186b537b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/memo_randomization.rs (target/debug/deps/memo_randomization-1fdd8360106f10df)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/substrate_rpc.rs (target/debug/deps/substrate_rpc-4ea8998d2352ea75)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+

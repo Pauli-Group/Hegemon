@@ -104,6 +104,8 @@ pub enum ProofError {
     MissingAggregationProofForSelfContainedMode,
     #[error("missing transaction proofs")]
     MissingTransactionProofs,
+    #[error("missing transaction validity claims")]
+    MissingTransactionValidityClaims,
     #[error("missing transaction statement bindings")]
     MissingTransactionStatementBindings,
     #[error("transaction proof count mismatch: expected {expected}, got {observed}")]
@@ -132,6 +134,12 @@ pub enum ProofError {
     FlatBatchProofDecodeFailed(String),
     #[error("flat batch coverage invalid: {0}")]
     FlatBatchCoverage(String),
+    #[error("unsupported proof artifact: {0}")]
+    UnsupportedProofArtifact(String),
+    #[error("no verifier registered for proof artifact: {0}")]
+    MissingArtifactVerifier(String),
+    #[error("verified transaction artifact unavailable at index {index}: {message}")]
+    VerifiedTxArtifactUnavailable { index: usize, message: String },
     #[error("proof verifier panicked: {0}")]
     VerifierPanicked(String),
     #[error("commitment tree error: {0}")]

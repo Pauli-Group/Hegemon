@@ -3,13 +3,23 @@
 use alloc::{format, string::String};
 
 use crate::p3_air::{TransactionAirP3, TransactionPublicInputsP3};
-use crate::p3_config::{config_with_fri, TransactionProofP3};
+use crate::p3_config::{
+    config_with_fri, config_with_profile, release_tx_fri_profile_for_version, TransactionProofP3,
+};
 use p3_uni_stark::verify;
+use protocol_versioning::{TxFriProfile, VersionBinding};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InferredFriProfileP3 {
     pub log_blowup: usize,
     pub num_queries: usize,
+}
+
+impl InferredFriProfileP3 {
+    pub fn matches(self, expected: TxFriProfile) -> bool {
+        self.log_blowup == expected.log_blowup_usize()
+            && self.num_queries == expected.num_queries_usize()
+    }
 }
 
 pub fn prewarm_transaction_verifier_cache_p3(
@@ -100,6 +110,43 @@ pub fn verify_transaction_proof_p3(
         .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
 }
 
+pub fn verify_transaction_proof_p3_with_profile(
+    proof: &TransactionProofP3,
+    pub_inputs: &TransactionPublicInputsP3,
+    expected_profile: TxFriProfile,
+) -> Result<(), TransactionVerifyErrorP3> {
+    pub_inputs
+        .validate()
+        .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
+
+    let pub_inputs_vec = pub_inputs.to_vec();
+    let inferred = infer_fri_profile_from_proof_p3(proof)?;
+    if !inferred.matches(expected_profile) {
+        return Err(TransactionVerifyErrorP3::VerificationFailed(format!(
+            "proof FRI profile mismatch: expected log_blowup={} num_queries={}, got log_blowup={} num_queries={}",
+            expected_profile.log_blowup,
+            expected_profile.num_queries,
+            inferred.log_blowup,
+            inferred.num_queries
+        )));
+    }
+    let config = config_with_profile(expected_profile);
+    verify(&config.config, &TransactionAirP3, proof, &pub_inputs_vec)
+        .map_err(|err| TransactionVerifyErrorP3::VerificationFailed(format!("{err:?}")))
+}
+
+pub fn verify_transaction_proof_p3_for_version(
+    proof: &TransactionProofP3,
+    pub_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<(), TransactionVerifyErrorP3> {
+    verify_transaction_proof_p3_with_profile(
+        proof,
+        pub_inputs,
+        release_tx_fri_profile_for_version(version),
+    )
+}
+
 pub fn verify_transaction_proof_bytes_p3(
     proof_bytes: &[u8],
     pub_inputs: &TransactionPublicInputsP3,
@@ -111,6 +158,32 @@ pub fn verify_transaction_proof_bytes_p3(
     let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
         .map_err(|_| TransactionVerifyErrorP3::InvalidProofFormat)?;
     verify_transaction_proof_p3(&proof, pub_inputs)
+}
+
+pub fn verify_transaction_proof_bytes_p3_with_profile(
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionPublicInputsP3,
+    expected_profile: TxFriProfile,
+) -> Result<(), TransactionVerifyErrorP3> {
+    pub_inputs
+        .validate()
+        .map_err(TransactionVerifyErrorP3::InvalidPublicInputs)?;
+
+    let proof: TransactionProofP3 = postcard::from_bytes(proof_bytes)
+        .map_err(|_| TransactionVerifyErrorP3::InvalidProofFormat)?;
+    verify_transaction_proof_p3_with_profile(&proof, pub_inputs, expected_profile)
+}
+
+pub fn verify_transaction_proof_bytes_p3_for_version(
+    proof_bytes: &[u8],
+    pub_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<(), TransactionVerifyErrorP3> {
+    verify_transaction_proof_bytes_p3_with_profile(
+        proof_bytes,
+        pub_inputs,
+        release_tx_fri_profile_for_version(version),
+    )
 }
 
 #[derive(Debug, Clone)]

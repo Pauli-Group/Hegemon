@@ -36,7 +36,7 @@ pub struct ChainSpec {
 pub fn chain_spec(profile: ChainProfile) -> ChainSpec {
     match profile {
         ChainProfile::Dev => ChainSpec {
-            name: "hegemon-devnet",
+            name: "hegemon-native-devnet",
             consensus: "pow-equihash-like",
             pow_bits: DEFAULT_GENESIS_POW_BITS.saturating_sub(4),
             pq_seeds: Vec::new(), // Dev mode: no seeds, use HEGEMON_SEEDS env var

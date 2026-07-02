@@ -1,6 +1,6 @@
 use crate::{
     GossipMessage, HandshakeAcceptance, HandshakeConfirmation, HandshakeOffer, NetworkError,
-    PeerId, PeerIdentity, ProtocolMessage, SecureChannel,
+    PeerId, PeerIdentity, ProtocolMessage, SecureChannel, wire,
 };
 use crypto::hashes::sha256;
 use futures::{SinkExt, StreamExt};
@@ -9,6 +9,61 @@ use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::bytes::Bytes;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
+
+fn length_delimited_codec(max_frame_len: usize) -> LengthDelimitedCodec {
+    let mut codec = LengthDelimitedCodec::new();
+    codec.set_max_frame_length(max_frame_len);
+    codec
+}
+
+fn handshake_codec() -> LengthDelimitedCodec {
+    length_delimited_codec(wire::MAX_HANDSHAKE_FRAME_LEN)
+}
+
+fn identity_finalize_handshake_for_connection(
+    identity: &PeerIdentity,
+    offer: &HandshakeOffer,
+    acceptance: &HandshakeAcceptance,
+    offer_bytes: &[u8],
+    acceptance_bytes: &[u8],
+) -> Result<(SecureChannel, HandshakeConfirmation, Vec<u8>), NetworkError> {
+    identity.finalize_handshake(offer, acceptance, offer_bytes, acceptance_bytes)
+}
+
+fn identity_complete_handshake_for_connection(
+    identity: &PeerIdentity,
+    offer: &HandshakeOffer,
+    acceptance: &HandshakeAcceptance,
+    confirmation: &HandshakeConfirmation,
+    offer_bytes: &[u8],
+    acceptance_bytes: &[u8],
+    confirmation_bytes: &[u8],
+    responder_secret: crate::MlKemSharedSecret,
+) -> Result<SecureChannel, NetworkError> {
+    identity.complete_handshake(
+        offer,
+        acceptance,
+        confirmation,
+        offer_bytes,
+        acceptance_bytes,
+        confirmation_bytes,
+        responder_secret,
+    )
+}
+
+fn encrypt_connection_frame(
+    channel: &mut SecureChannel,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    channel.encrypt(plaintext)
+}
+
+fn decrypt_connection_frame(
+    channel: &mut SecureChannel,
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, NetworkError> {
+    channel.decrypt(ciphertext)
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum CompactAddress {
@@ -82,9 +137,15 @@ where
 {
     pub fn new(socket: S) -> Self {
         Self {
-            stream: Framed::new(socket, LengthDelimitedCodec::new()),
+            stream: Framed::new(socket, handshake_codec()),
             channel: None,
         }
+    }
+
+    fn promote_to_secure_wire_codec(&mut self) {
+        self.stream
+            .codec_mut()
+            .set_max_frame_length(wire::MAX_WIRE_FRAME_LEN);
     }
 
     pub async fn handshake_initiator(
@@ -93,16 +154,23 @@ where
     ) -> Result<PeerId, NetworkError> {
         // 1. Create and send offer
         let offer = identity.create_offer()?;
-        let offer_bytes = bincode::serialize(&offer)?;
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
         self.send_raw(&offer_bytes).await?;
 
         // 2. Receive acceptance
         let acceptance_bytes = self.recv_raw().await?;
-        let acceptance: HandshakeAcceptance = bincode::deserialize(&acceptance_bytes)?;
+        let acceptance: HandshakeAcceptance =
+            wire::decode(&acceptance_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 3. Finalize handshake
         let (channel, _confirmation, confirmation_bytes) =
-            identity.finalize_handshake(&offer, &acceptance, &offer_bytes, &acceptance_bytes)?;
+            identity_finalize_handshake_for_connection(
+                identity,
+                &offer,
+                &acceptance,
+                &offer_bytes,
+                &acceptance_bytes,
+            )?;
 
         let peer_id = sha256(&acceptance.identity_key);
 
@@ -110,6 +178,7 @@ where
         self.send_raw(&confirmation_bytes).await?;
 
         // 5. Set channel
+        self.promote_to_secure_wire_codec();
         self.channel = Some(channel);
 
         Ok(peer_id)
@@ -121,20 +190,23 @@ where
     ) -> Result<PeerId, NetworkError> {
         // 1. Receive offer
         let offer_bytes = self.recv_raw().await?;
-        let offer: HandshakeOffer = bincode::deserialize(&offer_bytes)?;
+        let offer: HandshakeOffer = wire::decode(&offer_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 2. Accept offer
-        let (_acceptance, responder_secret, acceptance_bytes) = identity.accept_offer(&offer)?;
+        let (acceptance, responder_secret, acceptance_bytes) = identity.accept_offer(&offer)?;
         self.send_raw(&acceptance_bytes).await?;
 
         // 3. Receive confirmation
         let confirmation_bytes = self.recv_raw().await?;
-        let confirmation: HandshakeConfirmation = bincode::deserialize(&confirmation_bytes)?;
+        let confirmation: HandshakeConfirmation =
+            wire::decode(&confirmation_bytes, wire::MAX_HANDSHAKE_FRAME_LEN)?;
 
         // 4. Complete handshake
-        let offer_bytes = bincode::serialize(&offer)?;
-        let channel = identity.complete_handshake(
+        let offer_bytes = wire::encode(&offer, wire::MAX_HANDSHAKE_FRAME_LEN)?;
+        let channel = identity_complete_handshake_for_connection(
+            identity,
             &offer,
+            &acceptance,
             &confirmation,
             &offer_bytes,
             &acceptance_bytes,
@@ -145,15 +217,22 @@ where
         let peer_id = sha256(&offer.identity_key);
 
         // 5. Set channel
+        self.promote_to_secure_wire_codec();
         self.channel = Some(channel);
 
         Ok(peer_id)
     }
 
     pub async fn send(&mut self, msg: WireMessage) -> Result<(), NetworkError> {
-        let bytes = bincode::serialize(&msg)?;
+        let bytes = wire::encode(&msg, wire::MAX_WIRE_FRAME_LEN)?;
+        if bytes.len() > wire::MAX_WIRE_FRAME_LEN {
+            return Err(NetworkError::Handshake("wire message too large"));
+        }
         if let Some(channel) = &mut self.channel {
-            let encrypted = channel.encrypt(&bytes)?;
+            let encrypted = encrypt_connection_frame(channel, &bytes)?;
+            if encrypted.len() > wire::MAX_WIRE_FRAME_LEN {
+                return Err(NetworkError::Handshake("encrypted frame too large"));
+            }
             self.stream.send(Bytes::copy_from_slice(&encrypted)).await?;
         } else {
             return Err(NetworkError::Handshake("connection not encrypted"));
@@ -169,8 +248,8 @@ where
         };
 
         if let Some(channel) = &mut self.channel {
-            let decrypted = channel.decrypt(&frame)?;
-            let msg = bincode::deserialize(&decrypted)?;
+            let decrypted = decrypt_connection_frame(channel, &frame)?;
+            let msg = wire::decode(&decrypted, wire::MAX_WIRE_FRAME_LEN)?;
             Ok(Some(msg))
         } else {
             Err(NetworkError::Handshake("connection not encrypted"))
@@ -178,13 +257,21 @@ where
     }
 
     async fn send_raw(&mut self, bytes: &[u8]) -> Result<(), NetworkError> {
+        if bytes.len() > wire::MAX_HANDSHAKE_FRAME_LEN {
+            return Err(NetworkError::Handshake("handshake frame too large"));
+        }
         self.stream.send(Bytes::copy_from_slice(bytes)).await?;
         Ok(())
     }
 
     async fn recv_raw(&mut self) -> Result<Vec<u8>, NetworkError> {
         match self.stream.next().await {
-            Some(Ok(bytes)) => Ok(bytes.to_vec()),
+            Some(Ok(bytes)) => {
+                if bytes.len() > wire::MAX_HANDSHAKE_FRAME_LEN {
+                    return Err(NetworkError::Handshake("handshake frame too large"));
+                }
+                Ok(bytes.to_vec())
+            }
             Some(Err(e)) => Err(e.into()),
             None => Err(NetworkError::Handshake("connection closed")),
         }
@@ -194,6 +281,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{PqConnectionInfo, RelayConfig};
     use tokio::io::duplex;
     use tokio::net::TcpListener;
     use tokio::net::TcpStream;
@@ -206,6 +294,83 @@ mod tests {
 
         assert_eq!(CompactAddress::from(ipv4).to_socket_addr(), ipv4);
         assert_eq!(CompactAddress::from(ipv6).to_socket_addr(), ipv6);
+    }
+
+    #[test]
+    fn pq_connection_info_and_relay_config_do_not_change_wire_or_consensus_payload_projection() {
+        fn proto_wire_and_payload_projection(
+            _connection: &PqConnectionInfo,
+            _relay: &RelayConfig,
+            msg: &ProtocolMessage,
+        ) -> (Vec<u8>, Vec<u8>) {
+            let encoded = wire::encode(&WireMessage::Proto(msg.clone()), wire::MAX_WIRE_FRAME_LEN)
+                .expect("encode proto wire message");
+            let decoded: WireMessage = wire::decode(&encoded, wire::MAX_WIRE_FRAME_LEN)
+                .expect("decode proto wire message");
+            let payload = match decoded {
+                WireMessage::Proto(proto) => proto.payload,
+                other => panic!("expected proto wire message, got {other:?}"),
+            };
+            (encoded, payload)
+        }
+
+        fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+            !needle.is_empty()
+                && haystack
+                    .windows(needle.len())
+                    .any(|window| window == needle)
+        }
+
+        let consensus_payload = b"consensus-payload-v1".to_vec();
+        let msg = ProtocolMessage {
+            protocol: 0x4847_0001,
+            payload: consensus_payload.clone(),
+        };
+        let connection_a = PqConnectionInfo {
+            peer_id: [0xa5; 32],
+            addr: "10.254.0.11:30333".parse().unwrap(),
+            is_outbound: true,
+            bytes_sent: 0x1111_2222_3333_4444,
+            bytes_received: 0x5555_6666_7777_8888,
+            protocol: "local-pq-relay-alpha-sentinel".to_string(),
+        };
+        let relay_a = RelayConfig {
+            allow_relay: true,
+            relays: vec!["relay-alpha-sentinel.invalid:30333".to_string()],
+        };
+        let connection_b = PqConnectionInfo {
+            peer_id: [0x5a; 32],
+            addr: "10.254.0.22:40444".parse().unwrap(),
+            is_outbound: false,
+            bytes_sent: 0x9999_aaaa_bbbb_cccc,
+            bytes_received: 0xdddd_eeee_ffff_0001,
+            protocol: "local-pq-relay-beta-sentinel".to_string(),
+        };
+        let relay_b = RelayConfig {
+            allow_relay: false,
+            relays: vec!["relay-beta-sentinel.invalid:40444".to_string()],
+        };
+
+        let (wire_a, payload_a) = proto_wire_and_payload_projection(&connection_a, &relay_a, &msg);
+        let (wire_b, payload_b) = proto_wire_and_payload_projection(&connection_b, &relay_b, &msg);
+
+        assert_eq!(wire_a, wire_b);
+        assert_eq!(payload_a, consensus_payload);
+        assert_eq!(payload_b, consensus_payload);
+
+        for forbidden in [
+            &connection_a.peer_id[..],
+            connection_a.protocol.as_bytes(),
+            relay_a.relays[0].as_bytes(),
+            &connection_b.peer_id[..],
+            connection_b.protocol.as_bytes(),
+            relay_b.relays[0].as_bytes(),
+        ] {
+            assert!(!contains_subslice(&wire_a, forbidden));
+            assert!(!contains_subslice(&wire_b, forbidden));
+            assert!(!contains_subslice(&payload_a, forbidden));
+            assert!(!contains_subslice(&payload_b, forbidden));
+        }
     }
 
     #[tokio::test]
@@ -269,6 +434,35 @@ mod tests {
 
         assert_eq!(initiator_peer, responder_identity.peer_id());
         assert_eq!(responder_peer, initiator_identity.peer_id());
+    }
+
+    #[tokio::test]
+    async fn oversized_handshake_frame_is_rejected() {
+        let responder_identity = PeerIdentity::generate(b"oversized-handshake-responder");
+        let (client_stream, responder_stream) = duplex(wire::MAX_HANDSHAKE_FRAME_LEN * 2);
+
+        let responder_task = task::spawn(async move {
+            let mut conn = Connection::new(responder_stream);
+            conn.handshake_responder(&responder_identity).await
+        });
+
+        let mut raw = Framed::new(
+            client_stream,
+            length_delimited_codec(wire::MAX_HANDSHAKE_FRAME_LEN + 1),
+        );
+        raw.send(Bytes::from(vec![0u8; wire::MAX_HANDSHAKE_FRAME_LEN + 1]))
+            .await
+            .expect("send oversized handshake frame");
+
+        let err = responder_task
+            .await
+            .expect("responder task")
+            .expect_err("oversized handshake should fail");
+        let err = err.to_string();
+        assert!(
+            err.contains("handshake frame too large") || err.contains("frame"),
+            "unexpected handshake rejection: {err}"
+        );
     }
 
     #[tokio::test]

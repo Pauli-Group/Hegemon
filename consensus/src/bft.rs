@@ -4,7 +4,7 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::{ConsensusError, SlashingEvidence};
 use crate::header::ConsensusMode;
 use crate::nullifier::NullifierSet;
-use crate::proof::{ProofVerifier, verify_commitments};
+use crate::proof_interface::{ProofVerifier, verify_commitments};
 use crate::types::{ConsensusBlock, ValidatorId, kernel_root_from_shielded_root};
 use crate::validator::ValidatorSet;
 use crate::version_policy::VersionSchedule;
@@ -84,6 +84,21 @@ impl ForkTree {
     }
 }
 
+fn validate_bft_block_versions(
+    schedule: &VersionSchedule,
+    block: &ConsensusBlock,
+) -> Result<(), ConsensusError> {
+    schedule
+        .validate_versions(
+            block.header.height,
+            block.transactions.iter().map(|tx| tx.version),
+        )
+        .map_err(|version| ConsensusError::UnsupportedVersion {
+            version,
+            height: block.header.height,
+        })
+}
+
 #[derive(Debug, Clone)]
 pub struct ConsensusUpdate {
     pub block_hash: [u8; 32],
@@ -142,15 +157,7 @@ impl<V: ProofVerifier> BftConsensus<V> {
         }
         block.header.ensure_structure()?;
         verify_commitments(&block)?;
-        if let Some(version) = self.version_schedule.first_unsupported(
-            block.header.height,
-            block.transactions.iter().map(|tx| tx.version),
-        ) {
-            return Err(ConsensusError::UnsupportedVersion {
-                version,
-                height: block.header.height,
-            });
-        }
+        validate_bft_block_versions(&self.version_schedule, &block)?;
         if block.header.validator_set_commitment != self.validator_set.validator_set_commitment() {
             return Err(ConsensusError::ValidatorSetMismatch);
         }

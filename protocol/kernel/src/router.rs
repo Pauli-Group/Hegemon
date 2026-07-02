@@ -1,7 +1,7 @@
-use sp_runtime::DispatchError;
-
 use crate::manifest::KernelManifest;
-use crate::traits::{ApplyOutcome, KernelStateView, KernelStateWrite, ValidActionMeta};
+use crate::traits::{
+    ApplyOutcome, KernelError, KernelStateView, KernelStateWrite, ValidActionMeta,
+};
 use crate::types::ActionEnvelope;
 
 pub trait FamilyRouter {
@@ -9,11 +9,11 @@ pub trait FamilyRouter {
         manifest: &KernelManifest,
         state: &dyn KernelStateView,
         envelope: &ActionEnvelope,
-    ) -> Result<ValidActionMeta, DispatchError>;
+    ) -> Result<ValidActionMeta, KernelError>;
 
     fn apply(
         manifest: &KernelManifest,
         state: &mut dyn KernelStateWrite,
         envelope: &ActionEnvelope,
-    ) -> Result<ApplyOutcome, DispatchError>;
+    ) -> Result<ApplyOutcome, KernelError>;
 }

@@ -1,8 +1,8 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, session } from 'electron';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
 import { WalletdClient } from './walletdClient';
@@ -27,8 +27,13 @@ import type {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const nodeManager = new NodeManager();
 const walletdClient = new WalletdClient();
-const devServerUrl = process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
+const rendererUrlOverride = app.isPackaged
+  ? undefined
+  : process.env.ELECTRON_RENDERER_URL ?? process.env.VITE_DEV_SERVER_URL;
 const contactsFileName = 'contacts.json';
+const privateDirectoryMode = 0o700;
+const privateFileMode = 0o600;
+const loopbackRpcHosts = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 let shutdownInProgress = false;
 const DEFAULT_UNLOCK_TTL_MS = 5 * 60 * 1000;
@@ -55,6 +60,55 @@ if (process.platform === 'win32') {
 app.setName('Hegemon');
 
 const resolveContactsPath = () => join(app.getPath('appData'), 'Hegemon', contactsFileName);
+
+const chmodPrivate = async (path: string, mode: number) => {
+  if (process.platform === 'win32') {
+    return;
+  }
+  await chmod(path, mode);
+};
+
+const normalizeLoopbackWalletRpcEndpoint = (endpoint: string) => {
+  if (typeof endpoint !== 'string') {
+    throw new Error('Wallet RPC endpoint is required.');
+  }
+  const trimmed = endpoint.trim();
+  if (!trimmed) {
+    throw new Error('Wallet RPC endpoint is required.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('Wallet RPC endpoint must be a valid URL.');
+  }
+
+  if (!['ws:', 'wss:', 'http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Wallet RPC endpoint must use ws, wss, http, or https.');
+  }
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error('Wallet RPC endpoint must not include credentials or fragments.');
+  }
+  if (!loopbackRpcHosts.has(parsed.hostname.toLowerCase())) {
+    throw new Error('Wallet RPC endpoint must be loopback. Run a local Hegemon P2P relay node for remote network access.');
+  }
+  return parsed.toString();
+};
+
+const normalizeLoopbackWalletOneShotRpcEndpoint = (endpoint: string) => {
+  const normalized = normalizeLoopbackWalletRpcEndpoint(endpoint);
+  const parsed = new URL(normalized);
+  if (parsed.protocol === 'ws:') {
+    parsed.protocol = 'http:';
+    return parsed.toString();
+  }
+  if (parsed.protocol === 'wss:') {
+    parsed.protocol = 'https:';
+    return parsed.toString();
+  }
+  return normalized;
+};
 
 const configureAppMenu = () => {
   if (process.platform !== 'darwin') {
@@ -171,10 +225,13 @@ const saveContacts = async (contacts: Contact[]) => {
   const payload = JSON.stringify(contacts, null, 2);
 
   const nextWrite = contactsWriteQueue.then(async () => {
-    await mkdir(dirname(filePath), { recursive: true });
+    await mkdir(dirname(filePath), { recursive: true, mode: privateDirectoryMode });
+    await chmodPrivate(dirname(filePath), privateDirectoryMode);
     const tmpPath = `${filePath}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    await writeFile(tmpPath, payload, 'utf-8');
+    await writeFile(tmpPath, payload, { encoding: 'utf-8', mode: privateFileMode });
+    await chmodPrivate(tmpPath, privateFileMode);
     await rename(tmpPath, filePath);
+    await chmodPrivate(filePath, privateFileMode);
   });
 
   contactsWriteQueue = nextWrite.catch((error) => {
@@ -194,7 +251,10 @@ const createWindow = () => {
     webPreferences: {
       preload: join(__dirname, '../preload/preload.cjs'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   });
 
@@ -202,9 +262,20 @@ const createWindow = () => {
     app.dock?.setIcon(windowIcon);
   }
 
-  if (process.env.VITE_DEV_SERVER_URL) {
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event) => {
+    event.preventDefault();
+  });
+  win.webContents.on('will-redirect', (event) => {
+    event.preventDefault();
+  });
+  win.webContents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+
+  if (!app.isPackaged && process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else if (process.env.ELECTRON_RENDERER_URL) {
+  } else if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'));
@@ -216,12 +287,51 @@ const stopManagedServices = async () => {
   await Promise.allSettled([nodeManager.stopNode(), walletdClient.stop()]);
 };
 
-const resolveStorePathForSession = (storePath: string) =>
-  storePath === '~'
-    ? app.getPath('home')
-    : storePath.startsWith('~/')
-      ? join(app.getPath('home'), storePath.slice(2))
-      : storePath;
+const walletStoreRoot = () => resolve(app.getPath('userData'), 'wallets');
+
+const isPathWithin = (root: string, candidate: string) => {
+  const rel = relative(root, candidate);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+};
+
+const resolveStorePathForSession = (storePath: string) => {
+  if (typeof storePath !== 'string') {
+    throw new Error('Wallet store path is required.');
+  }
+  const trimmed = storePath.trim();
+  if (!trimmed) {
+    throw new Error('Wallet store path is required.');
+  }
+  if (trimmed.includes('\0')) {
+    throw new Error('Wallet store path contains an invalid character.');
+  }
+
+  const root = walletStoreRoot();
+  const relativeInput =
+    trimmed === '~'
+      ? 'default.wallet'
+      : trimmed.startsWith('~/')
+        ? trimmed.slice(2)
+        : trimmed;
+  if (isAbsolute(relativeInput)) {
+    const candidate = resolve(relativeInput);
+    if (!isPathWithin(root, candidate)) {
+      throw new Error('Wallet stores must be selected from the Hegemon wallet directory.');
+    }
+    if (candidate === root || candidate.endsWith(sep)) {
+      throw new Error('Wallet store path must name a wallet file.');
+    }
+    return candidate;
+  }
+  const candidate = resolve(root, relativeInput);
+  if (!isPathWithin(root, candidate)) {
+    throw new Error('Wallet store path escapes the Hegemon wallet directory.');
+  }
+  if (candidate === root || candidate.endsWith(sep)) {
+    throw new Error('Wallet store path must name a wallet file.');
+  }
+  return candidate;
+};
 
 const issueWalletUnlockSession = (storePath: string, status: WalletStatus): WalletUnlockSession => {
   const token = randomBytes(32).toString('hex');
@@ -261,7 +371,7 @@ app.whenReady().then(() => {
 
   configureAppMenu();
 
-  const csp = buildContentSecurityPolicy(devServerUrl);
+  const csp = buildContentSecurityPolicy(rendererUrlOverride);
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -270,6 +380,10 @@ app.whenReady().then(() => {
       }
     });
   });
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(false);
+  });
+  session.defaultSession.setPermissionCheckHandler(() => false);
   createWindow();
 
   app.on('activate', () => {
@@ -317,13 +431,23 @@ ipcMain.handle('node:setMining', async (_event, request: NodeMiningRequest) => {
 
 ipcMain.handle('node:logs', async () => nodeManager.getLogs());
 
+ipcMain.handle('clipboard:writeText', async (_event, text: string) => {
+  if (typeof text !== 'string' || text.length === 0) {
+    throw new Error('Clipboard text is required.');
+  }
+  clipboard.writeText(text);
+});
+
 ipcMain.handle('wallet:init', async (_event, storePath: string, passphrase: string) => {
-  const status = (await walletdClient.init(storePath, passphrase)) as WalletStatus;
+  const resolvedStorePath = resolveStorePathForSession(storePath);
+  await mkdir(dirname(resolvedStorePath), { recursive: true });
+  const status = (await walletdClient.init(resolvedStorePath, passphrase)) as WalletStatus;
   return issueWalletUnlockSession(storePath, status);
 });
 
 ipcMain.handle('wallet:restore', async (_event, storePath: string, passphrase: string) => {
-  const status = (await walletdClient.restore(storePath, passphrase)) as WalletStatus;
+  const resolvedStorePath = resolveStorePathForSession(storePath);
+  const status = (await walletdClient.restore(resolvedStorePath, passphrase)) as WalletStatus;
   return issueWalletUnlockSession(storePath, status);
 });
 
@@ -343,13 +467,20 @@ ipcMain.handle('wallet:sync', async (
   forceRescan = false
 ) => {
   requireWalletUnlock(storePath, unlockToken);
-  return walletdClient.sync(wsUrl, forceRescan) as Promise<WalletSyncResult>;
+  return walletdClient.sync(
+    normalizeLoopbackWalletOneShotRpcEndpoint(wsUrl),
+    forceRescan
+  ) as Promise<WalletSyncResult>;
 });
 
 ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
   requireWalletUnlock(request.storePath, request.unlockToken);
+  const admittedRequest = {
+    ...request,
+    wsUrl: normalizeLoopbackWalletOneShotRpcEndpoint(request.wsUrl)
+  };
   try {
-    return (await walletdClient.send(request)) as WalletSendResult;
+    return (await walletdClient.send(admittedRequest)) as WalletSendResult;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
@@ -363,8 +494,8 @@ ipcMain.handle('wallet:send', async (_event, request: WalletSendRequest) => {
 
     // Recover from stale anchor state (e.g. after fork recovery/reorg) by forcing a
     // wallet rescan against the current chain and retrying submission once.
-    await walletdClient.sync(request.wsUrl, true);
-    return (await walletdClient.send(request)) as WalletSendResult;
+    await walletdClient.sync(admittedRequest.wsUrl, true);
+    return (await walletdClient.send(admittedRequest)) as WalletSendResult;
   }
 });
 
@@ -389,7 +520,11 @@ ipcMain.handle(
     output: number
   ) => {
     requireWalletUnlock(storePath, unlockToken);
-    return walletdClient.disclosureCreate(wsUrl, txId, output) as Promise<WalletDisclosureCreateResult>;
+    return walletdClient.disclosureCreate(
+      normalizeLoopbackWalletOneShotRpcEndpoint(wsUrl),
+      txId,
+      output
+    ) as Promise<WalletDisclosureCreateResult>;
   }
 );
 
@@ -403,7 +538,10 @@ ipcMain.handle(
     packageJson: object
   ) => {
     requireWalletUnlock(storePath, unlockToken);
-    return walletdClient.disclosureVerify(wsUrl, packageJson) as Promise<WalletDisclosureVerifyResult>;
+    return walletdClient.disclosureVerify(
+      normalizeLoopbackWalletOneShotRpcEndpoint(wsUrl),
+      packageJson
+    ) as Promise<WalletDisclosureVerifyResult>;
   }
 );
 
@@ -425,12 +563,22 @@ ipcMain.handle('contacts:save', async (_event, contacts: Contact[]) => {
 
 ipcMain.handle('dialog:openPath', async (_event, options: DialogOpenOptions) => {
   const browserWindow = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const dialogBase = options.baseDirectory === 'walletStore' ? walletStoreRoot() : app.getPath('home');
+  const trimmedDefaultPath = options.defaultPath?.trim();
   const resolvedDefaultPath =
-    options.defaultPath === '~'
-      ? app.getPath('home')
-      : options.defaultPath?.startsWith('~/')
-        ? join(app.getPath('home'), options.defaultPath.slice(2))
-        : options.defaultPath;
+    options.baseDirectory === 'walletStore'
+      ? !trimmedDefaultPath || trimmedDefaultPath === '~'
+        ? dialogBase
+        : trimmedDefaultPath.startsWith('~/')
+          ? resolve(dialogBase, trimmedDefaultPath.slice(2))
+          : isAbsolute(trimmedDefaultPath)
+            ? resolve(trimmedDefaultPath)
+            : resolve(dialogBase, trimmedDefaultPath)
+      : options.defaultPath === '~'
+        ? app.getPath('home')
+        : options.defaultPath?.startsWith('~/')
+          ? join(app.getPath('home'), options.defaultPath.slice(2))
+          : options.defaultPath;
   const dialogOptions: Electron.OpenDialogOptions = {
     title: options.title,
     defaultPath: resolvedDefaultPath,
@@ -442,5 +590,13 @@ ipcMain.handle('dialog:openPath', async (_event, options: DialogOpenOptions) => 
   if (result.canceled || result.filePaths.length === 0) {
     return null;
   }
-  return result.filePaths[0];
+  const selectedPath = resolve(result.filePaths[0]);
+  if (options.baseDirectory === 'walletStore') {
+    const root = walletStoreRoot();
+    if (!isPathWithin(root, selectedPath) || selectedPath === root || selectedPath.endsWith(sep)) {
+      throw new Error('Wallet stores must be selected from the Hegemon wallet directory.');
+    }
+    return `~/${relative(root, selectedPath).split(sep).join('/')}`;
+  }
+  return selectedPath;
 });

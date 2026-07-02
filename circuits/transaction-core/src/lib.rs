@@ -13,6 +13,7 @@ pub mod dimensions;
 pub mod hashing;
 pub mod hashing_pq;
 pub mod p3_air;
+pub mod p3_analysis;
 pub mod p3_config;
 pub mod p3_verifier;
 pub mod poseidon2;

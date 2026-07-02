@@ -1,0 +1,2677 @@
+import Hegemon.Transaction.AssetIsolation
+import Hegemon.Transaction.CanonicalVerifierBoundary
+
+namespace Hegemon
+namespace Transaction
+namespace ProofSystemBoundary
+
+open Hegemon.Transaction.AcceptedTransactionSoundness
+open Hegemon.Transaction.AcceptedProofArtifact
+open Hegemon.Transaction.AssetIsolation
+open Hegemon.Transaction.CanonicalVerifierBoundary
+open Hegemon.Transaction.ProofWrapperAdmission
+open Hegemon.Transaction.PublicInputs
+open Hegemon.Transaction.SpendAuthorization
+
+structure CanonicalDeployedVerifierBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot) : Prop where
+  deployedRelationFacts :
+    DeployedTxRelationFacts
+      shape
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  acceptedTransactionRelation :
+    AcceptedTransactionRelation
+      wrapper
+      shape
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  wrapperPreconditions : proofWrapperPreconditions wrapper = true
+  publicBindingValid :
+    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicShapeValid : validPublicInputShape shape = true
+  statementLength :
+    statementBytes.length = StatementHash.expectedPreimageLength
+  statementPreimage :
+    StatementHash.statementPreimage statementFields = some statementBytes
+  bindingMessage :
+    ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  vectorBinding :
+    shape.nullifiers = statementFields.nullifierSeeds
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  inputVectorBinding :
+    shape.inputFlags = bound.inputFlags
+      ∧ shape.nullifiers = statementFields.nullifierSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+  outputVectorBinding :
+    shape.outputFlags = bound.outputFlags
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  valueBalanceBinding :
+    statementFields.valueBalanceSign = bound.valueBalanceSign
+      ∧ statementFields.valueBalanceMagnitude = bound.valueBalanceMagnitude
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.valueBalance
+        bound.valueBalanceSign
+        bound.valueBalanceMagnitude = true
+  stablecoinPayloadBinding :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ statementFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ statementFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ bindingFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ bindingFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.stablecoinIssuanceDelta
+        bound.stablecoinIssuanceSign
+        bound.stablecoinIssuanceMagnitude = true
+
+structure CanonicalDeployedVerifierSpendBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness) : Prop where
+  spendAuthorized :
+    transactionSpendAuthorized shape merkleRoot spendWitnesses = true
+  inputSlotsAuthorized :
+    authorizeInputSlots merkleRoot shape.inputFlags shape.nullifiers
+      spendWitnesses = true
+  spendWitnessesAlign :
+    shape.inputFlags.length = shape.nullifiers.length
+      ∧ shape.inputFlags.length = spendWitnesses.length
+  wrapperPreconditions : proofWrapperPreconditions wrapper = true
+  wrapperSurface : acceptedProofWrapperSurface wrapper
+  publicBindingValid :
+    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicShapeValid : validPublicInputShape shape = true
+  statementLength :
+    statementBytes.length = StatementHash.expectedPreimageLength
+  statementPreimage :
+    StatementHash.statementPreimage statementFields = some statementBytes
+  bindingMessage :
+    ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  inputVectorBinding :
+    shape.inputFlags = bound.inputFlags
+      ∧ shape.nullifiers = statementFields.nullifierSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+
+structure CanonicalDeployedVerifierBalancePublicBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot) : Prop where
+  balancePublicFacts :
+    DeployedTxBalancePublicFieldFacts
+      publicFields
+      balanceWitness
+      slots
+  balanceSlotsEq : balanceSlots balanceWitness = some slots
+  validBalanceEq : validBalance balanceWitness = true
+  publicFieldFacts :
+    BalancePublicFieldFacts
+      publicFields
+      balanceWitness
+  authorizedPublicDeltaValue :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  wrapperPreconditions : proofWrapperPreconditions wrapper = true
+  wrapperSurface : acceptedProofWrapperSurface wrapper
+  publicBindingValid :
+    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicShapeValid : validPublicInputShape shape = true
+  statementLength :
+    statementBytes.length = StatementHash.expectedPreimageLength
+  statementPreimage :
+    StatementHash.statementPreimage statementFields = some statementBytes
+  bindingMessage :
+    ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  outputVectorBinding :
+    shape.outputFlags = bound.outputFlags
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  valueBalanceBinding :
+    statementFields.valueBalanceSign = bound.valueBalanceSign
+      ∧ statementFields.valueBalanceMagnitude = bound.valueBalanceMagnitude
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.valueBalance
+        bound.valueBalanceSign
+        bound.valueBalanceMagnitude = true
+  stablecoinPayloadBinding :
+    statementFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ statementFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ statementFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ bindingFields.stablecoinPolicyHashSeed = bound.stablecoinPolicyHash
+      ∧ bindingFields.stablecoinOracleCommitmentSeed =
+        bound.stablecoinOracleCommitment
+      ∧ bindingFields.stablecoinAttestationCommitmentSeed =
+        bound.stablecoinAttestationCommitment
+      ∧ PublicInputBinding.signedMagnitudeMatches
+        bindingFields.stablecoinIssuanceDelta
+        bound.stablecoinIssuanceSign
+        bound.stablecoinIssuanceMagnitude = true
+
+structure CanonicalDeployedVerifierInputSlotBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (index activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness : InputSpendWitness) : Prop where
+  boundaryFacts :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  inputSlotFacts :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness
+  statementRootBinding : statementFields.merkleRootSeed = merkleRoot
+  bindingRootBinding : bindingFields.anchorSeed = merkleRoot
+  statementSlot :
+    ActiveInputAt
+      bound.inputFlags
+      statementFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+  bindingSlot :
+    ActiveInputAt
+      bound.inputFlags
+      bindingFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+
+structure CanonicalDeployedVerifierSpendInputSlotBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (index activeFlag : Nat)
+    (publicNullifier : Digest)
+    (witness : InputSpendWitness) : Prop where
+  spendBoundaryFacts :
+    CanonicalDeployedVerifierSpendBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+  inputSlotFacts :
+    InputSlotAuthorizationFacts
+      merkleRoot
+      activeFlag
+      publicNullifier
+      witness
+  statementRootBinding : statementFields.merkleRootSeed = merkleRoot
+  bindingRootBinding : bindingFields.anchorSeed = merkleRoot
+  statementSlot :
+    ActiveInputAt
+      bound.inputFlags
+      statementFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+  bindingSlot :
+    ActiveInputAt
+      bound.inputFlags
+      bindingFields.nullifierSeeds
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness
+
+structure CanonicalDeployedVerifierOutputSlotBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (index activeFlag : Nat)
+    (publicCommitment publicCiphertextHash : Digest) : Prop where
+  boundaryFacts :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  outputSlotFacts :
+    OutputSlotFacts
+      activeFlag
+      publicCommitment
+      publicCiphertextHash
+  statementSlot :
+    OutputSlotAt
+      bound.outputFlags
+      statementFields.commitmentSeeds
+      statementFields.ciphertextHashSeeds
+      index
+      activeFlag
+      publicCommitment
+      publicCiphertextHash
+  bindingSlot :
+    OutputSlotAt
+      bound.outputFlags
+      bindingFields.commitmentSeeds
+      bindingFields.ciphertextHashSeeds
+      index
+      activeFlag
+      publicCommitment
+      publicCiphertextHash
+
+structure CanonicalProofSystemNoTheftBoundaryFacts
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot) : Prop where
+  fullBoundary :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  spendBoundary :
+    CanonicalDeployedVerifierSpendBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+  balancePublicBoundary :
+    CanonicalDeployedVerifierBalancePublicBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots
+  witnessAuthorizedDelta :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        authorizedAssetDeltaValue balanceWitness assetId
+  publicAuthorizedDelta :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nonNativeNonzeroExceptionSurface :
+    ∀ {assetId : Nat},
+      assetId ≠ Hegemon.Transaction.nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+        StablecoinMintExceptionSurface
+          publicFields
+          bound
+          statementFields
+          bindingFields
+          assetId
+          (slotDelta assetId slots)
+
+structure CanonicalProofArtifactAdmissionStatementCertificate
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot) : Prop where
+  canonicalSurface :
+    CanonicalTxStatementSurface
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+  wrapperPreconditions : proofWrapperPreconditions wrapper = true
+  wrapperSurface : acceptedProofWrapperSurface wrapper
+  metadataProjectionSurface :
+    acceptedProofWrapperMetadataProjectionSurface
+      (metadataProjectionFromAdmissionInput wrapper)
+  publicBindingValid :
+    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicShapeValid : validPublicInputShape shape = true
+  statementLength :
+    statementBytes.length = StatementHash.expectedPreimageLength
+  statementPreimage :
+    StatementHash.statementPreimage statementFields = some statementBytes
+  bindingMessage :
+    ProofStatementBinding.bindingMessage bindingFields = some bindingBytes
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  vectorBinding :
+    shape.nullifiers = statementFields.nullifierSeeds
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  balanceArtifactFacts :
+    balanceSlots balanceWitness = some slots
+      ∧ validBalance balanceWitness = true
+  nativeDeltaAuthorized :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness
+
+theorem accepted_canonical_statement_surface_with_balance_soundness_implies_proof_artifact_admission_statement_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      BalanceSoundnessAssumption wrapper balanceWitness slots) :
+    CanonicalProofArtifactAdmissionStatementCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots := by
+  have balanceFacts := balanceSound surface.accepted
+  exact
+    {
+      canonicalSurface := surface,
+      wrapperPreconditions :=
+        canonical_statement_surface_wrapper_preconditions surface,
+      wrapperSurface :=
+        canonical_statement_surface_statement_surface surface,
+      metadataProjectionSurface :=
+        proofWrapperAccepts_implies_no_metadata_projection_or_row_extension
+          surface.accepted,
+      publicBindingValid :=
+        canonical_statement_surface_public_binding_valid surface,
+      publicShapeValid :=
+        canonical_statement_surface_public_shape_valid surface,
+      statementLength :=
+        canonical_statement_surface_statement_length surface,
+      statementPreimage := surface.statementPreimage,
+      bindingMessage := surface.bindingMessage,
+      coreStatementBinding :=
+        canonical_statement_surface_core_binding surface,
+      vectorBinding :=
+        canonical_statement_surface_vectors_bound surface,
+      balanceArtifactFacts :=
+        ⟨balanceFacts.left, balanceFacts.right⟩,
+      nativeDeltaAuthorized :=
+        accepted_proof_artifact_native_delta
+          surface.accepted
+          balanceSound
+    }
+
+theorem deployed_soundness_canonical_surface_implies_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots where
+  deployedRelationFacts := sound surface
+  acceptedTransactionRelation :=
+    accepted_wrapper_and_canonical_statement_implies_transaction_relation
+      surface
+      sound
+  wrapperPreconditions :=
+    canonical_statement_surface_wrapper_preconditions surface
+  publicBindingValid :=
+    canonical_statement_surface_public_binding_valid surface
+  publicShapeValid :=
+    canonical_statement_surface_public_shape_valid surface
+  statementLength :=
+    canonical_statement_surface_statement_length surface
+  statementPreimage := surface.statementPreimage
+  bindingMessage := surface.bindingMessage
+  coreStatementBinding :=
+    canonical_statement_surface_core_binding surface
+  vectorBinding :=
+    canonical_statement_surface_vectors_bound surface
+  inputVectorBinding :=
+    canonical_statement_surface_input_vectors_bound surface
+  outputVectorBinding :=
+    canonical_statement_surface_output_vectors_bound surface
+  valueBalanceBinding :=
+    canonical_statement_surface_value_balance_bound surface
+  stablecoinPayloadBinding :=
+    canonical_statement_surface_stablecoin_payload_bound surface
+
+theorem spend_soundness_canonical_surface_implies_spend_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses) :
+    CanonicalDeployedVerifierSpendBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses := by
+  have authorized := spendSound surface
+  exact
+    {
+      spendAuthorized := authorized,
+      inputSlotsAuthorized :=
+        transactionSpendAuthorized_implies_slots_authorized authorized,
+      spendWitnessesAlign :=
+        transactionSpendAuthorized_witnesses_align_with_public_inputs
+          authorized,
+      wrapperPreconditions :=
+        canonical_statement_surface_wrapper_preconditions surface,
+      wrapperSurface :=
+        canonical_statement_surface_statement_surface surface,
+      publicBindingValid :=
+        canonical_statement_surface_public_binding_valid surface,
+      publicShapeValid :=
+        canonical_statement_surface_public_shape_valid surface,
+      statementLength :=
+        canonical_statement_surface_statement_length surface,
+      statementPreimage := surface.statementPreimage,
+      bindingMessage := surface.bindingMessage,
+      coreStatementBinding :=
+        canonical_statement_surface_core_binding surface,
+      inputVectorBinding :=
+        canonical_statement_surface_input_vectors_bound surface
+    }
+
+theorem balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    CanonicalDeployedVerifierBalancePublicBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots := by
+  have balanceFacts := balanceSound surface
+  exact
+    {
+      balancePublicFacts := balanceFacts,
+      balanceSlotsEq := balanceFacts.balanceSlotsEq,
+      validBalanceEq := balanceFacts.validBalanceEq,
+      publicFieldFacts := balanceFacts.publicFields,
+      authorizedPublicDeltaValue := by
+        intro assetId
+        exact
+          balance_public_field_facts_authorized_asset_delta_value
+            balanceFacts.balanceSlotsEq
+            balanceFacts.validBalanceEq
+            balanceFacts.publicFields,
+      wrapperPreconditions :=
+        canonical_statement_surface_wrapper_preconditions surface,
+      wrapperSurface :=
+        canonical_statement_surface_statement_surface surface,
+      publicBindingValid :=
+        canonical_statement_surface_public_binding_valid surface,
+      publicShapeValid :=
+        canonical_statement_surface_public_shape_valid surface,
+      statementLength :=
+        canonical_statement_surface_statement_length surface,
+      statementPreimage := surface.statementPreimage,
+      bindingMessage := surface.bindingMessage,
+      coreStatementBinding :=
+        canonical_statement_surface_core_binding surface,
+      outputVectorBinding :=
+        canonical_statement_surface_output_vectors_bound surface,
+      valueBalanceBinding :=
+        canonical_statement_surface_value_balance_bound surface,
+      stablecoinPayloadBinding :=
+        canonical_statement_surface_stablecoin_payload_bound surface
+    }
+
+theorem canonical_split_boundary_facts_imply_full_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (spendFacts :
+      CanonicalDeployedVerifierSpendBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceFacts :
+      CanonicalDeployedVerifierBalancePublicBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots := by
+  rcases spendFacts.inputVectorBinding with
+    ⟨_shapeFlags, shapeNullifiers, bindingNullifiers⟩
+  rcases balanceFacts.outputVectorBinding with
+    ⟨_shapeOutputFlags,
+      shapeCommitments,
+      shapeCiphertextHashes,
+      bindingCommitments,
+      bindingCiphertextHashes⟩
+  have accepted : proofWrapperAccepts wrapper = true :=
+    (accepts_iff_proof_wrapper_preconditions (input := wrapper)).mpr
+      spendFacts.wrapperPreconditions
+  exact
+    {
+      deployedRelationFacts :=
+        {
+          balanceSlotsEq := balanceFacts.balanceSlotsEq,
+          validBalanceEq := balanceFacts.validBalanceEq,
+          spendAuthorized := spendFacts.spendAuthorized
+        },
+      acceptedTransactionRelation :=
+        ⟨accepted,
+          spendFacts.wrapperSurface,
+          balanceFacts.balanceSlotsEq,
+          balanceFacts.validBalanceEq,
+          spendFacts.publicShapeValid,
+          spendFacts.inputSlotsAuthorized⟩,
+      wrapperPreconditions := spendFacts.wrapperPreconditions,
+      publicBindingValid := spendFacts.publicBindingValid,
+      publicShapeValid := spendFacts.publicShapeValid,
+      statementLength := spendFacts.statementLength,
+      statementPreimage := spendFacts.statementPreimage,
+      bindingMessage := spendFacts.bindingMessage,
+      coreStatementBinding := spendFacts.coreStatementBinding,
+      vectorBinding :=
+        ⟨shapeNullifiers,
+          shapeCommitments,
+          shapeCiphertextHashes,
+          bindingNullifiers,
+          bindingCommitments,
+          bindingCiphertextHashes⟩,
+      inputVectorBinding := spendFacts.inputVectorBinding,
+      outputVectorBinding := balanceFacts.outputVectorBinding,
+      valueBalanceBinding := balanceFacts.valueBalanceBinding,
+      stablecoinPayloadBinding := balanceFacts.stablecoinPayloadBinding
+    }
+
+theorem deployed_soundness_parts_canonical_surface_implies_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots :=
+  canonical_split_boundary_facts_imply_full_boundary_facts
+    (spend_soundness_canonical_surface_implies_spend_boundary_facts
+      surface
+      spendSound)
+    (balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts
+      surface
+      balanceSound)
+
+theorem deployed_soundness_parts_canonical_surface_implies_no_theft_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    CanonicalProofSystemNoTheftBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots := by
+  have spendFacts :=
+    spend_soundness_canonical_surface_implies_spend_boundary_facts
+      surface
+      spendSound
+  have balanceFacts :=
+    balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts
+      surface
+      balanceSound
+  have fullFacts :=
+    canonical_split_boundary_facts_imply_full_boundary_facts
+      spendFacts
+      balanceFacts
+  exact
+    {
+      fullBoundary := fullFacts,
+      spendBoundary := spendFacts,
+      balancePublicBoundary := balanceFacts,
+      witnessAuthorizedDelta := by
+        intro assetId
+        exact
+          accepted_transaction_relation_authorized_asset_delta_value
+            fullFacts.acceptedTransactionRelation,
+      publicAuthorizedDelta := by
+        intro assetId
+        exact
+          balance_public_field_facts_authorized_asset_delta_value
+            balanceFacts.balanceSlotsEq
+            balanceFacts.validBalanceEq
+            balanceFacts.publicFieldFacts,
+      nonNativeNonzeroExceptionSurface := by
+        intro assetId nonNative nonzero
+        exact
+          canonical_statement_balance_soundness_non_native_nonzero_stablecoin_mint_exception_surface
+            surface
+            balanceSound
+            nonNative
+            nonzero
+    }
+
+theorem balance_public_soundness_canonical_surface_authorized_stablecoin_mint_exception
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    {livePolicyAuthorizes : LiveStablecoinPolicyAuthorizes}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (nonNative : assetId ≠ Hegemon.Transaction.nativeAsset)
+    (nonzero : slotDelta assetId slots ≠ 0)
+    (authorized :
+      livePolicyAuthorizes
+        (stablecoinMintExceptionPayload
+          publicFields
+          assetId
+          (slotDelta assetId slots))) :
+    AuthorizedStablecoinMintExceptionSurface
+      publicFields
+      bound
+      statementFields
+      bindingFields
+      assetId
+      (slotDelta assetId slots)
+      livePolicyAuthorizes :=
+  canonical_statement_balance_soundness_authorized_stablecoin_mint_exception_surface
+    surface
+    balanceSound
+    nonNative
+    nonzero
+    authorized
+
+theorem canonical_boundary_facts_expose_spend_and_balance
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    balanceSlots balanceWitness = some slots
+      ∧ validBalance balanceWitness = true
+      ∧ transactionSpendAuthorized shape merkleRoot spendWitnesses = true :=
+  ⟨facts.deployedRelationFacts.balanceSlotsEq,
+    facts.deployedRelationFacts.validBalanceEq,
+    facts.deployedRelationFacts.spendAuthorized⟩
+
+theorem canonical_boundary_facts_core_statement_binding
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot :=
+  facts.coreStatementBinding
+
+theorem canonical_boundary_facts_native_delta
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness :=
+  accepted_transaction_relation_native_delta
+    facts.acceptedTransactionRelation
+
+theorem canonical_boundary_facts_authorized_asset_delta
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    AuthorizedAssetDelta balanceWitness slots assetId :=
+  accepted_transaction_relation_authorized_asset_delta
+    facts.acceptedTransactionRelation
+
+theorem canonical_boundary_facts_authorized_asset_delta_value
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    slotDelta assetId slots =
+      authorizedAssetDeltaValue balanceWitness assetId :=
+  accepted_transaction_relation_authorized_asset_delta_value
+    facts.acceptedTransactionRelation
+
+theorem canonical_balance_public_boundary_facts_authorized_public_delta_value
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (facts :
+      CanonicalDeployedVerifierBalancePublicBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    slotDelta assetId slots =
+      publicAuthorizedAssetDeltaValue publicFields assetId :=
+  facts.authorizedPublicDeltaValue
+
+theorem canonical_boundary_facts_input_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+        merkleRoot
+        activeFlag
+        publicNullifier
+        witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+  have slotFacts :=
+    transactionSpendAuthorized_input_slot_facts_at
+      facts.deployedRelationFacts.spendAuthorized
+      slot
+  have statementRoot : statementFields.merkleRootSeed = merkleRoot := by
+    rw [facts.coreStatementBinding.statementRoot,
+      ← facts.coreStatementBinding.relationRoot]
+  have bindingRoot : bindingFields.anchorSeed = merkleRoot := by
+    rw [facts.coreStatementBinding.bindingAnchor,
+      ← facts.coreStatementBinding.relationRoot]
+  rcases facts.inputVectorBinding with
+    ⟨shapeFlags, shapeNullifiers, bindingNullifiers⟩
+  have slotStatement :
+      ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← shapeFlags, ← shapeNullifiers]
+    exact slot
+  have slotBinding :
+      ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← shapeFlags, bindingNullifiers, ← shapeNullifiers]
+    exact slot
+  exact
+    ⟨slotFacts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
+
+theorem canonical_spend_boundary_facts_input_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (facts :
+      CanonicalDeployedVerifierSpendBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    InputSlotAuthorizationFacts
+        merkleRoot
+        activeFlag
+        publicNullifier
+        witness
+      ∧ statementFields.merkleRootSeed = merkleRoot
+      ∧ bindingFields.anchorSeed = merkleRoot
+      ∧ ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness
+      ∧ ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+  have slotFacts :=
+    transactionSpendAuthorized_input_slot_facts_at
+      facts.spendAuthorized
+      slot
+  have statementRoot : statementFields.merkleRootSeed = merkleRoot := by
+    rw [facts.coreStatementBinding.statementRoot,
+      ← facts.coreStatementBinding.relationRoot]
+  have bindingRoot : bindingFields.anchorSeed = merkleRoot := by
+    rw [facts.coreStatementBinding.bindingAnchor,
+      ← facts.coreStatementBinding.relationRoot]
+  rcases facts.inputVectorBinding with
+    ⟨shapeFlags, shapeNullifiers, bindingNullifiers⟩
+  have slotStatement :
+      ActiveInputAt
+        bound.inputFlags
+        statementFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← shapeFlags, ← shapeNullifiers]
+    exact slot
+  have slotBinding :
+      ActiveInputAt
+        bound.inputFlags
+        bindingFields.nullifierSeeds
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness := by
+    rw [← shapeFlags, bindingNullifiers, ← shapeNullifiers]
+    exact slot
+  exact
+    ⟨slotFacts, statementRoot, bindingRoot, slotStatement, slotBinding⟩
+
+theorem canonical_boundary_facts_output_slot_bound_to_statement
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (facts :
+      CanonicalDeployedVerifierBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    OutputSlotFacts
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+      ∧ OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+  have slotFacts :=
+    validPublicInputShape_output_slot_facts_at
+      facts.publicShapeValid
+      slot
+  rcases facts.outputVectorBinding with
+    ⟨shapeFlags,
+      shapeCommitments,
+      shapeCiphertextHashes,
+      bindingCommitments,
+      bindingCiphertextHashes⟩
+  have slotStatement :
+      OutputSlotAt
+        bound.outputFlags
+        statementFields.commitmentSeeds
+        statementFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← shapeFlags, ← shapeCommitments, ← shapeCiphertextHashes]
+    exact slot
+  have slotBinding :
+      OutputSlotAt
+        bound.outputFlags
+        bindingFields.commitmentSeeds
+        bindingFields.ciphertextHashSeeds
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash := by
+    rw [← shapeFlags, bindingCommitments, bindingCiphertextHashes,
+      ← shapeCommitments, ← shapeCiphertextHashes]
+    exact slot
+  exact ⟨slotFacts, slotStatement, slotBinding⟩
+
+theorem deployed_soundness_canonical_surface_exposes_spend_and_balance
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    balanceSlots balanceWitness = some slots
+      ∧ validBalance balanceWitness = true
+      ∧ transactionSpendAuthorized shape merkleRoot spendWitnesses = true :=
+  canonical_boundary_facts_expose_spend_and_balance
+    (deployed_soundness_canonical_surface_implies_boundary_facts
+      surface
+      sound)
+
+theorem deployed_soundness_canonical_surface_public_input_p3_binding_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (_sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots) :
+    PublicInputBinding.PublicInputP3BindingFacts
+      publicFields
+      serializedFields
+      bound :=
+  canonical_statement_surface_p3_public_input_binding_facts surface
+
+theorem balance_public_soundness_canonical_surface_authorized_public_delta_value
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {assetId : Nat}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots) :
+    slotDelta assetId slots =
+      publicAuthorizedAssetDeltaValue publicFields assetId :=
+  canonical_balance_public_boundary_facts_authorized_public_delta_value
+    (balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts
+      surface
+      balanceSound)
+
+theorem spend_soundness_canonical_surface_input_slot_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    CanonicalDeployedVerifierSpendInputSlotBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      index
+      activeFlag
+      publicNullifier
+      witness := by
+  have facts :=
+    spend_soundness_canonical_surface_implies_spend_boundary_facts
+      surface
+      spendSound
+  have slotFacts :=
+    canonical_spend_boundary_facts_input_slot_bound_to_statement facts slot
+  exact
+    {
+      spendBoundaryFacts := facts,
+      inputSlotFacts := slotFacts.left,
+      statementRootBinding := slotFacts.right.left,
+      bindingRootBinding := slotFacts.right.right.left,
+      statementSlot := slotFacts.right.right.right.left,
+      bindingSlot := slotFacts.right.right.right.right
+    }
+
+theorem deployed_soundness_canonical_surface_input_slot_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness) :
+    CanonicalDeployedVerifierInputSlotBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      index
+      activeFlag
+      publicNullifier
+      witness := by
+  have facts :=
+    deployed_soundness_canonical_surface_implies_boundary_facts
+      surface
+      sound
+  have slotFacts :=
+    canonical_boundary_facts_input_slot_bound_to_statement facts slot
+  exact
+    {
+      boundaryFacts := facts,
+      inputSlotFacts := slotFacts.left,
+      statementRootBinding := slotFacts.right.left,
+      bindingRootBinding := slotFacts.right.right.left,
+      statementSlot := slotFacts.right.right.right.left,
+      bindingSlot := slotFacts.right.right.right.right
+    }
+
+theorem deployed_soundness_canonical_surface_output_slot_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {index activeFlag : Nat}
+    {publicCommitment publicCiphertextHash : Digest}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (sound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (slot :
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash) :
+    CanonicalDeployedVerifierOutputSlotBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      index
+      activeFlag
+      publicCommitment
+      publicCiphertextHash := by
+  have facts :=
+    deployed_soundness_canonical_surface_implies_boundary_facts
+      surface
+      sound
+  have slotFacts :=
+    canonical_boundary_facts_output_slot_bound_to_statement facts slot
+  exact
+    {
+      boundaryFacts := facts,
+      outputSlotFacts := slotFacts.left,
+      statementSlot := slotFacts.right.left,
+      bindingSlot := slotFacts.right.right
+    }
+
+structure CanonicalProofSystemProductionResidualAssumptions where
+  wrapperCanonicalDecodeEquivalence : Prop
+  publicInputSerializationEquivalence : Prop
+  statementHashCollisionResistance : Prop
+  bindingTranscriptHashSoundness : Prop
+  deployedVerifierImplementationEquivalence : Prop
+  starkAirPcsSoundness : Prop
+  witnessExtractionCompleteness : Prop
+  merkleCommitmentHashSecurity : Prop
+
+structure CanonicalProofSystemProductionResidualCertificate
+    (wrapper : ProofWrapperInput)
+    (shape : PublicInputShape)
+    (publicFields : PublicInputBinding.PublicFields)
+    (serializedFields : PublicInputBinding.SerializedFields)
+    (bound : PublicInputBinding.BoundPublicInputs)
+    (statementFields : StatementHash.StatementFields)
+    (statementBytes : List Byte)
+    (bindingFields : ProofStatementBinding.BindingFields)
+    (bindingBytes : List Byte)
+    (merkleRoot : Digest)
+    (spendWitnesses : List InputSpendWitness)
+    (balanceWitness : BalanceWitness)
+    (slots : List BalanceSlot)
+    (residuals : CanonicalProofSystemProductionResidualAssumptions) :
+    Prop where
+  proofArtifactStatementCertificate :
+    CanonicalProofArtifactAdmissionStatementCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots
+  noTheftBoundaryFacts :
+    CanonicalProofSystemNoTheftBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  canonicalBoundaryFacts :
+    CanonicalDeployedVerifierBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+  spendBoundaryFacts :
+    CanonicalDeployedVerifierSpendBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+  balancePublicBoundaryFacts :
+    CanonicalDeployedVerifierBalancePublicBoundaryFacts
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      balanceWitness
+      slots
+  coreStatementBinding :
+    CanonicalStatementCoreBinding
+      shape
+      bound
+      statementFields
+      bindingFields
+      merkleRoot
+  vectorBinding :
+    shape.nullifiers = statementFields.nullifierSeeds
+      ∧ shape.commitments = statementFields.commitmentSeeds
+      ∧ shape.ciphertextHashes = statementFields.ciphertextHashSeeds
+      ∧ bindingFields.nullifierSeeds = statementFields.nullifierSeeds
+      ∧ bindingFields.commitmentSeeds = statementFields.commitmentSeeds
+      ∧ bindingFields.ciphertextHashSeeds =
+        statementFields.ciphertextHashSeeds
+  inputSlotBoundaryFacts :
+    ∀ {index activeFlag : Nat}
+      {publicNullifier : Digest}
+      {witness : InputSpendWitness},
+      ActiveInputAt
+        shape.inputFlags
+        shape.nullifiers
+        spendWitnesses
+        index
+        activeFlag
+        publicNullifier
+        witness ->
+      CanonicalDeployedVerifierInputSlotBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        index
+        activeFlag
+        publicNullifier
+        witness
+  outputSlotBoundaryFacts :
+    ∀ {index activeFlag : Nat}
+      {publicCommitment publicCiphertextHash : Digest},
+      OutputSlotAt
+        shape.outputFlags
+        shape.commitments
+        shape.ciphertextHashes
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash ->
+      CanonicalDeployedVerifierOutputSlotBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        index
+        activeFlag
+        publicCommitment
+        publicCiphertextHash
+  witnessAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        authorizedAssetDeltaValue balanceWitness assetId
+  publicAuthorizedDeltas :
+    ∀ {assetId : Nat},
+      slotDelta assetId slots =
+        publicAuthorizedAssetDeltaValue publicFields assetId
+  nativeDeltaAuthorized :
+    slotDelta nativeAsset slots = nativeExpected balanceWitness
+  nonNativeNonzeroExceptionSurface :
+    ∀ {assetId : Nat},
+      assetId ≠ nativeAsset ->
+      slotDelta assetId slots ≠ 0 ->
+        StablecoinMintExceptionSurface
+          publicFields
+          bound
+          statementFields
+          bindingFields
+          assetId
+          (slotDelta assetId slots)
+  wrapperCanonicalDecodeEquivalence :
+    residuals.wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalence :
+    residuals.publicInputSerializationEquivalence
+  statementHashCollisionResistance :
+    residuals.statementHashCollisionResistance
+  bindingTranscriptHashSoundness :
+    residuals.bindingTranscriptHashSoundness
+  deployedVerifierImplementationEquivalence :
+    residuals.deployedVerifierImplementationEquivalence
+  starkAirPcsSoundness :
+    residuals.starkAirPcsSoundness
+  witnessExtractionCompleteness :
+    residuals.witnessExtractionCompleteness
+  merkleCommitmentHashSecurity :
+    residuals.merkleCommitmentHashSecurity
+
+structure CanonicalProofSystemResidualBoundaryFacts
+    (residuals : CanonicalProofSystemProductionResidualAssumptions) :
+    Prop where
+  wrapperCanonicalDecodeEquivalence :
+    residuals.wrapperCanonicalDecodeEquivalence
+  publicInputSerializationEquivalence :
+    residuals.publicInputSerializationEquivalence
+  statementHashCollisionResistance :
+    residuals.statementHashCollisionResistance
+  bindingTranscriptHashSoundness :
+    residuals.bindingTranscriptHashSoundness
+  deployedVerifierImplementationEquivalence :
+    residuals.deployedVerifierImplementationEquivalence
+  starkAirPcsSoundness :
+    residuals.starkAirPcsSoundness
+  witnessExtractionCompleteness :
+    residuals.witnessExtractionCompleteness
+  merkleCommitmentHashSecurity :
+    residuals.merkleCommitmentHashSecurity
+
+theorem canonical_proof_system_production_residual_certificate_exposes_residual_boundary_facts
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {residuals : CanonicalProofSystemProductionResidualAssumptions}
+    (certificate :
+      CanonicalProofSystemProductionResidualCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots
+        residuals) :
+    CanonicalProofSystemResidualBoundaryFacts residuals := by
+  exact
+    {
+      wrapperCanonicalDecodeEquivalence :=
+        certificate.wrapperCanonicalDecodeEquivalence,
+      publicInputSerializationEquivalence :=
+        certificate.publicInputSerializationEquivalence,
+      statementHashCollisionResistance :=
+        certificate.statementHashCollisionResistance,
+      bindingTranscriptHashSoundness :=
+        certificate.bindingTranscriptHashSoundness,
+      deployedVerifierImplementationEquivalence :=
+        certificate.deployedVerifierImplementationEquivalence,
+      starkAirPcsSoundness := certificate.starkAirPcsSoundness,
+      witnessExtractionCompleteness :=
+        certificate.witnessExtractionCompleteness,
+      merkleCommitmentHashSecurity :=
+        certificate.merkleCommitmentHashSecurity
+    }
+
+theorem packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {residuals : CanonicalProofSystemProductionResidualAssumptions}
+    (proofArtifactStatementCertificate :
+      CanonicalProofArtifactAdmissionStatementCertificate
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (noTheftBoundaryFacts :
+      CanonicalProofSystemNoTheftBoundaryFacts
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots)
+    (wrapperCanonicalDecodeEquivalence :
+      residuals.wrapperCanonicalDecodeEquivalence)
+    (publicInputSerializationEquivalence :
+      residuals.publicInputSerializationEquivalence)
+    (statementHashCollisionResistance :
+      residuals.statementHashCollisionResistance)
+    (bindingTranscriptHashSoundness :
+      residuals.bindingTranscriptHashSoundness)
+    (deployedVerifierImplementationEquivalence :
+      residuals.deployedVerifierImplementationEquivalence)
+    (starkAirPcsSoundness :
+      residuals.starkAirPcsSoundness)
+    (witnessExtractionCompleteness :
+      residuals.witnessExtractionCompleteness)
+    (merkleCommitmentHashSecurity :
+      residuals.merkleCommitmentHashSecurity) :
+    CanonicalProofSystemProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      residuals := by
+  exact
+    {
+      proofArtifactStatementCertificate :=
+        proofArtifactStatementCertificate,
+      noTheftBoundaryFacts := noTheftBoundaryFacts,
+      canonicalBoundaryFacts := noTheftBoundaryFacts.fullBoundary,
+      spendBoundaryFacts := noTheftBoundaryFacts.spendBoundary,
+      balancePublicBoundaryFacts :=
+        noTheftBoundaryFacts.balancePublicBoundary,
+      coreStatementBinding :=
+        noTheftBoundaryFacts.fullBoundary.coreStatementBinding,
+      vectorBinding := noTheftBoundaryFacts.fullBoundary.vectorBinding,
+      inputSlotBoundaryFacts := by
+        intro index activeFlag publicNullifier witness slot
+        have slotFacts :=
+          canonical_boundary_facts_input_slot_bound_to_statement
+            noTheftBoundaryFacts.fullBoundary
+            slot
+        exact
+          {
+            boundaryFacts := noTheftBoundaryFacts.fullBoundary,
+            inputSlotFacts := slotFacts.left,
+            statementRootBinding := slotFacts.right.left,
+            bindingRootBinding := slotFacts.right.right.left,
+            statementSlot := slotFacts.right.right.right.left,
+            bindingSlot := slotFacts.right.right.right.right
+          },
+      outputSlotBoundaryFacts := by
+        intro index activeFlag publicCommitment publicCiphertextHash slot
+        have slotFacts :=
+          canonical_boundary_facts_output_slot_bound_to_statement
+            noTheftBoundaryFacts.fullBoundary
+            slot
+        exact
+          {
+            boundaryFacts := noTheftBoundaryFacts.fullBoundary,
+            outputSlotFacts := slotFacts.left,
+            statementSlot := slotFacts.right.left,
+            bindingSlot := slotFacts.right.right
+          },
+      witnessAuthorizedDeltas :=
+        noTheftBoundaryFacts.witnessAuthorizedDelta,
+      publicAuthorizedDeltas :=
+        noTheftBoundaryFacts.publicAuthorizedDelta,
+      nativeDeltaAuthorized :=
+        canonical_boundary_facts_native_delta
+          noTheftBoundaryFacts.fullBoundary,
+      nonNativeNonzeroExceptionSurface :=
+        noTheftBoundaryFacts.nonNativeNonzeroExceptionSurface,
+      wrapperCanonicalDecodeEquivalence :=
+        wrapperCanonicalDecodeEquivalence,
+      publicInputSerializationEquivalence :=
+        publicInputSerializationEquivalence,
+      statementHashCollisionResistance :=
+        statementHashCollisionResistance,
+      bindingTranscriptHashSoundness :=
+        bindingTranscriptHashSoundness,
+      deployedVerifierImplementationEquivalence :=
+        deployedVerifierImplementationEquivalence,
+      starkAirPcsSoundness := starkAirPcsSoundness,
+      witnessExtractionCompleteness := witnessExtractionCompleteness,
+      merkleCommitmentHashSecurity := merkleCommitmentHashSecurity
+    }
+
+theorem accepted_canonical_surface_with_split_soundness_and_residuals_imply_proof_system_production_residual_certificate
+    {wrapper : ProofWrapperInput}
+    {shape : PublicInputShape}
+    {publicFields : PublicInputBinding.PublicFields}
+    {serializedFields : PublicInputBinding.SerializedFields}
+    {bound : PublicInputBinding.BoundPublicInputs}
+    {statementFields : StatementHash.StatementFields}
+    {statementBytes : List Byte}
+    {bindingFields : ProofStatementBinding.BindingFields}
+    {bindingBytes : List Byte}
+    {merkleRoot : Digest}
+    {spendWitnesses : List InputSpendWitness}
+    {balanceWitness : BalanceWitness}
+    {slots : List BalanceSlot}
+    {residuals : CanonicalProofSystemProductionResidualAssumptions}
+    (surface :
+      CanonicalTxStatementSurface
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot)
+    (spendSound :
+      DeployedTxVerifierSpendSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses)
+    (balanceSound :
+      DeployedTxVerifierBalancePublicFieldSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        balanceWitness
+        slots)
+    (wrapperCanonicalDecodeEquivalence :
+      residuals.wrapperCanonicalDecodeEquivalence)
+    (publicInputSerializationEquivalence :
+      residuals.publicInputSerializationEquivalence)
+    (statementHashCollisionResistance :
+      residuals.statementHashCollisionResistance)
+    (bindingTranscriptHashSoundness :
+      residuals.bindingTranscriptHashSoundness)
+    (deployedVerifierImplementationEquivalence :
+      residuals.deployedVerifierImplementationEquivalence)
+    (starkAirPcsSoundness :
+      residuals.starkAirPcsSoundness)
+    (witnessExtractionCompleteness :
+      residuals.witnessExtractionCompleteness)
+    (merkleCommitmentHashSecurity :
+      residuals.merkleCommitmentHashSecurity) :
+    CanonicalProofSystemProductionResidualCertificate
+      wrapper
+      shape
+      publicFields
+      serializedFields
+      bound
+      statementFields
+      statementBytes
+      bindingFields
+      bindingBytes
+      merkleRoot
+      spendWitnesses
+      balanceWitness
+      slots
+      residuals := by
+  have balanceArtifactSound :
+      BalanceSoundnessAssumption wrapper balanceWitness slots := by
+    intro _accepted
+    have balanceFacts := balanceSound surface
+    exact ⟨balanceFacts.balanceSlotsEq, balanceFacts.validBalanceEq⟩
+  have proofArtifactCertificate :=
+    accepted_canonical_statement_surface_with_balance_soundness_implies_proof_artifact_admission_statement_certificate
+      surface
+      balanceArtifactSound
+  have spendFacts :=
+    spend_soundness_canonical_surface_implies_spend_boundary_facts
+      surface
+      spendSound
+  have balanceFacts :=
+    balance_public_soundness_canonical_surface_implies_balance_public_boundary_facts
+      surface
+      balanceSound
+  have noTheftFacts :=
+    deployed_soundness_parts_canonical_surface_implies_no_theft_boundary_facts
+      surface
+      spendSound
+      balanceSound
+  have deployedSound :
+      DeployedTxVerifierSoundnessAssumption
+        wrapper
+        shape
+        publicFields
+        serializedFields
+        bound
+        statementFields
+        statementBytes
+        bindingFields
+        bindingBytes
+        merkleRoot
+        spendWitnesses
+        balanceWitness
+        slots :=
+    deployed_soundness_parts_imply_deployed_tx_verifier_soundness_assumption
+      spendSound
+      balanceSound
+  exact
+    {
+      proofArtifactStatementCertificate := proofArtifactCertificate,
+      noTheftBoundaryFacts := noTheftFacts,
+      canonicalBoundaryFacts := noTheftFacts.fullBoundary,
+      spendBoundaryFacts := spendFacts,
+      balancePublicBoundaryFacts := balanceFacts,
+      coreStatementBinding := noTheftFacts.fullBoundary.coreStatementBinding,
+      vectorBinding := noTheftFacts.fullBoundary.vectorBinding,
+      inputSlotBoundaryFacts := by
+        intro index activeFlag publicNullifier witness slot
+        exact
+          deployed_soundness_canonical_surface_input_slot_boundary_facts
+            surface
+            deployedSound
+            slot,
+      outputSlotBoundaryFacts := by
+        intro index activeFlag publicCommitment publicCiphertextHash slot
+        exact
+          deployed_soundness_canonical_surface_output_slot_boundary_facts
+            surface
+            deployedSound
+            slot,
+      witnessAuthorizedDeltas := noTheftFacts.witnessAuthorizedDelta,
+      publicAuthorizedDeltas := noTheftFacts.publicAuthorizedDelta,
+      nativeDeltaAuthorized :=
+        canonical_boundary_facts_native_delta noTheftFacts.fullBoundary,
+      nonNativeNonzeroExceptionSurface :=
+        noTheftFacts.nonNativeNonzeroExceptionSurface,
+      wrapperCanonicalDecodeEquivalence :=
+        wrapperCanonicalDecodeEquivalence,
+      publicInputSerializationEquivalence :=
+        publicInputSerializationEquivalence,
+      statementHashCollisionResistance :=
+        statementHashCollisionResistance,
+      bindingTranscriptHashSoundness :=
+        bindingTranscriptHashSoundness,
+      deployedVerifierImplementationEquivalence :=
+        deployedVerifierImplementationEquivalence,
+      starkAirPcsSoundness := starkAirPcsSoundness,
+      witnessExtractionCompleteness := witnessExtractionCompleteness,
+      merkleCommitmentHashSecurity := merkleCommitmentHashSecurity
+    }
+
+end ProofSystemBoundary
+end Transaction
+end Hegemon

@@ -1,4 +1,4 @@
-use wallet::{SubstrateRpcClient, TransactionBundle};
+use wallet::{NodeRpcClient, TransactionBundle};
 
 fn parse_hex48(s: &str) -> [u8; 48] {
     let t = s.trim_start_matches("0x");
@@ -10,23 +10,21 @@ fn parse_hex48(s: &str) -> [u8; 48] {
 
 #[tokio::main]
 async fn main() {
-    let client = SubstrateRpcClient::connect("ws://127.0.0.1:9955")
-        .await
-        .unwrap();
+    let client = NodeRpcClient::connect("ws://127.0.0.1:9955").await.unwrap();
 
-    let raw_client = jsonrpsee::ws_client::WsClientBuilder::default()
+    let raw_client = jsonrpsee_ws_client::WsClientBuilder::default()
         .build("ws://127.0.0.1:9955")
         .await
         .unwrap();
-    use jsonrpsee::core::client::ClientT;
+    use jsonrpsee_core::client::ClientT;
     let fin: String = raw_client
-        .request("chain_getFinalizedHead", jsonrpsee::rpc_params![])
+        .request("chain_getFinalizedHead", jsonrpsee_core::rpc_params![])
         .await
         .unwrap();
     let fin_root_hex: String = raw_client
         .request(
             "state_call",
-            jsonrpsee::rpc_params!["ShieldedPoolApi_merkle_root", "0x", fin],
+            jsonrpsee_core::rpc_params!["ShieldedPoolApi_merkle_root", "0x", fin],
         )
         .await
         .unwrap();

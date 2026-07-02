@@ -97,4 +97,123 @@ impl VersionSchedule {
             .into_iter()
             .find(|version| !allowed.contains(version))
     }
+
+    pub fn validate_versions<I>(&self, height: u64, versions: I) -> Result<(), VersionBinding>
+    where
+        I: IntoIterator<Item = VersionBinding>,
+    {
+        match self.first_unsupported(height, versions) {
+            Some(version) => Err(version),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanVersionPolicyVectorFile {
+        schema_version: u32,
+        version_policy_cases: Vec<LeanVersionPolicyCase>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanVersionPolicyCase {
+        name: String,
+        height: u64,
+        initial: Vec<VersionBinding>,
+        activations: Vec<LeanVersionEvent>,
+        retirements: Vec<LeanVersionEvent>,
+        tx_versions: Vec<VersionBinding>,
+        expected_allowed: Vec<VersionBinding>,
+        expected_valid: bool,
+        expected_first_unsupported: Option<VersionBinding>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanVersionEvent {
+        height: u64,
+        versions: Vec<VersionBinding>,
+    }
+
+    #[test]
+    fn lean_generated_version_policy_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_VERSION_POLICY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_VERSION_POLICY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean version vectors");
+        let vectors: LeanVersionPolicyVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean version vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            vectors.version_policy_cases.len() >= 8,
+            "Lean version-policy cases cover too few policy branches"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.version_policy_cases {
+            assert!(names.insert(case.name.clone()));
+            verify_version_policy_case(case);
+        }
+    }
+
+    fn verify_version_policy_case(case: &LeanVersionPolicyCase) {
+        let mut schedule = VersionSchedule::new(case.initial.iter().copied());
+        for event in &case.activations {
+            schedule
+                .activations
+                .entry(event.height)
+                .or_default()
+                .extend(event.versions.iter().copied());
+        }
+        for event in &case.retirements {
+            schedule
+                .retirements
+                .entry(event.height)
+                .or_default()
+                .extend(event.versions.iter().copied());
+        }
+
+        let allowed = schedule.allowed_at(case.height);
+        let expected_allowed = case
+            .expected_allowed
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            allowed, expected_allowed,
+            "{} allowed set drifted from Lean spec",
+            case.name
+        );
+
+        let result = schedule.validate_versions(case.height, case.tx_versions.iter().copied());
+        assert_eq!(
+            result.is_ok(),
+            case.expected_valid,
+            "{} version-policy validity drifted from Lean spec",
+            case.name
+        );
+        match result {
+            Ok(()) => assert_eq!(
+                None, case.expected_first_unsupported,
+                "{} production accepted a case Lean rejected",
+                case.name
+            ),
+            Err(version) => assert_eq!(
+                Some(version),
+                case.expected_first_unsupported,
+                "{} first unsupported version drifted from Lean spec",
+                case.name
+            ),
+        }
+    }
 }

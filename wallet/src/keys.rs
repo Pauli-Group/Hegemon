@@ -1,14 +1,15 @@
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use protocol_versioning::CRYPTO_SUITE_GAMMA;
 use synthetic_crypto::{
     deterministic::expand_to_length,
     hashes::{blake3_256, derive_prf_key},
+    ml_dsa::MlDsaSecretKey,
     ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSecretKey, MlKemSharedSecret},
-    traits::KemKeyPair,
+    traits::{KemKeyPair, SigningKey, VerifyKey},
 };
 use transaction_circuit::hashing_pq::spend_auth_key_bytes;
 
@@ -17,6 +18,26 @@ use crate::{address::ShieldedAddress, error::WalletError};
 const KEY_SIZE: usize = 32;
 const ADDRESS_VERSION: u8 = 3;
 const ADDRESS_CRYPTO_SUITE: u16 = CRYPTO_SUITE_GAMMA;
+
+/// Derive the legacy 32-byte account id from a deterministic ML-DSA seed.
+pub fn ml_dsa_account_id_from_seed(seed: &[u8; 32]) -> [u8; 32] {
+    let signing_key = MlDsaSecretKey::generate_deterministic(seed);
+    let public_key = signing_key.verify_key();
+    blake2_256_hash(&public_key.to_bytes())
+}
+
+fn blake2_256_hash(data: &[u8]) -> [u8; 32] {
+    use blake2::digest::{Update as BlakeUpdate, VariableOutput};
+    use blake2::Blake2bVar;
+
+    let mut hasher = Blake2bVar::new(32).expect("valid blake2 output size");
+    hasher.update(data);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("output size matches");
+    out
+}
 
 /// Root secret key - the master seed for the wallet.
 /// This is zeroized on drop to prevent key material from persisting in memory.
@@ -31,7 +52,9 @@ impl RootSecret {
     pub fn from_rng<R: RngCore + ?Sized>(rng: &mut R) -> Self {
         let mut bytes = [0u8; KEY_SIZE];
         rng.fill_bytes(&mut bytes);
-        Self(bytes)
+        let root = Self(bytes);
+        bytes.zeroize();
+        root
     }
 
     pub fn to_bytes(&self) -> [u8; KEY_SIZE] {
@@ -100,14 +123,14 @@ impl ViewKey {
     }
 
     pub fn nullifier_key(&self) -> [u8; KEY_SIZE] {
-        let mut material = Vec::with_capacity(b"view_nf".len() + self.0.len());
+        let mut material = Zeroizing::new(Vec::with_capacity(b"view_nf".len() + self.0.len()));
         material.extend_from_slice(b"view_nf");
         material.extend_from_slice(&self.0);
         blake3_256(&material)
     }
 
     pub fn pk_recipient(&self, diversifier: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-        let mut material = Vec::with_capacity(self.0.len() + diversifier.len());
+        let mut material = Zeroizing::new(Vec::with_capacity(self.0.len() + diversifier.len()));
         material.extend_from_slice(&self.0);
         material.extend_from_slice(diversifier);
         blake3_256(&material)
@@ -121,7 +144,8 @@ pub struct EncryptionSeed(#[serde(with = "serde_bytes32")] [u8; KEY_SIZE]);
 
 impl EncryptionSeed {
     pub fn derive_keypair(&self, diversifier: &[u8; KEY_SIZE], index: u32) -> MlKemKeyPair {
-        let mut seed_material = Vec::with_capacity(2 * KEY_SIZE + 4 + b"addr-seed".len());
+        let mut seed_material =
+            Zeroizing::new(Vec::with_capacity(2 * KEY_SIZE + 4 + b"addr-seed".len()));
         seed_material.extend_from_slice(b"addr-seed");
         seed_material.extend_from_slice(&self.0);
         seed_material.extend_from_slice(diversifier);
@@ -239,7 +263,7 @@ impl AddressKeyMaterial {
 }
 
 fn derive_subkey(label: &[u8], root: &[u8; KEY_SIZE]) -> [u8; KEY_SIZE] {
-    let mut material = Vec::with_capacity(label.len() + root.len());
+    let mut material = Zeroizing::new(Vec::with_capacity(label.len() + root.len()));
     material.extend_from_slice(label);
     material.extend_from_slice(root);
     let derived = expand_to_length(b"wallet-hkdf", &material, KEY_SIZE);

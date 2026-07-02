@@ -1,12 +1,12 @@
 //! Pure ML-KEM-1024 handshake implementation (no classical ECDH)
 
-use crypto::hashes::sha256;
 use crypto::ml_dsa::{MlDsaPublicKey, MlDsaSignature};
-use crypto::ml_kem::{MlKemCiphertext, MlKemPublicKey, MlKemSharedSecret};
+use crypto::ml_kem::{MlKemCiphertext, MlKemKeyPair, MlKemPublicKey, MlKemSharedSecret};
 use crypto::traits::{KemKeyPair, KemPublicKey, SigningKey, VerifyKey};
-use rand::RngCore;
+use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
 
+use crate::codec;
 use crate::config::PqNoiseConfig;
 use crate::error::{HandshakeError, Result};
 use crate::noise::Transcript;
@@ -20,6 +20,7 @@ pub struct PqHandshake {
     config: PqNoiseConfig,
     transcript: Transcript,
     remote_peer: Option<RemotePeer>,
+    local_ephemeral_kem: Option<MlKemKeyPair>,
     mlkem_shared_1: Option<MlKemSharedSecret>,
     mlkem_shared_2: Option<MlKemSharedSecret>,
 }
@@ -31,6 +32,7 @@ impl PqHandshake {
             config,
             transcript: Transcript::new(),
             remote_peer: None,
+            local_ephemeral_kem: None,
             mlkem_shared_1: None,
             mlkem_shared_2: None,
         }
@@ -38,16 +40,13 @@ impl PqHandshake {
 
     /// Generate the initiator's hello message
     pub fn initiator_hello(&mut self) -> Result<HandshakeMessage> {
-        let mut rng = rand::thread_rng();
-
-        // Get our identity and KEM public keys
+        // Get our identity key and a fresh per-session KEM public key.
         let identity_key = self.config.identity.verify_key.to_bytes();
-        let mlkem_public_key = self.config.identity.kem_keypair.public_key().to_bytes();
+        let local_ephemeral_kem = random_kem_keypair();
+        let mlkem_public_key = local_ephemeral_kem.public_key().to_bytes();
+        self.local_ephemeral_kem = Some(local_ephemeral_kem);
 
-        // Generate nonce
-        let mut nonce_bytes = [0u8; 8];
-        rng.fill_bytes(&mut nonce_bytes);
-        let nonce = u64::from_be_bytes(nonce_bytes);
+        let nonce = random_nonce();
 
         // Create message (without signature first)
         let message = InitHelloMessage {
@@ -68,7 +67,7 @@ impl PqHandshake {
         };
 
         // Update transcript
-        let serialized = bincode::serialize(&signed_message)?;
+        let serialized = codec::encode_transcript(&signed_message)?;
         self.transcript.update(&serialized);
 
         if self.config.verbose_logging {
@@ -104,7 +103,7 @@ impl PqHandshake {
             .map_err(|_| HandshakeError::InvalidSignature)?;
 
         // Update transcript with received message
-        let serialized = bincode::serialize(&init_hello)?;
+        let serialized = codec::encode_transcript(&init_hello)?;
         self.transcript.update(&serialized);
 
         // Store remote peer info
@@ -112,22 +111,19 @@ impl PqHandshake {
             RemotePeer::from_handshake(&init_hello.identity_key, &init_hello.mlkem_public_key)?;
         self.remote_peer = Some(remote_peer.clone());
 
-        let mut rng = rand::thread_rng();
-
         // Encapsulate to initiator's ML-KEM public key
         let initiator_mlkem_pk = MlKemPublicKey::from_bytes(&init_hello.mlkem_public_key)?;
-        let encap_seed = sha256(&[&self.transcript.hash()[..], b"encap1"].concat());
-        let (ciphertext, shared_secret) = initiator_mlkem_pk.encapsulate(&encap_seed);
+        let encap_seed = random_encapsulation_seed();
+        let (ciphertext, shared_secret) = encapsulate_with_seed(&initiator_mlkem_pk, &encap_seed);
         self.mlkem_shared_1 = Some(shared_secret);
 
-        // Get our identity and KEM public keys
+        // Get our identity key and a fresh per-session KEM public key.
         let identity_key = self.config.identity.verify_key.to_bytes();
-        let mlkem_public_key = self.config.identity.kem_keypair.public_key().to_bytes();
+        let local_ephemeral_kem = random_kem_keypair();
+        let mlkem_public_key = local_ephemeral_kem.public_key().to_bytes();
+        self.local_ephemeral_kem = Some(local_ephemeral_kem);
 
-        // Generate nonce
-        let mut nonce_bytes = [0u8; 8];
-        rng.fill_bytes(&mut nonce_bytes);
-        let nonce = u64::from_be_bytes(nonce_bytes);
+        let nonce = random_nonce();
 
         // Create message (without signature)
         let message = RespHelloMessage {
@@ -149,7 +145,7 @@ impl PqHandshake {
         };
 
         // Update transcript
-        let serialized = bincode::serialize(&signed_message)?;
+        let serialized = codec::encode_transcript(&signed_message)?;
         self.transcript.update(&serialized);
 
         if self.config.verbose_logging {
@@ -185,7 +181,7 @@ impl PqHandshake {
             .map_err(|_| HandshakeError::InvalidSignature)?;
 
         // Update transcript
-        let serialized = bincode::serialize(&resp_hello)?;
+        let serialized = codec::encode_transcript(&resp_hello)?;
         self.transcript.update(&serialized);
 
         // Store remote peer info
@@ -195,21 +191,21 @@ impl PqHandshake {
 
         // Decapsulate the ciphertext from responder
         let ciphertext = MlKemCiphertext::from_bytes(&resp_hello.mlkem_ciphertext)?;
-        let shared_secret_1 = self.config.identity.kem_keypair.decapsulate(&ciphertext)?;
+        let shared_secret_1 = self
+            .local_ephemeral_kem
+            .as_ref()
+            .ok_or(HandshakeError::InvalidState)?
+            .decapsulate(&ciphertext)?;
+        self.local_ephemeral_kem = None;
         self.mlkem_shared_1 = Some(shared_secret_1);
 
         // Encapsulate to responder's ML-KEM public key
         let responder_mlkem_pk = MlKemPublicKey::from_bytes(&resp_hello.mlkem_public_key)?;
-        let encap_seed = sha256(&[&self.transcript.hash()[..], b"encap2"].concat());
-        let (ciphertext, shared_secret_2) = responder_mlkem_pk.encapsulate(&encap_seed);
+        let encap_seed = random_encapsulation_seed();
+        let (ciphertext, shared_secret_2) = encapsulate_with_seed(&responder_mlkem_pk, &encap_seed);
         self.mlkem_shared_2 = Some(shared_secret_2);
 
-        let mut rng = rand::thread_rng();
-
-        // Generate nonce
-        let mut nonce_bytes = [0u8; 8];
-        rng.fill_bytes(&mut nonce_bytes);
-        let nonce = u64::from_be_bytes(nonce_bytes);
+        let nonce = random_nonce();
 
         // Create finish message (without signature)
         let message = FinishMessage {
@@ -228,7 +224,7 @@ impl PqHandshake {
         };
 
         // Update transcript
-        let serialized = bincode::serialize(&signed_message)?;
+        let serialized = codec::encode_transcript(&signed_message)?;
         self.transcript.update(&serialized);
 
         if self.config.verbose_logging {
@@ -258,12 +254,17 @@ impl PqHandshake {
             .map_err(|_| HandshakeError::InvalidSignature)?;
 
         // Update transcript
-        let serialized = bincode::serialize(&finish)?;
+        let serialized = codec::encode_transcript(&finish)?;
         self.transcript.update(&serialized);
 
         // Decapsulate the ciphertext from initiator
         let ciphertext = MlKemCiphertext::from_bytes(&finish.mlkem_ciphertext)?;
-        let shared_secret_2 = self.config.identity.kem_keypair.decapsulate(&ciphertext)?;
+        let shared_secret_2 = self
+            .local_ephemeral_kem
+            .as_ref()
+            .ok_or(HandshakeError::InvalidState)?
+            .decapsulate(&ciphertext)?;
+        self.local_ephemeral_kem = None;
         self.mlkem_shared_2 = Some(shared_secret_2);
 
         // Derive session keys
@@ -315,35 +316,110 @@ impl PqHandshake {
     // Helper methods to compute signing data
 
     fn compute_init_hello_signing_data(&self, msg: &InitHelloMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"init-hello");
-        hasher.update([msg.version]);
-        hasher.update(&msg.mlkem_public_key);
-        hasher.update(&msg.identity_key);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.finalize().to_vec()
+        init_hello_signing_data(msg)
     }
 
     fn compute_resp_hello_signing_data(&self, msg: &RespHelloMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"resp-hello");
-        hasher.update([msg.version]);
-        hasher.update(&msg.mlkem_public_key);
-        hasher.update(&msg.mlkem_ciphertext);
-        hasher.update(&msg.identity_key);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(self.transcript.hash());
-        hasher.finalize().to_vec()
+        let transcript_hash = self.transcript.hash();
+        resp_hello_signing_data(msg, &transcript_hash)
     }
 
     fn compute_finish_signing_data(&self, msg: &FinishMessage) -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        hasher.update(b"finish");
-        hasher.update(&msg.mlkem_ciphertext);
-        hasher.update(msg.nonce.to_be_bytes());
-        hasher.update(self.transcript.hash());
-        hasher.finalize().to_vec()
+        let transcript_hash = self.transcript.hash();
+        finish_signing_data(msg, &transcript_hash)
     }
+}
+
+pub(crate) fn init_hello_signing_preimage(msg: &InitHelloMessage) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"init-hello".len() + 1 + msg.mlkem_public_key.len() + msg.identity_key.len() + 8,
+    );
+    preimage.extend_from_slice(b"init-hello");
+    preimage.push(msg.version);
+    preimage.extend_from_slice(&msg.mlkem_public_key);
+    preimage.extend_from_slice(&msg.identity_key);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage
+}
+
+pub(crate) fn resp_hello_signing_preimage(
+    msg: &RespHelloMessage,
+    transcript_hash: &[u8; 32],
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"resp-hello".len()
+            + 1
+            + msg.mlkem_public_key.len()
+            + msg.mlkem_ciphertext.len()
+            + msg.identity_key.len()
+            + 8
+            + transcript_hash.len(),
+    );
+    preimage.extend_from_slice(b"resp-hello");
+    preimage.push(msg.version);
+    preimage.extend_from_slice(&msg.mlkem_public_key);
+    preimage.extend_from_slice(&msg.mlkem_ciphertext);
+    preimage.extend_from_slice(&msg.identity_key);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage.extend_from_slice(transcript_hash);
+    preimage
+}
+
+pub(crate) fn finish_signing_preimage(msg: &FinishMessage, transcript_hash: &[u8; 32]) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        b"finish".len() + msg.mlkem_ciphertext.len() + 8 + transcript_hash.len(),
+    );
+    preimage.extend_from_slice(b"finish");
+    preimage.extend_from_slice(&msg.mlkem_ciphertext);
+    preimage.extend_from_slice(&msg.nonce.to_be_bytes());
+    preimage.extend_from_slice(transcript_hash);
+    preimage
+}
+
+pub(crate) fn signing_digest(preimage: &[u8]) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(preimage);
+    hasher.finalize().to_vec()
+}
+
+pub(crate) fn init_hello_signing_data(msg: &InitHelloMessage) -> Vec<u8> {
+    signing_digest(&init_hello_signing_preimage(msg))
+}
+
+pub(crate) fn resp_hello_signing_data(
+    msg: &RespHelloMessage,
+    transcript_hash: &[u8; 32],
+) -> Vec<u8> {
+    signing_digest(&resp_hello_signing_preimage(msg, transcript_hash))
+}
+
+pub(crate) fn finish_signing_data(msg: &FinishMessage, transcript_hash: &[u8; 32]) -> Vec<u8> {
+    signing_digest(&finish_signing_preimage(msg, transcript_hash))
+}
+
+fn random_nonce() -> u64 {
+    OsRng.next_u64()
+}
+
+fn random_kem_keypair() -> MlKemKeyPair {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    let keypair = MlKemKeyPair::generate_deterministic(&seed);
+    seed.fill(0);
+    keypair
+}
+
+pub(crate) fn random_encapsulation_seed() -> [u8; 32] {
+    let mut seed = [0u8; 32];
+    OsRng.fill_bytes(&mut seed);
+    seed
+}
+
+pub(crate) fn encapsulate_with_seed(
+    public_key: &MlKemPublicKey,
+    seed: &[u8; 32],
+) -> (MlKemCiphertext, MlKemSharedSecret) {
+    public_key.encapsulate(seed)
 }
 
 #[cfg(test)]
@@ -351,7 +427,9 @@ mod tests {
     use super::*;
     use crate::config::PqNoiseConfig;
     use crate::error::PqNoiseError;
+    use crate::noise::Transcript;
     use crate::types::LocalIdentity;
+    use crypto::hashes::sha256;
 
     #[test]
     fn test_full_handshake() {
@@ -470,5 +548,106 @@ mod tests {
                 HandshakeError::VersionMismatch { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn handshake_does_not_use_public_transcript_as_kem_seed() {
+        let initiator_identity = LocalIdentity::generate(b"public-seed-check-initiator");
+        let responder_identity = LocalIdentity::generate(b"public-seed-check-responder");
+
+        let initiator_config = PqNoiseConfig::new(initiator_identity);
+        let responder_config = PqNoiseConfig::new(responder_identity);
+
+        let mut initiator = PqHandshake::new(initiator_config);
+        let init_hello = initiator.initiator_hello().unwrap();
+        let init_hello_msg = match init_hello {
+            HandshakeMessage::InitHello(msg) => msg,
+            _ => panic!("Expected InitHello"),
+        };
+
+        let mut public_transcript = Transcript::new();
+        public_transcript.update(&codec::encode_transcript(&init_hello_msg).unwrap());
+
+        let old_public_seed_1 = sha256(&[&public_transcript.hash()[..], b"encap1"].concat());
+        let initiator_mlkem_pk =
+            MlKemPublicKey::from_bytes(&init_hello_msg.mlkem_public_key).unwrap();
+        let (old_public_ct_1, _) = initiator_mlkem_pk.encapsulate(&old_public_seed_1);
+
+        let mut responder = PqHandshake::new(responder_config);
+        let resp_hello = responder
+            .responder_process_init_hello(init_hello_msg)
+            .unwrap();
+        let resp_hello_msg = match resp_hello {
+            HandshakeMessage::RespHello(msg) => msg,
+            _ => panic!("Expected RespHello"),
+        };
+
+        assert_ne!(
+            old_public_ct_1.to_bytes().to_vec(),
+            resp_hello_msg.mlkem_ciphertext,
+            "ML-KEM response ciphertext must not be reproducible from public transcript bytes"
+        );
+
+        public_transcript.update(&codec::encode_transcript(&resp_hello_msg).unwrap());
+        let old_public_seed_2 = sha256(&[&public_transcript.hash()[..], b"encap2"].concat());
+        let responder_mlkem_pk =
+            MlKemPublicKey::from_bytes(&resp_hello_msg.mlkem_public_key).unwrap();
+        let (old_public_ct_2, _) = responder_mlkem_pk.encapsulate(&old_public_seed_2);
+
+        let finish = initiator
+            .initiator_process_resp_hello(resp_hello_msg)
+            .unwrap();
+        let finish_msg = match finish {
+            HandshakeMessage::Finish(msg) => msg,
+            _ => panic!("Expected Finish"),
+        };
+
+        assert_ne!(
+            old_public_ct_2.to_bytes().to_vec(),
+            finish_msg.mlkem_ciphertext,
+            "ML-KEM finish ciphertext must not be reproducible from public transcript bytes"
+        );
+    }
+
+    #[test]
+    fn handshake_advertises_signed_ephemeral_kem_keys() {
+        let initiator_identity = LocalIdentity::generate(b"ephemeral-kem-initiator");
+        let responder_identity = LocalIdentity::generate(b"ephemeral-kem-responder");
+
+        let initiator_static_kem = initiator_identity.kem_keypair.public_key().to_bytes();
+        let responder_static_kem = responder_identity.kem_keypair.public_key().to_bytes();
+
+        let mut initiator = PqHandshake::new(PqNoiseConfig::new(initiator_identity));
+        let init_hello = match initiator.initiator_hello().unwrap() {
+            HandshakeMessage::InitHello(msg) => msg,
+            _ => panic!("Expected InitHello"),
+        };
+        assert_ne!(
+            init_hello.mlkem_public_key, initiator_static_kem,
+            "initiator must advertise a per-session KEM key, not its static identity KEM key"
+        );
+
+        let mut responder = PqHandshake::new(PqNoiseConfig::new(responder_identity));
+        let resp_hello = match responder.responder_process_init_hello(init_hello).unwrap() {
+            HandshakeMessage::RespHello(msg) => msg,
+            _ => panic!("Expected RespHello"),
+        };
+        assert_ne!(
+            resp_hello.mlkem_public_key, responder_static_kem,
+            "responder must advertise a per-session KEM key, not its static identity KEM key"
+        );
+    }
+
+    #[test]
+    fn encapsulate_with_seed_consumes_supplied_seed() {
+        let identity = LocalIdentity::generate(b"encapsulation-seed-binding");
+        let public_key = identity.kem_keypair.public_key();
+        let seed = [17u8; 32];
+
+        let (ciphertext, shared_secret) = encapsulate_with_seed(&public_key, &seed);
+        let (expected_ciphertext, expected_shared_secret) = public_key.encapsulate(&seed);
+
+        assert_eq!(ciphertext.to_bytes(), expected_ciphertext.to_bytes());
+        assert_eq!(shared_secret.as_bytes(), expected_shared_secret.as_bytes());
     }
 }

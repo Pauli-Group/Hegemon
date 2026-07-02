@@ -5,7 +5,7 @@ use alloc::{format, string::String};
 use crate::p3_air::{SettlementAirP3, SettlementPublicInputsP3, PREPROCESSED_WIDTH};
 use p3_uni_stark::{get_log_num_quotient_chunks, setup_preprocessed, verify_with_preprocessed};
 use transaction_core::p3_config::{
-    config_with_fri, TransactionProofP3, Val, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, TransactionProofP3, Val,
 };
 
 pub fn verify_settlement_proof_p3(
@@ -23,8 +23,9 @@ pub fn verify_settlement_proof_p3(
         pub_inputs_vec.len(),
         0,
     );
-    let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-    let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+    let profile = default_build_tx_fri_profile();
+    let log_blowup = profile.log_blowup_usize().max(log_chunks);
+    let config = config_with_fri(log_blowup, profile.num_queries_usize());
     let degree_bits = proof.degree_bits;
     let prep_vk = setup_preprocessed(&config.config, &SettlementAirP3, degree_bits)
         .map(|(_, vk)| vk)

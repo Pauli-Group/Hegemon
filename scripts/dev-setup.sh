@@ -6,20 +6,13 @@ set -euo pipefail
 # it will also ensure jq/clang-format/build-essential exist for benchmark demos.
 
 RUST_TOOLCHAIN="stable"
-GO_VERSION="1.21.6"
+GO_VERSION="1.26.4"
 NODE_VERSION="20.19.0"
 NODE_INSTALL_DIR=${NODE_INSTALL_DIR:-"$HOME/.local/node"}
 APT_PACKAGES=(build-essential pkg-config libssl-dev clang-format jq)
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
-}
-
-ensure_macos_libclang() {
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        return
-    fi
-    "$(dirname "$0")/ensure-macos-libclang.sh"
 }
 
 print_tool_version() {
@@ -32,6 +25,76 @@ print_tool_version() {
     else
         echo "$label (not found)"
     fi
+}
+
+sha256_file() {
+    if have_cmd sha256sum; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+verify_sha256() {
+    local file="$1"
+    local expected="$2"
+    local actual
+    actual="$(sha256_file "$file")"
+    if [[ "$actual" != "$expected" ]]; then
+        echo "error: checksum mismatch for $file" >&2
+        echo "expected: $expected" >&2
+        echo "actual:   $actual" >&2
+        exit 1
+    fi
+}
+
+go_archive_sha256() {
+    case "$1" in
+        go1.26.4.linux-amd64.tar.gz) echo "1153d3d50e0ac764b447adfe05c2bcf08e889d42a02e0fe0259bd47f6733ad7f" ;;
+        go1.26.4.linux-arm64.tar.gz) echo "ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de4405925238768" ;;
+        go1.26.4.darwin-amd64.tar.gz) echo "05dc9b5f9997744520aaebb3d5deaa7c755371aebbfb7f97c2511a9f3367538d" ;;
+        go1.26.4.darwin-arm64.tar.gz) echo "b62ad2b6d7d2464f12a5bcad7ff47f19d08325773b5efd21610e445a05a9bf53" ;;
+        *) echo "error: no pinned Go checksum for $1" >&2; exit 1 ;;
+    esac
+}
+
+node_archive_sha256() {
+    case "$1" in
+        node-v20.19.0-linux-x64.tar.gz) echo "8a4dbcdd8bccef3132d21e8543940557e55dcf44f00f0a99ba8a062f4552e722" ;;
+        node-v20.19.0-linux-arm64.tar.gz) echo "618e4294602b78e97118a39050116b70d088b16197cd3819bba1fc18b473dfc4" ;;
+        node-v20.19.0-darwin-x64.tar.gz) echo "a8554af97d6491fdbdabe63d3a1cfb9571228d25a3ad9aed2df856facb131b20" ;;
+        node-v20.19.0-darwin-arm64.tar.gz) echo "c016cd1975a264a29dc1b07c6fbe60d5df0a0c2beb4113c0450e3d998d1a0d9c" ;;
+        *) echo "error: no pinned Node.js checksum for $1" >&2; exit 1 ;;
+    esac
+}
+
+rustup_target_and_sha256() {
+    local rust_os rust_arch target sha
+    case "$(uname -s)" in
+        Linux) rust_os="unknown-linux-gnu" ;;
+        Darwin) rust_os="apple-darwin" ;;
+        *)
+            echo "error: unsupported OS for rustup binary install: $(uname -s)" >&2
+            exit 1
+            ;;
+    esac
+    case "$(uname -m)" in
+        x86_64 | amd64) rust_arch="x86_64" ;;
+        arm64 | aarch64) rust_arch="aarch64" ;;
+        *)
+            echo "error: unsupported CPU architecture for rustup binary install: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+    target="${rust_arch}-${rust_os}"
+    case "$target" in
+        x86_64-unknown-linux-gnu) sha="4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10" ;;
+        aarch64-unknown-linux-gnu) sha="9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792" ;;
+        x86_64-apple-darwin) sha="33cf85df9142bc6d29cbc62fa5ca1d4c29622cddb55213a4c1a43c457fb9b2d7" ;;
+        aarch64-apple-darwin) sha="aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1" ;;
+        *) echo "error: no pinned rustup checksum for $target" >&2; exit 1 ;;
+    esac
+    printf '%s %s\n' "$target" "$sha"
 }
 
 # shellcheck disable=SC2120
@@ -71,8 +134,17 @@ install_rustup() {
         echo "error: curl is required to install rustup" >&2
         exit 1
     fi
-    echo "Installing rustup"
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
+    local tmp target expected
+    tmp=$(mktemp -d)
+    trap 'rm -rf "${tmp:-}"' RETURN
+    read -r target expected < <(rustup_target_and_sha256)
+    echo "Installing rustup for ${target}"
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error \
+        "https://static.rust-lang.org/rustup/dist/${target}/rustup-init" \
+        -o "$tmp/rustup-init"
+    verify_sha256 "$tmp/rustup-init" "$expected"
+    chmod 755 "$tmp/rustup-init"
+    "$tmp/rustup-init" -y --profile minimal --default-toolchain "$RUST_TOOLCHAIN"
     if [[ -f "$HOME/.cargo/env" ]]; then
         # shellcheck disable=SC1090
         source "$HOME/.cargo/env"
@@ -125,7 +197,8 @@ ensure_go() {
     local archive="go${GO_VERSION}.${go_os}-${go_arch}.tar.gz"
     local url="https://go.dev/dl/${archive}"
     echo "Installing Go ${GO_VERSION} from ${url}"
-    curl -sSfL "$url" -o "$tmp/$archive"
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error "$url" -o "$tmp/$archive"
+    verify_sha256 "$tmp/$archive" "$(go_archive_sha256 "$archive")"
 
     local install_root
     if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
@@ -188,7 +261,8 @@ ensure_node() {
     local archive="node-v${desired}-${node_os}-${node_arch}.tar.gz"
     local url="https://nodejs.org/dist/v${desired}/${archive}"
     echo "Installing Node.js ${desired} from ${url}"
-    curl -sSfL "$url" -o "$tmp/$archive"
+    curl --proto '=https' --tlsv1.2 --fail --location --show-error "$url" -o "$tmp/$archive"
+    verify_sha256 "$tmp/$archive" "$(node_archive_sha256 "$archive")"
     tar -C "$tmp" -xzf "$tmp/$archive"
 
     local install_root
@@ -214,7 +288,6 @@ ensure_node() {
 }
 
 main() {
-    ensure_macos_libclang
     ensure_apt_packages
     install_rustup
     install_rust_toolchain

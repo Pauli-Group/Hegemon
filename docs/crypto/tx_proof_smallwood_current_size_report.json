@@ -1,0 +1,37 @@
+{
+  "generator": {
+    "command": "cargo test -p transaction-circuit smallwood_candidate_proof_size_report_matches_current_release_bytes --release -- --ignored --nocapture",
+    "date_utc": "2026-05-03T09:37:45Z",
+    "note": "Generated from one exact sampled SmallWoodCandidate release proof on the 2026-05-03 tree before the 2026-06 output ciphertext-hash binding hardening. The current shipped structural upper bound after that hardening is 91262 bytes; rerun the ignored release-size report before quoting a refreshed exact sampled byte band."
+  },
+  "report": {
+    "total_bytes": 87310,
+    "wrapper_bytes": 12,
+    "ark_proof_bytes": 87298,
+    "transcript_bytes": 9488,
+    "commitment_bytes": 7545,
+    "opened_values_bytes": 23944,
+    "opening_payload_bytes": 46321,
+    "other_bytes": 0,
+    "arithmetization": "DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1",
+    "inner": {
+      "total_bytes": 87298,
+      "transcript_bytes": 9488,
+      "commitment_bytes": 7545,
+      "opened_values_bytes": 23944,
+      "opening_payload_bytes": 46321,
+      "opened_witness_bytes": 30157,
+      "other_bytes": 0,
+      "salt_bytes": 36,
+      "nonce_bytes": 4,
+      "h_piop_bytes": 32,
+      "piop_bytes": 9416,
+      "pcs_rcombi_tails_bytes": 1108,
+      "pcs_subset_evals_bytes": 23556,
+      "pcs_partial_evals_bytes": 388,
+      "decs_auth_paths_bytes": 7545,
+      "decs_masking_evals_bytes": 556,
+      "decs_high_coeffs_bytes": 14500
+    }
+  }
+}

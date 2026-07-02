@@ -53,7 +53,7 @@ impl SlhCompatibleRng {
     }
 }
 
-impl slh_rand_core::TryRngCore for SlhCompatibleRng {
+impl slh_rand_core::TryRng for SlhCompatibleRng {
     type Error = Infallible;
 
     fn try_next_u32(&mut self) -> Result<u32, Self::Error> {

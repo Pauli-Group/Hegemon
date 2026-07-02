@@ -1,0 +1,27 @@
+{
+  "generated_by": "cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_spike_projection_shows_aux_path_loses --release -- --nocapture && cargo test -p transaction-circuit smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_matches_projection_and_still_loses --release -- --nocapture",
+  "date_utc": "2026-05-03T09:37:45Z",
+  "current_shipped_smallwood_candidate_bytes": 87086,
+  "auxiliary_poseidon_words": 54912,
+  "projected_frontier": [
+    {
+      "shape": "1024x4",
+      "projected_total_bytes": 492170
+    },
+    {
+      "shape": "512x8",
+      "projected_total_bytes": 475642
+    },
+    {
+      "shape": "256x16",
+      "projected_total_bytes": 470450
+    }
+  ],
+  "exact_current_engine_negative_result": {
+    "shape": "512x8",
+    "result": "proved_and_verified",
+    "exact_total_bytes": 472611,
+    "projected_total_bytes": 475642
+  },
+  "conclusion": "Carrying the current Poseidon2 subtrace as auxiliary witness is not viable on the current SmallWood engine. It proves and verifies now, but the exact 512x8 proof is 472611 bytes, about 5.43x the 87086-byte shipped reference and far above the 90830-byte structural cap."
+}

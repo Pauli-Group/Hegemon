@@ -4,7 +4,7 @@
 
 ## Essence
 - **Golden throne triangle** – the open gilded wedge signals the hegemonic seat of authority while preserving negative space for readability on dark dashboards.
-- **Shielded privacy core** – concentric rings echo Zcash-style zero-knowledge bubbles and STARK proofs, reinforcing the repo’s PQ privacy posture.
+- **Shielded privacy core** – concentric rings frame the shielded core and STARK verification boundary, reinforcing the repo’s PQ privacy posture.
 - **Lattice accent** – cross-hatched diagonals nod to lattice cryptography (ML-DSA/Kyber) without cluttering the mark at small sizes.
 - **Sans-serif wordmark** – the HEGEMON lockup uses "Space Grotesk" to convey modern technical precision beneath the emblem.
 

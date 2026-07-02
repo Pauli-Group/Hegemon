@@ -4,13 +4,15 @@
 # PQ Security Audit Script - Phase 15.1.1
 # Scans the codebase for forbidden classical cryptographic primitives.
 #
-# This script ensures the codebase contains ZERO elliptic curve, pairing,
-# or Groth16 implementations, as mandated by the PQ-ONLY security policy.
+# This script ensures the codebase contains ZERO elliptic curve, RSA, pairing,
+# Groth16/PLONK/Halo2, or trusted-setup implementations, as mandated by the
+# PQ-ONLY security policy.
 #
 # Usage:
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
+#   ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -30,8 +32,18 @@ NC='\033[0m' # No Color
 # Parse arguments
 QUICK=false
 FIX=false
-for arg in "$@"; do
-    case $arg in
+REQUIRE_BINARY=false
+NODE_BIN=""
+BINARY_BINS=()
+
+usage() {
+    cat <<'USAGE'
+usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--node-bin PATH] [--binary PATH ...]
+USAGE
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
         --quick)
             QUICK=true
             shift
@@ -40,7 +52,66 @@ for arg in "$@"; do
             FIX=true
             shift
             ;;
+        --require-binary)
+            REQUIRE_BINARY=true
+            shift
+            ;;
+        --node-bin)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage >&2
+                exit 2
+            fi
+            NODE_BIN="$2"
+            shift 2
+            ;;
+        --node-bin=*)
+            NODE_BIN="${1#*=}"
+            if [ -z "$NODE_BIN" ]; then
+                usage >&2
+                exit 2
+            fi
+            shift
+            ;;
+        --binary)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage >&2
+                exit 2
+            fi
+            BINARY_BINS+=("$2")
+            shift 2
+            ;;
+        --binary=*)
+            BINARY_PATH="${1#*=}"
+            if [ -z "$BINARY_PATH" ]; then
+                usage >&2
+                exit 2
+            fi
+            BINARY_BINS+=("$BINARY_PATH")
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            usage >&2
+            exit 2
+            ;;
     esac
+done
+
+if [ -z "$NODE_BIN" ]; then
+    NODE_BIN="$PROJECT_ROOT/target/release/hegemon-node"
+elif [[ "$NODE_BIN" != /* ]]; then
+    NODE_BIN="$PROJECT_ROOT/$NODE_BIN"
+fi
+RELEASE_BINS=("$NODE_BIN")
+for binary_path in "${BINARY_BINS[@]}"; do
+    if [[ "$binary_path" != /* ]]; then
+        binary_path="$PROJECT_ROOT/$binary_path"
+    fi
+    RELEASE_BINS+=("$binary_path")
 done
 
 cd "$PROJECT_ROOT"
@@ -50,11 +121,19 @@ echo "   PQ Security Audit: Hegemon v0.1.0"
 echo "========================================"
 echo ""
 echo "Scanning for forbidden classical cryptographic primitives..."
-echo "Target: ZERO ECC, ZERO pairings, ZERO Groth16"
+echo "Target: ZERO ECC, ZERO RSA, ZERO pairings, ZERO trusted-setup SNARKs"
 echo ""
 
 VIOLATIONS=0
 WARNINGS=0
+
+if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
+    echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
+    echo ""
+    python3 "$PROJECT_ROOT/scripts/check_release_pq_binary_policy_vectors.py" \
+        "$HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS"
+    echo ""
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1: Grep scan for forbidden primitive names in source code
@@ -63,6 +142,54 @@ WARNINGS=0
 echo "=== Step 1: Source Code Pattern Scan ==="
 echo ""
 
+# Some trust-boundary code has to name a forbidden primitive in order to reject
+# it explicitly. Keep those branches auditable without letting real use sites
+# disappear from the report.
+filter_reject_only_matches() {
+    while IFS= read -r match; do
+        [ -z "$match" ] && continue
+        if [[ "$match" =~ ^(.+):([0-9]+):(.*)$ ]]; then
+            local file="${BASH_REMATCH[1]}"
+            local line="${BASH_REMATCH[2]}"
+            local start=$((line > 3 ? line - 3 : 1))
+            local end=$((line + 4))
+            local context
+            context="$(sed -n "${start},${end}p" "$file" 2>/dev/null || true)"
+            local source_line="${BASH_REMATCH[3]}"
+            if printf '%s\n' "$source_line" | grep -Eiq 'not accepted|not allowed|reject|unsupported|forbidden'; then
+                continue
+            fi
+            if printf '%s\n' "$source_line" | grep -Eq '=>[[:space:]]*[{]?' && \
+               printf '%s\n' "$context" | grep -Eiq 'return[[:space:]]+Err|Err[[:space:]]*\(' && \
+               printf '%s\n' "$context" | grep -Eiq 'not accepted|not allowed|reject|unsupported|forbidden'; then
+                continue
+            fi
+        fi
+        printf '%s\n' "$match"
+    done
+}
+
+search_source_pattern() {
+    local pattern="$1"
+
+    if command -v rg >/dev/null 2>&1; then
+        rg -n -i -H --color never --hidden --no-ignore \
+            --glob '*.rs' \
+            --glob '*.toml' \
+            --glob '!target/**' \
+            --glob '!**/target/**' \
+            --glob '!.git/**' \
+            --glob '!**/.git/**' \
+            -- "$pattern" "$PROJECT_ROOT"
+    else
+        grep -rniE "$pattern" \
+            --include="*.rs" --include="*.toml" \
+            "$PROJECT_ROOT" 2>/dev/null \
+            | grep -v "target/" \
+            | grep -v ".git/"
+    fi
+}
+
 # Function to check a single pattern
 check_pattern() {
     local pattern="$1"
@@ -70,12 +197,10 @@ check_pattern() {
     
     printf "Checking for '%s'... " "$pattern"
     
-    # Search in Rust files, excluding target/, .git/, comments, test output, and this audit script
-    matches=$(grep -rniE "$pattern" \
-        --include="*.rs" --include="*.toml" \
-        "$PROJECT_ROOT" 2>/dev/null \
-        | grep -v "target/" \
-        | grep -v ".git/" \
+    # Search in Rust and Cargo files, excluding target/, .git/, comments, test
+    # output, and this audit script. Prefer ripgrep so CI does not repeatedly
+    # traverse generated build artifacts for every forbidden primitive pattern.
+    raw_matches=$(search_source_pattern "$pattern" 2>/dev/null \
         | grep -v "security-audit.sh" \
         | grep -v "FORBIDDEN" \
         | grep -v "# VIOLATION" \
@@ -90,8 +215,10 @@ check_pattern() {
         | grep -v "pq_params_audit.rs" \
         | grep -v "stark_soundness.rs" \
         | grep -v "println!" \
+        | grep -v "keywords =" \
         | grep -v "// " \
         || true)
+    matches=$(printf '%s\n' "$raw_matches" | filter_reject_only_matches)
     
     if [ -n "$matches" ]; then
         printf "${RED}❌ FOUND${NC}\n"
@@ -112,6 +239,7 @@ check_pattern() {
 
 # Check all forbidden patterns
 check_pattern "groth16" "Pairing-based SNARK (BLS12-381), quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])rsa([^[:alnum:]_]|$)" "RSA signature/encryption, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ed25519" "Elliptic curve signature (Curve25519), Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "x25519" "Elliptic curve ECDH (Curve25519), Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ecdh" "Elliptic curve Diffie-Hellman, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
@@ -123,13 +251,16 @@ check_pattern "bls12" "Pairing-friendly curve (Groth16), quantum-vulnerable" || 
 check_pattern "bn254" "Pairing-friendly curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "jubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "babyjubjub" "Embedded curve for SNARKs, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "pallas" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "vesta" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)" "Halo2 curve, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "curve25519" "Elliptic curve, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "dalek" "Curve25519 library, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "ristretto" "Curve25519 variant, Shor-breakable" || VIOLATIONS=$((VIOLATIONS + 1))
 check_pattern "halo2" "ECC-based zkSNARK, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
-check_pattern "plonk" "Polynomial commitment SNARK (often ECC), check dependencies" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)" "Polynomial commitment SNARK (often ECC), check dependencies" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "trusted[[:space:]_-]*setup" "Trusted-setup proof system artifact, not PQ-clean release policy" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "powers[[:space:]_-]*of[[:space:]_-]*tau" "Trusted-setup ceremony artifact, not PQ-clean release policy" || VIOLATIONS=$((VIOLATIONS + 1))
+check_pattern "(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" "Pairing-based polynomial commitment, quantum-vulnerable" || VIOLATIONS=$((VIOLATIONS + 1))
 
 echo ""
 
@@ -146,7 +277,7 @@ if [ "$QUICK" = false ]; then
         WARNINGS=$((WARNINGS + 1))
     else
         # ECC crates that indicate quantum-vulnerable dependencies
-        ECC_CRATES="curve25519-dalek ed25519-dalek x25519-dalek k256 p256 secp256k1 ark-ec ark-bls12-381 ark-bn254 bellman halo2_proofs halo2_gadgets pasta_curves"
+        ECC_CRATES="curve25519-dalek ed25519-dalek x25519-dalek k256 p256 secp256k1 rsa ark-ec ark-bls12-381 ark-bn254 ark-poly-commit bellman groth16 halo2_proofs halo2_gadgets pasta_curves plonk kzg"
         
         for crate in $ECC_CRATES; do
             echo -n "Checking for '$crate' in Cargo.lock... "
@@ -165,52 +296,47 @@ if [ "$QUICK" = false ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Step 3: Check runtime WASM for ECC symbols
+# Step 3: Check native node binary for ECC symbols
 # ---------------------------------------------------------------------------
 
-echo "=== Step 3: Runtime WASM Symbol Scan ==="
+echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
-WASM_PATH="$PROJECT_ROOT/target/release/wbuild/runtime/runtime.compact.wasm"
-WASM_PATH_ALT="$PROJECT_ROOT/target/release/wbuild/hegemon-runtime/hegemon_runtime.compact.wasm"
-
-if [ -f "$WASM_PATH" ]; then
-    WASM_TO_CHECK="$WASM_PATH"
-elif [ -f "$WASM_PATH_ALT" ]; then
-    WASM_TO_CHECK="$WASM_PATH_ALT"
-else
-    echo -e "${YELLOW}⚠️  WARNING: Runtime WASM not found at expected paths:${NC}"
-    echo "    $WASM_PATH"
-    echo "    $WASM_PATH_ALT"
-    echo "  Run 'cargo build --release -p runtime' to generate"
-    WASM_TO_CHECK=""
-    WARNINGS=$((WARNINGS + 1))
-fi
-
-if [ -n "$WASM_TO_CHECK" ]; then
-    echo "Checking: $WASM_TO_CHECK"
-    
-    # Check if wasm-objdump is available
-    if command -v wasm-objdump &> /dev/null; then
-        echo -n "Scanning for ECC symbols... "
-        ecc_symbols=$(wasm-objdump -x "$WASM_TO_CHECK" 2>/dev/null \
-            | grep -iE "curve|dalek|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|pallas|vesta" \
-            || true)
-        
-        if [ -n "$ecc_symbols" ]; then
+for release_bin in "${RELEASE_BINS[@]}"; do
+if [ -f "$release_bin" ]; then
+    echo "Checking: $release_bin"
+    if ! command -v strings >/dev/null 2>&1; then
+        echo -e "${RED}❌ CANNOT SCAN${NC}"
+        echo "  Required tool not found: strings"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    else
+        symbol_matches=$(
+            strings "$release_bin" 2>/dev/null \
+                | grep -iE "curve25519|secp|ecdsa|ed25519|x25519|bls12|bn254|jubjub|groth16|halo2|trusted[[:space:]_-]*setup|powers[[:space:]_-]*of[[:space:]_-]*tau" \
+                || true
+            strings "$release_bin" 2>/dev/null \
+                | grep -iE "(^|[^[:alnum:]_])pallas([^[:alnum:]_]|$)|(^|[^[:alnum:]_])vesta([^[:alnum:]_]|$)|(^|[^[:alnum:]_.])rsa([^[:alnum:]]|$)|(^|[^[:alnum:]])rsa_|(^|[^[:alnum:]_])plonk([^[:alnum:]_y]|$)|(^|[^[:alnum:]_])kzg([^[:alnum:]_]|$)" \
+                || true
+        )
+        if [ -n "$symbol_matches" ]; then
             echo -e "${RED}❌ FOUND${NC}"
-            echo "  ECC symbols in WASM:"
-            echo "$ecc_symbols" | head -10 | sed 's/^/    /'
+            echo "$symbol_matches" | head -10 | sed 's/^/    /'
             VIOLATIONS=$((VIOLATIONS + 1))
         else
-            echo -e "${GREEN}✅ No ECC symbols${NC}"
+            echo -e "${GREEN}✅ No forbidden ECC symbols${NC}"
         fi
+    fi
+else
+    if [ "$REQUIRE_BINARY" = true ]; then
+        echo -e "${RED}❌ FOUND${NC}"
+        echo "  Required release binary not found: $release_bin"
+        VIOLATIONS=$((VIOLATIONS + 1))
     else
-        echo -e "${YELLOW}⚠️  WARNING: wasm-objdump not found, skipping WASM symbol scan${NC}"
-        echo "  Install with: cargo install wabt"
+        echo -e "${YELLOW}⚠️  WARNING: release binary not found; run the release build before binary scan: $release_bin${NC}"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
+done
 
 echo ""
 
@@ -233,35 +359,22 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
-# Check identity pallet uses ML-DSA (not Ed25519)
-echo -n "Checking identity pallet uses ML-DSA-65... "
-if grep -q "ml-dsa\|MlDsa" "$PROJECT_ROOT/pallets/identity/src"/*.rs 2>/dev/null || \
-   grep -q "ML_DSA\|MlDsa" "$PROJECT_ROOT/crypto/src"/*.rs 2>/dev/null; then
+# Check native identity/signing uses ML-DSA (not Ed25519)
+echo -n "Checking native signing uses ML-DSA-65... "
+if grep -q "ML_DSA\|MlDsa\|ml_dsa" "$PROJECT_ROOT/crypto/src"/*.rs "$PROJECT_ROOT/network/src"/*.rs "$PROJECT_ROOT/node/src"/*.rs 2>/dev/null; then
     echo -e "${GREEN}✅ Uses ML-DSA-65${NC}"
 else
     echo -e "${YELLOW}⚠️  Could not verify ML-DSA usage${NC}"
     WARNINGS=$((WARNINGS + 1))
 fi
 
-# Check shielded-pool uses STARK (not Groth16)
-echo -n "Checking shielded-pool uses STARK proofs... "
-if grep -q "STARK\|stark" "$PROJECT_ROOT/pallets/shielded-pool/Cargo.toml" 2>/dev/null || \
-   grep -q "StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
+# Check shielded protocol uses STARK (not Groth16)
+echo -n "Checking shielded protocol uses STARK proofs... "
+if grep -q "STARK\|stark" "$PROJECT_ROOT/circuits/transaction/Cargo.toml" "$PROJECT_ROOT/consensus/src"/*.rs 2>/dev/null; then
     echo -e "${GREEN}✅ Uses STARK (Plonky3)${NC}"
 else
     echo -e "${YELLOW}⚠️  Could not verify STARK usage${NC}"
     WARNINGS=$((WARNINGS + 1))
-fi
-
-# Check runtime config
-echo -n "Checking runtime uses StarkVerifier... "
-if grep -q "type ProofVerifier = .*StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
-    echo -e "${GREEN}✅ Runtime configured with StarkVerifier${NC}"
-elif grep -q "StarkVerifier" "$PROJECT_ROOT/runtime/src/lib.rs" 2>/dev/null; then
-    echo -e "${GREEN}✅ StarkVerifier found in runtime${NC}"
-else
-    echo -e "${RED}❌ Runtime may not use StarkVerifier!${NC}"
-    VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
 echo ""

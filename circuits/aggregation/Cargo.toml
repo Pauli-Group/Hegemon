@@ -30,7 +30,6 @@ rayon = "1"
 transaction-circuit = { path = "../transaction", package = "transaction-circuit" }
 block-circuit = { path = "../block" }
 crypto = { package = "synthetic-crypto", path = "../../crypto" }
-sp-core = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
 consensus = { path = "../../consensus" }

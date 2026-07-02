@@ -3,11 +3,10 @@ mod common;
 use block_circuit::CommitmentBlockProver;
 use common::{PowBlockParams, assemble_pow_block, dummy_coinbase, make_validators};
 use consensus::pow::DEFAULT_GENESIS_POW_BITS;
+use consensus::proof::{ParallelProofVerifier, commitment_nullifier_lists};
+use consensus::proof_interface::{BlockBackendInputs, ProofVerifier};
 use consensus::types::{ProvenBatch, ProvenBatchMode, kernel_root_from_shielded_root};
-use consensus::{
-    CommitmentTreeState, NullifierSet, ParallelProofVerifier, ProofError, ProofVerifier,
-    commitment_nullifier_lists,
-};
+use consensus::{CommitmentTreeState, NullifierSet, ProofError};
 use crypto::hashes::blake3_384;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{
@@ -17,7 +16,8 @@ use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::prove;
 use transaction_circuit::{
-    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionWitness,
+    InputNoteWitness, OutputNoteWitness, StablecoinPolicyBinding, TransactionProof,
+    TransactionWitness,
 };
 
 fn compute_merkle_root(leaf: HashFelt, position: u64, path: &[HashFelt]) -> HashFelt {
@@ -230,34 +230,56 @@ fn parallel_verifier_accepts_valid_commitment_proof() {
         da_root: block.header.da_root,
         da_chunk_count: 1,
         commitment_proof,
-        mode: ProvenBatchMode::FlatBatches,
-        flat_batches: Vec::new(),
-        merge_root: None,
+        mode: ProvenBatchMode::ReceiptRoot,
+        proof_kind: consensus::proof_artifact_kind_from_mode(ProvenBatchMode::ReceiptRoot),
+        verifier_profile: consensus::legacy_block_artifact_verifier_profile(
+            consensus::proof_artifact_kind_from_mode(ProvenBatchMode::ReceiptRoot),
+        ),
+        receipt_root: None,
     });
     block.tx_statements_commitment = Some(tx_statements_commitment);
-    block.transaction_proofs = Some(vec![tx_proof.clone()]);
+    let backend_inputs = BlockBackendInputs::from_tx_validity_artifacts(vec![
+        consensus::proof::tx_validity_artifact_from_proof(&tx_proof).expect("tx validity artifact"),
+    ]);
+    block.tx_validity_claims = Some(
+        consensus::proof::tx_validity_claims_from_tx_artifacts(
+            &block.transactions,
+            backend_inputs
+                .tx_validity_artifacts()
+                .expect("tx validity artifacts"),
+        )
+        .expect("tx validity claims"),
+    );
 
     let verifier = ParallelProofVerifier::new();
     let updated = verifier
-        .verify_block(&block, &base_tree)
+        .verify_block_with_backend(&block, Some(&backend_inputs), &base_tree)
         .expect("parallel verification");
     assert_eq!(updated.root(), updated_tree.root());
 
-    let mut tampered = block.clone();
-    if let Some(proofs) = tampered.transaction_proofs.as_mut() {
-        let mut inputs = proofs[0]
-            .stark_public_inputs
-            .clone()
-            .expect("stark public inputs");
-        inputs.fee = inputs.fee.saturating_add(1);
-        proofs[0].stark_public_inputs = Some(inputs);
-    }
+    let tampered = block.clone();
+    let mut tampered_backend = backend_inputs.clone();
+    let artifacts = tampered_backend
+        .tx_validity_artifacts
+        .as_mut()
+        .expect("tx artifacts");
+    let envelope = artifacts[0].proof.as_mut().expect("inline proof");
+    let mut proof: TransactionProof =
+        bincode::deserialize(&envelope.artifact_bytes).expect("decode proof");
+    let mut inputs = proof
+        .stark_public_inputs
+        .clone()
+        .expect("stark public inputs");
+    inputs.fee = inputs.fee.saturating_add(1);
+    proof.stark_public_inputs = Some(inputs);
+    envelope.artifact_bytes = bincode::serialize(&proof).expect("encode proof");
 
     let err = verifier
-        .verify_block(&tampered, &base_tree)
+        .verify_block_with_backend(&tampered, Some(&tampered_backend), &base_tree)
         .expect_err("tampered proof should fail");
     assert!(matches!(
         err,
-        ProofError::TransactionProofVerification { .. }
+        ProofError::TransactionProofInputsMismatch { .. }
+            | ProofError::TransactionProofVerification { .. }
     ));
 }

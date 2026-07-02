@@ -3,6 +3,7 @@
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
+use codec::Encode;
 use core::iter::IntoIterator;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha384};
@@ -10,7 +11,78 @@ use sha2::{Digest, Sha384};
 pub type CircuitVersion = u16;
 pub type CryptoSuiteId = u16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Encode,
+)]
+#[repr(u8)]
+pub enum TxProofBackend {
+    Plonky3Fri = 1,
+    SmallwoodCandidate = 2,
+}
+
+impl TxProofBackend {
+    pub const fn wire_id(self) -> u8 {
+        self as u8
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Plonky3Fri => "plonky3_fri",
+            Self::SmallwoodCandidate => "smallwood_candidate",
+        }
+    }
+}
+
+impl Default for TxProofBackend {
+    fn default() -> Self {
+        DEFAULT_TX_PROOF_BACKEND
+    }
+}
+
+impl TryFrom<u8> for TxProofBackend {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Plonky3Fri),
+            2 => Ok(Self::SmallwoodCandidate),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Encode)]
+pub struct TxFriProfile {
+    pub log_blowup: u8,
+    pub num_queries: u8,
+    pub query_pow_bits: u8,
+}
+
+impl TxFriProfile {
+    pub const fn new(log_blowup: u8, num_queries: u8, query_pow_bits: u8) -> Self {
+        Self {
+            log_blowup,
+            num_queries,
+            query_pow_bits,
+        }
+    }
+
+    pub const fn log_blowup_usize(self) -> usize {
+        self.log_blowup as usize
+    }
+
+    pub const fn num_queries_usize(self) -> usize {
+        self.num_queries as usize
+    }
+
+    pub const fn query_pow_bits_usize(self) -> usize {
+        self.query_pow_bits as usize
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Encode,
+)]
 pub struct VersionBinding {
     pub circuit: CircuitVersion,
     pub crypto: CryptoSuiteId,
@@ -99,7 +171,58 @@ pub const CRYPTO_SUITE_ALPHA: CryptoSuiteId = 1;
 pub const CRYPTO_SUITE_BETA: CryptoSuiteId = 2;
 pub const CRYPTO_SUITE_GAMMA: CryptoSuiteId = 3;
 
-pub const DEFAULT_VERSION_BINDING: VersionBinding = VersionBinding {
+pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+    circuit: CIRCUIT_V2,
+    crypto: CRYPTO_SUITE_BETA,
+};
+pub const LEGACY_PLONKY3_FRI_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_GAMMA,
 };
+pub const DEFAULT_VERSION_BINDING: VersionBinding = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+
+pub const DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::SmallwoodCandidate;
+pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
+
+pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
+    match (version.circuit, version.crypto) {
+        (CIRCUIT_V2, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
+        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(TxProofBackend::Plonky3Fri),
+        _ => None,
+    }
+}
+
+pub const fn tx_fri_profile_for_version(version: VersionBinding) -> Option<TxFriProfile> {
+    match (version.circuit, version.crypto) {
+        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_FRI_PROFILE),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_binding_uses_smallwood_candidate_backend() {
+        assert_eq!(DEFAULT_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING);
+        assert_eq!(DEFAULT_TX_PROOF_BACKEND, TxProofBackend::SmallwoodCandidate);
+        assert_eq!(
+            tx_proof_backend_for_version(DEFAULT_VERSION_BINDING),
+            Some(TxProofBackend::SmallwoodCandidate)
+        );
+        assert_eq!(tx_fri_profile_for_version(DEFAULT_VERSION_BINDING), None);
+    }
+
+    #[test]
+    fn legacy_plonky3_binding_still_maps_to_fri_profile() {
+        assert_eq!(
+            tx_proof_backend_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+            Some(TxProofBackend::Plonky3Fri)
+        );
+        assert_eq!(
+            tx_fri_profile_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+            Some(DEFAULT_TX_FRI_PROFILE)
+        );
+    }
+}

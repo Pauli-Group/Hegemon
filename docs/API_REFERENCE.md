@@ -8,7 +8,7 @@ This reference summarizes the public APIs of the monorepo components and points 
   - `Keypair::generate(seed: &[u8; 48]) -> Keypair`
   - `Keypair::sign(&self, msg: &[u8]) -> Signature`
   - `VerifyKey::verify(&self, msg: &[u8], sig: &Signature) -> Result<()>`
-  - Security margin: ML-DSA-65 (Dilithium 3) sized keys (pk 1952 B, sk 4000 B, sig 3293 B).
+  - Security margin: ML-DSA-65 (Dilithium 3) sized keys (pk 1952 B, expanded compatibility sk 4032 B, sig 3309 B).
 - `ml_kem` module
   - `Keypair::encapsulate(&self, rng_seed: &[u8; 32]) -> (Ciphertext, SharedSecret)`
   - `SecretKey::decapsulate(&self, ct: &Ciphertext) -> SharedSecret`
@@ -30,6 +30,17 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 - Rust crate `consensus` exposes `BlockBuilder`, ledger-state transition helpers, and PQ signature utilities that miners call w
 hen assembling payloads.
+- The proof-bearing block boundary is now backend-neutral:
+  - `ProofEnvelope { kind, verifier_profile, artifact_bytes }`
+  - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
+  - `TxValidityArtifact { receipt, proof }`
+  - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
+- Import routes proof checks through `VerifierRegistry`, which currently has adapters for the shipped `RecursiveBlockV1` lane, the explicit native `ReceiptRoot` compatibility lane, and the experimental `RecursiveBlockV2` lane.
+- The consensus crate also exposes the temporary receipt-root backend façade:
+  - `experimental_receipt_root_verifier_profile()`
+  - `build_experimental_receipt_root_artifact(receipts)`
+  - `verify_experimental_receipt_root_artifact(receipts, artifact_bytes)`
+  These helpers keep generic layers from importing a backend-specific `superneo-*` crate directly.
 - Go benchmarking module `consensus/bench` offers `cmd/netbench`:
   - Flags: `--miners`, `--payload-bytes`, `--pq-signature-bytes`, `--smoke`.
   - Output: JSON summary with `messages_per_second`, `avg_latency_ms`, `pq_signature_bytes` so operators can project miner gossi
@@ -37,11 +48,11 @@ p budgets.
 
 ## `wallet/`
 
-- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, Substrate RPC flows, and compliance tooling.
-- `wallet payment-proof create|verify|purge` generates and verifies disclosure packages (payment proofs) and manages stored outgoing disclosure records.
-- `wallet substrate-sync`, `wallet substrate-daemon`, and `wallet substrate-send` are the Substrate RPC paths for live wallets.
+- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, native node RPC flows, and disclosure tooling.
+- `wallet payment-proof create|verify|purge` generates and verifies proofs of disclosure and manages stored outgoing disclosure records.
+- `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets. One-shot commands accept the native node's plaintext `http://` JSON-RPC endpoint as well as `ws://`; subscription-backed daemon mode still requires `ws://`. PQ-only release wallets reject `https://` and `wss://`; put remote access behind an external PQ-safe transport or host control plane.
 - Wallet sync falls back to archive providers for ciphertext recovery when hot DA is pruned. Configure `HEGEMON_WALLET_ARCHIVE_WS_URL` or ensure providers are discoverable via `archive_listProviders`.
-- `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize payment-proof packages.
+- `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize proof-of-disclosure packages.
 - `wallet::TransactionBundle` and shielded-transfer payloads use `binding_hash` (a 64-byte hash commitment), not a signature.
 - `wallet/bench` binary crate (`wallet-bench`) accepts `--iterations` and reports note construction/sec, nullifier derivations/sec, and encryption throughput.
 
@@ -49,20 +60,21 @@ p budgets.
 
 - `walletd` is a sidecar daemon that speaks newline-delimited JSON over stdin/stdout for GUI clients.
 - Requests: `{ id, method, params }`. Responses: `{ id, ok, result?, error?, error_code? }`. `error_code` is snake_case.
-- `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, pending entries, note summary, and `genesisHash`.
+- `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, `pending` entries (still in mempool), `recent` confirmed outgoing entries, note summary, and `genesisHash`.
 - `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
+- Private multisig requests are `multisig.localSignerTag`, `multisig.accountCreate`, `multisig.accountExportPrivate`, `multisig.accountImportPrivate`, `multisig.accountList`, `multisig.noteList`, `multisig.openingExportPrivate`, `multisig.openingImportPrivate`, `multisig.valueLockSubmit`, `multisig.finalPlan`, `multisig.setupSubmit`, `multisig.approvalSubmit`, `multisig.finalSubmit`, `multisig.approvalCreate`, `multisig.approvalImport`, and `multisig.finalize`. The canonical custody flow is value-lock submit, setup submit for the returned `intentDigest`, approval submit until the hidden threshold is reached, then final submit. `multisig.localSignerTag` returns each signer-tag limb as a fixed-width hex string so JavaScript clients do not lose `u64` precision. `multisig.accountCreate` accepts `policySignerTags: [[hex-string; 5]; 1..=6]` and `threshold: 1..=policySignerTags.length`; legacy numeric limbs are still accepted for non-JavaScript callers. The scalar signer-id API is not exposed. The `*Private` methods move encrypted-wallet private descriptors/openings between signer wallets over an operator-controlled off-chain channel and must not be published as transaction data.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
-## Runtime kernel and shielded family
+## Protocol kernel and shielded family
 
-- `pallet-kernel`
+- `protocol-kernel`
   - `submit_action(envelope)` is the only live public dispatch surface for proof-native protocol actions.
   - `FamilyRoots` stores the active family roots.
   - `KernelGlobalRoot` commits to the family-root map and is part of the live validity shape.
 
-- `pallet-shielded-pool`
+- `protocol-shielded-pool`
   - remains the first kernel family backend for shielded commitments, nullifiers, fee accounting, and proof verification
-  - no longer exposes its six live state-changing calls as a public runtime dispatch surface
+  - does not expose its state-changing calls as a public runtime dispatch surface
   - still implements the underlying action semantics for:
     - per-transfer shielded proofs
     - batch transfer proofs
@@ -72,22 +84,36 @@ p budgets.
 
 ## Node RPC endpoints
 
-Hegemon-specific RPC methods exposed on the Substrate JSON-RPC server:
+Hegemon-specific RPC methods exposed on the native JSON-RPC server:
+
+Native HTTP JSON-RPC rejects request bodies above 8 MiB and caps in-flight RPC
+requests at 8. Chunk DA sidecar staging uploads rather than sending one large
+aggregate JSON body.
 
 - `hegemon_miningStatus() -> MiningStatus`
 - `hegemon_startMining(params?: { threads: number }) -> MiningControlResponse`
+  - Unsafe-only local/operator control RPC. Requires explicit `--rpc-methods=unsafe`; `auto` resolves to safe-only.
 - `hegemon_stopMining() -> MiningControlResponse`
+  - Unsafe-only local/operator control RPC. Requires explicit `--rpc-methods=unsafe`; `auto` resolves to safe-only.
 - `hegemon_compactJob(params?: { auth_token?: String }) -> CompactJobResponse`
 - `hegemon_submitCompactSolution(request: { worker_name: String, job_id: String, nonce: String, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolWork(params?: { auth_token?: String }) -> PoolWorkResponse`
 - `hegemon_submitPoolShare(request: { worker_name: String, nonce: String, pre_hash: String, parent_hash: String, height: u64, auth_token?: String }) -> SubmitPoolShareResponse`
 - `hegemon_poolStatus(params?: { auth_token?: String }) -> PoolStatusResponse`
+- `hegemon_submitTransaction(...) -> { success: false, error: String }`
+  - Disabled compatibility stub. Wallets and applications must use `hegemon_submitAction` for live native protocol actions.
 - `hegemon_consensusStatus() -> ConsensusStatus`
+- `hegemon_isValidAnchor(anchor_hex: String) -> bool`
+  - Read-only wallet precheck. Accepts a 48-byte commitment-tree root as hex, with or without `0x`, and returns whether the native commitment tree recognizes it.
 - `hegemon_telemetry() -> TelemetrySnapshot`
 - `hegemon_storageFootprint() -> StorageFootprint`
-- `hegemon_nodeConfig() -> NodeConfigSnapshot` (base path, chain spec identity, listen addresses, PQ verbosity, peer limits)
+- `hegemon_nodeConfig() -> NodeConfigSnapshot`
+  - Safe RPC returns only chain identity and method-policy fields with `redacted=true`.
+  - Unsafe local/operator RPC returns base path, listen addresses, bootstrap nodes, PQ verbosity, and peer limits.
 - `hegemon_peerList() -> Vec<PeerDetail>` (connected PQ peers with address, direction, best height/hash, last-seen seconds)
+  - Unsafe-only local/operator topology RPC.
 - `hegemon_peerGraph() -> PeerGraphSnapshot` (direct peers plus reported peers from discovery)
+  - Unsafe-only local/operator topology RPC.
 
 Compact mining RPC notes:
 - `hegemon_compactJob` is the preferred compact-job miner surface. It exposes a stable `job_id`, `pre_hash`, `parent_hash`, and share/network targets without assuming an implicit `u64` nonce.
@@ -97,7 +123,7 @@ Legacy / experimental pool-worker RPC notes:
 - `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
 - `hegemon_submitPoolShare` remains as a compatibility path and now also accepts a 32-byte nonce (`0x`-prefixed hex); full-target solutions are forwarded into the mining coordinator.
 - `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
-- These pool-worker RPCs are not part of the current default desktop or `InlineTx` operator flow. They remain in-tree for compatibility and experiments.
+- These pool-worker RPCs are not part of the current default desktop or shipped `RecursiveBlock` operator flow. They remain in-tree for compatibility and experiments.
 
 `CompactJobResponse` fields:
 - `available: bool`
@@ -168,7 +194,7 @@ Legacy / experimental pool-worker RPC notes:
 - `peer_id: String` (hex)
 - `address: String` (`ip:port`)
 
-Archive market RPC methods exposed on the Substrate JSON-RPC server:
+Archive market RPC methods exposed on the native JSON-RPC server:
 
 - `archive_listProviders() -> Vec<ArchiveProviderEntry>`
 - `archive_getProvider(account_id_hex: String) -> Option<ArchiveProviderEntry>`
@@ -176,7 +202,7 @@ Archive market RPC methods exposed on the Substrate JSON-RPC server:
 - `archive_listContracts(account_id_hex: String) -> Vec<ArchiveContractEntry>`
 - `archive_getContract(contract_id: u64) -> Option<ArchiveContractEntry>`
 
-Block validity and data-availability RPC methods exposed by the Substrate node:
+Block validity and data-availability RPC methods exposed by the native node:
 
 - `block_getCommitmentProof(block_hash: H256) -> Option<CommitmentProofResult>`
   - Returns the commitment proof bytes and public inputs for a block, or `null` if the block has no commitment proof (e.g., coinbase-only blocks).
@@ -186,46 +212,47 @@ Block validity and data-availability RPC methods exposed by the Substrate node:
   - `DaChunkResult`: `{ chunk: Bytes, merkle_proof: Vec<H256> }`
 - `da_getParams() -> DaParams`
   - Returns global DA parameters (chunk size, sample count, encoding scheme).
+- `da_submitCiphertexts(request: { ciphertexts: Vec<String> }) -> Vec<SubmitCiphertextsEntry>`
+  - Unsafe-only proposer/local staging RPC. Stages ciphertext sidecars for `*_sidecar` shielded submission paths and requires `--rpc-methods=unsafe`. Request-count and staged-capacity admission are Lean-conformance-checked against the production native helper.
+  - Staged ciphertext bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
+- `da_submitProofs(request: { proofs: Vec<{ binding_hash: String, proof: String }> }) -> Vec<SubmitProofsEntry>`
+  - Unsafe-only proposer/local proof staging RPC. Request-count, staged-capacity, proof binding-hash metadata, nonempty proof, and proof byte-cap admission are Lean-conformance-checked against the production native helpers.
+  - Large proof batches must be chunked to stay below the native 8 MiB JSON-RPC request-body cap.
+  - This upload path canonicalizes the supplied binding hash and response hash, but it does not verify `tx_leaf` proof bytes at upload time. Consensus validity is enforced later when native block artifact verification decodes the artifact and checks the derived binding against the action/candidate context.
+  - Staged proof bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
+- `da_submitWitnesses(...)`
+  - Deliberately disabled. Witness sidecars are rejected because they may contain secret material and must not be uploaded over RPC.
 
-Experimental prover-market RPC methods exposed on the Substrate node:
+Prepared-artifact discovery RPC methods exposed on the native node:
 
-- `prover_getWorkPackage() -> Option<WorkPackageResponse>`
-- `prover_getStageWorkPackage() -> Option<WorkPackageResponse>`
-- `prover_submitWorkResult(request) -> SubmitWorkResultResponse`
-- `prover_submitStageWorkResult(request) -> SubmitWorkResultResponse`
-- `prover_getWorkStatus(package_id) -> Option<WorkStatusResponse>`
-- `prover_getMarketParams() -> MarketParamsResponse`
-- `prover_getStagePlanStatus() -> StagePlanStatusResponse`
 - `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
-- `prover_getCandidateArtifact(tx_statements_commitment: String, tx_count: u32) -> Option<CandidateArtifactResponse>`
+- `prover_getCandidateArtifact(artifact_hash: String) -> Option<CandidateArtifactResponse>`
 
-These prover RPCs are experimental surfaces for recursive / market research. The live
-`InlineTx` path does not publish external proving work by default.
-
-`WorkPackageResponse` can now carry `root_finalize_payload` for standalone private
-prover workers. In the current branch this payload is intended for the
-experimental `MergeRoot` root-finalize path and includes:
-
-- resolved transaction proof material (bincode + base64)
-- statement hashes
-- `tx_statements_commitment`
-- DA metadata
-- commitment-proof public inputs (starting/ending roots and nullifier data)
-
-Standalone private prover worker binary:
-
-- `hegemon-prover-worker`
-  - Polls `prover_getStageWorkPackage`
-  - Builds commitment proof + merge-root payload for `root_finalize`
-  - Submits the completed bundle with `prover_submitStageWorkResult`
-  - Remains experimental and is not required for the normal `InlineTx` deployment path
+These prover RPCs now expose only reusable prepared artifacts on the live native-only branch. The external work-package / standalone-worker market surface was removed with the dead recursive proof lanes.
 
 Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
 
 Artifact market RPC notes:
 
-- `prover_listArtifactAnnouncements` returns lightweight reusable-artifact metadata for prepared candidate artifacts.
-- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a matching `(tx_statements_commitment, tx_count)` pair when one is available.
+- `prover_listArtifactAnnouncements` returns lightweight metadata for locally prepared candidate artifacts. Each entry includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels. Remote artifact-protocol announcements are not trusted as authoring inputs.
+- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a locally prepared artifact hash when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`. This is a local discovery surface, not a P2P import path.
+
+`ArtifactAnnouncementResponse` fields:
+- `artifact_hash: String` (`0x`-prefixed hex)
+- `tx_statements_commitment: String` (`0x`-prefixed hex)
+- `tx_count: u32`
+- `proof_mode: String` (compatibility label: `inline_tx` | `receipt_root` | `recursive_block`)
+- `proof_kind: String` (backend-neutral artifact family label)
+- `verifier_profile: String` (`0x`-prefixed 48-byte digest)
+
+`CandidateArtifactResponse` fields:
+- `artifact_hash: String` (`0x`-prefixed hex)
+- `tx_statements_commitment: String` (`0x`-prefixed hex)
+- `tx_count: u32`
+- `proof_kind: String`
+- `verifier_profile: String` (`0x`-prefixed 48-byte digest)
+- `candidate_txs: Vec<String>` (SCALE-encoded extrinsics as `0x` hex)
+- `payload: String` (full SCALE-encoded `CandidateArtifact` as `0x` hex)
 
 ## Documentation hooks
 

@@ -11,7 +11,7 @@ use crate::p3_air::{
     CYCLE_LENGTH, DUMMY_CYCLES, MERKLE_CYCLES as STARK_MERKLE_CYCLES, MIN_TRACE_LENGTH,
     NULLIFIER_CYCLES as STARK_NULLIFIER_CYCLES,
 };
-use crate::p3_config::FRI_NUM_QUERIES;
+use crate::p3_config::default_build_tx_fri_profile;
 
 /// Trace width (re-exported for convenience).
 pub const TRACE_WIDTH: usize = crate::p3_air::TRACE_WIDTH;
@@ -100,9 +100,10 @@ pub fn estimated_proof_size(trace_rows: usize, trace_width: usize) -> usize {
     // FRI layers: ~log2(rows) × 32 bytes per query × FRI_NUM_QUERIES
     // Query proofs: ~FRI_NUM_QUERIES × log2(rows) × 32 bytes
     let log_rows = log2_rows(trace_rows);
+    let num_queries = default_build_tx_fri_profile().num_queries_usize();
     let base = trace_width * 50;
-    let fri = log_rows * 32 * FRI_NUM_QUERIES;
-    let queries = FRI_NUM_QUERIES * log_rows * 32;
+    let fri = log_rows * 32 * num_queries;
+    let queries = num_queries * log_rows * 32;
     base + fri + queries + 500 // 500 bytes overhead
 }
 

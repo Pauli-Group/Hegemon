@@ -1,6 +1,13 @@
 use crate::error::ProofError;
 mod v5;
-use block_circuit::CommitmentBlockProver;
+use crate::backend_interface::{
+    Challenge, CommitmentBlockProver, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash,
+    POSEIDON2_RATE, TransactionAirP3, TransactionProof, TransactionProofP3,
+    TransactionPublicInputsP3, Val, config_with_fri, default_build_tx_fri_profile,
+    felts_to_bytes48, stark_public_inputs_p3, verify_transaction_proof_p3,
+};
+use blake2::Blake2bVar;
+use blake2::digest::{Update as BlakeUpdate, VariableOutput};
 use crypto::hashes::blake3_384;
 use p3_batch_stark::{BatchProof, CommonData, verify_batch};
 use p3_circuit::CircuitBuilder;
@@ -17,16 +24,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-use transaction_circuit::proof::stark_public_inputs_p3;
-use transaction_circuit::{
-    TransactionAirP3, TransactionProof, TransactionPublicInputsP3,
-    hashing_pq::felts_to_bytes48,
-    p3_config::{
-        Challenge, Compress, Config, DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_POW_BITS, Hash,
-        POSEIDON2_RATE, TransactionProofP3, Val, config_with_fri,
-    },
-    p3_verifier::verify_transaction_proof_p3,
-};
 use zstd::stream::{decode_all, encode_all};
 
 type InnerFri = FriProofTargets<
@@ -76,6 +73,21 @@ struct AggregationVerifierCache {
     condvar: Condvar,
 }
 
+fn decode_postcard_exact<'a, T>(bytes: &'a [u8], label: &str) -> Result<T, String>
+where
+    T: Deserialize<'a>,
+{
+    let (value, remaining) =
+        postcard::take_from_bytes(bytes).map_err(|err| format!("{label} decode failed: {err}"))?;
+    if !remaining.is_empty() {
+        return Err(format!(
+            "{label} decode left {} trailing bytes",
+            remaining.len()
+        ));
+    }
+    Ok(value)
+}
+
 impl Default for AggregationVerifierCache {
     fn default() -> Self {
         Self {
@@ -95,7 +107,7 @@ const MAX_AGGREGATION_PROOF_UNCOMPRESSED_LEN: usize = 64 * 1024 * 1024;
 pub const AGGREGATION_PROOF_FORMAT_VERSION_V4: u8 = 4;
 const AGGREGATION_PUBLIC_VALUES_ENCODING_V1: u8 = 1;
 const MAX_AGGREGATION_SLOT_PADDING_FACTOR: usize = 16;
-const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v1";
+const BINDING_HASH_DOMAIN: &[u8] = b"binding-hash-v3";
 const STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 const DEFAULT_OUTER_BATCH_LOG_BLOWUP: usize = 2;
 const DEFAULT_OUTER_BATCH_NUM_QUERIES: usize = 2;
@@ -143,15 +155,7 @@ fn outer_batch_config() -> Config {
 }
 
 fn legacy_v4_enabled() -> bool {
-    std::env::var("HEGEMON_AGG_LEGACY_V4")
-        .ok()
-        .map(|value| {
-            matches!(
-                value.to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    false
 }
 
 struct AggregationCacheResult {
@@ -270,7 +274,9 @@ fn build_aggregation_verifier_cache_entry(
 
 fn transaction_log_blowup_for_public_inputs(pub_inputs_len: usize) -> usize {
     let log_chunks = get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_len, 0);
-    FRI_LOG_BLOWUP.max(log_chunks)
+    default_build_tx_fri_profile()
+        .log_blowup_usize()
+        .max(log_chunks)
 }
 
 fn resolve_log_blowup(
@@ -297,7 +303,7 @@ fn resolve_log_blowup(
             push_unique(log_blowup.saturating_add(delta));
         }
     }
-    push_unique(FRI_LOG_BLOWUP);
+    push_unique(default_build_tx_fri_profile().log_blowup_usize());
     for fallback in 0..=8 {
         push_unique(fallback);
     }
@@ -372,7 +378,7 @@ fn aggregation_shape_id(
     bytes.extend_from_slice(&(shape.commit_phase_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.final_poly_len as u64).to_le_bytes());
     bytes.extend_from_slice(&(shape.query_count as u64).to_le_bytes());
-    sp_core::hashing::blake2_256(&bytes)
+    blake2_256(&bytes)
 }
 
 fn validate_payload_header(
@@ -648,15 +654,31 @@ fn binding_hash_from_public_inputs(
     ensure_zeroed_suffix(&public.commitments, output_count, "commitments")?;
     ensure_zeroed_suffix(&public.ciphertext_hashes, output_count, "ciphertext_hashes")?;
 
-    let mut message =
-        Vec::with_capacity(48 + input_count * 48 + output_count * 48 + output_count * 48 + 24);
+    let mut message = Vec::with_capacity(
+        48 + 12
+            + input_count * 48
+            + output_count * 48
+            + output_count * 48
+            + 24
+            + public.balance_slot_assets.len() * 8
+            + 1
+            + 8
+            + 48
+            + 48
+            + 48
+            + 16
+            + 4,
+    );
     message.extend_from_slice(&felts_to_bytes48(&public.merkle_root));
+    extend_binding_len(&mut message, input_count);
     for nf in public.nullifiers.iter().take(input_count) {
         message.extend_from_slice(&felts_to_bytes48(nf));
     }
+    extend_binding_len(&mut message, output_count);
     for cm in public.commitments.iter().take(output_count) {
         message.extend_from_slice(&felts_to_bytes48(cm));
     }
+    extend_binding_len(&mut message, output_count);
     for ct in public.ciphertext_hashes.iter().take(output_count) {
         message.extend_from_slice(&felts_to_bytes48(ct));
     }
@@ -664,23 +686,97 @@ fn binding_hash_from_public_inputs(
     let value_balance =
         decode_signed_i128_from_parts(public.value_balance_sign, public.value_balance_magnitude)?;
     message.extend_from_slice(&value_balance.to_le_bytes());
+    for asset_id in public.balance_slot_assets {
+        message.extend_from_slice(&asset_id.as_canonical_u64().to_le_bytes());
+    }
+
+    let stablecoin_enabled =
+        canonical_u8_public_input(public.stablecoin_enabled, "stablecoin_enabled")?;
+    if stablecoin_enabled > 1 {
+        return Err(ProofError::AggregationProofV4Binding(
+            "stablecoin_enabled is not boolean".to_string(),
+        ));
+    }
+    let stablecoin_asset = public.stablecoin_asset.as_canonical_u64();
+    let stablecoin_policy_version = canonical_u32_public_input(
+        public.stablecoin_policy_version,
+        "stablecoin_policy_version",
+    )?;
+    let stablecoin_issuance_sign =
+        canonical_u8_public_input(public.stablecoin_issuance_sign, "stablecoin_issuance_sign")?;
+    let stablecoin_issuance_magnitude = public.stablecoin_issuance_magnitude.as_canonical_u64();
+    let stablecoin_issuance = decode_signed_i128_from_parts(
+        public.stablecoin_issuance_sign,
+        public.stablecoin_issuance_magnitude,
+    )?;
+    let stablecoin_policy_hash = felts_to_bytes48(&public.stablecoin_policy_hash);
+    let stablecoin_oracle_commitment = felts_to_bytes48(&public.stablecoin_oracle_commitment);
+    let stablecoin_attestation_commitment =
+        felts_to_bytes48(&public.stablecoin_attestation_commitment);
+    if stablecoin_enabled == 0
+        && (stablecoin_asset != 0
+            || stablecoin_policy_version != 0
+            || stablecoin_issuance_sign != 0
+            || stablecoin_issuance_magnitude != 0
+            || stablecoin_policy_hash != [0u8; 48]
+            || stablecoin_oracle_commitment != [0u8; 48]
+            || stablecoin_attestation_commitment != [0u8; 48])
+    {
+        return Err(ProofError::AggregationProofV4Binding(
+            "disabled stablecoin public fields must be zero".to_string(),
+        ));
+    }
+    message.push(stablecoin_enabled);
+    message.extend_from_slice(&stablecoin_asset.to_le_bytes());
+    message.extend_from_slice(&stablecoin_policy_hash);
+    message.extend_from_slice(&stablecoin_oracle_commitment);
+    message.extend_from_slice(&stablecoin_attestation_commitment);
+    message.extend_from_slice(&stablecoin_issuance.to_le_bytes());
+    message.extend_from_slice(&stablecoin_policy_version.to_le_bytes());
 
     let mut msg0 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
     msg0.extend_from_slice(BINDING_HASH_DOMAIN);
     msg0.push(0);
     msg0.extend_from_slice(&message);
-    let hash0 = sp_core::hashing::blake2_256(&msg0);
+    let hash0 = blake2_256(&msg0);
 
     let mut msg1 = Vec::with_capacity(BINDING_HASH_DOMAIN.len() + 1 + message.len());
     msg1.extend_from_slice(BINDING_HASH_DOMAIN);
     msg1.push(1);
     msg1.extend_from_slice(&message);
-    let hash1 = sp_core::hashing::blake2_256(&msg1);
+    let hash1 = blake2_256(&msg1);
 
     let mut out = [0u8; 64];
     out[..32].copy_from_slice(&hash0);
     out[32..].copy_from_slice(&hash1);
     Ok(out)
+}
+
+fn extend_binding_len(message: &mut Vec<u8>, len: usize) {
+    let len = u32::try_from(len).expect("aggregation binding vector length exceeds u32");
+    message.extend_from_slice(&len.to_le_bytes());
+}
+
+fn canonical_u8_public_input(value: Val, label: &str) -> Result<u8, ProofError> {
+    let raw = value.as_canonical_u64();
+    u8::try_from(raw)
+        .map_err(|_| ProofError::AggregationProofV4Binding(format!("{label} does not fit in u8")))
+}
+
+fn canonical_u32_public_input(value: Val, label: &str) -> Result<u32, ProofError> {
+    let raw = value.as_canonical_u64();
+    u32::try_from(raw)
+        .map_err(|_| ProofError::AggregationProofV4Binding(format!("{label} does not fit in u32")))
+}
+
+fn blake2_256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Blake2bVar::new(32).expect("valid BLAKE2b output length");
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    hasher
+        .finalize_variable(&mut out)
+        .expect("fixed output buffer has requested length");
+    out
 }
 
 fn statement_hash_from_binding_hash(binding_hash: &[u8; 64]) -> [u8; 48] {
@@ -812,8 +908,11 @@ pub fn warm_aggregation_cache(
     })?;
     let pub_inputs_vec = pub_inputs.to_vec();
 
-    let inner_proof: TransactionProofP3 = postcard::from_bytes(&representative_proof.stark_proof)
-        .map_err(|_| {
+    let inner_proof: TransactionProofP3 = decode_postcard_exact(
+        &representative_proof.stark_proof,
+        "transaction proof",
+    )
+    .map_err(|_| {
         ProofError::AggregationProofInputsMismatch("transaction proof encoding invalid".to_string())
     })?;
     let shape = ProofShape {
@@ -852,7 +951,8 @@ pub fn warm_aggregation_cache_from_proof_bytes(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+    if let Ok(payload_v5) =
+        decode_postcard_exact::<v5::AggregationProofV5Payload>(&decoded, "aggregation V5 payload")
         && payload_v5.version == 5
     {
         return v5::warm_aggregation_cache_from_payload(
@@ -866,9 +966,12 @@ pub fn warm_aggregation_cache_from_proof_bytes(
             "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
         ));
     }
-    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
-    })?;
+    let payload: AggregationProofV4Payload =
+        decode_postcard_exact(&decoded, "aggregation V4 payload").map_err(|_| {
+            ProofError::AggregationProofV4Decode(
+                "aggregation V4 payload encoding invalid".to_string(),
+            )
+        })?;
 
     let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
@@ -912,12 +1015,13 @@ pub fn warm_aggregation_cache_from_proof_bytes(
         ));
     }
 
-    let representative_proof: TransactionProofP3 =
-        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV4Decode(
-                "representative proof encoding invalid".to_string(),
-            )
-        })?;
+    let representative_proof: TransactionProofP3 = decode_postcard_exact(
+        &payload.representative_proof,
+        "representative proof",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV4Decode("representative proof encoding invalid".to_string())
+    })?;
     let shape = ProofShape {
         degree_bits: representative_proof.degree_bits,
         commit_phase_len: representative_proof
@@ -966,7 +1070,8 @@ pub fn verify_aggregation_proof_with_metrics(
     }
 
     let decoded = decode_aggregation_proof_bytes(aggregation_proof)?;
-    if let Ok(payload_v5) = postcard::from_bytes::<v5::AggregationProofV5Payload>(&decoded)
+    if let Ok(payload_v5) =
+        decode_postcard_exact::<v5::AggregationProofV5Payload>(&decoded, "aggregation V5 payload")
         && payload_v5.version == 5
     {
         return v5::verify_with_metrics(&payload_v5, tx_count, expected_statement_commitment);
@@ -976,9 +1081,12 @@ pub fn verify_aggregation_proof_with_metrics(
             "legacy V4 aggregation payloads are disabled on the fresh testnet".to_string(),
         ));
     }
-    let payload: AggregationProofV4Payload = postcard::from_bytes(&decoded).map_err(|_| {
-        ProofError::AggregationProofV4Decode("aggregation V4 payload encoding invalid".to_string())
-    })?;
+    let payload: AggregationProofV4Payload =
+        decode_postcard_exact(&decoded, "aggregation V4 payload").map_err(|_| {
+            ProofError::AggregationProofV4Decode(
+                "aggregation V4 payload encoding invalid".to_string(),
+            )
+        })?;
 
     let slot_tx_count = validate_payload_header(&payload, tx_count, expected_statement_commitment)?;
     if payload.representative_proof.is_empty() {
@@ -1019,12 +1127,13 @@ pub fn verify_aggregation_proof_with_metrics(
         ));
     }
 
-    let representative_proof: TransactionProofP3 =
-        postcard::from_bytes(&payload.representative_proof).map_err(|_| {
-            ProofError::AggregationProofV4Decode(
-                "representative proof encoding invalid".to_string(),
-            )
-        })?;
+    let representative_proof: TransactionProofP3 = decode_postcard_exact(
+        &payload.representative_proof,
+        "representative proof",
+    )
+    .map_err(|_| {
+        ProofError::AggregationProofV4Decode("representative proof encoding invalid".to_string())
+    })?;
     if payload.outer_proof.is_empty() {
         if tx_count != 1 || slot_tx_count != 1 {
             return Err(ProofError::AggregationProofV4Decode(
@@ -1078,7 +1187,7 @@ pub fn verify_aggregation_proof_with_metrics(
         get_or_build_aggregation_verifier_cache_entry(cache_key, &representative_proof)?;
 
     let outer_proof: BatchProof<Config> =
-        postcard::from_bytes(&payload.outer_proof).map_err(|_| {
+        decode_postcard_exact(&payload.outer_proof, "outer aggregation proof").map_err(|_| {
             ProofError::AggregationProofV4Decode(
                 "outer aggregation proof encoding invalid".to_string(),
             )
@@ -1187,6 +1296,21 @@ mod tests {
         let raw = vec![1u8, 2, 3, 4, 5, 6, 7, 8, 9];
         let decoded = decode_aggregation_proof_bytes(&raw).expect("decode");
         assert_eq!(decoded, raw);
+    }
+
+    #[test]
+    fn exact_postcard_decoder_rejects_trailing_bytes() {
+        #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+        struct Sample {
+            value: u64,
+        }
+
+        let mut encoded = postcard::to_allocvec(&Sample { value: 7 }).expect("encode");
+        encoded.push(0xff);
+        let err = decode_postcard_exact::<Sample>(&encoded, "sample")
+            .expect_err("trailing bytes must be rejected");
+
+        assert!(err.contains("trailing bytes"));
     }
 
     #[test]
@@ -1322,6 +1446,76 @@ mod tests {
             err,
             ProofError::AggregationProofV4Decode(_) | ProofError::AggregationProofV5Decode(_)
         ));
+    }
+
+    #[test]
+    fn verify_aggregation_proof_rejects_legacy_v4_by_default() {
+        assert!(
+            !legacy_v4_enabled(),
+            "legacy V4 aggregation must not be runtime-enabled"
+        );
+
+        let commitment = [0u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            tree_arity: 8,
+            tree_levels: 1,
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_count: 1,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0u8],
+            packed_public_values: vec![0u64, 0u64],
+            outer_proof: Vec::new(),
+        };
+
+        let encoded = postcard::to_allocvec(&payload).expect("encode");
+        let err = verify_aggregation_proof(&encoded, 1, &commitment)
+            .expect_err("legacy V4 must be disabled by default");
+
+        assert!(matches!(err, ProofError::AggregationProofV5Decode(_)));
+        assert!(
+            err.to_string()
+                .contains("legacy V4 aggregation payloads are disabled")
+        );
+    }
+
+    #[test]
+    fn verify_aggregation_proof_rejects_legacy_v4_even_when_env_set() {
+        assert!(
+            !legacy_v4_enabled(),
+            "HEGEMON_AGG_LEGACY_V4 must not re-enable legacy aggregation"
+        );
+
+        let commitment = [0u8; 48];
+        let payload = AggregationProofV4Payload {
+            version: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            proof_format: AGGREGATION_PROOF_FORMAT_VERSION_V4,
+            tree_arity: 8,
+            tree_levels: 1,
+            root_level: 0,
+            shape_id: [0u8; 32],
+            tx_count: 1,
+            tx_statements_commitment: commitment.to_vec(),
+            public_values_encoding: AGGREGATION_PUBLIC_VALUES_ENCODING_V1,
+            inner_public_inputs_len: 1,
+            representative_proof: vec![0u8],
+            packed_public_values: vec![0u64, 0u64],
+            outer_proof: Vec::new(),
+        };
+
+        let encoded = postcard::to_allocvec(&payload).expect("encode");
+        let err = verify_aggregation_proof(&encoded, 1, &commitment)
+            .expect_err("legacy V4 must stay disabled");
+
+        assert!(matches!(err, ProofError::AggregationProofV5Decode(_)));
+        assert!(
+            err.to_string()
+                .contains("legacy V4 aggregation payloads are disabled")
+        );
     }
 
     #[test]

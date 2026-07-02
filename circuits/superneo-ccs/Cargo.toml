@@ -1,0 +1,19 @@
+[package]
+name = "superneo-ccs"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+p3-field = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+p3-goldilocks = { workspace = true }
+
+[lints]
+workspace = true

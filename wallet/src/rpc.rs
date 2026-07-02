@@ -9,7 +9,7 @@ use crate::notes::NoteCiphertext;
 /// This contains all data needed to submit a shielded transfer to the chain.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TransactionBundle {
-    /// STARK proof bytes (serialized Plonky3 proof).
+    /// Serialized native tx-leaf artifact bytes for the shipped shielded path.
     #[serde(with = "serde_bytes_vec")]
     pub proof_bytes: Vec<u8>,
     /// Nullifiers (48 bytes each, left-padded field elements).
@@ -29,7 +29,7 @@ pub struct TransactionBundle {
     pub binding_hash: [u8; 64],
     /// Asset ids for the fixed four balance slots used by the transaction proof.
     pub balance_slot_asset_ids: [u64; 4],
-    /// Native fee encoded in the proof.
+    /// Optional miner tip encoded in the proof.
     pub fee: u64,
     /// Value balance (must be 0 when no transparent pool is enabled).
     pub value_balance: i128,
@@ -59,8 +59,8 @@ impl TransactionBundle {
         }
         let mut encoded = Vec::with_capacity(ciphertexts.len());
         for ct in ciphertexts {
-            // Use pallet-compatible format instead of bincode
-            encoded.push(ct.to_pallet_bytes()?);
+            // Use SCALE-compatible format instead of bincode
+            encoded.push(ct.to_chain_bytes()?);
         }
         Ok(Self {
             proof_bytes,
@@ -79,8 +79,8 @@ impl TransactionBundle {
     pub fn decode_notes(&self) -> Result<Vec<NoteCiphertext>, WalletError> {
         let mut notes = Vec::with_capacity(self.ciphertexts.len());
         for bytes in &self.ciphertexts {
-            // Decode from pallet format
-            notes.push(NoteCiphertext::from_pallet_bytes(bytes)?);
+            // Decode from chain format
+            notes.push(NoteCiphertext::from_chain_bytes(bytes)?);
         }
         Ok(notes)
     }

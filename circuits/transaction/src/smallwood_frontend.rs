@@ -1,0 +1,8513 @@
+use blake3::Hasher;
+use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use protocol_versioning::{tx_proof_backend_for_version, TxProofBackend, VersionBinding};
+use serde::{Deserialize, Serialize};
+use std::io::Cursor;
+use transaction_core::{
+    constants::{
+        MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG, POSEIDON2_RATE, POSEIDON2_STEPS,
+        POSEIDON2_WIDTH,
+    },
+    p3_air::TransactionPublicInputsP3,
+    poseidon2::poseidon2_step,
+};
+
+use crate::{
+    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS},
+    error::TransactionCircuitError,
+    hashing_pq::{
+        bytes48_to_felts, felts_to_bytes48, merkle_node, note_commitment_inputs,
+        nullifier_inputs as core_nullifier_inputs, prf_key, spend_auth_key, Felt, HashFelt,
+    },
+    note::{InputNoteWitness, MerklePath, OutputNoteWitness, MERKLE_TREE_DEPTH},
+    proof::{
+        admit_transaction_proof_wrapper as admit_shared_transaction_proof_wrapper,
+        transaction_proof_wrapper_public_inputs_for_admission,
+        transaction_public_inputs_p3_from_parts, SerializedStarkInputs, TransactionProof,
+        TransactionProofWrapperAdmissionInput, VerificationReport,
+    },
+    public_inputs::TransactionPublicInputs,
+    smallwood_engine::{
+        projected_candidate_proof_bytes_with_profile as projected_smallwood_backend_proof_bytes_with_profile_statement,
+        prove_candidate_with_profile as prove_smallwood_backend_statement_with_profile,
+        report_smallwood_backend_opening_surface_with_profile_v1,
+        report_smallwood_no_grinding_soundness_v1, report_smallwood_proof_size_v1,
+        smallwood_no_grinding_profile_for_arithmetization,
+        verify_candidate_with_profile as verify_smallwood_backend_statement_with_profile,
+        SmallwoodArithmetization, SmallwoodBackendOpeningSurfaceReportV1,
+        SmallwoodLvcsPlannerGeometryKindV1, SmallwoodLvcsPlannerProjectionReportV1,
+        SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
+        SmallwoodProofSizeReportV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+    },
+    smallwood_native::{test_candidate_witness, test_candidate_witness_with_auxiliary},
+    witness::TransactionWitness,
+};
+
+const SMALLWOOD_PUBLIC_STATEMENT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-public-statement.v1";
+const SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.tx.smallwood-binding-transcript.v1";
+const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
+const SMALLWOOD_AUTH_INTENT_DOMAIN_TAG: u64 = 5;
+const SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG: u64 = 6;
+const SMALLWOOD_AUTH_POLICY_DOMAIN_TAG: u64 = 7;
+const SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG: u64 = 8;
+
+pub const SMALLWOOD_LPPC_PACKING_FACTOR: usize = 1;
+pub const SMALLWOOD_PACKED_LPPC_PACKING_FACTOR: usize = 64;
+pub const SMALLWOOD_BRIDGE_PACKING_FACTOR: usize = 64;
+pub const SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE: u16 = 8;
+pub const SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION: usize = POSEIDON2_STEPS + 1;
+pub const SMALLWOOD_RHO: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho as u32;
+pub const SMALLWOOD_NB_OPENED_EVALS: u32 =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.nb_opened_evals as u32;
+pub const SMALLWOOD_BETA: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta as u32;
+pub const SMALLWOOD_OPENING_POW_BITS: u32 =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.opening_pow_bits;
+pub const SMALLWOOD_DECS_NB_EVALS: u32 =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals as u32;
+pub const SMALLWOOD_DECS_NB_OPENED_EVALS: u32 =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals as u32;
+pub const SMALLWOOD_DECS_ETA: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_eta as u32;
+pub const SMALLWOOD_DECS_POW_BITS: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_pow_bits;
+#[allow(dead_code)]
+const SMALLWOOD_BASE_PUBLIC_VALUE_COUNT: usize = 78;
+const SMALLWOOD_LANE_SELECTOR_ROWS: usize = 0;
+const SMALLWOOD_WORDS_PER_48_BYTES: usize = 6;
+const SMALLWOOD_PUBLIC_ROWS: usize = 0;
+const SMALLWOOD_BASE_INPUT_ROWS: usize = 1 + 1 + MERKLE_TREE_DEPTH;
+const SMALLWOOD_INPUT_DIRECTION_OFFSET: usize = 2;
+pub const SMALLWOOD_SIGNER_TAG_WORDS: usize = 5;
+pub const SMALLWOOD_MULTISIG_MAX_SIGNERS: usize = 6;
+const SMALLWOOD_MULTISIG_PAIR_COUNT: usize =
+    SMALLWOOD_MULTISIG_MAX_SIGNERS * (SMALLWOOD_MULTISIG_MAX_SIGNERS - 1) / 2;
+const SMALLWOOD_AUTH_MODE_ROWS: usize = 3;
+const SMALLWOOD_AUTH_INPUT_PRF_ROWS: usize = MAX_INPUTS;
+const SMALLWOOD_AUTH_INPUT_KEY_ROWS: usize = MAX_INPUTS * 4;
+const SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS: usize = 5;
+const SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_POLICY_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_INTENT_ROWS: usize = SMALLWOOD_WORDS_PER_48_BYTES;
+const SMALLWOOD_AUTH_SCALAR_ROWS: usize = 4 + (SMALLWOOD_MULTISIG_MAX_SIGNERS * 2) + 2;
+const SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS;
+const SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS;
+const SMALLWOOD_AUTH_COUNT_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS + 1;
+const SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS + 1;
+const SMALLWOOD_AUTH_POLICY_SIGNER_ROWS: usize =
+    SMALLWOOD_MULTISIG_MAX_SIGNERS * SMALLWOOD_SIGNER_TAG_WORDS;
+const SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS: usize = SMALLWOOD_MULTISIG_MAX_SIGNERS;
+const SMALLWOOD_AUTH_POLICY_DISTINCT_INVERSE_ROWS: usize = SMALLWOOD_MULTISIG_PAIR_COUNT;
+const SMALLWOOD_OUTPUT_AUTH_KEY_ROWS: usize = 4;
+const SMALLWOOD_AUTH_ROWS: usize = SMALLWOOD_AUTH_MODE_ROWS
+    + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+    + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+    + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+    + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+    + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+    + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
+    + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
+    + SMALLWOOD_AUTH_POLICY_ROWS
+    + SMALLWOOD_AUTH_INTENT_ROWS
+    + SMALLWOOD_AUTH_SCALAR_ROWS
+    + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+    + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+    + SMALLWOOD_AUTH_COUNT_FLAG_ROWS
+    + SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS
+    + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS
+    + SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS
+    + SMALLWOOD_AUTH_POLICY_DISTINCT_INVERSE_ROWS;
+const SMALLWOOD_AUTH_INTENT_PERMUTATIONS: usize =
+    SMALLWOOD_BASE_PUBLIC_VALUE_COUNT.div_ceil(POSEIDON2_RATE);
+const SMALLWOOD_AUTH_ACCUMULATOR_INPUTS: usize =
+    (SMALLWOOD_WORDS_PER_48_BYTES * 2) + 3 + SMALLWOOD_MULTISIG_MAX_SIGNERS;
+const SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS: usize =
+    SMALLWOOD_AUTH_ACCUMULATOR_INPUTS.div_ceil(POSEIDON2_RATE);
+const SMALLWOOD_AUTH_POLICY_INPUTS: usize = 2 + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS;
+const SMALLWOOD_AUTH_POLICY_PERMUTATIONS: usize =
+    SMALLWOOD_AUTH_POLICY_INPUTS.div_ceil(POSEIDON2_RATE);
+const SMALLWOOD_AUTH_VALUE_LOCK_INPUTS: usize = SMALLWOOD_WORDS_PER_48_BYTES * 2;
+const SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS: usize =
+    SMALLWOOD_AUTH_VALUE_LOCK_INPUTS.div_ceil(POSEIDON2_RATE);
+const SMALLWOOD_AUTH_POSEIDON_PERMUTATIONS: usize = SMALLWOOD_AUTH_INTENT_PERMUTATIONS
+    + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
+    + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2)
+    + SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS;
+
+pub type SmallwoodSignerTag = [u64; SMALLWOOD_SIGNER_TAG_WORDS];
+const PUB_INPUT_FLAG0: usize = 0;
+const PUB_OUTPUT_FLAG0: usize = 2;
+const PUB_NULLIFIERS: usize = 4;
+const PUB_COMMITMENTS: usize = 16;
+const PUB_CIPHERTEXT_HASHES: usize = 28;
+#[cfg(test)]
+const PUB_FEE: usize = 40;
+#[cfg(test)]
+const PUB_VALUE_BALANCE_SIGN: usize = 41;
+#[cfg(test)]
+const PUB_VALUE_BALANCE_MAG: usize = 42;
+const PUB_MERKLE_ROOT: usize = 43;
+#[cfg(test)]
+const PUB_BALANCE_SLOT_ASSETS: usize = 49;
+#[cfg(test)]
+const PUB_STABLE_ENABLED: usize = 53;
+#[cfg(test)]
+const PUB_STABLE_ASSET: usize = 54;
+const PUB_STABLE_POLICY_VERSION: usize = 55;
+#[cfg(test)]
+const PUB_STABLE_ISSUANCE_SIGN: usize = 56;
+#[cfg(test)]
+const PUB_STABLE_ISSUANCE_MAG: usize = 57;
+const PUB_STABLE_POLICY_HASH: usize = 58;
+const PUB_STABLE_ORACLE: usize = 64;
+const PUB_STABLE_ATTESTATION: usize = 70;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SmallwoodPrivateAuthMode {
+    SingleKey,
+    ApprovalStep,
+    FinalThresholdSpend,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmallwoodAccumulatorAuthOpening {
+    pub policy_root: [u8; 48],
+    pub intent_digest: [u8; 48],
+    pub threshold: u64,
+    pub signer_count: u64,
+    pub approval_count: u64,
+    pub approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+}
+
+impl Default for SmallwoodAccumulatorAuthOpening {
+    fn default() -> Self {
+        Self {
+            policy_root: [0u8; 48],
+            intent_digest: [0u8; 48],
+            threshold: 0,
+            signer_count: 0,
+            approval_count: 0,
+            approved_slots: [0; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmallwoodPrivateAuthWitness {
+    pub mode: SmallwoodPrivateAuthMode,
+    pub accumulator: SmallwoodAccumulatorAuthOpening,
+    pub next_accumulator: SmallwoodAccumulatorAuthOpening,
+    pub policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+}
+
+impl Default for SmallwoodPrivateAuthWitness {
+    fn default() -> Self {
+        Self {
+            mode: SmallwoodPrivateAuthMode::SingleKey,
+            accumulator: SmallwoodAccumulatorAuthOpening::default(),
+            next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
+            policy_signer_tags: [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+        }
+    }
+}
+
+fn smallwood_witness_self_check_enabled() -> bool {
+    std::env::var("HEGEMON_SMALLWOOD_WITNESS_SELF_CHECK")
+        .map(|value| {
+            !matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "" | "0" | "false" | "no" | "off"
+            )
+        })
+        .unwrap_or(cfg!(debug_assertions))
+}
+
+#[inline]
+fn bridge_input_base(layout: SmallwoodBridgeRowLayout, input: usize) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + input * layout.input_rows
+}
+
+#[inline]
+fn bridge_output_base(layout: SmallwoodBridgeRowLayout, output: usize) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + MAX_INPUTS * layout.input_rows + output * layout.output_secret_rows
+}
+
+#[inline]
+fn bridge_row_input_value(layout: SmallwoodBridgeRowLayout, input: usize) -> usize {
+    bridge_input_base(layout, input)
+}
+
+#[inline]
+fn bridge_row_input_asset(layout: SmallwoodBridgeRowLayout, input: usize) -> usize {
+    bridge_input_base(layout, input) + 1
+}
+
+#[inline]
+fn bridge_row_input_direction(layout: SmallwoodBridgeRowLayout, input: usize, bit: usize) -> usize {
+    bridge_input_base(layout, input) + SMALLWOOD_INPUT_DIRECTION_OFFSET + bit
+}
+
+#[inline]
+fn bridge_row_input_current_agg(
+    layout: SmallwoodBridgeRowLayout,
+    input: usize,
+    level: usize,
+) -> usize {
+    bridge_input_base(layout, input)
+        + layout.input_current_offset().expect("merkle rows present")
+        + level
+}
+
+#[inline]
+fn bridge_row_input_left_agg(
+    layout: SmallwoodBridgeRowLayout,
+    input: usize,
+    level: usize,
+) -> usize {
+    bridge_input_base(layout, input)
+        + layout.input_left_offset().expect("merkle rows present")
+        + level
+}
+
+#[inline]
+fn bridge_row_input_right_agg(
+    layout: SmallwoodBridgeRowLayout,
+    input: usize,
+    level: usize,
+) -> usize {
+    bridge_input_base(layout, input)
+        + layout.input_right_offset().expect("merkle rows present")
+        + level
+}
+
+#[inline]
+fn bridge_row_output_auth_key(
+    layout: SmallwoodBridgeRowLayout,
+    output: usize,
+    limb: usize,
+) -> usize {
+    bridge_output_base(layout, output) + layout.output_secret_rows - SMALLWOOD_OUTPUT_AUTH_KEY_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_aux_input_current_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_TREE_DEPTH * 3 + level * 3
+}
+
+#[inline]
+fn bridge_aux_input_left_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_TREE_DEPTH * 3 + level * 3 + 1
+}
+
+#[inline]
+fn bridge_aux_input_right_agg(input: usize, level: usize) -> usize {
+    input * MERKLE_TREE_DEPTH * 3 + level * 3 + 2
+}
+
+#[inline]
+fn bridge_stable_base(layout: SmallwoodBridgeRowLayout) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + MAX_INPUTS * layout.input_rows + MAX_OUTPUTS * layout.output_secret_rows
+}
+
+#[inline]
+fn bridge_auth_base(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_stable_base(layout) + layout.stable_binding_rows
+}
+
+#[inline]
+#[cfg(test)]
+fn bridge_auth_mode_row(layout: SmallwoodBridgeRowLayout, mode: usize) -> usize {
+    bridge_auth_base(layout) + mode
+}
+
+#[inline]
+fn bridge_auth_input_prf_row(layout: SmallwoodBridgeRowLayout, input: usize) -> usize {
+    bridge_auth_base(layout) + SMALLWOOD_AUTH_MODE_ROWS + input
+}
+
+#[inline]
+fn bridge_auth_input_key_row(layout: SmallwoodBridgeRowLayout, input: usize, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + input * 4
+        + limb
+}
+
+#[inline]
+fn bridge_auth_legacy_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_current_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_next_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_value_lock_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_statement_digest_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_policy_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
+        + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_intent_row(layout: SmallwoodBridgeRowLayout, limb: usize) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
+        + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
+        + SMALLWOOD_AUTH_POLICY_ROWS
+        + limb
+}
+
+#[inline]
+fn bridge_auth_threshold_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_base(layout)
+        + SMALLWOOD_AUTH_MODE_ROWS
+        + SMALLWOOD_AUTH_INPUT_PRF_ROWS
+        + SMALLWOOD_AUTH_INPUT_KEY_ROWS
+        + SMALLWOOD_AUTH_LEGACY_DIGEST_ROWS
+        + SMALLWOOD_AUTH_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_NEXT_ACCUMULATOR_DIGEST_ROWS
+        + SMALLWOOD_AUTH_VALUE_LOCK_DIGEST_ROWS
+        + SMALLWOOD_AUTH_STATEMENT_DIGEST_ROWS
+        + SMALLWOOD_AUTH_POLICY_ROWS
+        + SMALLWOOD_AUTH_INTENT_ROWS
+}
+
+#[inline]
+fn bridge_auth_signer_count_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_threshold_row(layout) + 1
+}
+
+#[inline]
+fn bridge_auth_count_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_threshold_row(layout) + 2
+}
+
+#[inline]
+fn bridge_auth_slot_row(layout: SmallwoodBridgeRowLayout, slot: usize) -> usize {
+    bridge_auth_threshold_row(layout) + 3 + slot
+}
+
+#[inline]
+fn bridge_auth_next_count_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_threshold_row(layout) + 3 + SMALLWOOD_MULTISIG_MAX_SIGNERS
+}
+
+#[inline]
+fn bridge_auth_next_slot_row(layout: SmallwoodBridgeRowLayout, slot: usize) -> usize {
+    bridge_auth_threshold_row(layout) + 4 + SMALLWOOD_MULTISIG_MAX_SIGNERS + slot
+}
+
+#[inline]
+#[cfg(test)]
+fn bridge_auth_signer_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_threshold_row(layout) + 4 + (SMALLWOOD_MULTISIG_MAX_SIGNERS * 2)
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_duplicate_inverse_row(layout: SmallwoodBridgeRowLayout) -> usize {
+    bridge_auth_threshold_row(layout) + 5 + (SMALLWOOD_MULTISIG_MAX_SIGNERS * 2)
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_threshold_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
+    bridge_auth_threshold_row(layout) + SMALLWOOD_AUTH_SCALAR_ROWS + flag
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_signer_count_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + flag
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_count_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+        + flag
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_next_count_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_COUNT_FLAG_ROWS
+        + flag
+}
+
+#[inline]
+fn bridge_auth_policy_signer_row(layout: SmallwoodBridgeRowLayout, signer: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS
+        + signer
+}
+
+#[inline]
+#[cfg(test)]
+fn bridge_auth_membership_flag_row(layout: SmallwoodBridgeRowLayout, flag: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS
+        + flag
+}
+
+#[inline]
+#[allow(dead_code)]
+fn bridge_auth_policy_distinct_inverse_row(layout: SmallwoodBridgeRowLayout, pair: usize) -> usize {
+    bridge_auth_threshold_row(layout)
+        + SMALLWOOD_AUTH_SCALAR_ROWS
+        + SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS
+        + SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS
+        + SMALLWOOD_AUTH_POLICY_SIGNER_ROWS
+        + SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS
+        + pair
+}
+
+#[inline]
+fn bridge_poseidon_rows_start(layout: SmallwoodBridgeRowLayout) -> usize {
+    SMALLWOOD_PUBLIC_ROWS + layout.secret_witness_rows() + SMALLWOOD_LANE_SELECTOR_ROWS
+}
+
+#[inline]
+fn bridge_poseidon_row(
+    packing_factor: usize,
+    layout: SmallwoodBridgeRowLayout,
+    permutation: usize,
+    step_row: usize,
+    limb: usize,
+) -> usize {
+    let group = permutation / packing_factor;
+    bridge_poseidon_rows_start(layout)
+        + (group * layout.poseidon_rows_per_permutation() + step_row) * POSEIDON2_WIDTH
+        + limb
+}
+
+#[inline]
+fn packed_bridge_index(row: usize, lane: usize, packing_factor: usize) -> u32 {
+    (row * packing_factor + lane) as u32
+}
+
+#[inline]
+fn packed_bridge_permutation_lane(permutation: usize, packing_factor: usize) -> usize {
+    permutation % packing_factor
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodPublicStatement {
+    pub public_values: Vec<u64>,
+    pub public_value_count: u32,
+    pub raw_witness_len: u32,
+    pub lppc_row_count: u32,
+    pub poseidon_permutation_count: u32,
+    pub poseidon_state_row_count: u32,
+    pub expanded_witness_len: u32,
+    pub lppc_packing_factor: u16,
+    pub effective_constraint_degree: u16,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodLinearConstraints {
+    pub term_offsets: Vec<u32>,
+    pub term_indices: Vec<u32>,
+    pub term_coefficients: Vec<u64>,
+    pub targets: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodCandidateProof {
+    #[serde(default = "default_smallwood_candidate_arithmetization")]
+    pub arithmetization: SmallwoodArithmetization,
+    pub ark_proof: Vec<u8>,
+    #[serde(default)]
+    pub auxiliary_witness_words: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct LegacySmallwoodCandidateProof {
+    #[serde(default = "default_smallwood_candidate_arithmetization")]
+    pub arithmetization: SmallwoodArithmetization,
+    pub ark_proof: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodPublicBindingMode {
+    RowAlignedSecretBindingsV1,
+    CompactPublicBindingsV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodPoseidonLayout {
+    GroupedRowsV1,
+    GroupedRowsSkipInitialMdsV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SmallwoodMerkleAggregationMode {
+    WitnessRowsV1,
+    InlinePoseidonV1,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodFrontendShape {
+    pub lppc_packing_factor: usize,
+    pub public_binding_mode: SmallwoodPublicBindingMode,
+    pub merkle_aggregation_mode: SmallwoodMerkleAggregationMode,
+    pub poseidon_layout: SmallwoodPoseidonLayout,
+}
+
+impl SmallwoodFrontendShape {
+    pub const fn direct_packed_compact_bindings_v1(lppc_packing_factor: usize) -> Self {
+        Self {
+            lppc_packing_factor,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsV1,
+        }
+    }
+
+    pub const fn direct_packed16_compact_bindings_v1() -> Self {
+        Self::direct_packed_compact_bindings_v1(SMALLWOOD_BRIDGE_PACKING_FACTOR / 4)
+    }
+
+    pub const fn direct_packed32_compact_bindings_v1() -> Self {
+        Self::direct_packed_compact_bindings_v1(SMALLWOOD_BRIDGE_PACKING_FACTOR / 2)
+    }
+
+    pub const fn bridge64_v1() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            public_binding_mode: SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsV1,
+        }
+    }
+
+    pub const fn direct_packed64_compact_bindings_v1() -> Self {
+        Self::direct_packed_compact_bindings_v1(SMALLWOOD_BRIDGE_PACKING_FACTOR)
+    }
+
+    pub const fn direct_packed128_compact_bindings_v1() -> Self {
+        Self::direct_packed_compact_bindings_v1(SMALLWOOD_BRIDGE_PACKING_FACTOR * 2)
+    }
+
+    pub const fn direct_packed64_compact_bindings_skip_initial_mds_v1() -> Self {
+        Self {
+            lppc_packing_factor: SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1,
+        }
+    }
+
+    pub const fn direct_packed_compact_bindings_inline_merkle_skip_initial_mds_v1(
+        lppc_packing_factor: usize,
+    ) -> Self {
+        Self {
+            lppc_packing_factor,
+            public_binding_mode: SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            poseidon_layout: SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1,
+        }
+    }
+
+    pub const fn direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1() -> Self {
+        Self::direct_packed_compact_bindings_inline_merkle_skip_initial_mds_v1(
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        )
+    }
+
+    pub const fn direct_packed128_compact_bindings_inline_merkle_skip_initial_mds_v1() -> Self {
+        Self::direct_packed_compact_bindings_inline_merkle_skip_initial_mds_v1(
+            SMALLWOOD_BRIDGE_PACKING_FACTOR * 2,
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SmallwoodBridgeRowLayout {
+    input_rows: usize,
+    output_secret_rows: usize,
+    stable_binding_rows: usize,
+    merkle_aggregation_mode: SmallwoodMerkleAggregationMode,
+    poseidon_layout: SmallwoodPoseidonLayout,
+}
+
+impl SmallwoodBridgeRowLayout {
+    const fn for_shape(shape: SmallwoodFrontendShape) -> Self {
+        match (shape.public_binding_mode, shape.merkle_aggregation_mode) {
+            (
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+                SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            ) => Self {
+                input_rows: SMALLWOOD_BASE_INPUT_ROWS + (MERKLE_TREE_DEPTH * 3),
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
+                stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
+                merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
+                poseidon_layout: shape.poseidon_layout,
+            },
+            (
+                SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+                SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            ) => Self {
+                input_rows: SMALLWOOD_BASE_INPUT_ROWS + (MERKLE_TREE_DEPTH * 3),
+                output_secret_rows: 1 + 1 + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
+                stable_binding_rows: 0,
+                merkle_aggregation_mode: SmallwoodMerkleAggregationMode::WitnessRowsV1,
+                poseidon_layout: shape.poseidon_layout,
+            },
+            (
+                SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+                SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            ) => Self {
+                input_rows: SMALLWOOD_BASE_INPUT_ROWS,
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
+                stable_binding_rows: 0,
+                merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+                poseidon_layout: shape.poseidon_layout,
+            },
+            (
+                SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+                SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            ) => Self {
+                input_rows: SMALLWOOD_BASE_INPUT_ROWS,
+                output_secret_rows: 1
+                    + 1
+                    + SMALLWOOD_WORDS_PER_48_BYTES
+                    + SMALLWOOD_OUTPUT_AUTH_KEY_ROWS,
+                stable_binding_rows: 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 3),
+                merkle_aggregation_mode: SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+                poseidon_layout: shape.poseidon_layout,
+            },
+        }
+    }
+
+    const fn secret_witness_rows(self) -> usize {
+        (MAX_INPUTS * self.input_rows)
+            + (MAX_OUTPUTS * self.output_secret_rows)
+            + self.stable_binding_rows
+            + SMALLWOOD_AUTH_ROWS
+    }
+
+    const fn has_merkle_aggregate_rows(self) -> bool {
+        matches!(
+            self.merkle_aggregation_mode,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1
+        )
+    }
+
+    const fn poseidon_rows_per_permutation(self) -> usize {
+        match self.poseidon_layout {
+            SmallwoodPoseidonLayout::GroupedRowsV1 => SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION,
+            SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+                SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION - 1
+            }
+        }
+    }
+
+    const fn poseidon_last_row(self) -> usize {
+        self.poseidon_rows_per_permutation() - 1
+    }
+
+    const fn poseidon_trace_row(self, logical_row: usize) -> usize {
+        match self.poseidon_layout {
+            SmallwoodPoseidonLayout::GroupedRowsV1 => logical_row,
+            SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {
+                if logical_row == 0 {
+                    0
+                } else {
+                    logical_row + 1
+                }
+            }
+        }
+    }
+
+    const fn input_current_offset(self) -> Option<usize> {
+        match self.merkle_aggregation_mode {
+            SmallwoodMerkleAggregationMode::WitnessRowsV1 => {
+                Some(SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH)
+            }
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1 => None,
+        }
+    }
+
+    const fn input_left_offset(self) -> Option<usize> {
+        match self.merkle_aggregation_mode {
+            SmallwoodMerkleAggregationMode::WitnessRowsV1 => {
+                Some(SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH * 2)
+            }
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1 => None,
+        }
+    }
+
+    const fn input_right_offset(self) -> Option<usize> {
+        match self.merkle_aggregation_mode {
+            SmallwoodMerkleAggregationMode::WitnessRowsV1 => {
+                Some(SMALLWOOD_INPUT_DIRECTION_OFFSET + MERKLE_TREE_DEPTH * 3)
+            }
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1 => None,
+        }
+    }
+}
+
+const fn binds_output_ciphertext_hash_rows(shape: SmallwoodFrontendShape) -> bool {
+    matches!(
+        (shape.public_binding_mode, shape.merkle_aggregation_mode),
+        (SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1, _)
+            | (
+                SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+                SmallwoodMerkleAggregationMode::InlinePoseidonV1
+            )
+    )
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodCandidateProofSizeReport {
+    pub total_bytes: usize,
+    pub wrapper_bytes: usize,
+    pub ark_proof_bytes: usize,
+    pub transcript_bytes: usize,
+    pub commitment_bytes: usize,
+    pub opened_values_bytes: usize,
+    pub opening_payload_bytes: usize,
+    pub other_bytes: usize,
+    pub arithmetization: SmallwoodArithmetization,
+    pub inner: SmallwoodProofSizeReportV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SmallwoodCandidateProfileAnalysisReport {
+    pub arithmetization: SmallwoodArithmetization,
+    pub profile: SmallwoodNoGrindingProfileV1,
+    pub projected_total_bytes: usize,
+    pub soundness: SmallwoodNoGrindingSoundnessReportV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodCandidateExactProfileReport {
+    pub arithmetization: SmallwoodArithmetization,
+    pub profile: SmallwoodNoGrindingProfileV1,
+    pub projected_total_bytes: usize,
+    pub exact_total_bytes: usize,
+    pub exact_ark_proof_bytes: usize,
+    pub size_report: SmallwoodCandidateProofSizeReport,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodCandidateBackendOpeningSurfaceReport {
+    pub arithmetization: SmallwoodArithmetization,
+    pub profile: SmallwoodNoGrindingProfileV1,
+    pub structural_upper_bound_bytes: usize,
+    pub exact_total_bytes: usize,
+    pub exact_ark_proof_bytes: usize,
+    pub wrapper_bytes: usize,
+    pub backend: SmallwoodBackendOpeningSurfaceReportV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SmallwoodCandidateLvcsPlannerProjectionReport {
+    pub arithmetization: SmallwoodArithmetization,
+    pub profile: SmallwoodNoGrindingProfileV1,
+    pub planners: Vec<SmallwoodCandidateLvcsPlannerProjectionEntry>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SmallwoodCandidateLvcsPlannerProjectionEntry {
+    pub planner: SmallwoodLvcsPlannerGeometryKindV1,
+    pub projected_total_bytes: usize,
+    pub inner: SmallwoodLvcsPlannerProjectionReportV1,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SmallwoodCandidateProfileSurface {
+    pub public_statement: SmallwoodPublicStatement,
+    pub linear_constraints: SmallwoodLinearConstraints,
+    pub auxiliary_witness_limb_count: usize,
+}
+
+struct ExactSmallwoodCandidateProofArtifacts {
+    ark_proof: Vec<u8>,
+    proof_bytes: Vec<u8>,
+}
+
+fn default_smallwood_candidate_arithmetization() -> SmallwoodArithmetization {
+    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+}
+
+fn smallwood_effective_constraint_degree_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> u16 {
+    let _ = arithmetization;
+    SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE
+}
+
+fn uses_inline_merkle_auxiliary(arithmetization: SmallwoodArithmetization) -> bool {
+    matches!(
+        arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+    )
+}
+
+#[allow(dead_code)]
+struct SmallwoodFrontendMaterial {
+    public_inputs: TransactionPublicInputs,
+    serialized_public_inputs: SerializedStarkInputs,
+    public_statement: SmallwoodPublicStatement,
+    padded_expanded_witness: Vec<u64>,
+    linear_constraints: SmallwoodLinearConstraints,
+    transcript_binding: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PackedSmallwoodFrontendMaterial {
+    pub public_statement: SmallwoodPublicStatement,
+    pub packed_expanded_witness: Vec<u64>,
+    pub linear_constraints: SmallwoodLinearConstraints,
+    pub transcript_binding: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PackedBridgeSmallwoodFrontendMaterial {
+    pub public_inputs: TransactionPublicInputs,
+    pub serialized_public_inputs: SerializedStarkInputs,
+    pub public_statement: SmallwoodPublicStatement,
+    pub packed_witness_rows: Vec<u64>,
+    pub linear_constraints: SmallwoodLinearConstraints,
+    pub transcript_binding: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PackedSmallwoodAuxFrontendMaterial {
+    pub public_statement: SmallwoodPublicStatement,
+    pub packed_expanded_witness: Vec<u64>,
+    pub linear_constraints: SmallwoodLinearConstraints,
+    pub auxiliary_witness_words: Vec<u64>,
+    pub transcript_binding: Vec<u8>,
+}
+
+struct SmallwoodWitnessContext {
+    witness: TransactionWitness,
+    auth: SmallwoodPrivateAuthWitness,
+    public_inputs: TransactionPublicInputs,
+    serialized_public_inputs: SerializedStarkInputs,
+    public_inputs_p3: TransactionPublicInputsP3,
+    public_values: Vec<u64>,
+    bridge_poseidon_rows:
+        Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+}
+
+pub fn prove_smallwood_candidate(
+    witness: &TransactionWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_auth(witness, &SmallwoodPrivateAuthWitness::default())
+}
+
+pub fn prove_smallwood_candidate_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_arithmetization_and_auth(
+        witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        auth,
+    )
+}
+
+pub fn prove_smallwood_candidate_with_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    prove_smallwood_candidate_with_arithmetization_and_auth(
+        witness,
+        arithmetization,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+pub fn prove_smallwood_candidate_with_arithmetization_and_auth(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionProof, TransactionCircuitError> {
+    if tx_proof_backend_for_version(witness.version) != Some(TxProofBackend::SmallwoodCandidate) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "version {:?} is not bound to the smallwood_candidate backend",
+            witness.version
+        )));
+    }
+    let context = build_smallwood_witness_context_with_auth(witness, auth)?;
+    let profile = smallwood_no_grinding_profile_for_arithmetization(arithmetization);
+    match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    SmallwoodArithmetization::Bridge64V1,
+                    &material.public_statement.public_values,
+                    &material.packed_witness_rows,
+                    material.public_statement.lppc_row_count as usize,
+                    SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                    material.public_statement.effective_constraint_degree,
+                    &material.linear_constraints.term_offsets,
+                    &material.linear_constraints.term_indices,
+                    &material.linear_constraints.term_coefficients,
+                    &material.linear_constraints.targets,
+                )?;
+            }
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                SmallwoodArithmetization::Bridge64V1,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            let ark_proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_witness_rows,
+                &material.transcript_binding,
+                profile,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof, &[])?;
+            Ok(TransactionProof {
+                nullifiers: material.public_inputs.nullifiers.clone(),
+                commitments: material.public_inputs.commitments.clone(),
+                balance_slots: material.public_inputs.balance_slots.clone(),
+                public_inputs: material.public_inputs,
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(material.serialized_public_inputs),
+            })
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let direct_material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    SmallwoodArithmetization::DirectPacked64V1,
+                    &direct_material.public_statement.public_values,
+                    &direct_material.packed_expanded_witness,
+                    direct_material.public_statement.lppc_row_count as usize,
+                    direct_material.public_statement.lppc_packing_factor as usize,
+                    direct_material.public_statement.effective_constraint_degree,
+                    &direct_material.linear_constraints.term_offsets,
+                    &direct_material.linear_constraints.term_indices,
+                    &direct_material.linear_constraints.term_coefficients,
+                    &direct_material.linear_constraints.targets,
+                )?;
+            }
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &direct_material.public_statement.public_values,
+                direct_material.public_statement.lppc_row_count as usize,
+                direct_material.public_statement.lppc_packing_factor as usize,
+                direct_material.public_statement.effective_constraint_degree as usize,
+                &direct_material.linear_constraints.term_offsets,
+                &direct_material.linear_constraints.term_indices,
+                &direct_material.linear_constraints.term_coefficients,
+                &direct_material.linear_constraints.targets,
+            );
+            let ark_proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &direct_material.packed_expanded_witness,
+                &direct_material.transcript_binding,
+                profile,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof, &[])?;
+            Ok(TransactionProof {
+                nullifiers: context.public_inputs.nullifiers.clone(),
+                commitments: context.public_inputs.commitments.clone(),
+                balance_slots: context.public_inputs.balance_slots.clone(),
+                public_inputs: context.public_inputs.clone(),
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(context.serialized_public_inputs.clone()),
+            })
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness_with_auxiliary(
+                    arithmetization,
+                    &material.public_statement.public_values,
+                    &material.packed_expanded_witness,
+                    material.public_statement.lppc_row_count as usize,
+                    material.public_statement.lppc_packing_factor as usize,
+                    material.public_statement.effective_constraint_degree,
+                    &material.linear_constraints.term_offsets,
+                    &material.linear_constraints.term_indices,
+                    &material.linear_constraints.term_coefficients,
+                    &material.linear_constraints.targets,
+                    &material.auxiliary_witness_words,
+                )?;
+            }
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.auxiliary_witness_words,
+                material.auxiliary_witness_words.len(),
+            );
+            let ark_proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+                profile,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof, &[])?;
+            Ok(TransactionProof {
+                nullifiers: context.public_inputs.nullifiers.clone(),
+                commitments: context.public_inputs.commitments.clone(),
+                balance_slots: context.public_inputs.balance_slots.clone(),
+                public_inputs: context.public_inputs.clone(),
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(context.serialized_public_inputs.clone()),
+            })
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let direct_material =
+                build_compact_binding_material_from_context(&context, witness, arithmetization)?;
+            if smallwood_witness_self_check_enabled() {
+                test_candidate_witness(
+                    arithmetization,
+                    &direct_material.public_statement.public_values,
+                    &direct_material.packed_expanded_witness,
+                    direct_material.public_statement.lppc_row_count as usize,
+                    direct_material.public_statement.lppc_packing_factor as usize,
+                    direct_material.public_statement.effective_constraint_degree,
+                    &direct_material.linear_constraints.term_offsets,
+                    &direct_material.linear_constraints.term_indices,
+                    &direct_material.linear_constraints.term_coefficients,
+                    &direct_material.linear_constraints.targets,
+                )?;
+            }
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &direct_material.public_statement.public_values,
+                direct_material.public_statement.lppc_row_count as usize,
+                direct_material.public_statement.lppc_packing_factor as usize,
+                direct_material.public_statement.effective_constraint_degree as usize,
+                &direct_material.linear_constraints.term_offsets,
+                &direct_material.linear_constraints.term_indices,
+                &direct_material.linear_constraints.term_coefficients,
+                &direct_material.linear_constraints.targets,
+            );
+            let ark_proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &direct_material.packed_expanded_witness,
+                &direct_material.transcript_binding,
+                profile,
+            )?;
+            let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof, &[])?;
+            Ok(TransactionProof {
+                nullifiers: context.public_inputs.nullifiers.clone(),
+                commitments: context.public_inputs.commitments.clone(),
+                balance_slots: context.public_inputs.balance_slots.clone(),
+                public_inputs: context.public_inputs.clone(),
+                backend: TxProofBackend::SmallwoodCandidate,
+                stark_proof: proof_bytes,
+                stark_public_inputs: Some(context.serialized_public_inputs.clone()),
+            })
+        }
+    }
+}
+
+pub fn projected_smallwood_candidate_proof_bytes(
+    witness: &TransactionWitness,
+) -> Result<usize, TransactionCircuitError> {
+    projected_smallwood_candidate_proof_bytes_for_arithmetization(
+        witness,
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+    )
+}
+
+pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<usize, TransactionCircuitError> {
+    projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profile(
+        witness,
+        arithmetization,
+        smallwood_no_grinding_profile_for_arithmetization(arithmetization),
+    )
+}
+
+pub fn projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profile(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<usize, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            let ark_proof_bytes =
+                projected_smallwood_backend_proof_bytes_with_profile_from_material(
+                    SmallwoodArithmetization::Bridge64V1,
+                    &material.public_statement,
+                    &material.linear_constraints,
+                    0,
+                    profile,
+                )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            let ark_proof_bytes =
+                projected_smallwood_backend_proof_bytes_with_profile_from_material(
+                    SmallwoodArithmetization::DirectPacked64V1,
+                    &material.public_statement,
+                    &material.linear_constraints,
+                    0,
+                    profile,
+                )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            let ark_proof_bytes =
+                projected_smallwood_backend_proof_bytes_with_profile_from_material(
+                    arithmetization,
+                    &material.public_statement,
+                    &material.linear_constraints,
+                    material.auxiliary_witness_words.len(),
+                    profile,
+                )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let material =
+                build_compact_binding_material_from_context(&context, witness, arithmetization)?;
+            let ark_proof_bytes =
+                projected_smallwood_backend_proof_bytes_with_profile_from_material(
+                    arithmetization,
+                    &material.public_statement,
+                    &material.linear_constraints,
+                    0,
+                    profile,
+                )?;
+            projected_wrapped_smallwood_candidate_proof_bytes(arithmetization, ark_proof_bytes, 0)
+        }
+    }
+}
+
+pub fn analyze_smallwood_candidate_profile_for_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodCandidateProfileAnalysisReport, TransactionCircuitError> {
+    let surface =
+        build_smallwood_candidate_profile_surface_for_arithmetization(witness, arithmetization)?;
+    analyze_smallwood_candidate_profile_surface(&surface, arithmetization, profile)
+}
+
+pub fn build_smallwood_candidate_profile_surface_for_arithmetization(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<SmallwoodCandidateProfileSurface, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let (public_statement, linear_constraints, auxiliary_witness_limb_count) = match arithmetization
+    {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            (material.public_statement, material.linear_constraints, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            (material.public_statement, material.linear_constraints, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            (
+                material.public_statement,
+                material.linear_constraints,
+                material.auxiliary_witness_words.len(),
+            )
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let material =
+                build_compact_binding_material_from_context(&context, witness, arithmetization)?;
+            (material.public_statement, material.linear_constraints, 0)
+        }
+    };
+    Ok(SmallwoodCandidateProfileSurface {
+        public_statement,
+        linear_constraints,
+        auxiliary_witness_limb_count,
+    })
+}
+
+pub fn analyze_smallwood_candidate_profile_surface(
+    surface: &SmallwoodCandidateProfileSurface,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodCandidateProfileAnalysisReport, TransactionCircuitError> {
+    let ark_proof_bytes = projected_smallwood_backend_proof_bytes_with_profile_from_material(
+        arithmetization,
+        &surface.public_statement,
+        &surface.linear_constraints,
+        surface.auxiliary_witness_limb_count,
+        profile,
+    )?;
+    let soundness = smallwood_candidate_soundness_report_from_material(
+        arithmetization,
+        &surface.public_statement,
+        &surface.linear_constraints,
+        surface.auxiliary_witness_limb_count,
+        profile,
+    )?;
+    Ok(SmallwoodCandidateProfileAnalysisReport {
+        arithmetization,
+        profile,
+        projected_total_bytes: projected_wrapped_smallwood_candidate_proof_bytes(
+            arithmetization,
+            ark_proof_bytes,
+            0,
+        )?,
+        soundness,
+    })
+}
+
+pub fn exact_smallwood_candidate_profile_report_from_witness(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodCandidateExactProfileReport, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let projected_total_bytes =
+        projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profile(
+            witness,
+            arithmetization,
+            profile,
+        )?;
+    let exact = exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
+        &context,
+        witness,
+        arithmetization,
+        profile,
+    )?;
+    let size_report = report_smallwood_candidate_proof_size(&exact.proof_bytes)?;
+    Ok(SmallwoodCandidateExactProfileReport {
+        arithmetization,
+        profile,
+        projected_total_bytes,
+        exact_total_bytes: exact.proof_bytes.len(),
+        exact_ark_proof_bytes: exact.ark_proof.len(),
+        size_report,
+    })
+}
+
+pub fn exact_smallwood_candidate_backend_opening_surface_report_from_witness(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodCandidateBackendOpeningSurfaceReport, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let structural_upper_bound_bytes =
+        projected_smallwood_candidate_proof_bytes_for_arithmetization_with_profile(
+            witness,
+            arithmetization,
+            profile,
+        )?;
+    let exact = exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
+        &context,
+        witness,
+        arithmetization,
+        profile,
+    )?;
+    let backend = match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            report_smallwood_backend_opening_surface_with_profile_v1(
+                &packed_statement,
+                &material.transcript_binding,
+                &exact.ark_proof,
+                profile,
+                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
+            )?
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            report_smallwood_backend_opening_surface_with_profile_v1(
+                &packed_statement,
+                &material.transcript_binding,
+                &exact.ark_proof,
+                profile,
+                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
+            )?
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.auxiliary_witness_words,
+                material.auxiliary_witness_words.len(),
+            );
+            report_smallwood_backend_opening_surface_with_profile_v1(
+                &packed_statement,
+                &material.transcript_binding,
+                &exact.ark_proof,
+                profile,
+                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
+            )?
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let material =
+                build_compact_binding_material_from_context(&context, witness, arithmetization)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            report_smallwood_backend_opening_surface_with_profile_v1(
+                &packed_statement,
+                &material.transcript_binding,
+                &exact.ark_proof,
+                profile,
+                crate::smallwood_engine::SmallwoodTranscriptBackend::Blake3,
+            )?
+        }
+    };
+    Ok(SmallwoodCandidateBackendOpeningSurfaceReport {
+        arithmetization,
+        profile,
+        structural_upper_bound_bytes,
+        exact_total_bytes: exact.proof_bytes.len(),
+        exact_ark_proof_bytes: exact.ark_proof.len(),
+        wrapper_bytes: exact
+            .proof_bytes
+            .len()
+            .saturating_sub(exact.ark_proof.len()),
+        backend,
+    })
+}
+
+pub fn project_smallwood_candidate_lvcs_planner_report_from_witness(
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodCandidateLvcsPlannerProjectionReport, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let planners = match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood LVCS planner projection only supports direct packed candidate statements",
+            ));
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            build_smallwood_candidate_lvcs_planner_entries(
+                arithmetization,
+                profile,
+                &packed_statement,
+                material.public_statement.public_values.len(),
+                0,
+            )?
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.auxiliary_witness_words,
+                material.auxiliary_witness_words.len(),
+            );
+            build_smallwood_candidate_lvcs_planner_entries(
+                arithmetization,
+                profile,
+                &packed_statement,
+                material.public_statement.public_values.len(),
+                material.auxiliary_witness_words.len(),
+            )?
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let shape =
+                compact_binding_shape_for_arithmetization(arithmetization).ok_or_else(|| {
+                    TransactionCircuitError::ConstraintViolationOwned(format!(
+                        "missing compact-binding shape for arithmetization {:?}",
+                        arithmetization
+                    ))
+                })?;
+            let material = build_packed_smallwood_frontend_material_from_context_with_shape(
+                &context,
+                witness,
+                shape,
+                arithmetization,
+            )?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            build_smallwood_candidate_lvcs_planner_entries(
+                arithmetization,
+                profile,
+                &packed_statement,
+                material.public_statement.public_values.len(),
+                0,
+            )?
+        }
+    };
+    Ok(SmallwoodCandidateLvcsPlannerProjectionReport {
+        arithmetization,
+        profile,
+        planners,
+    })
+}
+
+fn build_smallwood_candidate_lvcs_planner_entries(
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+    statement: &(dyn crate::smallwood_semantics::SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    auxiliary_witness_limb_count: usize,
+) -> Result<Vec<SmallwoodCandidateLvcsPlannerProjectionEntry>, TransactionCircuitError> {
+    [
+        SmallwoodLvcsPlannerGeometryKindV1::CurrentTiledRowsV1,
+        SmallwoodLvcsPlannerGeometryKindV1::SharedPackingRowsProjectionV1,
+    ]
+    .into_iter()
+    .map(|planner| {
+        let inner = crate::smallwood_engine::report_smallwood_lvcs_planner_projection_v1(
+            statement,
+            public_value_count,
+            auxiliary_witness_limb_count,
+            profile,
+            planner,
+        )?;
+        let projected_total_bytes = projected_wrapped_smallwood_candidate_proof_bytes(
+            arithmetization,
+            inner.projected_inner_proof_bytes,
+            0,
+        )?;
+        Ok::<_, TransactionCircuitError>(SmallwoodCandidateLvcsPlannerProjectionEntry {
+            planner,
+            projected_total_bytes,
+            inner,
+        })
+    })
+    .collect()
+}
+
+fn exact_smallwood_candidate_proof_artifacts_from_context_with_profile(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<ExactSmallwoodCandidateProofArtifacts, TransactionCircuitError> {
+    let ark_proof = match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let material = build_packed_smallwood_bridge_material_from_context(&context, witness)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                SMALLWOOD_BRIDGE_PACKING_FACTOR,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            let proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_witness_rows,
+                &material.transcript_binding,
+                profile,
+            )?;
+            verify_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.transcript_binding,
+                &proof,
+                profile,
+            )?;
+            proof
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let material =
+                build_packed_smallwood_frontend_material_from_context(&context, witness)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            let proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+                profile,
+            )?;
+            verify_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.transcript_binding,
+                &proof,
+                profile,
+            )?;
+            proof
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let material =
+                build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &material.auxiliary_witness_words,
+                material.auxiliary_witness_words.len(),
+            );
+            let proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+                profile,
+            )?;
+            verify_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.transcript_binding,
+                &proof,
+                profile,
+            )?;
+            proof
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let material =
+                build_compact_binding_material_from_context(&context, witness, arithmetization)?;
+            let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+            );
+            let proof = prove_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.packed_expanded_witness,
+                &material.transcript_binding,
+                profile,
+            )?;
+            verify_smallwood_backend_statement_with_profile(
+                &packed_statement,
+                &material.transcript_binding,
+                &proof,
+                profile,
+            )?;
+            proof
+        }
+    };
+    let proof_bytes = encode_smallwood_candidate_proof(arithmetization, ark_proof.clone(), &[])?;
+    Ok(ExactSmallwoodCandidateProofArtifacts {
+        ark_proof,
+        proof_bytes,
+    })
+}
+
+pub fn verify_smallwood_candidate_proof_bytes(
+    proof_bytes: &[u8],
+    pub_inputs: &transaction_core::p3_air::TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    let candidate = decode_smallwood_candidate_proof(proof_bytes)?;
+    if candidate.ark_proof.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate PCS/ARK proof bytes must not be empty",
+        ));
+    }
+    ensure_smallwood_version(version, version)?;
+    let profile = smallwood_no_grinding_profile_for_arithmetization(candidate.arithmetization);
+    let (public_statement, linear_constraints, auxiliary_witness_limb_count) = match candidate
+        .arithmetization
+    {
+        SmallwoodArithmetization::Bridge64V1 => {
+            let statement = build_packed_smallwood_bridge_public_statement(pub_inputs, version)?;
+            let constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodFrontendShape::bridge64_v1(),
+            );
+            (statement, constraints, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            let statement = build_direct_packed_smallwood_public_statement(pub_inputs, version)?;
+            let constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodFrontendShape::bridge64_v1(),
+            );
+            (statement, constraints, 0)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            let shape = compact_binding_shape_for_arithmetization(candidate.arithmetization)
+                .expect("inline-merkle arithmetization must have a shape");
+            let statement = build_packed_smallwood_bridge_public_statement_with_shape(
+                pub_inputs, version, shape,
+            )?;
+            let constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &statement,
+                shape,
+                MAX_INPUTS * MERKLE_TREE_DEPTH * 3,
+            );
+            (statement, constraints, MAX_INPUTS * MERKLE_TREE_DEPTH * 3)
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            let shape = compact_binding_shape_for_arithmetization(candidate.arithmetization)
+                .expect("compact-binding arithmetization must have a shape");
+            let statement = build_packed_smallwood_bridge_public_statement_with_shape(
+                pub_inputs, version, shape,
+            )?;
+            let constraints = build_packed_bridge_linear_constraints(&statement, shape);
+            (statement, constraints, 0)
+        }
+    };
+    if uses_inline_merkle_auxiliary(candidate.arithmetization) {
+        let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+            candidate.arithmetization,
+            &public_statement.public_values,
+            public_statement.lppc_row_count as usize,
+            public_statement.lppc_packing_factor as usize,
+            public_statement.effective_constraint_degree as usize,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+            &[],
+            auxiliary_witness_limb_count,
+        );
+        verify_smallwood_backend_statement_with_profile(
+            &packed_statement,
+            &smallwood_transcript_binding(&public_statement, version, candidate.arithmetization)?,
+            &candidate.ark_proof,
+            profile,
+        )?;
+    } else {
+        let packed_statement = crate::smallwood_semantics::PackedStatement::new(
+            candidate.arithmetization,
+            &public_statement.public_values,
+            public_statement.lppc_row_count as usize,
+            public_statement.lppc_packing_factor as usize,
+            public_statement.effective_constraint_degree as usize,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+        );
+        verify_smallwood_backend_statement_with_profile(
+            &packed_statement,
+            &smallwood_transcript_binding(&public_statement, version, candidate.arithmetization)?,
+            &candidate.ark_proof,
+            profile,
+        )?;
+    }
+    Ok(())
+}
+
+fn admit_smallwood_transaction_proof_wrapper(
+    input: TransactionProofWrapperAdmissionInput,
+    verifier_result: Result<(), TransactionCircuitError>,
+) -> Result<(), TransactionCircuitError> {
+    admit_shared_transaction_proof_wrapper(input, verifier_result)
+}
+
+pub fn verify_smallwood_candidate_transaction_proof(
+    proof: &TransactionProof,
+) -> Result<VerificationReport, TransactionCircuitError> {
+    let backend_supported = matches!(proof.backend, TxProofBackend::SmallwoodCandidate);
+    let p3_inputs =
+        transaction_proof_wrapper_public_inputs_for_admission(proof, backend_supported)?;
+    ensure_smallwood_version(proof.version_binding(), proof.version_binding())?;
+    if proof.nullifiers != proof.public_inputs.nullifiers {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate nullifier vector mismatch",
+        ));
+    }
+    if proof.commitments != proof.public_inputs.commitments {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate commitment vector mismatch",
+        ));
+    }
+    if proof.balance_slots != proof.public_inputs.balance_slots {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate balance slots mismatch",
+        ));
+    }
+    crate::proof::verify_balance_slots(proof).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood candidate public input validation failed: {err}"
+        ))
+    })?;
+    let verifier_result = verify_smallwood_candidate_proof_bytes(
+        &proof.stark_proof,
+        &p3_inputs,
+        proof.version_binding(),
+    );
+    admit_smallwood_transaction_proof_wrapper(
+        TransactionProofWrapperAdmissionInput {
+            exact_consumption: true,
+            canonical_reencode: true,
+            backend_supported,
+            proof_bytes_present: !proof.stark_proof.is_empty(),
+            serialized_public_inputs_present: proof.stark_public_inputs.is_some(),
+            public_inputs_valid: true,
+            nullifier_vector_agrees: proof.nullifiers == proof.public_inputs.nullifiers,
+            commitment_vector_agrees: proof.commitments == proof.public_inputs.commitments,
+            balance_slots_agree: true,
+            verifier_accepts: verifier_result.is_ok(),
+        },
+        verifier_result,
+    )?;
+    Ok(VerificationReport { verified: true })
+}
+
+pub fn smallwood_candidate_verifier_profile_material(
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Vec<u8> {
+    let profile = smallwood_no_grinding_profile_for_arithmetization(arithmetization);
+    let mut material = Vec::new();
+    material.extend_from_slice(SMALLWOOD_PUBLIC_STATEMENT_DOMAIN);
+    material.extend_from_slice(match arithmetization {
+        SmallwoodArithmetization::Bridge64V1 => b"candidate-smallwood-bridge-pcs-ark".as_slice(),
+        SmallwoodArithmetization::DirectPacked64V1 => {
+            b"candidate-smallwood-direct-packed-payload".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            b"candidate-smallwood-direct-packed-compact-bindings".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1 => {
+            b"candidate-smallwood-direct-packed-128-compact-bindings".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked16CompactBindingsV1 => {
+            b"candidate-smallwood-direct-packed-16-compact-bindings".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1 => {
+            b"candidate-smallwood-direct-packed-32-compact-bindings".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            b"candidate-smallwood-direct-packed-64-compact-bindings-skip-initial-mds".as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            b"candidate-smallwood-direct-packed-64-inline-merkle-compact-bindings-skip-initial-mds"
+                .as_slice()
+        }
+        SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            b"candidate-smallwood-direct-packed-128-inline-merkle-compact-bindings-skip-initial-mds"
+                .as_slice()
+        }
+    });
+    material.extend_from_slice(b"hegemon.blake3-field-xof.v1");
+    material.extend_from_slice(&version.circuit.to_le_bytes());
+    material.extend_from_slice(&version.crypto.to_le_bytes());
+    material.extend_from_slice(&(arithmetization as u64).to_le_bytes());
+    material.extend_from_slice(
+        &(smallwood_effective_constraint_degree_for_arithmetization(arithmetization) as u64)
+            .to_le_bytes(),
+    );
+    material.extend_from_slice(&(profile.rho as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.nb_opened_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.beta as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.opening_pow_bits as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.decs_nb_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.decs_nb_opened_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.decs_eta as u64).to_le_bytes());
+    material.extend_from_slice(&(profile.decs_pow_bits as u64).to_le_bytes());
+    material.extend_from_slice(&(POSEIDON2_WIDTH as u64).to_le_bytes());
+    material.extend_from_slice(&(POSEIDON2_RATE as u64).to_le_bytes());
+    material.extend_from_slice(&(POSEIDON2_STEPS as u64).to_le_bytes());
+    let poseidon_rows_per_permutation = compact_binding_shape_for_arithmetization(arithmetization)
+        .map(SmallwoodBridgeRowLayout::for_shape)
+        .unwrap_or_else(|| {
+            SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1())
+        })
+        .poseidon_rows_per_permutation();
+    material.extend_from_slice(&(poseidon_rows_per_permutation as u64).to_le_bytes());
+    material
+}
+
+pub fn build_smallwood_public_statement_from_witness(
+    witness: &TransactionWitness,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    Ok(build_smallwood_frontend_material(witness)?.public_statement)
+}
+
+pub fn build_packed_smallwood_public_statement_from_witness(
+    witness: &TransactionWitness,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    Ok(build_packed_smallwood_frontend_material(witness)?.public_statement)
+}
+
+pub fn build_packed_smallwood_frontend_material_from_witness(
+    witness: &TransactionWitness,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    build_packed_smallwood_frontend_material(witness)
+}
+
+pub fn build_packed_smallwood_frontend_material_with_shape_from_witness(
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_frontend_material_from_context_with_shape(
+        &context,
+        witness,
+        shape,
+        direct_packed_arithmetization_for_shape(shape),
+    )
+}
+
+pub fn build_packed_smallwood_bridge_material_from_witness(
+    witness: &TransactionWitness,
+) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    build_packed_smallwood_bridge_material(witness)
+}
+
+fn ensure_supported_smallwood_frontend_shape(
+    shape: &SmallwoodFrontendShape,
+) -> Result<(), TransactionCircuitError> {
+    if !matches!(
+        shape.lppc_packing_factor,
+        pf if pf == SMALLWOOD_BRIDGE_PACKING_FACTOR / 4
+            || pf == SMALLWOOD_BRIDGE_PACKING_FACTOR / 2
+            || pf == SMALLWOOD_BRIDGE_PACKING_FACTOR
+            || pf == SMALLWOOD_BRIDGE_PACKING_FACTOR * 2
+    ) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "unsupported SmallWood frontend packing factor {}, expected one of {}, {}, {}, or {} for the current engine",
+            shape.lppc_packing_factor,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR / 4,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR / 2,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR * 2
+        )));
+    }
+    match shape.public_binding_mode {
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+        | SmallwoodPublicBindingMode::CompactPublicBindingsV1 => {}
+    }
+    match shape.poseidon_layout {
+        SmallwoodPoseidonLayout::GroupedRowsV1
+        | SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1 => {}
+    }
+    Ok(())
+}
+
+fn compact_binding_shape_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> Option<SmallwoodFrontendShape> {
+    match arithmetization {
+        SmallwoodArithmetization::DirectPacked16CompactBindingsV1 => {
+            Some(SmallwoodFrontendShape::direct_packed16_compact_bindings_v1())
+        }
+        SmallwoodArithmetization::DirectPacked32CompactBindingsV1 => {
+            Some(SmallwoodFrontendShape::direct_packed32_compact_bindings_v1())
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsV1 => {
+            Some(SmallwoodFrontendShape::direct_packed64_compact_bindings_v1())
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 => {
+            Some(SmallwoodFrontendShape::direct_packed64_compact_bindings_skip_initial_mds_v1())
+        }
+        SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            Some(
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+            )
+        }
+        SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            Some(
+                SmallwoodFrontendShape::direct_packed128_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+            )
+        }
+        SmallwoodArithmetization::DirectPacked128CompactBindingsV1 => {
+            Some(SmallwoodFrontendShape::direct_packed128_compact_bindings_v1())
+        }
+        SmallwoodArithmetization::Bridge64V1 | SmallwoodArithmetization::DirectPacked64V1 => None,
+    }
+}
+
+fn direct_packed_arithmetization_for_shape(
+    shape: SmallwoodFrontendShape,
+) -> SmallwoodArithmetization {
+    match (
+        shape.public_binding_mode,
+        shape.merkle_aggregation_mode,
+        shape.lppc_packing_factor,
+    ) {
+        (
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) => SmallwoodArithmetization::DirectPacked64V1,
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            packing_factor,
+        ) if packing_factor == SMALLWOOD_BRIDGE_PACKING_FACTOR / 4 => {
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            packing_factor,
+        ) if packing_factor == SMALLWOOD_BRIDGE_PACKING_FACTOR / 2 => {
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) if matches!(
+            shape.poseidon_layout,
+            SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+        ) =>
+        {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) if matches!(
+            shape.poseidon_layout,
+            SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+        ) =>
+        {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) if matches!(
+            shape.poseidon_layout,
+            SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+        ) =>
+        {
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            packing_factor,
+        ) if packing_factor == SMALLWOOD_BRIDGE_PACKING_FACTOR * 2
+            && matches!(
+                shape.poseidon_layout,
+                SmallwoodPoseidonLayout::GroupedRowsSkipInitialMdsV1
+            ) =>
+        {
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+        }
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        ) => SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            packing_factor,
+        ) if packing_factor == SMALLWOOD_BRIDGE_PACKING_FACTOR * 2 => {
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1
+        }
+        (
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            _,
+        )
+        | (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::InlinePoseidonV1,
+            _,
+        )
+        | (
+            SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            _,
+        ) => SmallwoodArithmetization::DirectPacked64V1,
+        (
+            SmallwoodPublicBindingMode::CompactPublicBindingsV1,
+            SmallwoodMerkleAggregationMode::WitnessRowsV1,
+            _,
+        ) => unreachable!("unsupported compact SmallWood shape: {shape:?}"),
+    }
+}
+
+fn build_compact_binding_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let shape = compact_binding_shape_for_arithmetization(arithmetization).ok_or_else(|| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "expected compact-binding SmallWood arithmetization, got {arithmetization:?}"
+        ))
+    })?;
+    build_packed_smallwood_frontend_material_from_context_with_shape(
+        context,
+        witness,
+        shape,
+        arithmetization,
+    )
+}
+
+fn build_compact_aux_merkle_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<PackedSmallwoodAuxFrontendMaterial, TransactionCircuitError> {
+    let shape = compact_binding_shape_for_arithmetization(arithmetization).ok_or_else(|| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "expected inline-merkle compact-binding SmallWood arithmetization, got {arithmetization:?}"
+        ))
+    })?;
+    let mut material = build_packed_smallwood_frontend_material_from_context_with_shape(
+        context,
+        witness,
+        shape,
+        arithmetization,
+    )?;
+    let auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+        witness,
+        &material.public_statement.public_values,
+    )?;
+    material.linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+        &material.public_statement,
+        shape,
+        auxiliary_witness_words.len(),
+    );
+    Ok(PackedSmallwoodAuxFrontendMaterial {
+        public_statement: material.public_statement,
+        packed_expanded_witness: material.packed_expanded_witness,
+        linear_constraints: material.linear_constraints,
+        auxiliary_witness_words,
+        transcript_binding: material.transcript_binding,
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SmallwoodCandidateWrapperKind {
+    Current,
+    Legacy,
+}
+
+impl SmallwoodCandidateWrapperKind {
+    #[cfg(test)]
+    fn label(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+fn decode_exact_current_smallwood_candidate_proof(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+    let mut cursor = Cursor::new(proof_bytes);
+    let candidate: SmallwoodCandidateProof =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to decode smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper has trailing bytes",
+        ));
+    }
+    let canonical = bincode::serialize(&candidate).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize smallwood candidate proof wrapper: {err}"
+        ))
+    })?;
+    if canonical != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must use canonical serialization",
+        ));
+    }
+    if !candidate.auxiliary_witness_words.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must not carry auxiliary witness words",
+        ));
+    }
+    Ok(candidate)
+}
+
+fn decode_exact_legacy_smallwood_candidate_proof(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+    let mut cursor = Cursor::new(proof_bytes);
+    let legacy: LegacySmallwoodCandidateProof =
+        bincode::deserialize_from(&mut cursor).map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to decode legacy smallwood candidate proof wrapper: {err}"
+            ))
+        })?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "legacy smallwood candidate proof wrapper has trailing bytes",
+        ));
+    }
+    let canonical = bincode::serialize(&legacy).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to reserialize legacy smallwood candidate proof wrapper: {err}"
+        ))
+    })?;
+    if canonical != proof_bytes {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "legacy smallwood candidate proof wrapper must use canonical serialization",
+        ));
+    }
+    Ok(SmallwoodCandidateProof {
+        arithmetization: legacy.arithmetization,
+        ark_proof: legacy.ark_proof,
+        auxiliary_witness_words: Vec::new(),
+    })
+}
+
+fn decode_smallwood_candidate_proof_with_kind(
+    proof_bytes: &[u8],
+) -> Result<(SmallwoodCandidateProof, SmallwoodCandidateWrapperKind), TransactionCircuitError> {
+    match decode_exact_current_smallwood_candidate_proof(proof_bytes) {
+        Ok(candidate) => Ok((candidate, SmallwoodCandidateWrapperKind::Current)),
+        Err(err) => decode_exact_legacy_smallwood_candidate_proof(proof_bytes)
+            .map(|candidate| (candidate, SmallwoodCandidateWrapperKind::Legacy))
+            .map_err(|legacy_err| {
+                TransactionCircuitError::ConstraintViolationOwned(format!(
+                    "{err}; legacy decode also failed: {legacy_err}"
+                ))
+            }),
+    }
+}
+
+pub(crate) fn decode_smallwood_candidate_proof(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProof, TransactionCircuitError> {
+    decode_smallwood_candidate_proof_with_kind(proof_bytes).map(|(candidate, _)| candidate)
+}
+
+pub fn report_smallwood_candidate_proof_size(
+    proof_bytes: &[u8],
+) -> Result<SmallwoodCandidateProofSizeReport, TransactionCircuitError> {
+    let candidate = decode_smallwood_candidate_proof(proof_bytes)?;
+    let inner = report_smallwood_proof_size_v1(&candidate.ark_proof)?;
+    let wrapper_bytes = proof_bytes
+        .len()
+        .checked_sub(candidate.ark_proof.len())
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper length underflow",
+        ))?;
+    let accounted = wrapper_bytes
+        + inner.transcript_bytes
+        + inner.commitment_bytes
+        + inner.opened_values_bytes
+        + inner.opening_payload_bytes
+        + inner.other_bytes;
+    if accounted != proof_bytes.len() {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood candidate proof size report mismatch: accounted={accounted} total={}",
+            proof_bytes.len()
+        )));
+    }
+    Ok(SmallwoodCandidateProofSizeReport {
+        total_bytes: proof_bytes.len(),
+        wrapper_bytes,
+        ark_proof_bytes: candidate.ark_proof.len(),
+        transcript_bytes: inner.transcript_bytes,
+        commitment_bytes: inner.commitment_bytes,
+        opened_values_bytes: inner.opened_values_bytes,
+        opening_payload_bytes: inner.opening_payload_bytes,
+        other_bytes: inner.other_bytes,
+        arithmetization: candidate.arithmetization,
+        inner,
+    })
+}
+
+fn build_smallwood_frontend_material(
+    witness: &TransactionWitness,
+) -> Result<SmallwoodFrontendMaterial, TransactionCircuitError> {
+    witness.validate()?;
+    validate_native_merkle_membership(witness)?;
+    let public_inputs = witness.public_inputs()?;
+    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
+    let secret_witness = semantic_secret_witness_rows(witness, &public_inputs_p3)?;
+    let poseidon_rows = poseidon_subtrace_rows(witness)?;
+    let public_statement = build_smallwood_public_statement(&public_inputs_p3, witness.version)?;
+    let semantic_rows = expanded_witness_words(
+        &public_statement.public_values,
+        &secret_witness,
+        &poseidon_rows,
+    );
+    let padded_expanded_witness = semantic_rows;
+    let linear_constraints = build_coordinate_linear_constraints((
+        build_smallwood_public_selector_indices(public_statement.public_values.len()),
+        public_statement.public_values.clone(),
+    ));
+    let transcript_binding = smallwood_transcript_binding(
+        &public_statement,
+        witness.version,
+        SmallwoodArithmetization::DirectPacked64V1,
+    )?;
+    Ok(SmallwoodFrontendMaterial {
+        public_inputs,
+        serialized_public_inputs,
+        padded_expanded_witness,
+        linear_constraints,
+        public_statement,
+        transcript_binding,
+    })
+}
+
+fn build_packed_smallwood_frontend_material(
+    witness: &TransactionWitness,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_frontend_material_from_context(&context, witness)
+}
+
+fn build_packed_smallwood_frontend_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    build_packed_smallwood_frontend_material_from_context_with_shape(
+        context,
+        witness,
+        SmallwoodFrontendShape::bridge64_v1(),
+        SmallwoodArithmetization::DirectPacked64V1,
+    )
+}
+
+fn build_packed_smallwood_frontend_material_from_context_with_shape(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<PackedSmallwoodFrontendMaterial, TransactionCircuitError> {
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    let semantic_secret_rows = semantic_secret_witness_rows_with_shape_and_auth(
+        &context.witness,
+        &context.public_inputs_p3,
+        shape,
+        &context.auth,
+    )?;
+    let packed_expanded_witness = packed_bridge_witness_rows(
+        &semantic_secret_rows,
+        &context.bridge_poseidon_rows,
+        layout,
+        shape.lppc_packing_factor,
+    );
+    let row_count = packed_expanded_witness.len() / shape.lppc_packing_factor;
+    let public_statement = SmallwoodPublicStatement {
+        public_values: context.public_values.clone(),
+        public_value_count: context.public_values.len() as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
+        lppc_row_count: row_count as u32,
+        poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
+        poseidon_state_row_count: (context.bridge_poseidon_rows.len()
+            * layout.poseidon_rows_per_permutation()) as u32,
+        expanded_witness_len: packed_expanded_witness.len() as u32,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
+        effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
+            arithmetization,
+        ),
+    };
+    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement, shape);
+    let transcript_binding =
+        smallwood_transcript_binding(&public_statement, witness.version, arithmetization)?;
+    Ok(PackedSmallwoodFrontendMaterial {
+        public_statement,
+        packed_expanded_witness,
+        linear_constraints,
+        transcript_binding,
+    })
+}
+
+fn build_packed_smallwood_bridge_material(
+    witness: &TransactionWitness,
+) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    build_packed_smallwood_bridge_material_from_context(&context, witness)
+}
+
+fn build_packed_smallwood_bridge_material_from_context(
+    context: &SmallwoodWitnessContext,
+    witness: &TransactionWitness,
+) -> Result<PackedBridgeSmallwoodFrontendMaterial, TransactionCircuitError> {
+    let shape = SmallwoodFrontendShape::bridge64_v1();
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    let packed_witness_rows = packed_bridge_witness_rows(
+        &semantic_secret_witness_rows_with_shape_and_auth(
+            &context.witness,
+            &context.public_inputs_p3,
+            shape,
+            &context.auth,
+        )?,
+        &context.bridge_poseidon_rows,
+        layout,
+        shape.lppc_packing_factor,
+    );
+    let row_count = packed_witness_rows.len() / shape.lppc_packing_factor;
+    let public_statement = SmallwoodPublicStatement {
+        public_values: context.public_values.clone(),
+        public_value_count: context.public_values.len() as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
+        lppc_row_count: row_count as u32,
+        poseidon_permutation_count: context.bridge_poseidon_rows.len() as u32,
+        poseidon_state_row_count: (context.bridge_poseidon_rows.len()
+            * layout.poseidon_rows_per_permutation()) as u32,
+        expanded_witness_len: packed_witness_rows.len() as u32,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
+        effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
+            SmallwoodArithmetization::Bridge64V1,
+        ),
+    };
+    let linear_constraints = build_packed_bridge_linear_constraints(&public_statement, shape);
+    let transcript_binding = smallwood_transcript_binding(
+        &public_statement,
+        witness.version,
+        SmallwoodArithmetization::Bridge64V1,
+    )?;
+    Ok(PackedBridgeSmallwoodFrontendMaterial {
+        public_inputs: context.public_inputs.clone(),
+        serialized_public_inputs: context.serialized_public_inputs.clone(),
+        public_statement,
+        packed_witness_rows,
+        linear_constraints,
+        transcript_binding,
+    })
+}
+
+fn build_smallwood_witness_context(
+    witness: &TransactionWitness,
+) -> Result<SmallwoodWitnessContext, TransactionCircuitError> {
+    build_smallwood_witness_context_with_auth(witness, &SmallwoodPrivateAuthWitness::default())
+}
+
+fn build_smallwood_witness_context_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<SmallwoodWitnessContext, TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
+    witness.validate()?;
+    validate_native_merkle_membership(witness)?;
+    let public_inputs = smallwood_public_inputs_with_auth(witness, auth)?;
+    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
+    let public_values =
+        smallwood_public_statement_values_for_p3(&public_inputs_p3, witness.version);
+    let bridge_poseidon_rows = poseidon_subtrace_rows_with_auth(witness, &public_values, auth)?;
+    Ok(SmallwoodWitnessContext {
+        witness: witness.clone(),
+        auth: auth.clone(),
+        public_inputs,
+        serialized_public_inputs,
+        public_inputs_p3,
+        public_values,
+        bridge_poseidon_rows,
+    })
+}
+
+fn smallwood_public_inputs_with_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<TransactionPublicInputs, TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
+    let (inputs, input_flags) = padded_inputs(&witness.inputs);
+    let resolved = resolve_smallwood_private_auth(witness, auth, input_flags, [Felt::ZERO; 6])?;
+    let mut nullifiers = Vec::with_capacity(MAX_INPUTS);
+    for input in 0..MAX_INPUTS {
+        if input_flags[input] {
+            let prf = Felt::from_u64(resolved.input_prfs[input]);
+            nullifiers.push(crate::hashing_pq::felts_to_bytes48(
+                &crate::hashing_pq::nullifier(prf, &inputs[input].note.rho, inputs[input].position),
+            ));
+        } else {
+            nullifiers.push([0u8; 48]);
+        }
+    }
+    let commitments = {
+        let mut list: Vec<[u8; 48]> = witness
+            .outputs
+            .iter()
+            .map(|note| crate::hashing_pq::felts_to_bytes48(&note.note.commitment()))
+            .collect();
+        list.resize(MAX_OUTPUTS, [0u8; 48]);
+        list
+    };
+    let ciphertext_hashes = {
+        let mut list = witness.ciphertext_hashes.clone();
+        list.resize(MAX_OUTPUTS, [0u8; 48]);
+        list
+    };
+    TransactionPublicInputs::new(
+        witness.merkle_root,
+        nullifiers,
+        commitments,
+        ciphertext_hashes,
+        witness.balance_slots()?,
+        witness.fee,
+        witness.value_balance,
+        witness.stablecoin.clone(),
+        witness.version,
+    )
+}
+
+fn validate_smallwood_private_auth_shape(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<(), TransactionCircuitError> {
+    match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => Ok(()),
+        SmallwoodPrivateAuthMode::ApprovalStep => {
+            if witness.inputs.len() != MAX_INPUTS || witness.outputs.is_empty() {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "private multisig approval requires current accumulator input, signer input, and next accumulator output",
+                ));
+            }
+            Ok(())
+        }
+        SmallwoodPrivateAuthMode::FinalThresholdSpend => {
+            if witness.inputs.len() != MAX_INPUTS {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "private multisig final spend requires value-lock input and threshold accumulator input",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+pub fn smallwood_private_auth_intent_digest_bytes(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<[u8; 48], TransactionCircuitError> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
+    witness.validate()?;
+    let public_inputs = smallwood_public_inputs_with_auth(witness, auth)?;
+    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
+    let public_values =
+        smallwood_public_statement_values_for_p3(&public_inputs_p3, witness.version);
+    Ok(felts_to_bytes48(&smallwood_statement_digest(
+        &public_values,
+    )))
+}
+
+pub fn smallwood_public_statement_values_for_p3(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Vec<u64> {
+    public_inputs
+        .to_vec()
+        .into_iter()
+        .map(|felt| felt.as_canonical_u64())
+        .chain([u64::from(version.circuit), u64::from(version.crypto)])
+        .collect()
+}
+
+#[allow(dead_code)]
+fn build_packed_smallwood_bridge_public_statement(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    build_packed_smallwood_bridge_public_statement_with_shape(
+        public_inputs,
+        version,
+        SmallwoodFrontendShape::bridge64_v1(),
+    )
+}
+
+#[allow(dead_code)]
+fn build_packed_smallwood_bridge_public_statement_with_shape(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+    shape: SmallwoodFrontendShape,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    let public_values = smallwood_public_statement_values_for_p3(public_inputs, version);
+    if public_values.len() != SMALLWOOD_BASE_PUBLIC_VALUE_COUNT {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "unexpected smallwood bridge public value count {}, expected {}",
+            public_values.len(),
+            SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+        )));
+    }
+    let poseidon_permutation_count = smallwood_poseidon_permutation_count();
+    let poseidon_group_count = smallwood_bridge_poseidon_group_count(
+        poseidon_permutation_count,
+        shape.lppc_packing_factor,
+    );
+    let lppc_row_count = SMALLWOOD_PUBLIC_ROWS
+        + layout.secret_witness_rows()
+        + SMALLWOOD_LANE_SELECTOR_ROWS
+        + (poseidon_group_count * layout.poseidon_rows_per_permutation() * POSEIDON2_WIDTH);
+    Ok(SmallwoodPublicStatement {
+        public_values,
+        public_value_count: SMALLWOOD_BASE_PUBLIC_VALUE_COUNT as u32,
+        raw_witness_len: layout.secret_witness_rows() as u32,
+        lppc_row_count: lppc_row_count as u32,
+        poseidon_permutation_count: poseidon_permutation_count as u32,
+        poseidon_state_row_count: (poseidon_permutation_count
+            * layout.poseidon_rows_per_permutation()) as u32,
+        expanded_witness_len: (lppc_row_count * shape.lppc_packing_factor) as u32,
+        lppc_packing_factor: shape.lppc_packing_factor as u16,
+        effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
+            direct_packed_arithmetization_for_shape(shape),
+        ),
+    })
+}
+
+fn build_smallwood_public_statement(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+    let public_values = smallwood_public_statement_values_for_p3(public_inputs, version);
+
+    let raw_witness_len = layout.secret_witness_rows();
+    let poseidon_permutation_count = smallwood_poseidon_permutation_count();
+    let poseidon_state_row_count =
+        poseidon_permutation_count * layout.poseidon_rows_per_permutation();
+    let semantic_row_count =
+        public_values.len() + raw_witness_len + (poseidon_state_row_count * POSEIDON2_WIDTH);
+    let expanded_witness_len = semantic_row_count * SMALLWOOD_LPPC_PACKING_FACTOR;
+    let lppc_row_count = semantic_row_count;
+
+    Ok(SmallwoodPublicStatement {
+        public_value_count: public_values.len() as u32,
+        public_values,
+        raw_witness_len: raw_witness_len as u32,
+        lppc_row_count: lppc_row_count as u32,
+        poseidon_permutation_count: poseidon_permutation_count as u32,
+        poseidon_state_row_count: poseidon_state_row_count as u32,
+        expanded_witness_len: expanded_witness_len as u32,
+        lppc_packing_factor: SMALLWOOD_LPPC_PACKING_FACTOR as u16,
+        effective_constraint_degree: SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+    })
+}
+
+fn build_direct_packed_smallwood_public_statement(
+    public_inputs: &TransactionPublicInputsP3,
+    version: VersionBinding,
+) -> Result<SmallwoodPublicStatement, TransactionCircuitError> {
+    build_packed_smallwood_bridge_public_statement(public_inputs, version)
+}
+
+fn build_smallwood_public_selector_indices(public_value_count: usize) -> Vec<u32> {
+    (0..public_value_count as u32).collect()
+}
+
+fn build_coordinate_linear_constraints(
+    selectors: (Vec<u32>, Vec<u64>),
+) -> SmallwoodLinearConstraints {
+    let (indices, targets) = selectors;
+    let term_offsets = (0..=indices.len() as u32).collect();
+    let term_coefficients = vec![1u64; indices.len()];
+    SmallwoodLinearConstraints {
+        term_offsets,
+        term_indices: indices,
+        term_coefficients,
+        targets,
+    }
+}
+
+fn push_linear_constraint(
+    constraints: &mut SmallwoodLinearConstraints,
+    terms: &[(u32, u64)],
+    target: u64,
+) {
+    for (index, coefficient) in terms {
+        constraints.term_indices.push(*index);
+        constraints.term_coefficients.push(*coefficient);
+    }
+    constraints
+        .term_offsets
+        .push(constraints.term_indices.len() as u32);
+    constraints.targets.push(target);
+}
+
+fn push_bridge_constraint(
+    constraints: &mut SmallwoodLinearConstraints,
+    packing_factor: usize,
+    terms: &[(usize, usize, u64)],
+    target: u64,
+) {
+    let mapped = terms
+        .iter()
+        .map(|(row, lane, coeff)| (packed_bridge_index(*row, *lane, packing_factor), *coeff))
+        .collect::<Vec<_>>();
+    push_linear_constraint(constraints, &mapped, target);
+}
+
+fn build_packed_bridge_linear_constraints(
+    statement: &SmallwoodPublicStatement,
+    shape: SmallwoodFrontendShape,
+) -> SmallwoodLinearConstraints {
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    let packing_factor = statement.lppc_packing_factor as usize;
+    let secret_row_start = SMALLWOOD_PUBLIC_ROWS;
+    let secret_row_count = statement.raw_witness_len as usize;
+    let neg_one = (transaction_core::constants::FIELD_MODULUS as u64).wrapping_sub(1);
+    let neg_coeff = |value: u64| {
+        if value == 0 {
+            0
+        } else {
+            (transaction_core::constants::FIELD_MODULUS as u64).wrapping_sub(value)
+        }
+    };
+
+    let mut constraints = SmallwoodLinearConstraints {
+        term_offsets: vec![0],
+        term_indices: Vec::new(),
+        term_coefficients: Vec::new(),
+        targets: Vec::new(),
+    };
+
+    for row in 0..secret_row_count {
+        let row_base = ((secret_row_start + row) * packing_factor) as u32;
+        for lane in 1..packing_factor {
+            push_linear_constraint(
+                &mut constraints,
+                &[(row_base + lane as u32, 1), (row_base, neg_one)],
+                0,
+            );
+        }
+    }
+
+    let push_bridge_constant =
+        |constraints: &mut SmallwoodLinearConstraints, row: usize, lane: usize, target: u64| {
+            push_bridge_constraint(constraints, packing_factor, &[(row, lane, 1)], target);
+        };
+    let poseidon_row = |permutation: usize, step_row: usize, limb: usize| {
+        bridge_poseidon_row(packing_factor, layout, permutation, step_row, limb)
+    };
+    let permutation_lane =
+        |permutation: usize| packed_bridge_permutation_lane(permutation, packing_factor);
+    let push_poseidon_fresh_frame = |constraints: &mut SmallwoodLinearConstraints,
+                                     permutation: usize| {
+        let lane = permutation_lane(permutation);
+        for limb in 6..(POSEIDON2_WIDTH - 1) {
+            push_bridge_constant(constraints, poseidon_row(permutation, 0, limb), lane, 0);
+        }
+        push_bridge_constant(
+            constraints,
+            poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+            lane,
+            1,
+        );
+    };
+    let push_poseidon_continuation = |constraints: &mut SmallwoodLinearConstraints,
+                                      prev_permutation: usize,
+                                      permutation: usize| {
+        let prev_lane = permutation_lane(prev_permutation);
+        let lane = permutation_lane(permutation);
+        for limb in 6..POSEIDON2_WIDTH {
+            push_bridge_constraint(
+                constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(permutation, 0, limb), lane, 1),
+                    (
+                        poseidon_row(prev_permutation, layout.poseidon_last_row(), limb),
+                        prev_lane,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
+    };
+    let merkle_challenge_terms = |challenge: u64,
+                                  permutation: usize,
+                                  subtract_prev: Option<usize>|
+     -> Vec<(usize, usize, u64)> {
+        let lane = permutation_lane(permutation);
+        let mut power = 1u64;
+        let mut terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES * 2);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            terms.push((poseidon_row(permutation, 0, limb), lane, neg_coeff(power)));
+            if let Some(prev) = subtract_prev {
+                let prev_lane = permutation_lane(prev);
+                terms.push((
+                    poseidon_row(prev, layout.poseidon_last_row(), limb),
+                    prev_lane,
+                    power,
+                ));
+            }
+            power = mul_mod_u64(power, challenge);
+        }
+        terms
+    };
+
+    let prf_permutation = bridge_prf_permutation();
+    let prf_lane = permutation_lane(prf_permutation);
+    push_bridge_constant(
+        &mut constraints,
+        poseidon_row(prf_permutation, 0, 4),
+        prf_lane,
+        0,
+    );
+    push_bridge_constant(
+        &mut constraints,
+        poseidon_row(prf_permutation, 0, 5),
+        prf_lane,
+        0,
+    );
+    for limb in 6..(POSEIDON2_WIDTH - 1) {
+        push_bridge_constant(
+            &mut constraints,
+            poseidon_row(prf_permutation, 0, limb),
+            prf_lane,
+            0,
+        );
+    }
+    push_bridge_constant(
+        &mut constraints,
+        poseidon_row(prf_permutation, 0, POSEIDON2_WIDTH - 1),
+        prf_lane,
+        1,
+    );
+    for limb in 0..5 {
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (bridge_auth_legacy_digest_row(layout, limb), prf_lane, 1),
+                (
+                    poseidon_row(prf_permutation, layout.poseidon_last_row(), limb),
+                    prf_lane,
+                    neg_one,
+                ),
+            ],
+            0,
+        );
+    }
+
+    let bind_digest_output = |constraints: &mut SmallwoodLinearConstraints,
+                              digest_row: fn(SmallwoodBridgeRowLayout, usize) -> usize,
+                              last_permutation: usize,
+                              limbs: usize| {
+        let lane = permutation_lane(last_permutation);
+        for limb in 0..limbs {
+            push_bridge_constraint(
+                constraints,
+                packing_factor,
+                &[
+                    (digest_row(layout, limb), lane, 1),
+                    (
+                        poseidon_row(last_permutation, layout.poseidon_last_row(), limb),
+                        lane,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
+    };
+    bind_digest_output(
+        &mut constraints,
+        bridge_auth_statement_digest_row,
+        bridge_auth_intent_permutation(SMALLWOOD_AUTH_INTENT_PERMUTATIONS - 1),
+        SMALLWOOD_WORDS_PER_48_BYTES,
+    );
+    for chunk in 0..SMALLWOOD_AUTH_INTENT_PERMUTATIONS {
+        let permutation = bridge_auth_intent_permutation(chunk);
+        let lane = permutation_lane(permutation);
+        for limb in 0..POSEIDON2_RATE {
+            let public_idx = chunk * POSEIDON2_RATE + limb;
+            let raw_public_value = statement
+                .public_values
+                .get(public_idx)
+                .copied()
+                .unwrap_or(0);
+            let public_value = smallwood_intent_public_value(
+                &statement.public_values,
+                public_idx,
+                raw_public_value,
+            );
+            if chunk == 0 {
+                let target = if limb == 0 {
+                    add_mod_u64(SMALLWOOD_AUTH_INTENT_DOMAIN_TAG, public_value)
+                } else {
+                    public_value
+                };
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    target,
+                );
+            } else {
+                let prev = bridge_auth_intent_permutation(chunk - 1);
+                let prev_lane = permutation_lane(prev);
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    public_value,
+                );
+            }
+        }
+        if chunk == 0 {
+            for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                lane,
+                1,
+            );
+        } else {
+            let prev = bridge_auth_intent_permutation(chunk - 1);
+            let prev_lane = permutation_lane(prev);
+            for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    0,
+                );
+            }
+        }
+    }
+    let policy_input_row = |input_idx: usize| -> Option<usize> {
+        if input_idx == 0 {
+            Some(bridge_auth_threshold_row(layout))
+        } else if input_idx == 1 {
+            Some(bridge_auth_signer_count_row(layout))
+        } else if input_idx < SMALLWOOD_AUTH_POLICY_INPUTS {
+            Some(bridge_auth_policy_signer_row(layout, input_idx - 2))
+        } else {
+            None
+        }
+    };
+    for chunk in 0..SMALLWOOD_AUTH_POLICY_PERMUTATIONS {
+        let permutation = bridge_auth_policy_permutation(chunk);
+        let lane = permutation_lane(permutation);
+        for limb in 0..POSEIDON2_RATE {
+            let input_idx = chunk * POSEIDON2_RATE + limb;
+            match (chunk, policy_input_row(input_idx)) {
+                (0, Some(row)) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (row, lane, neg_one),
+                        ],
+                        target,
+                    );
+                }
+                (0, None) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constant(
+                        &mut constraints,
+                        poseidon_row(permutation, 0, limb),
+                        lane,
+                        target,
+                    );
+                }
+                (_, Some(row)) => {
+                    let prev = bridge_auth_policy_permutation(chunk - 1);
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                            (row, lane, neg_one),
+                        ],
+                        0,
+                    );
+                }
+                (_, None) => {
+                    let prev = bridge_auth_policy_permutation(chunk - 1);
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                        ],
+                        0,
+                    );
+                }
+            }
+        }
+        if chunk == 0 {
+            for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                lane,
+                1,
+            );
+        } else {
+            let prev = bridge_auth_policy_permutation(chunk - 1);
+            let prev_lane = permutation_lane(prev);
+            for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    0,
+                );
+            }
+        }
+    }
+    bind_digest_output(
+        &mut constraints,
+        bridge_auth_current_digest_row,
+        bridge_auth_current_permutation(SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS - 1),
+        SMALLWOOD_WORDS_PER_48_BYTES,
+    );
+    bind_digest_output(
+        &mut constraints,
+        bridge_auth_next_digest_row,
+        bridge_auth_next_permutation(SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS - 1),
+        SMALLWOOD_WORDS_PER_48_BYTES,
+    );
+    bind_digest_output(
+        &mut constraints,
+        bridge_auth_value_lock_digest_row,
+        bridge_auth_value_lock_permutation(SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS - 1),
+        SMALLWOOD_WORDS_PER_48_BYTES,
+    );
+
+    for chunk in 0..SMALLWOOD_AUTH_VALUE_LOCK_PERMUTATIONS {
+        let permutation = bridge_auth_value_lock_permutation(chunk);
+        let lane = permutation_lane(permutation);
+        let value_lock_input_row = |input_idx: usize| -> Option<usize> {
+            if input_idx < SMALLWOOD_WORDS_PER_48_BYTES {
+                Some(bridge_auth_policy_row(layout, input_idx))
+            } else if input_idx < SMALLWOOD_AUTH_VALUE_LOCK_INPUTS {
+                Some(bridge_auth_intent_row(
+                    layout,
+                    input_idx - SMALLWOOD_WORDS_PER_48_BYTES,
+                ))
+            } else {
+                None
+            }
+        };
+        for limb in 0..POSEIDON2_RATE {
+            let input_idx = chunk * POSEIDON2_RATE + limb;
+            match (chunk, value_lock_input_row(input_idx)) {
+                (0, Some(row)) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (row, lane, neg_one),
+                        ],
+                        target,
+                    );
+                }
+                (0, None) => {
+                    let target = if limb == 0 {
+                        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG
+                    } else {
+                        0
+                    };
+                    push_bridge_constant(
+                        &mut constraints,
+                        poseidon_row(permutation, 0, limb),
+                        lane,
+                        target,
+                    );
+                }
+                (_, Some(row)) => {
+                    let prev = permutation - 1;
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                            (row, lane, neg_one),
+                        ],
+                        0,
+                    );
+                }
+                (_, None) => {
+                    let prev = permutation - 1;
+                    let prev_lane = permutation_lane(prev);
+                    push_bridge_constraint(
+                        &mut constraints,
+                        packing_factor,
+                        &[
+                            (poseidon_row(permutation, 0, limb), lane, 1),
+                            (
+                                poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                prev_lane,
+                                neg_one,
+                            ),
+                        ],
+                        0,
+                    );
+                }
+            }
+        }
+        if chunk == 0 {
+            for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                push_bridge_constant(
+                    &mut constraints,
+                    poseidon_row(permutation, 0, limb),
+                    lane,
+                    0,
+                );
+            }
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                lane,
+                1,
+            );
+        } else {
+            let prev = permutation - 1;
+            let prev_lane = permutation_lane(prev);
+            for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &[
+                        (poseidon_row(permutation, 0, limb), lane, 1),
+                        (
+                            poseidon_row(prev, layout.poseidon_last_row(), limb),
+                            prev_lane,
+                            neg_one,
+                        ),
+                    ],
+                    0,
+                );
+            }
+        }
+    }
+
+    let bind_accumulator_preimage =
+        |constraints: &mut SmallwoodLinearConstraints,
+         first_permutation: usize,
+         count_row: usize,
+         slot_row: fn(SmallwoodBridgeRowLayout, usize) -> usize| {
+            let accumulator_input_row = |input_idx: usize| -> Option<usize> {
+                if input_idx < SMALLWOOD_WORDS_PER_48_BYTES {
+                    Some(bridge_auth_policy_row(layout, input_idx))
+                } else if input_idx < SMALLWOOD_WORDS_PER_48_BYTES * 2 {
+                    Some(bridge_auth_intent_row(
+                        layout,
+                        input_idx - SMALLWOOD_WORDS_PER_48_BYTES,
+                    ))
+                } else if input_idx == SMALLWOOD_WORDS_PER_48_BYTES * 2 {
+                    Some(bridge_auth_threshold_row(layout))
+                } else if input_idx == SMALLWOOD_WORDS_PER_48_BYTES * 2 + 1 {
+                    Some(bridge_auth_signer_count_row(layout))
+                } else if input_idx == SMALLWOOD_WORDS_PER_48_BYTES * 2 + 2 {
+                    Some(count_row)
+                } else if input_idx < SMALLWOOD_AUTH_ACCUMULATOR_INPUTS {
+                    Some(slot_row(
+                        layout,
+                        input_idx - (SMALLWOOD_WORDS_PER_48_BYTES * 2 + 3),
+                    ))
+                } else {
+                    None
+                }
+            };
+            for chunk in 0..SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS {
+                let permutation = first_permutation + chunk;
+                let lane = permutation_lane(permutation);
+                for limb in 0..POSEIDON2_RATE {
+                    let input_idx = chunk * POSEIDON2_RATE + limb;
+                    match (chunk, accumulator_input_row(input_idx)) {
+                        (0, Some(row)) => {
+                            let target = if limb == 0 {
+                                SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG
+                            } else {
+                                0
+                            };
+                            push_bridge_constraint(
+                                constraints,
+                                packing_factor,
+                                &[
+                                    (poseidon_row(permutation, 0, limb), lane, 1),
+                                    (row, lane, neg_one),
+                                ],
+                                target,
+                            );
+                        }
+                        (0, None) => {
+                            let target = if limb == 0 {
+                                SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG
+                            } else {
+                                0
+                            };
+                            push_bridge_constant(
+                                constraints,
+                                poseidon_row(permutation, 0, limb),
+                                lane,
+                                target,
+                            );
+                        }
+                        (_, Some(row)) => {
+                            let prev = permutation - 1;
+                            let prev_lane = permutation_lane(prev);
+                            push_bridge_constraint(
+                                constraints,
+                                packing_factor,
+                                &[
+                                    (poseidon_row(permutation, 0, limb), lane, 1),
+                                    (
+                                        poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                        prev_lane,
+                                        neg_one,
+                                    ),
+                                    (row, lane, neg_one),
+                                ],
+                                0,
+                            );
+                        }
+                        (_, None) => {
+                            let prev = permutation - 1;
+                            let prev_lane = permutation_lane(prev);
+                            push_bridge_constraint(
+                                constraints,
+                                packing_factor,
+                                &[
+                                    (poseidon_row(permutation, 0, limb), lane, 1),
+                                    (
+                                        poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                        prev_lane,
+                                        neg_one,
+                                    ),
+                                ],
+                                0,
+                            );
+                        }
+                    }
+                }
+                if chunk == 0 {
+                    for limb in POSEIDON2_RATE..(POSEIDON2_WIDTH - 1) {
+                        push_bridge_constant(
+                            constraints,
+                            poseidon_row(permutation, 0, limb),
+                            lane,
+                            0,
+                        );
+                    }
+                    push_bridge_constant(
+                        constraints,
+                        poseidon_row(permutation, 0, POSEIDON2_WIDTH - 1),
+                        lane,
+                        1,
+                    );
+                } else {
+                    let prev = permutation - 1;
+                    let prev_lane = permutation_lane(prev);
+                    for limb in POSEIDON2_RATE..POSEIDON2_WIDTH {
+                        push_bridge_constraint(
+                            constraints,
+                            packing_factor,
+                            &[
+                                (poseidon_row(permutation, 0, limb), lane, 1),
+                                (
+                                    poseidon_row(prev, layout.poseidon_last_row(), limb),
+                                    prev_lane,
+                                    neg_one,
+                                ),
+                            ],
+                            0,
+                        );
+                    }
+                }
+            }
+        };
+    bind_accumulator_preimage(
+        &mut constraints,
+        bridge_auth_current_permutation(0),
+        bridge_auth_count_row(layout),
+        bridge_auth_slot_row,
+    );
+    bind_accumulator_preimage(
+        &mut constraints,
+        bridge_auth_next_permutation(0),
+        bridge_auth_next_count_row(layout),
+        bridge_auth_next_slot_row,
+    );
+
+    for input in 0..MAX_INPUTS {
+        if statement.public_values[PUB_INPUT_FLAG0 + input] == 0 {
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                push_linear_constraint(
+                    &mut constraints,
+                    &[],
+                    statement.public_values
+                        [PUB_NULLIFIERS + input * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                );
+            }
+            continue;
+        }
+        let commitment0 = bridge_input_commitment_permutation(input, 0);
+        let commitment1 = bridge_input_commitment_permutation(input, 1);
+        let commitment2 = bridge_input_commitment_permutation(input, 2);
+        let lane0 = permutation_lane(commitment0);
+        let lane1 = permutation_lane(commitment1);
+        let lane2 = permutation_lane(commitment2);
+
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (poseidon_row(commitment0, 0, 0), lane0, 1),
+                (bridge_row_input_value(layout, input), lane0, neg_one),
+            ],
+            NOTE_DOMAIN_TAG,
+        );
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (poseidon_row(commitment0, 0, 1), lane0, 1),
+                (bridge_row_input_asset(layout, input), lane0, neg_one),
+            ],
+            0,
+        );
+        push_poseidon_fresh_frame(&mut constraints, commitment0);
+        push_poseidon_continuation(&mut constraints, commitment0, commitment1);
+        push_poseidon_continuation(&mut constraints, commitment1, commitment2);
+        for limb in 0..4 {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(commitment2, 0, 2 + limb), lane2, 1),
+                    (
+                        poseidon_row(commitment1, layout.poseidon_last_row(), 2 + limb),
+                        lane1,
+                        neg_one,
+                    ),
+                    (
+                        bridge_auth_input_key_row(layout, input, limb),
+                        lane2,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
+
+        for level in 0..MERKLE_TREE_DEPTH {
+            let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+            let merkle1 = bridge_input_merkle_permutation(input, level, 1);
+            if layout.has_merkle_aggregate_rows() {
+                let challenge =
+                    smallwood_bridge_merkle_challenge(&statement.public_values, input, level);
+                let lane = permutation_lane(merkle0);
+                let current_row = bridge_row_input_current_agg(layout, input, level);
+                let left_row = bridge_row_input_left_agg(layout, input, level);
+                let right_row = bridge_row_input_right_agg(layout, input, level);
+
+                let current_source = if level == 0 {
+                    commitment2
+                } else {
+                    bridge_input_merkle_permutation(input, level - 1, 1)
+                };
+                let current_lane = permutation_lane(current_source);
+                let mut power = 1u64;
+                let mut current_terms = vec![(current_row, lane, 1)];
+                for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                    current_terms.push((
+                        poseidon_row(current_source, layout.poseidon_last_row(), limb),
+                        current_lane,
+                        neg_coeff(power),
+                    ));
+                    power = mul_mod_u64(power, challenge);
+                }
+                push_bridge_constraint(&mut constraints, packing_factor, &current_terms, 0);
+
+                let mut left_terms = vec![(left_row, lane, 1)];
+                left_terms.extend(merkle_challenge_terms(challenge, merkle0, None));
+                push_bridge_constraint(
+                    &mut constraints,
+                    packing_factor,
+                    &left_terms,
+                    neg_coeff(MERKLE_DOMAIN_TAG),
+                );
+
+                let mut right_terms = vec![(right_row, lane, 1)];
+                right_terms.extend(merkle_challenge_terms(challenge, merkle1, Some(merkle0)));
+                push_bridge_constraint(&mut constraints, packing_factor, &right_terms, 0);
+            }
+
+            push_poseidon_fresh_frame(&mut constraints, merkle0);
+            push_poseidon_continuation(&mut constraints, merkle0, merkle1);
+        }
+
+        let nullifier = bridge_input_nullifier_permutation(input);
+        let nullifier_lane = permutation_lane(nullifier);
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (poseidon_row(nullifier, 0, 0), nullifier_lane, 1),
+                (
+                    bridge_auth_input_prf_row(layout, input),
+                    nullifier_lane,
+                    neg_one,
+                ),
+            ],
+            NULLIFIER_DOMAIN_TAG,
+        );
+        let mut position_terms = Vec::with_capacity(MERKLE_TREE_DEPTH + 1);
+        position_terms.push((poseidon_row(nullifier, 0, 1), nullifier_lane, 1));
+        for bit in 0..MERKLE_TREE_DEPTH {
+            position_terms.push((
+                bridge_row_input_direction(layout, input, bit),
+                nullifier_lane,
+                neg_coeff(1u64 << bit),
+            ));
+        }
+        push_bridge_constraint(&mut constraints, packing_factor, &position_terms, 0);
+        for limb in 0..4 {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(nullifier, 0, 2 + limb), nullifier_lane, 1),
+                    (poseidon_row(commitment1, 0, limb), lane1, neg_one),
+                    (
+                        poseidon_row(commitment0, layout.poseidon_last_row(), limb),
+                        lane0,
+                        1,
+                    ),
+                ],
+                0,
+            );
+        }
+        for limb in 6..(POSEIDON2_WIDTH - 1) {
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(nullifier, 0, limb),
+                nullifier_lane,
+                0,
+            );
+        }
+        push_bridge_constant(
+            &mut constraints,
+            poseidon_row(nullifier, 0, POSEIDON2_WIDTH - 1),
+            nullifier_lane,
+            1,
+        );
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(nullifier, layout.poseidon_last_row(), limb),
+                nullifier_lane,
+                statement.public_values
+                    [PUB_NULLIFIERS + input * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+            );
+        }
+        let root_source = bridge_input_merkle_permutation(input, MERKLE_TREE_DEPTH - 1, 1);
+        let root_lane = permutation_lane(root_source);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(root_source, layout.poseidon_last_row(), limb),
+                root_lane,
+                statement.public_values[PUB_MERKLE_ROOT + limb],
+            );
+        }
+    }
+
+    for output in 0..MAX_OUTPUTS {
+        if statement.public_values[PUB_OUTPUT_FLAG0 + output] == 0 {
+            if binds_output_ciphertext_hash_rows(shape) {
+                for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                    push_bridge_constant(
+                        &mut constraints,
+                        bridge_output_base(layout, output) + 2 + limb,
+                        0,
+                        statement.public_values
+                            [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                    );
+                }
+            }
+            continue;
+        }
+        let commitment0 = bridge_output_commitment_permutation(output, 0);
+        let commitment1 = bridge_output_commitment_permutation(output, 1);
+        let commitment2 = bridge_output_commitment_permutation(output, 2);
+        let lane0 = permutation_lane(commitment0);
+        let output_base = bridge_output_base(layout, output);
+
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (poseidon_row(commitment0, 0, 0), lane0, 1),
+                (output_base, lane0, neg_one),
+            ],
+            NOTE_DOMAIN_TAG,
+        );
+        push_bridge_constraint(
+            &mut constraints,
+            packing_factor,
+            &[
+                (poseidon_row(commitment0, 0, 1), lane0, 1),
+                (output_base + 1, lane0, neg_one),
+            ],
+            0,
+        );
+        push_poseidon_fresh_frame(&mut constraints, commitment0);
+        push_poseidon_continuation(&mut constraints, commitment0, commitment1);
+        push_poseidon_continuation(&mut constraints, commitment1, commitment2);
+        let lane1 = permutation_lane(commitment1);
+        let lane2 = permutation_lane(commitment2);
+        for limb in 0..SMALLWOOD_OUTPUT_AUTH_KEY_ROWS {
+            push_bridge_constraint(
+                &mut constraints,
+                packing_factor,
+                &[
+                    (poseidon_row(commitment2, 0, 2 + limb), lane2, 1),
+                    (
+                        poseidon_row(commitment1, layout.poseidon_last_row(), 2 + limb),
+                        lane1,
+                        neg_one,
+                    ),
+                    (
+                        bridge_row_output_auth_key(layout, output, limb),
+                        lane2,
+                        neg_one,
+                    ),
+                ],
+                0,
+            );
+        }
+        let out_lane = permutation_lane(commitment2);
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                poseidon_row(commitment2, layout.poseidon_last_row(), limb),
+                out_lane,
+                statement.public_values
+                    [PUB_COMMITMENTS + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+            );
+        }
+        if binds_output_ciphertext_hash_rows(shape) {
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                push_bridge_constant(
+                    &mut constraints,
+                    output_base + 2 + limb,
+                    0,
+                    statement.public_values
+                        [PUB_CIPHERTEXT_HASHES + output * SMALLWOOD_WORDS_PER_48_BYTES + limb],
+                );
+            }
+        }
+    }
+
+    if matches!(
+        shape.public_binding_mode,
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+    ) {
+        let stable_base = bridge_stable_base(layout);
+        push_bridge_constant(
+            &mut constraints,
+            stable_base,
+            0,
+            statement.public_values[PUB_STABLE_POLICY_VERSION],
+        );
+        for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + limb,
+                0,
+                statement.public_values[PUB_STABLE_POLICY_HASH + limb],
+            );
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + SMALLWOOD_WORDS_PER_48_BYTES + limb,
+                0,
+                statement.public_values[PUB_STABLE_ORACLE + limb],
+            );
+            push_bridge_constant(
+                &mut constraints,
+                stable_base + 1 + (SMALLWOOD_WORDS_PER_48_BYTES * 2) + limb,
+                0,
+                statement.public_values[PUB_STABLE_ATTESTATION + limb],
+            );
+        }
+    }
+
+    constraints
+}
+
+fn build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+    statement: &SmallwoodPublicStatement,
+    shape: SmallwoodFrontendShape,
+    auxiliary_words_len: usize,
+) -> SmallwoodLinearConstraints {
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    debug_assert!(!layout.has_merkle_aggregate_rows());
+    let packing_factor = statement.lppc_packing_factor as usize;
+    let witness_size = statement.lppc_row_count as usize * packing_factor;
+    let mut constraints = build_packed_bridge_linear_constraints(statement, shape);
+    let neg_coeff = |value: u64| {
+        if value == 0 {
+            0
+        } else {
+            (transaction_core::constants::FIELD_MODULUS as u64).wrapping_sub(value)
+        }
+    };
+    let poseidon_row = |permutation: usize, step_row: usize, limb: usize| {
+        bridge_poseidon_row(packing_factor, layout, permutation, step_row, limb)
+    };
+    let permutation_lane =
+        |permutation: usize| packed_bridge_permutation_lane(permutation, packing_factor);
+    let push_aux_constraint =
+        |constraints: &mut SmallwoodLinearConstraints,
+         aux_idx: usize,
+         terms: &[(usize, usize, u64)],
+         target: u64| {
+            debug_assert!(aux_idx < auxiliary_words_len);
+            let mut mapped = Vec::with_capacity(terms.len() + 1);
+            mapped.push(((witness_size + aux_idx) as u32, 1u64));
+            mapped.extend(terms.iter().map(|(row, lane, coeff)| {
+                (packed_bridge_index(*row, *lane, packing_factor), *coeff)
+            }));
+            push_linear_constraint(constraints, &mapped, target);
+        };
+
+    for input in 0..MAX_INPUTS {
+        let commitment2 = bridge_input_commitment_permutation(input, 2);
+        for level in 0..MERKLE_TREE_DEPTH {
+            let challenge =
+                smallwood_bridge_merkle_challenge(&statement.public_values, input, level);
+            let current_source = if level == 0 {
+                commitment2
+            } else {
+                bridge_input_merkle_permutation(input, level - 1, 1)
+            };
+            let current_lane = permutation_lane(current_source);
+            let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+            let merkle1 = bridge_input_merkle_permutation(input, level, 1);
+            let lane0 = permutation_lane(merkle0);
+            let lane1 = permutation_lane(merkle1);
+
+            let mut current_terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES);
+            let mut left_terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES);
+            let mut right_terms = Vec::with_capacity(SMALLWOOD_WORDS_PER_48_BYTES * 2);
+            let mut power = 1u64;
+            for limb in 0..SMALLWOOD_WORDS_PER_48_BYTES {
+                current_terms.push((
+                    poseidon_row(current_source, layout.poseidon_last_row(), limb),
+                    current_lane,
+                    neg_coeff(power),
+                ));
+                left_terms.push((poseidon_row(merkle0, 0, limb), lane0, neg_coeff(power)));
+                right_terms.push((poseidon_row(merkle1, 0, limb), lane1, neg_coeff(power)));
+                right_terms.push((
+                    poseidon_row(merkle0, layout.poseidon_last_row(), limb),
+                    lane0,
+                    power,
+                ));
+                power = mul_mod_u64(power, challenge);
+            }
+
+            push_aux_constraint(
+                &mut constraints,
+                bridge_aux_input_current_agg(input, level),
+                &current_terms,
+                0,
+            );
+            push_aux_constraint(
+                &mut constraints,
+                bridge_aux_input_left_agg(input, level),
+                &left_terms,
+                neg_coeff(MERKLE_DOMAIN_TAG),
+            );
+            push_aux_constraint(
+                &mut constraints,
+                bridge_aux_input_right_agg(input, level),
+                &right_terms,
+                0,
+            );
+        }
+    }
+
+    constraints
+}
+
+fn ensure_smallwood_version(
+    expected: VersionBinding,
+    actual: VersionBinding,
+) -> Result<(), TransactionCircuitError> {
+    if tx_proof_backend_for_version(expected) != Some(TxProofBackend::SmallwoodCandidate) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "version {:?} is not bound to the smallwood_candidate backend",
+            expected
+        )));
+    }
+    if expected == actual {
+        Ok(())
+    } else {
+        Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "smallwood candidate version mismatch: expected {:?}, got {:?}",
+            expected, actual
+        )))
+    }
+}
+
+fn validate_native_merkle_membership(
+    witness: &TransactionWitness,
+) -> Result<(), TransactionCircuitError> {
+    let root = bytes48_to_felts(&witness.merkle_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("native tx merkle root is non-canonical"),
+    )?;
+    for (index, input) in witness.inputs.iter().enumerate() {
+        if input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "native tx input {index} merkle path has length {}, expected {}",
+                input.merkle_path.siblings.len(),
+                MERKLE_TREE_DEPTH
+            )));
+        }
+        if !input
+            .merkle_path
+            .verify(input.note.commitment(), input.position, root)
+        {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "native tx input {index} merkle path does not match root"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn serialized_public_inputs_from_witness(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputs,
+) -> Result<SerializedStarkInputs, TransactionCircuitError> {
+    if public_inputs.balance_slots.len() != BALANCE_SLOTS {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "native tx public inputs balance slot count does not match BALANCE_SLOTS",
+        ));
+    }
+    let (value_balance_sign, value_balance_magnitude) =
+        signed_magnitude_u64(witness.value_balance, "value_balance")?;
+    let (stablecoin_issuance_sign, stablecoin_issuance_magnitude) =
+        signed_magnitude_u64(witness.stablecoin.issuance_delta, "stablecoin_issuance")?;
+    let canonicalize_balance_slot_asset_id =
+        |asset_id: u64| Felt::from_u64(asset_id).as_canonical_u64();
+    Ok(SerializedStarkInputs {
+        input_flags: (0..MAX_INPUTS)
+            .map(|idx| u8::from(idx < witness.inputs.len()))
+            .collect(),
+        output_flags: (0..MAX_OUTPUTS)
+            .map(|idx| u8::from(idx < witness.outputs.len()))
+            .collect(),
+        fee: witness.fee,
+        value_balance_sign,
+        value_balance_magnitude,
+        merkle_root: witness.merkle_root,
+        balance_slot_asset_ids: public_inputs
+            .balance_slots
+            .iter()
+            .map(|slot| canonicalize_balance_slot_asset_id(slot.asset_id))
+            .collect(),
+        stablecoin_enabled: u8::from(witness.stablecoin.enabled),
+        stablecoin_asset_id: witness.stablecoin.asset_id,
+        stablecoin_policy_version: witness.stablecoin.policy_version,
+        stablecoin_issuance_sign,
+        stablecoin_issuance_magnitude,
+        stablecoin_policy_hash: witness.stablecoin.policy_hash,
+        stablecoin_oracle_commitment: witness.stablecoin.oracle_commitment,
+        stablecoin_attestation_commitment: witness.stablecoin.attestation_commitment,
+    })
+}
+
+fn signed_magnitude_u64(value: i128, label: &str) -> Result<(u8, u64), TransactionCircuitError> {
+    let sign = u8::from(value < 0);
+    let magnitude = value.unsigned_abs();
+    if magnitude > u128::from(u64::MAX) {
+        return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+            "{label} magnitude {magnitude} exceeds u64::MAX"
+        )));
+    }
+    Ok((sign, magnitude as u64))
+}
+
+#[derive(Clone, Debug)]
+struct SmallwoodResolvedAuth {
+    mode_selectors: [u64; 3],
+    input_prfs: [u64; MAX_INPUTS],
+    input_auth_keys: [[u64; 4]; MAX_INPUTS],
+    legacy_digest: [u64; 5],
+    current_accumulator_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    next_accumulator_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    value_lock_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    statement_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    policy_root: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    intent_digest: [u64; SMALLWOOD_WORDS_PER_48_BYTES],
+    threshold: u64,
+    signer_count: u64,
+    approval_count: u64,
+    approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    next_approval_count: u64,
+    next_approved_slots: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    threshold_flags: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    signer_count_flags: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    count_flags: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS + 1],
+    next_count_flags: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS + 1],
+    policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    membership_flags: [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    policy_distinct_inverses: [u64; SMALLWOOD_MULTISIG_PAIR_COUNT],
+}
+
+fn bytes48_to_words(
+    bytes: &[u8; 48],
+    label: &'static str,
+) -> Result<[u64; 6], TransactionCircuitError> {
+    let felts =
+        bytes48_to_felts(bytes).ok_or(TransactionCircuitError::ConstraintViolation(label))?;
+    Ok(hash_felt_to_words(&felts))
+}
+
+fn hash4_to_words(values: &[Felt; 4]) -> [u64; 4] {
+    values.map(|felt| felt.as_canonical_u64())
+}
+
+fn hash_to_auth_key_words(hash: &HashFelt) -> [u64; 4] {
+    [
+        hash[0].as_canonical_u64(),
+        hash[1].as_canonical_u64(),
+        hash[2].as_canonical_u64(),
+        hash[3].as_canonical_u64(),
+    ]
+}
+
+fn auth_key_words_to_bytes(words: [u64; 4]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for (idx, word) in words.iter().enumerate() {
+        out[idx * 8..idx * 8 + 8].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+pub fn smallwood_accumulator_auth_key_bytes(
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> Result<[u8; 32], TransactionCircuitError> {
+    Ok(auth_key_words_to_bytes(hash_to_auth_key_words(
+        &smallwood_accumulator_hash(opening)?,
+    )))
+}
+
+pub fn smallwood_value_lock_auth_key_bytes(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<[u8; 32], TransactionCircuitError> {
+    Ok(auth_key_words_to_bytes(hash_to_auth_key_words(
+        &smallwood_value_lock_hash(policy_root, intent_digest)?,
+    )))
+}
+
+fn smallwood_accumulator_inputs(
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> Result<Vec<Felt>, TransactionCircuitError> {
+    let mut inputs = Vec::with_capacity(SMALLWOOD_AUTH_ACCUMULATOR_INPUTS);
+    inputs.extend(bytes48_to_felts(&opening.policy_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private auth policy root encoding"),
+    )?);
+    inputs.extend(bytes48_to_felts(&opening.intent_digest).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private auth intent encoding"),
+    )?);
+    inputs.push(Felt::from_u64(opening.threshold));
+    inputs.push(Felt::from_u64(opening.signer_count));
+    inputs.push(Felt::from_u64(opening.approval_count));
+    for slot in opening.approved_slots {
+        inputs.push(Felt::from_u64(slot));
+    }
+    Ok(inputs)
+}
+
+fn smallwood_accumulator_hash(
+    opening: &SmallwoodAccumulatorAuthOpening,
+) -> Result<HashFelt, TransactionCircuitError> {
+    Ok(trace_sponge_hash(
+        SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG,
+        &smallwood_accumulator_inputs(opening)?,
+    )
+    .0)
+}
+
+fn smallwood_value_lock_inputs(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<Vec<Felt>, TransactionCircuitError> {
+    let mut inputs = Vec::with_capacity(SMALLWOOD_AUTH_VALUE_LOCK_INPUTS);
+    inputs.extend(bytes48_to_felts(policy_root).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private value-lock policy root"),
+    )?);
+    inputs.extend(bytes48_to_felts(intent_digest).ok_or(
+        TransactionCircuitError::ConstraintViolation("invalid private value-lock intent digest"),
+    )?);
+    Ok(inputs)
+}
+
+fn smallwood_value_lock_hash(
+    policy_root: &[u8; 48],
+    intent_digest: &[u8; 48],
+) -> Result<HashFelt, TransactionCircuitError> {
+    Ok(trace_sponge_hash(
+        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG,
+        &smallwood_value_lock_inputs(policy_root, intent_digest)?,
+    )
+    .0)
+}
+
+pub fn smallwood_signer_tag_from_spend_key(spend_key: &[u8; 32]) -> SmallwoodSignerTag {
+    let auth = hash4_to_words(&spend_auth_key(spend_key));
+    [
+        prf_key(spend_key).as_canonical_u64(),
+        auth[0],
+        auth[1],
+        auth[2],
+        auth[3],
+    ]
+}
+
+fn smallwood_policy_inputs(
+    threshold: u64,
+    signer_count: u64,
+    policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> Vec<Felt> {
+    let mut inputs = Vec::with_capacity(SMALLWOOD_AUTH_POLICY_INPUTS);
+    inputs.push(Felt::from_u64(threshold));
+    inputs.push(Felt::from_u64(signer_count));
+    for tag in policy_signer_tags {
+        inputs.extend(tag.into_iter().map(Felt::from_u64));
+    }
+    inputs
+}
+
+fn smallwood_policy_root(
+    threshold: u64,
+    signer_count: u64,
+    policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> HashFelt {
+    trace_sponge_hash(
+        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG,
+        &smallwood_policy_inputs(threshold, signer_count, policy_signer_tags),
+    )
+    .0
+}
+
+pub fn smallwood_policy_root_bytes(
+    threshold: u64,
+    signer_count: u64,
+    policy_signer_tags: [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> [u8; 48] {
+    crate::hashing_pq::felts_to_bytes48(&smallwood_policy_root(
+        threshold,
+        signer_count,
+        policy_signer_tags,
+    ))
+}
+
+fn smallwood_effective_next_accumulator(
+    auth: &SmallwoodPrivateAuthWitness,
+) -> SmallwoodAccumulatorAuthOpening {
+    match auth.mode {
+        SmallwoodPrivateAuthMode::FinalThresholdSpend => SmallwoodAccumulatorAuthOpening {
+            policy_root: auth.accumulator.policy_root,
+            intent_digest: auth.accumulator.intent_digest,
+            threshold: auth.accumulator.threshold,
+            signer_count: auth.accumulator.signer_count,
+            approval_count: 0,
+            approved_slots: [0; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+        },
+        _ => auth.next_accumulator.clone(),
+    }
+}
+
+fn smallwood_statement_digest(public_values: &[u64]) -> HashFelt {
+    let public_felts = public_values
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| {
+            Felt::from_u64(smallwood_intent_public_value(public_values, idx, *value))
+        })
+        .collect::<Vec<_>>();
+    trace_sponge_hash(SMALLWOOD_AUTH_INTENT_DOMAIN_TAG, &public_felts).0
+}
+
+fn smallwood_intent_public_value(_public_values: &[u64], idx: usize, value: u64) -> u64 {
+    let nullifier_end = PUB_NULLIFIERS + MAX_INPUTS * SMALLWOOD_WORDS_PER_48_BYTES;
+    let merkle_root_end = PUB_MERKLE_ROOT + SMALLWOOD_WORDS_PER_48_BYTES;
+    // The private authorization intent binds the canonical spend shape, outputs, fees,
+    // balance, stablecoin fields, and version while excluding nullifiers and the Merkle
+    // root because those are derived from the accumulator note being authorized.
+    if (PUB_NULLIFIERS..nullifier_end).contains(&idx)
+        || (PUB_MERKLE_ROOT..merkle_root_end).contains(&idx)
+    {
+        0
+    } else {
+        value
+    }
+}
+
+fn count_flags(value: u64) -> [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS + 1] {
+    core::array::from_fn(|idx| u64::from(value == idx as u64))
+}
+
+fn positive_count_flags(value: u64) -> [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS] {
+    core::array::from_fn(|idx| u64::from(value == (idx + 1) as u64))
+}
+
+fn slot_active_from_count_flags(
+    signer_count_flags: &[u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    slot: usize,
+) -> u64 {
+    signer_count_flags[slot..].iter().copied().sum()
+}
+
+fn policy_distinct_inverses(
+    signer_count_flags: &[u64; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+    policy_signer_tags: &[SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS],
+) -> [u64; SMALLWOOD_MULTISIG_PAIR_COUNT] {
+    let mut inverses = [0u64; SMALLWOOD_MULTISIG_PAIR_COUNT];
+    let mut pair = 0;
+    for left in 0..SMALLWOOD_MULTISIG_MAX_SIGNERS {
+        let left_active = slot_active_from_count_flags(signer_count_flags, left);
+        for right in (left + 1)..SMALLWOOD_MULTISIG_MAX_SIGNERS {
+            let right_active = slot_active_from_count_flags(signer_count_flags, right);
+            if left_active == 1 && right_active == 1 {
+                let left_limb = Felt::from_u64(policy_signer_tags[left][0]);
+                let right_limb = Felt::from_u64(policy_signer_tags[right][0]);
+                let diff = left_limb - right_limb;
+                if diff != Felt::ZERO {
+                    inverses[pair] = diff.inverse().as_canonical_u64();
+                }
+            }
+            pair += 1;
+        }
+    }
+    inverses
+}
+
+fn resolve_smallwood_private_auth(
+    witness: &TransactionWitness,
+    auth: &SmallwoodPrivateAuthWitness,
+    input_flags: [bool; MAX_INPUTS],
+    statement_digest: HashFelt,
+) -> Result<SmallwoodResolvedAuth, TransactionCircuitError> {
+    let legacy_prf = prf_key(&witness.sk_spend).as_canonical_u64();
+    let legacy_auth = hash4_to_words(&spend_auth_key(&witness.sk_spend));
+    let legacy_digest: SmallwoodSignerTag = [
+        legacy_prf,
+        legacy_auth[0],
+        legacy_auth[1],
+        legacy_auth[2],
+        legacy_auth[3],
+    ];
+    let next_accumulator = smallwood_effective_next_accumulator(auth);
+    let current_hash = smallwood_accumulator_hash(&auth.accumulator)?;
+    let next_hash = smallwood_accumulator_hash(&next_accumulator)?;
+    let value_lock_hash = smallwood_value_lock_hash(
+        &auth.accumulator.policy_root,
+        &auth.accumulator.intent_digest,
+    )?;
+    let current_prf = current_hash[4].as_canonical_u64();
+    let current_auth = hash_to_auth_key_words(&current_hash);
+    let value_lock_prf = value_lock_hash[4].as_canonical_u64();
+    let value_lock_auth = hash_to_auth_key_words(&value_lock_hash);
+
+    let mut input_prfs = [0u64; MAX_INPUTS];
+    let mut input_auth_keys = [[0u64; 4]; MAX_INPUTS];
+    let mode_selectors = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [1, 0, 0],
+        SmallwoodPrivateAuthMode::ApprovalStep => [0, 1, 0],
+        SmallwoodPrivateAuthMode::FinalThresholdSpend => [0, 0, 1],
+    };
+
+    for input in 0..MAX_INPUTS {
+        if !input_flags[input] {
+            continue;
+        }
+        let (prf, key) = match auth.mode {
+            SmallwoodPrivateAuthMode::SingleKey => (legacy_prf, legacy_auth),
+            SmallwoodPrivateAuthMode::ApprovalStep => {
+                if input == 0 {
+                    (current_prf, current_auth)
+                } else {
+                    (legacy_prf, legacy_auth)
+                }
+            }
+            SmallwoodPrivateAuthMode::FinalThresholdSpend => {
+                if input == 0 {
+                    (value_lock_prf, value_lock_auth)
+                } else {
+                    (current_prf, current_auth)
+                }
+            }
+        };
+        input_prfs[input] = prf;
+        input_auth_keys[input] = key;
+    }
+
+    let policy_root = bytes48_to_words(
+        &auth.accumulator.policy_root,
+        "invalid private auth policy root encoding",
+    )?;
+    let expected_policy_root = hash_felt_to_words(&smallwood_policy_root(
+        auth.accumulator.threshold,
+        auth.accumulator.signer_count,
+        auth.policy_signer_tags,
+    ));
+    if !matches!(auth.mode, SmallwoodPrivateAuthMode::SingleKey)
+        && policy_root != expected_policy_root
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "private auth policy root does not match hidden signer policy",
+        ));
+    }
+    let intent_digest = bytes48_to_words(
+        &auth.accumulator.intent_digest,
+        "invalid private auth intent encoding",
+    )?;
+
+    let threshold_flag_rows = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_THRESHOLD_FLAG_ROWS],
+        _ => positive_count_flags(auth.accumulator.threshold),
+    };
+    let signer_count_flag_rows = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_SIGNER_COUNT_FLAG_ROWS],
+        _ => positive_count_flags(auth.accumulator.signer_count),
+    };
+    let count_flag_rows = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_COUNT_FLAG_ROWS],
+        _ => count_flags(auth.accumulator.approval_count),
+    };
+    let next_count_flag_rows = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_NEXT_COUNT_FLAG_ROWS],
+        _ => count_flags(next_accumulator.approval_count),
+    };
+    let policy_signer_tags = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => {
+            [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS]
+        }
+        _ => auth.policy_signer_tags,
+    };
+    let membership_flags = match auth.mode {
+        SmallwoodPrivateAuthMode::ApprovalStep => core::array::from_fn(|slot| {
+            let active = slot_active_from_count_flags(&signer_count_flag_rows, slot);
+            u64::from(active == 1 && legacy_digest == auth.policy_signer_tags[slot])
+        }),
+        _ => [0; SMALLWOOD_AUTH_MEMBERSHIP_FLAG_ROWS],
+    };
+    let policy_distinct_inverse_rows = match auth.mode {
+        SmallwoodPrivateAuthMode::SingleKey => [0; SMALLWOOD_AUTH_POLICY_DISTINCT_INVERSE_ROWS],
+        _ => policy_distinct_inverses(&signer_count_flag_rows, &auth.policy_signer_tags),
+    };
+
+    Ok(SmallwoodResolvedAuth {
+        mode_selectors,
+        input_prfs,
+        input_auth_keys,
+        legacy_digest,
+        current_accumulator_digest: hash_felt_to_words(&current_hash),
+        next_accumulator_digest: hash_felt_to_words(&next_hash),
+        value_lock_digest: hash_felt_to_words(&value_lock_hash),
+        statement_digest: hash_felt_to_words(&statement_digest),
+        policy_root,
+        intent_digest,
+        threshold: auth.accumulator.threshold,
+        signer_count: auth.accumulator.signer_count,
+        approval_count: auth.accumulator.approval_count,
+        approved_slots: auth.accumulator.approved_slots,
+        next_approval_count: next_accumulator.approval_count,
+        next_approved_slots: next_accumulator.approved_slots,
+        threshold_flags: threshold_flag_rows,
+        signer_count_flags: signer_count_flag_rows,
+        count_flags: count_flag_rows,
+        next_count_flags: next_count_flag_rows,
+        policy_signer_tags,
+        membership_flags,
+        policy_distinct_inverses: policy_distinct_inverse_rows,
+    })
+}
+
+fn smallwood_xof_words(input_words: &[u64], output_words: &mut [u64]) {
+    let mut hasher = Hasher::new();
+    hasher.update(SMALLWOOD_XOF_DOMAIN);
+    hasher.update(&(input_words.len() as u64).to_le_bytes());
+    for word in input_words {
+        hasher.update(&word.to_le_bytes());
+    }
+    let mut reader = hasher.finalize_xof();
+    for output in output_words {
+        let mut buf = [0u8; 16];
+        reader.fill(&mut buf);
+        *output = (u128::from_le_bytes(buf) % transaction_core::constants::FIELD_MODULUS) as u64;
+    }
+}
+
+fn smallwood_bridge_merkle_challenge(public_values: &[u64], input: usize, level: usize) -> u64 {
+    let mut words = Vec::with_capacity(SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 4);
+    words.push(0x736d_616c_6c77_6f6f);
+    words.push(9);
+    words.push(input as u64);
+    words.push(level as u64);
+    words.extend_from_slice(public_values);
+    let mut out = [0u64; 1];
+    smallwood_xof_words(&words, &mut out);
+    if out[0] <= 1 {
+        out[0] += 2;
+    }
+    out[0]
+}
+
+fn add_mod_u64(a: u64, b: u64) -> u64 {
+    let modulus = transaction_core::constants::FIELD_MODULUS;
+    let sum = a as u128 + b as u128;
+    if sum >= modulus {
+        (sum - modulus) as u64
+    } else {
+        sum as u64
+    }
+}
+
+fn mul_mod_u64(a: u64, b: u64) -> u64 {
+    ((a as u128 * b as u128) % transaction_core::constants::FIELD_MODULUS) as u64
+}
+
+fn aggregate_hash_words(words: &[u64; SMALLWOOD_WORDS_PER_48_BYTES], challenge: u64) -> u64 {
+    let mut acc = 0u64;
+    let mut power = 1u64;
+    for &word in words {
+        acc = add_mod_u64(acc, mul_mod_u64(power, word));
+        power = mul_mod_u64(power, challenge);
+    }
+    acc
+}
+
+fn hash_felt_to_words(hash: &HashFelt) -> [u64; SMALLWOOD_WORDS_PER_48_BYTES] {
+    let mut words = [0u64; SMALLWOOD_WORDS_PER_48_BYTES];
+    for (idx, felt) in hash.iter().enumerate() {
+        words[idx] = felt.as_canonical_u64();
+    }
+    words
+}
+
+fn aggregate_hash(hash: &HashFelt, challenge: u64) -> u64 {
+    aggregate_hash_words(&hash_felt_to_words(hash), challenge)
+}
+
+fn semantic_secret_witness_rows(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputsP3,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    semantic_secret_witness_rows_with_shape(
+        witness,
+        public_inputs,
+        SmallwoodFrontendShape::bridge64_v1(),
+    )
+}
+
+fn semantic_secret_witness_rows_with_shape(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputsP3,
+    shape: SmallwoodFrontendShape,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    semantic_secret_witness_rows_with_shape_and_auth(
+        witness,
+        public_inputs,
+        shape,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+fn semantic_secret_witness_rows_with_shape_and_auth(
+    witness: &TransactionWitness,
+    public_inputs: &TransactionPublicInputsP3,
+    shape: SmallwoodFrontendShape,
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+    validate_smallwood_private_auth_shape(witness, auth)?;
+    let (inputs, input_flags) = padded_inputs(&witness.inputs);
+    let (outputs, _output_flags) = padded_outputs(&witness.outputs);
+    let public_values: Vec<u64> = public_inputs
+        .to_vec()
+        .into_iter()
+        .map(|felt| felt.as_canonical_u64())
+        .chain([
+            u64::from(witness.version.circuit),
+            u64::from(witness.version.crypto),
+        ])
+        .collect();
+    let resolved_auth = resolve_smallwood_private_auth(
+        witness,
+        auth,
+        input_flags,
+        smallwood_statement_digest(&public_values),
+    )?;
+    let mut values = Vec::with_capacity(layout.secret_witness_rows());
+
+    for (idx, input) in inputs.iter().enumerate() {
+        values.push(input.note.value);
+        values.push(input.note.asset_id);
+        values.extend((0..MERKLE_TREE_DEPTH).map(|bit| (input.position >> bit) & 1));
+        if input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "native tx input merkle path has length {}, expected {}",
+                input.merkle_path.siblings.len(),
+                MERKLE_TREE_DEPTH
+            )));
+        }
+        let mut current = input.note.commitment();
+        let mut current_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
+        let mut left_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
+        let mut right_aggs = Vec::with_capacity(MERKLE_TREE_DEPTH);
+        for level in 0..MERKLE_TREE_DEPTH {
+            let sibling = input.merkle_path.siblings[level];
+            let challenge = smallwood_bridge_merkle_challenge(&public_values, idx, level);
+            current_aggs.push(aggregate_hash(&current, challenge));
+            let (left, right) = if ((input.position >> level) & 1) == 0 {
+                (current, sibling)
+            } else {
+                (sibling, current)
+            };
+            left_aggs.push(aggregate_hash(&left, challenge));
+            right_aggs.push(aggregate_hash(&right, challenge));
+            current = merkle_node(left, right);
+        }
+        if layout.has_merkle_aggregate_rows() {
+            values.extend(current_aggs);
+            values.extend(left_aggs);
+            values.extend(right_aggs);
+        }
+    }
+
+    for (idx, output) in outputs.iter().enumerate() {
+        values.push(output.note.value);
+        values.push(output.note.asset_id);
+        if binds_output_ciphertext_hash_rows(shape) {
+            let ciphertext_hash = witness.ciphertext_hashes.get(idx).copied();
+            let ciphertext_hash = ciphertext_hash.unwrap_or([0u8; 48]);
+            let ciphertext_hash_words = bytes48_to_felts(&ciphertext_hash).ok_or(
+                TransactionCircuitError::ConstraintViolation("invalid ciphertext hash encoding"),
+            )?;
+            values.extend(
+                ciphertext_hash_words
+                    .iter()
+                    .map(|felt| felt.as_canonical_u64()),
+            );
+        }
+        let auth_key_words = bytes_to_felts(&output.note.pk_auth);
+        debug_assert_eq!(auth_key_words.len(), SMALLWOOD_OUTPUT_AUTH_KEY_ROWS);
+        values.extend(auth_key_words.iter().map(|felt| felt.as_canonical_u64()));
+    }
+
+    if matches!(
+        shape.public_binding_mode,
+        SmallwoodPublicBindingMode::RowAlignedSecretBindingsV1
+    ) {
+        values.push(u64::from(witness.stablecoin.policy_version));
+        for digest in [
+            witness.stablecoin.policy_hash,
+            witness.stablecoin.oracle_commitment,
+            witness.stablecoin.attestation_commitment,
+        ] {
+            let words = bytes48_to_felts(&digest).ok_or(
+                TransactionCircuitError::ConstraintViolation("invalid stablecoin binding encoding"),
+            )?;
+            values.extend(words.iter().map(|felt| felt.as_canonical_u64()));
+        }
+    }
+
+    values.extend_from_slice(&resolved_auth.mode_selectors);
+    values.extend_from_slice(&resolved_auth.input_prfs);
+    for key in resolved_auth.input_auth_keys {
+        values.extend_from_slice(&key);
+    }
+    values.extend_from_slice(&resolved_auth.legacy_digest);
+    values.extend_from_slice(&resolved_auth.current_accumulator_digest);
+    values.extend_from_slice(&resolved_auth.next_accumulator_digest);
+    values.extend_from_slice(&resolved_auth.value_lock_digest);
+    values.extend_from_slice(&resolved_auth.statement_digest);
+    values.extend_from_slice(&resolved_auth.policy_root);
+    values.extend_from_slice(&resolved_auth.intent_digest);
+    values.push(resolved_auth.threshold);
+    values.push(resolved_auth.signer_count);
+    values.push(resolved_auth.approval_count);
+    values.extend_from_slice(&resolved_auth.approved_slots);
+    values.push(resolved_auth.next_approval_count);
+    values.extend_from_slice(&resolved_auth.next_approved_slots);
+    values.push(0);
+    values.push(0);
+    values.extend_from_slice(&resolved_auth.threshold_flags);
+    values.extend_from_slice(&resolved_auth.signer_count_flags);
+    values.extend_from_slice(&resolved_auth.count_flags);
+    values.extend_from_slice(&resolved_auth.next_count_flags);
+    for tag in resolved_auth.policy_signer_tags {
+        values.extend_from_slice(&tag);
+    }
+    values.extend_from_slice(&resolved_auth.membership_flags);
+    values.extend_from_slice(&resolved_auth.policy_distinct_inverses);
+
+    debug_assert_eq!(values.len(), layout.secret_witness_rows());
+    Ok(values)
+}
+
+fn smallwood_poseidon_permutation_count() -> usize {
+    1 + (MAX_INPUTS * 3)
+        + (MAX_INPUTS * MERKLE_TREE_DEPTH * 2)
+        + MAX_INPUTS
+        + (MAX_OUTPUTS * 3)
+        + SMALLWOOD_AUTH_POSEIDON_PERMUTATIONS
+}
+
+#[inline]
+fn bridge_prf_permutation() -> usize {
+    0
+}
+
+#[inline]
+fn bridge_input_commitment_permutation(input: usize, chunk: usize) -> usize {
+    1 + input * (3 + MERKLE_TREE_DEPTH * 2 + 1) + chunk
+}
+
+#[inline]
+fn bridge_input_merkle_permutation(input: usize, level: usize, chunk: usize) -> usize {
+    1 + input * (3 + MERKLE_TREE_DEPTH * 2 + 1) + 3 + level * 2 + chunk
+}
+
+#[inline]
+fn bridge_input_nullifier_permutation(input: usize) -> usize {
+    1 + input * (3 + MERKLE_TREE_DEPTH * 2 + 1) + (3 + MERKLE_TREE_DEPTH * 2 + 1) - 1
+}
+
+#[inline]
+fn bridge_output_commitment_permutation(output: usize, chunk: usize) -> usize {
+    1 + MAX_INPUTS * (3 + MERKLE_TREE_DEPTH * 2 + 1) + output * 3 + chunk
+}
+
+#[inline]
+fn bridge_auth_permutation_base() -> usize {
+    1 + MAX_INPUTS * (3 + MERKLE_TREE_DEPTH * 2 + 1) + MAX_OUTPUTS * 3
+}
+
+#[inline]
+fn bridge_auth_intent_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base() + chunk
+}
+
+#[inline]
+fn bridge_auth_policy_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base() + SMALLWOOD_AUTH_INTENT_PERMUTATIONS + chunk
+}
+
+#[inline]
+fn bridge_auth_current_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base()
+        + SMALLWOOD_AUTH_INTENT_PERMUTATIONS
+        + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
+        + chunk
+}
+
+#[inline]
+fn bridge_auth_next_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base()
+        + SMALLWOOD_AUTH_INTENT_PERMUTATIONS
+        + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
+        + SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS
+        + chunk
+}
+
+#[inline]
+fn bridge_auth_value_lock_permutation(chunk: usize) -> usize {
+    bridge_auth_permutation_base()
+        + SMALLWOOD_AUTH_INTENT_PERMUTATIONS
+        + SMALLWOOD_AUTH_POLICY_PERMUTATIONS
+        + (SMALLWOOD_AUTH_ACCUMULATOR_PERMUTATIONS * 2)
+        + chunk
+}
+
+fn poseidon_subtrace_rows(
+    witness: &TransactionWitness,
+) -> Result<
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+    TransactionCircuitError,
+> {
+    let public_inputs = witness.public_inputs()?;
+    let serialized_public_inputs = serialized_public_inputs_from_witness(witness, &public_inputs)?;
+    let public_inputs_p3 =
+        transaction_public_inputs_p3_from_parts(&public_inputs, &serialized_public_inputs)?;
+    let public_values =
+        smallwood_public_statement_values_for_p3(&public_inputs_p3, witness.version);
+    poseidon_subtrace_rows_with_auth(
+        witness,
+        &public_values,
+        &SmallwoodPrivateAuthWitness::default(),
+    )
+}
+
+fn poseidon_subtrace_rows_with_auth(
+    witness: &TransactionWitness,
+    public_values: &[u64],
+    auth: &SmallwoodPrivateAuthWitness,
+) -> Result<
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+    TransactionCircuitError,
+> {
+    validate_smallwood_private_auth_shape(witness, auth)?;
+    let (inputs, _input_flags) = padded_inputs(&witness.inputs);
+    let (_, input_flags) = padded_inputs(&witness.inputs);
+    let (outputs, _output_flags) = padded_outputs(&witness.outputs);
+    let resolved_auth = resolve_smallwood_private_auth(
+        witness,
+        auth,
+        input_flags,
+        smallwood_statement_digest(public_values),
+    )?;
+    let mut traces = Vec::new();
+
+    let (prf_hash, prf_traces) =
+        trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &bytes_to_felts(&witness.sk_spend));
+    traces.extend(prf_traces);
+
+    for (idx, input) in inputs.iter().enumerate() {
+        let (commitment, commitment_traces) =
+            trace_sponge_hash(NOTE_DOMAIN_TAG, &commitment_inputs(&input.note));
+        traces.extend(commitment_traces);
+
+        let mut current = commitment;
+        let mut pos = input.position;
+        for level in 0..MERKLE_TREE_DEPTH {
+            let sibling = input
+                .merkle_path
+                .siblings
+                .get(level)
+                .copied()
+                .unwrap_or([Felt::ZERO; 6]);
+            let (left, right) = if pos & 1 == 0 {
+                (current, sibling)
+            } else {
+                (sibling, current)
+            };
+            let (next, merkle_traces) = trace_merkle_node(left, right);
+            traces.extend(merkle_traces);
+            current = next;
+            pos >>= 1;
+        }
+
+        let (_, nullifier_traces) = trace_sponge_hash(
+            NULLIFIER_DOMAIN_TAG,
+            &nullifier_inputs(Felt::from_u64(resolved_auth.input_prfs[idx]), input),
+        );
+        traces.extend(nullifier_traces);
+    }
+
+    for output in &outputs {
+        let (_, commitment_traces) =
+            trace_sponge_hash(NOTE_DOMAIN_TAG, &commitment_inputs(&output.note));
+        traces.extend(commitment_traces);
+    }
+
+    let public_felts = public_values
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| {
+            Felt::from_u64(smallwood_intent_public_value(public_values, idx, *value))
+        })
+        .collect::<Vec<_>>();
+    let (_, intent_traces) = trace_sponge_hash(SMALLWOOD_AUTH_INTENT_DOMAIN_TAG, &public_felts);
+    traces.extend(intent_traces);
+
+    let (_, policy_traces) = trace_sponge_hash(
+        SMALLWOOD_AUTH_POLICY_DOMAIN_TAG,
+        &smallwood_policy_inputs(
+            auth.accumulator.threshold,
+            auth.accumulator.signer_count,
+            auth.policy_signer_tags,
+        ),
+    );
+    traces.extend(policy_traces);
+
+    let (_, current_auth_traces) = trace_sponge_hash(
+        SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG,
+        &smallwood_accumulator_inputs(&auth.accumulator)?,
+    );
+    traces.extend(current_auth_traces);
+    let next_accumulator = smallwood_effective_next_accumulator(auth);
+    let (_, next_auth_traces) = trace_sponge_hash(
+        SMALLWOOD_AUTH_ACCUMULATOR_DOMAIN_TAG,
+        &smallwood_accumulator_inputs(&next_accumulator)?,
+    );
+    traces.extend(next_auth_traces);
+    let (_, value_lock_traces) = trace_sponge_hash(
+        SMALLWOOD_AUTH_VALUE_LOCK_DOMAIN_TAG,
+        &smallwood_value_lock_inputs(
+            &auth.accumulator.policy_root,
+            &auth.accumulator.intent_digest,
+        )?,
+    );
+    traces.extend(value_lock_traces);
+
+    debug_assert_eq!(traces.len(), smallwood_poseidon_permutation_count());
+    let _ = prf_hash;
+    Ok(traces)
+}
+
+pub(crate) fn smallwood_bridge_poseidon_subtrace_rows_v1(
+    witness: &TransactionWitness,
+) -> Result<
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+    TransactionCircuitError,
+> {
+    poseidon_subtrace_rows(witness)
+}
+
+pub(crate) fn smallwood_compact_bridge_helper_rows_v1(
+    witness: &TransactionWitness,
+    packing_factor: usize,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    let shape = SmallwoodFrontendShape::direct_packed_compact_bindings_v1(packing_factor);
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    semantic_secret_witness_rows_with_shape_and_auth(
+        &context.witness,
+        &context.public_inputs_p3,
+        shape,
+        &context.auth,
+    )
+}
+
+pub(crate) fn smallwood_compact_bridge_helper_rows_with_shape_v1(
+    witness: &TransactionWitness,
+    shape: SmallwoodFrontendShape,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let context = build_smallwood_witness_context(witness)?;
+    ensure_supported_smallwood_frontend_shape(&shape)?;
+    semantic_secret_witness_rows_with_shape_and_auth(
+        &context.witness,
+        &context.public_inputs_p3,
+        shape,
+        &context.auth,
+    )
+}
+
+fn smallwood_compact_bridge_merkle_aggregate_rows_v1(
+    witness: &TransactionWitness,
+    public_values: &[u64],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let mut values = Vec::with_capacity(MAX_INPUTS * MERKLE_TREE_DEPTH * 3);
+    let (inputs, _input_flags) = padded_inputs(&witness.inputs);
+    for (input, note_input) in inputs.iter().enumerate() {
+        if note_input.merkle_path.siblings.len() != MERKLE_TREE_DEPTH {
+            return Err(TransactionCircuitError::ConstraintViolationOwned(format!(
+                "compact bridge input merkle path has length {}, expected {}",
+                note_input.merkle_path.siblings.len(),
+                MERKLE_TREE_DEPTH
+            )));
+        }
+        let mut current = note_input.note.commitment();
+        for level in 0..MERKLE_TREE_DEPTH {
+            let challenge = smallwood_bridge_merkle_challenge(public_values, input, level);
+            let sibling = note_input.merkle_path.siblings[level];
+            values.push(aggregate_hash(&current, challenge));
+            let (left, right) = if ((note_input.position >> level) & 1) == 0 {
+                (current, sibling)
+            } else {
+                (sibling, current)
+            };
+            values.push(aggregate_hash(&left, challenge));
+            values.push(aggregate_hash(&right, challenge));
+            current = merkle_node(left, right);
+        }
+    }
+    Ok(values)
+}
+
+fn expanded_witness_words(
+    public_values: &[u64],
+    raw_witness: &[u64],
+    poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+) -> Vec<u64> {
+    let mut expanded = Vec::with_capacity(
+        public_values.len()
+            + raw_witness.len()
+            + poseidon_rows.len() * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION * POSEIDON2_WIDTH,
+    );
+    expanded.extend_from_slice(public_values);
+    expanded.extend_from_slice(raw_witness);
+    for permutation in poseidon_rows {
+        for row in permutation {
+            expanded.extend_from_slice(row);
+        }
+    }
+    expanded
+}
+
+fn packed_bridge_witness_rows(
+    secret_rows: &[u64],
+    poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+    layout: SmallwoodBridgeRowLayout,
+    packing_factor: usize,
+) -> Vec<u64> {
+    debug_assert!(packing_factor > 0);
+    let dummy_rows = dummy_poseidon_rows();
+    let poseidon_group_count =
+        smallwood_bridge_poseidon_group_count(poseidon_rows.len(), packing_factor);
+    let mut rows = Vec::with_capacity(
+        (secret_rows.len()
+            + (poseidon_group_count * layout.poseidon_rows_per_permutation() * POSEIDON2_WIDTH))
+            * packing_factor,
+    );
+
+    for value in secret_rows {
+        rows.extend(std::iter::repeat_n(*value, packing_factor));
+    }
+    for group in 0..poseidon_group_count {
+        for logical_row in 0..layout.poseidon_rows_per_permutation() {
+            let step = layout.poseidon_trace_row(logical_row);
+            for limb in 0..POSEIDON2_WIDTH {
+                for lane in 0..packing_factor {
+                    let value = poseidon_rows
+                        .get(group * packing_factor + lane)
+                        .map(|permutation| permutation[step][limb])
+                        .unwrap_or(dummy_rows[step][limb]);
+                    rows.push(value);
+                }
+            }
+        }
+    }
+
+    rows
+}
+
+fn smallwood_bridge_poseidon_group_count(permutation_count: usize, packing_factor: usize) -> usize {
+    permutation_count.div_ceil(packing_factor)
+}
+
+fn dummy_poseidon_rows() -> [[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]
+{
+    let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+    state[POSEIDON2_WIDTH - 1] = Felt::ONE;
+    let mut rows = [[0u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION];
+    rows[0] = snapshot_state(&state);
+    for step in 0..POSEIDON2_STEPS {
+        poseidon2_step(&mut state, step);
+        rows[step + 1] = snapshot_state(&state);
+    }
+    rows
+}
+
+fn smallwood_transcript_binding(
+    statement: &SmallwoodPublicStatement,
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    let encoded = bincode::serialize(statement).map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize smallwood public statement transcript binding: {err}"
+        ))
+    })?;
+    Ok(smallwood_transcript_binding_from_serialized_statement(
+        &encoded,
+        version,
+        arithmetization,
+    ))
+}
+
+fn smallwood_transcript_binding_from_serialized_statement(
+    statement_bytes: &[u8],
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Vec<u8> {
+    let mut bytes = Vec::from(SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN);
+    bytes.extend_from_slice(&smallwood_candidate_verifier_profile_material(
+        version,
+        arithmetization,
+    ));
+    bytes.extend_from_slice(statement_bytes);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+    bytes
+}
+
+fn encode_smallwood_candidate_proof(
+    arithmetization: SmallwoodArithmetization,
+    ark_proof: Vec<u8>,
+    auxiliary_witness_words: &[u64],
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    if !auxiliary_witness_words.is_empty() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood candidate proof wrapper must not carry auxiliary witness words",
+        ));
+    }
+    if auxiliary_witness_words.is_empty() {
+        return bincode::serialize(&LegacySmallwoodCandidateProof {
+            arithmetization,
+            ark_proof,
+        })
+        .map_err(|err| {
+            TransactionCircuitError::ConstraintViolationOwned(format!(
+                "failed to serialize legacy smallwood candidate proof: {err}"
+            ))
+        });
+    }
+    bincode::serialize(&SmallwoodCandidateProof {
+        arithmetization,
+        ark_proof,
+        auxiliary_witness_words: auxiliary_witness_words.to_vec(),
+    })
+    .map_err(|err| {
+        TransactionCircuitError::ConstraintViolationOwned(format!(
+            "failed to serialize smallwood candidate proof: {err}"
+        ))
+    })
+}
+
+fn projected_wrapped_smallwood_candidate_proof_bytes(
+    arithmetization: SmallwoodArithmetization,
+    ark_proof_bytes: usize,
+    auxiliary_witness_limb_count: usize,
+) -> Result<usize, TransactionCircuitError> {
+    Ok(encode_smallwood_candidate_proof(
+        arithmetization,
+        vec![0u8; ark_proof_bytes],
+        &vec![0u64; auxiliary_witness_limb_count],
+    )?
+    .len())
+}
+
+fn projected_smallwood_backend_proof_bytes_with_profile_from_material(
+    arithmetization: SmallwoodArithmetization,
+    statement: &SmallwoodPublicStatement,
+    linear_constraints: &SmallwoodLinearConstraints,
+    auxiliary_witness_limb_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<usize, TransactionCircuitError> {
+    let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+        arithmetization,
+        &statement.public_values,
+        statement.lppc_row_count as usize,
+        statement.lppc_packing_factor as usize,
+        statement.effective_constraint_degree as usize,
+        &linear_constraints.term_offsets,
+        &linear_constraints.term_indices,
+        &linear_constraints.term_coefficients,
+        &linear_constraints.targets,
+        &[],
+        auxiliary_witness_limb_count,
+    );
+    projected_smallwood_backend_proof_bytes_with_profile_statement(&packed_statement, profile)
+}
+
+fn smallwood_candidate_soundness_report_from_material(
+    arithmetization: SmallwoodArithmetization,
+    statement: &SmallwoodPublicStatement,
+    linear_constraints: &SmallwoodLinearConstraints,
+    auxiliary_witness_limb_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<SmallwoodNoGrindingSoundnessReportV1, TransactionCircuitError> {
+    let packed_statement = crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+        arithmetization,
+        &statement.public_values,
+        statement.lppc_row_count as usize,
+        statement.lppc_packing_factor as usize,
+        statement.effective_constraint_degree as usize,
+        &linear_constraints.term_offsets,
+        &linear_constraints.term_indices,
+        &linear_constraints.term_coefficients,
+        &linear_constraints.targets,
+        &[],
+        auxiliary_witness_limb_count,
+    );
+    report_smallwood_no_grinding_soundness_v1(
+        &packed_statement,
+        statement.public_values.len(),
+        profile,
+    )
+}
+
+fn bytes_to_felts(bytes: &[u8]) -> Vec<Felt> {
+    bytes
+        .chunks(8)
+        .map(|chunk| {
+            let mut buf = [0u8; 8];
+            buf[8 - chunk.len()..].copy_from_slice(chunk);
+            Felt::from_u64(u64::from_be_bytes(buf))
+        })
+        .collect()
+}
+
+fn commitment_inputs(note: &crate::note::NoteData) -> Vec<Felt> {
+    note_commitment_inputs(
+        note.value,
+        note.asset_id,
+        &note.pk_recipient,
+        &note.rho,
+        &note.r,
+        &note.pk_auth,
+    )
+}
+
+fn nullifier_inputs(prf: Felt, input: &InputNoteWitness) -> Vec<Felt> {
+    core_nullifier_inputs(prf, &input.note.rho, input.position)
+}
+
+fn trace_merkle_node(
+    left: HashFelt,
+    right: HashFelt,
+) -> (
+    HashFelt,
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+) {
+    let mut inputs = Vec::with_capacity(12);
+    inputs.extend_from_slice(&left);
+    inputs.extend_from_slice(&right);
+    trace_sponge_hash(MERKLE_DOMAIN_TAG, &inputs)
+}
+
+fn trace_sponge_hash(
+    domain_tag: u64,
+    inputs: &[Felt],
+) -> (
+    HashFelt,
+    Vec<[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]>,
+) {
+    let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+    state[0] = Felt::from_u64(domain_tag);
+    state[POSEIDON2_WIDTH - 1] = Felt::ONE;
+    let mut cursor = 0usize;
+    let mut permutations = Vec::new();
+    while cursor < inputs.len() {
+        let take = core::cmp::min(POSEIDON2_RATE, inputs.len() - cursor);
+        for idx in 0..take {
+            state[idx] += inputs[cursor + idx];
+        }
+        let mut rows = [[0u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION];
+        rows[0] = snapshot_state(&state);
+        for step in 0..POSEIDON2_STEPS {
+            poseidon2_step(&mut state, step);
+            rows[step + 1] = snapshot_state(&state);
+        }
+        permutations.push(rows);
+        cursor += take;
+    }
+    let mut output = [Felt::ZERO; POSEIDON2_RATE];
+    output.copy_from_slice(&state[..POSEIDON2_RATE]);
+    (output, permutations)
+}
+
+fn snapshot_state(state: &[Felt; POSEIDON2_WIDTH]) -> [u64; POSEIDON2_WIDTH] {
+    let mut row = [0u64; POSEIDON2_WIDTH];
+    for (idx, value) in state.iter().enumerate() {
+        row[idx] = value.as_canonical_u64();
+    }
+    row
+}
+
+fn padded_inputs(inputs: &[InputNoteWitness]) -> (Vec<InputNoteWitness>, [bool; MAX_INPUTS]) {
+    let mut padded = Vec::with_capacity(MAX_INPUTS);
+    let mut flags = [false; MAX_INPUTS];
+    for (idx, note) in inputs.iter().cloned().enumerate() {
+        if idx < MAX_INPUTS {
+            padded.push(note);
+            flags[idx] = true;
+        }
+    }
+    while padded.len() < MAX_INPUTS {
+        padded.push(dummy_input());
+    }
+    (padded, flags)
+}
+
+fn padded_outputs(outputs: &[OutputNoteWitness]) -> (Vec<OutputNoteWitness>, [bool; MAX_OUTPUTS]) {
+    let mut padded = Vec::with_capacity(MAX_OUTPUTS);
+    let mut flags = [false; MAX_OUTPUTS];
+    for (idx, note) in outputs.iter().cloned().enumerate() {
+        if idx < MAX_OUTPUTS {
+            padded.push(note);
+            flags[idx] = true;
+        }
+    }
+    while padded.len() < MAX_OUTPUTS {
+        padded.push(dummy_output());
+    }
+    (padded, flags)
+}
+
+fn dummy_input() -> InputNoteWitness {
+    InputNoteWitness {
+        note: crate::note::NoteData {
+            value: 0,
+            asset_id: 0,
+            pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
+            rho: [0u8; 32],
+            r: [0u8; 32],
+        },
+        position: 0,
+        rho_seed: [0u8; 32],
+        merkle_path: MerklePath::default(),
+    }
+}
+
+fn dummy_output() -> OutputNoteWitness {
+    OutputNoteWitness {
+        note: crate::note::NoteData {
+            value: 0,
+            asset_id: 0,
+            pk_recipient: [0u8; 32],
+            pk_auth: [0u8; 32],
+            rho: [0u8; 32],
+            r: [0u8; 32],
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hashing_pq::{
+        felts_to_bytes48, merkle_node, note_commitment_inputs, spend_auth_key_bytes,
+    };
+    use crate::note::NoteData;
+    use crate::public_inputs::StablecoinPolicyBinding;
+    use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendAuthorizationVectors {
+        schema_version: u32,
+        field_modulus: u64,
+        smallwood_spend_authorization_cases: Vec<LeanSmallwoodSpendAuthorizationCase>,
+        #[serde(default)]
+        smallwood_spend_boundary_cases: Vec<LeanSmallwoodSpendBoundaryCase>,
+        #[serde(default)]
+        smallwood_output_binding_cases: Vec<LeanSmallwoodOutputBindingCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendAuthorizationCase {
+        name: String,
+        active: bool,
+        previous_commitment_state_limbs: [u64; 4],
+        spend_derived_auth_limbs: [u64; 4],
+        commitment_auth_limbs: [u64; 4],
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodSpendBoundaryCase {
+        name: String,
+        active_flag: u64,
+        note_opening_commitment: u64,
+        commitment_row_commitment: u64,
+        public_nullifier: u64,
+        nullifier_row: u64,
+        public_merkle_root: u64,
+        merkle_root_row: u64,
+        nullifier_position: u64,
+        merkle_position: u64,
+        merkle_path_accepted: bool,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodOutputBindingCase {
+        name: String,
+        active_flag: u64,
+        note_opening_commitment: u64,
+        commitment_row_commitment: u64,
+        public_commitment: u64,
+        ciphertext_hash_row: u64,
+        public_ciphertext_hash: u64,
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodTranscriptBindingVectors {
+        schema_version: u32,
+        smallwood_binding_transcript_domain_hex: String,
+        smallwood_public_statement_domain_hex: String,
+        smallwood_field_xof_domain_hex: String,
+        smallwood_transcript_binding_cases: Vec<LeanSmallwoodTranscriptBindingCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodTranscriptBindingCase {
+        name: String,
+        circuit_version: u16,
+        crypto_suite: u16,
+        arithmetization: u64,
+        statement_bytes_hex: String,
+        expected_profile_material_hex: String,
+        expected_unpadded_transcript_hex: String,
+        expected_transcript_binding_hex: String,
+        expected_padding_len: usize,
+        expected_padding_bytes: Vec<u8>,
+        expected_aligned_to_eight: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodCandidateWrapperAdmissionVectors {
+        schema_version: u32,
+        smallwood_candidate_wrapper_admission_cases:
+            Vec<LeanSmallwoodCandidateWrapperAdmissionCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodCandidateWrapperAdmissionCase {
+        name: String,
+        fixture: String,
+        current_decode_ok: bool,
+        current_exact_consumption: bool,
+        current_canonical_reencode: bool,
+        current_ark_proof_bytes_present: bool,
+        current_auxiliary_witness_words_empty: bool,
+        legacy_decode_ok: bool,
+        legacy_exact_consumption: bool,
+        legacy_canonical_reencode: bool,
+        legacy_ark_proof_bytes_present: bool,
+        legacy_auxiliary_witness_words_empty: bool,
+        expected_valid: bool,
+        expected_kind: Option<String>,
+        expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodVerifierStatementProjectionVectors {
+        schema_version: u32,
+        active_circuit_version: u16,
+        active_crypto_suite: u16,
+        smallwood_verifier_statement_projection_cases:
+            Vec<LeanSmallwoodVerifierStatementProjectionCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodVerifierStatementProjectionCase {
+        name: String,
+        fixture: String,
+        arithmetization: u64,
+        candidate_wrapper_accepted: bool,
+        public_statement_binding_accepted: bool,
+        transcript_binding_accepted: bool,
+        arithmetization_matches: bool,
+        public_values_match: bool,
+        row_count_matches: bool,
+        packing_factor_matches: bool,
+        constraint_degree_matches: bool,
+        linear_constraint_offsets_match: bool,
+        linear_constraint_indices_match: bool,
+        linear_constraint_coefficients_match: bool,
+        linear_constraint_targets_match: bool,
+        auxiliary_witness_limb_count_matches: bool,
+        profile_material_matches: bool,
+        transcript_bytes_match: bool,
+        proof_bytes_nonempty: bool,
+        verifier_accepted: bool,
+        expected_valid: bool,
+        expected_rejection: Option<String>,
+    }
+
+    fn smallwood_active_auth_link_case_accepts(case: &LeanSmallwoodSpendAuthorizationCase) -> bool {
+        if !case.active {
+            return true;
+        }
+        case.commitment_auth_limbs
+            .iter()
+            .zip(case.previous_commitment_state_limbs.iter())
+            .zip(case.spend_derived_auth_limbs.iter())
+            .all(|((&commitment_auth_limb, &previous_limb), &derived_limb)| {
+                Felt::from_u64(commitment_auth_limb)
+                    == Felt::from_u64(previous_limb) + Felt::from_u64(derived_limb)
+            })
+    }
+
+    fn smallwood_spend_boundary_case_accepts(case: &LeanSmallwoodSpendBoundaryCase) -> bool {
+        match case.active_flag {
+            1 => {
+                Felt::from_u64(case.commitment_row_commitment)
+                    == Felt::from_u64(case.note_opening_commitment)
+                    && Felt::from_u64(case.nullifier_row) == Felt::from_u64(case.public_nullifier)
+                    && Felt::from_u64(case.merkle_root_row)
+                        == Felt::from_u64(case.public_merkle_root)
+                    && Felt::from_u64(case.merkle_position)
+                        == Felt::from_u64(case.nullifier_position)
+                    && case.merkle_path_accepted
+            }
+            0 => case.public_nullifier == 0 && case.nullifier_row == 0,
+            _ => false,
+        }
+    }
+
+    fn smallwood_output_binding_case_accepts(case: &LeanSmallwoodOutputBindingCase) -> bool {
+        match case.active_flag {
+            1 => {
+                Felt::from_u64(case.commitment_row_commitment)
+                    == Felt::from_u64(case.note_opening_commitment)
+                    && Felt::from_u64(case.public_commitment)
+                        == Felt::from_u64(case.commitment_row_commitment)
+                    && Felt::from_u64(case.ciphertext_hash_row)
+                        == Felt::from_u64(case.public_ciphertext_hash)
+            }
+            0 => case.public_commitment == 0 && case.public_ciphertext_hash == 0,
+            _ => false,
+        }
+    }
+
+    fn smallwood_arithmetization_from_vector(value: u64) -> SmallwoodArithmetization {
+        match value {
+            0 => SmallwoodArithmetization::Bridge64V1,
+            1 => SmallwoodArithmetization::DirectPacked64V1,
+            2 => SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            3 => SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+            4 => SmallwoodArithmetization::DirectPacked16CompactBindingsV1,
+            5 => SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+            6 => SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+            7 => {
+                SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+            }
+            8 => {
+                SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+            }
+            _ => panic!("unsupported Lean SmallWood arithmetization tag {value}"),
+        }
+    }
+
+    fn decode_hex_bytes(value: &str) -> Vec<u8> {
+        let hex = value
+            .strip_prefix("0x")
+            .unwrap_or_else(|| panic!("hex string missing 0x prefix: {value}"));
+        assert_eq!(
+            hex.len() % 2,
+            0,
+            "hex string must contain an even number of nybbles"
+        );
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| {
+                u8::from_str_radix(&hex[index..index + 2], 16)
+                    .unwrap_or_else(|err| panic!("invalid hex byte in {value}: {err}"))
+            })
+            .collect()
+    }
+
+    fn load_smallwood_transcript_binding_vectors() -> LeanSmallwoodTranscriptBindingVectors {
+        if let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS") {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!("failed to read Lean SmallWood transcript vectors {path}: {err}")
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood transcript vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_transcript_binding_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!("failed to run Lean SmallWood transcript vector generator: {err}")
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood transcript vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!("failed to parse generated Lean SmallWood transcript vectors: {err}")
+        })
+    }
+
+    fn load_smallwood_candidate_wrapper_admission_vectors(
+    ) -> LeanSmallwoodCandidateWrapperAdmissionVectors {
+        if let Ok(path) =
+            std::env::var("HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS")
+        {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!("failed to read Lean SmallWood wrapper vectors {path}: {err}")
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood wrapper vectors {path}: {err}")
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_candidate_wrapper_admission_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!("failed to run Lean SmallWood wrapper vector generator: {err}")
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood wrapper vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!("failed to parse generated Lean SmallWood wrapper vectors: {err}")
+        })
+    }
+
+    fn load_smallwood_verifier_statement_projection_vectors(
+    ) -> LeanSmallwoodVerifierStatementProjectionVectors {
+        if let Ok(path) =
+            std::env::var("HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS")
+        {
+            let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+                panic!(
+                    "failed to read Lean SmallWood verifier statement projection vectors {path}: {err}"
+                )
+            });
+            return serde_json::from_slice(&bytes).unwrap_or_else(|err| {
+                panic!(
+                    "failed to parse Lean SmallWood verifier statement projection vectors {path}: {err}"
+                )
+            });
+        }
+
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest_dir
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("transaction crate must live under circuits/transaction");
+        let output = std::process::Command::new("lake")
+            .args(["exe", "gen_smallwood_verifier_statement_projection_vectors"])
+            .current_dir(root.join("formal/lean"))
+            .output()
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to run Lean SmallWood verifier statement projection vector generator: {err}"
+                )
+            });
+        assert!(
+            output.status.success(),
+            "Lean SmallWood verifier statement projection vector generator failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|err| {
+            panic!(
+                "failed to parse generated Lean SmallWood verifier statement projection vectors: {err}"
+            )
+        })
+    }
+
+    fn sample_witness() -> TransactionWitness {
+        let sk_spend = [42u8; 32];
+        let pk_auth = spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 8,
+            asset_id: crate::constants::NATIVE_ASSET_ID,
+            pk_recipient: [2u8; 32],
+            pk_auth,
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+        let input_note_asset = NoteData {
+            value: 5,
+            asset_id: 1,
+            pk_recipient: [5u8; 32],
+            pk_auth,
+            rho: [6u8; 32],
+            r: [7u8; 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = input_note_asset.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        TransactionWitness {
+            inputs: vec![
+                InputNoteWitness {
+                    note: input_note_native,
+                    position: 0,
+                    rho_seed: [9u8; 32],
+                    merkle_path: MerklePath {
+                        siblings: siblings0,
+                    },
+                },
+                InputNoteWitness {
+                    note: input_note_asset,
+                    position: 1,
+                    rho_seed: [8u8; 32],
+                    merkle_path: MerklePath {
+                        siblings: siblings1,
+                    },
+                },
+            ],
+            outputs: vec![
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 3,
+                        asset_id: crate::constants::NATIVE_ASSET_ID,
+                        pk_recipient: [11u8; 32],
+                        pk_auth: [111u8; 32],
+                        rho: [12u8; 32],
+                        r: [13u8; 32],
+                    },
+                },
+                OutputNoteWitness {
+                    note: NoteData {
+                        value: 5,
+                        asset_id: 1,
+                        pk_recipient: [21u8; 32],
+                        pk_auth: [121u8; 32],
+                        rho: [22u8; 32],
+                        r: [23u8; 32],
+                    },
+                },
+            ],
+            ciphertext_hashes: vec![[0u8; 48]; 2],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&current),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding::default(),
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn rebuild_two_input_tree(witness: &mut TransactionWitness) {
+        let leaf0 = witness.inputs[0].note.commitment();
+        let leaf1 = witness.inputs[1].note.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        witness.inputs[0].merkle_path = MerklePath {
+            siblings: siblings0,
+        };
+        witness.inputs[1].merkle_path = MerklePath {
+            siblings: siblings1,
+        };
+        witness.merkle_root = felts_to_bytes48(&current);
+    }
+
+    fn bytes48(seed: u8) -> [u8; 48] {
+        [seed; 48]
+    }
+
+    fn auth_digest_bytes(hash: HashFelt) -> [u8; 48] {
+        felts_to_bytes48(&hash)
+    }
+
+    fn auth_material(
+        witness: &TransactionWitness,
+        auth: &SmallwoodPrivateAuthWitness,
+    ) -> PackedSmallwoodFrontendMaterial {
+        let context =
+            build_smallwood_witness_context_with_auth(witness, auth).expect("auth context builds");
+        build_packed_smallwood_frontend_material_from_context_with_shape(
+            &context,
+            witness,
+            SmallwoodFrontendShape::bridge64_v1(),
+            SmallwoodArithmetization::DirectPacked64V1,
+        )
+        .expect("auth material builds")
+    }
+
+    fn assert_auth_material_accepts(material: &PackedSmallwoodFrontendMaterial) {
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .expect("auth relation accepts valid material");
+    }
+
+    fn assert_auth_material_rejects(material: &PackedSmallwoodFrontendMaterial, label: &str) {
+        let err = test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .expect_err(label);
+        assert!(err.to_string().contains("smallwood"), "{label}: {err}");
+    }
+
+    fn mutate_auth_row(material: &mut PackedSmallwoodFrontendMaterial, row: usize, delta: u64) {
+        let packing = material.public_statement.lppc_packing_factor as usize;
+        material.packed_expanded_witness[row * packing] ^= delta;
+    }
+
+    fn padded_policy(
+        tags: &[SmallwoodSignerTag],
+    ) -> [SmallwoodSignerTag; SMALLWOOD_MULTISIG_MAX_SIGNERS] {
+        let mut out = [[0; SMALLWOOD_SIGNER_TAG_WORDS]; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+        out[..tags.len()].copy_from_slice(tags);
+        out
+    }
+
+    fn approved_slots(slots: &[usize]) -> [u64; SMALLWOOD_MULTISIG_MAX_SIGNERS] {
+        let mut out = [0; SMALLWOOD_MULTISIG_MAX_SIGNERS];
+        for slot in slots {
+            out[*slot] = 1;
+        }
+        out
+    }
+
+    fn valid_approval_fixture() -> (TransactionWitness, SmallwoodPrivateAuthWitness) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let signer_tag = smallwood_signer_tag_from_spend_key(&witness.sk_spend);
+        let other_tag = smallwood_signer_tag_from_spend_key(&[91u8; 32]);
+        let third_tag = smallwood_signer_tag_from_spend_key(&[93u8; 32]);
+        let policy_signer_tags = padded_policy(&[other_tag, signer_tag, third_tag]);
+        let signer_count = 3;
+        let policy_root = smallwood_policy_root_bytes(2, signer_count, policy_signer_tags);
+        let mut auth = SmallwoodPrivateAuthWitness {
+            mode: SmallwoodPrivateAuthMode::ApprovalStep,
+            accumulator: SmallwoodAccumulatorAuthOpening {
+                policy_root,
+                intent_digest: bytes48(2),
+                threshold: 2,
+                signer_count,
+                approval_count: 0,
+                approved_slots: approved_slots(&[]),
+            },
+            next_accumulator: SmallwoodAccumulatorAuthOpening {
+                policy_root,
+                intent_digest: bytes48(2),
+                threshold: 2,
+                signer_count,
+                approval_count: 1,
+                approved_slots: approved_slots(&[1]),
+            },
+            policy_signer_tags,
+        };
+        witness.inputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
+        witness.inputs[1].note.pk_auth = spend_auth_key_bytes(&witness.sk_spend);
+        witness.outputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.next_accumulator).expect("next key");
+        rebuild_two_input_tree(&mut witness);
+        auth.next_accumulator.policy_root = auth.accumulator.policy_root;
+        (witness, auth)
+    }
+
+    fn final_fixture(
+        count: u64,
+        threshold: u64,
+    ) -> (TransactionWitness, SmallwoodPrivateAuthWitness) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        witness.inputs[0].note.pk_auth = spend_auth_key_bytes(&witness.sk_spend);
+        let signer_tag = smallwood_signer_tag_from_spend_key(&witness.sk_spend);
+        let other_tag = smallwood_signer_tag_from_spend_key(&[92u8; 32]);
+        let third_tag = smallwood_signer_tag_from_spend_key(&[94u8; 32]);
+        let policy_signer_tags = padded_policy(&[signer_tag, other_tag, third_tag]);
+        let signer_count = 3;
+        let policy_root = smallwood_policy_root_bytes(threshold, signer_count, policy_signer_tags);
+        let mut auth = SmallwoodPrivateAuthWitness {
+            mode: SmallwoodPrivateAuthMode::FinalThresholdSpend,
+            accumulator: SmallwoodAccumulatorAuthOpening {
+                policy_root,
+                intent_digest: [0u8; 48],
+                threshold,
+                signer_count,
+                approval_count: count,
+                approved_slots: match count {
+                    0 => approved_slots(&[]),
+                    1 => approved_slots(&[0]),
+                    _ => approved_slots(&[0, 1]),
+                },
+            },
+            next_accumulator: SmallwoodAccumulatorAuthOpening::default(),
+            policy_signer_tags,
+        };
+        witness.inputs[1].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("placeholder key");
+        rebuild_two_input_tree(&mut witness);
+        let context = build_smallwood_witness_context_with_auth(&witness, &auth)
+            .expect("placeholder final context");
+        auth.accumulator.intent_digest =
+            auth_digest_bytes(smallwood_statement_digest(&context.public_values));
+        witness.inputs[0].note.pk_auth = smallwood_value_lock_auth_key_bytes(
+            &auth.accumulator.policy_root,
+            &auth.accumulator.intent_digest,
+        )
+        .expect("value-lock key");
+        witness.inputs[1].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("final key");
+        rebuild_two_input_tree(&mut witness);
+        (witness, auth)
+    }
+
+    #[test]
+    fn universal_auth_approval_accepts() {
+        let (witness, auth) = valid_approval_fixture();
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_accepts(&material);
+    }
+
+    #[test]
+    fn universal_auth_single_key_accepts() {
+        let witness = sample_witness();
+        let auth = SmallwoodPrivateAuthWitness::default();
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_accepts(&material);
+    }
+
+    #[test]
+    fn universal_auth_rejects_two_hot_selector() {
+        let (witness, auth) = valid_approval_fixture();
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_mode_row(layout, 0), 1);
+        assert_auth_material_rejects(&material, "two-hot selector must reject");
+    }
+
+    #[test]
+    fn universal_auth_rejects_single_key_non_neutral_payload() {
+        let witness = sample_witness();
+        let auth = SmallwoodPrivateAuthWitness::default();
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_policy_row(layout, 0), 1);
+        assert_auth_material_rejects(&material, "single-key payload must be neutral");
+    }
+
+    #[test]
+    fn universal_auth_rejects_wrong_policy() {
+        let (witness, auth) = valid_approval_fixture();
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_policy_row(layout, 0), 1);
+        assert_auth_material_rejects(&material, "wrong hidden policy must reject");
+    }
+
+    #[test]
+    fn universal_auth_rejects_duplicate_signer() {
+        let (mut witness, mut auth) = valid_approval_fixture();
+        auth.accumulator.approval_count = 1;
+        auth.accumulator.approved_slots = approved_slots(&[1]);
+        auth.next_accumulator.approval_count = 2;
+        auth.next_accumulator.approved_slots = approved_slots(&[1]);
+        witness.inputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
+        witness.outputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.next_accumulator).expect("next key");
+        rebuild_two_input_tree(&mut witness);
+
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(&material, "duplicate signer must reject");
+    }
+
+    #[test]
+    fn universal_auth_rejects_wrong_next_approved_slot() {
+        let (witness, auth) = valid_approval_fixture();
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_next_slot_row(layout, 0), 1);
+        assert_auth_material_rejects(&material, "wrong next approved slot must reject");
+    }
+
+    #[test]
+    fn universal_auth_approval_requires_state_shape() {
+        let (mut missing_signer_input, auth) = valid_approval_fixture();
+        missing_signer_input.inputs.truncate(1);
+        let err = match build_smallwood_witness_context_with_auth(&missing_signer_input, &auth) {
+            Ok(_) => panic!("approval without signer input must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("approval requires"));
+
+        let (mut missing_next_output, auth) = valid_approval_fixture();
+        missing_next_output.outputs.clear();
+        let err = match build_smallwood_witness_context_with_auth(&missing_next_output, &auth) {
+            Ok(_) => panic!("approval without next accumulator output must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("approval requires"));
+    }
+
+    #[test]
+    fn universal_auth_approval_rejects_wrong_next_output_auth_key() {
+        let (mut witness, auth) = valid_approval_fixture();
+        witness.outputs[0].note.pk_auth = [19u8; 32];
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(
+            &material,
+            "approval output must use next accumulator auth key",
+        );
+    }
+
+    #[test]
+    fn universal_auth_rejects_signer_outside_hidden_policy() {
+        let (mut witness, mut auth) = valid_approval_fixture();
+        auth.policy_signer_tags = padded_policy(&[
+            smallwood_signer_tag_from_spend_key(&[23u8; 32]),
+            smallwood_signer_tag_from_spend_key(&[24u8; 32]),
+            smallwood_signer_tag_from_spend_key(&[25u8; 32]),
+        ]);
+        auth.accumulator.policy_root = smallwood_policy_root_bytes(
+            auth.accumulator.threshold,
+            auth.accumulator.signer_count,
+            auth.policy_signer_tags,
+        );
+        auth.next_accumulator.policy_root = auth.accumulator.policy_root;
+        auth.next_accumulator.approved_slots = approved_slots(&[0]);
+        witness.inputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.accumulator).expect("current key");
+        witness.outputs[0].note.pk_auth =
+            smallwood_accumulator_auth_key_bytes(&auth.next_accumulator).expect("next key");
+        rebuild_two_input_tree(&mut witness);
+
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(&material, "policy membership must reject");
+    }
+
+    #[test]
+    fn universal_auth_rejects_wrong_membership_flag() {
+        let (witness, auth) = valid_approval_fixture();
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_membership_flag_row(layout, 1), 1);
+        assert_auth_material_rejects(&material, "membership flag must match signer");
+    }
+
+    #[test]
+    fn universal_auth_final_exact_threshold_accepts() {
+        let (witness, auth) = final_fixture(2, 2);
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_accepts(&material);
+    }
+
+    #[test]
+    fn universal_auth_final_rejects_single_key_value_input() {
+        let (mut witness, auth) = final_fixture(2, 2);
+        witness.inputs[0].note.pk_auth = spend_auth_key_bytes(&witness.sk_spend);
+        rebuild_two_input_tree(&mut witness);
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(&material, "final value input must use value-lock auth key");
+    }
+
+    #[test]
+    fn universal_auth_final_requires_accumulator_input() {
+        let (mut witness, auth) = final_fixture(2, 2);
+        witness.inputs.truncate(1);
+        let err = match build_smallwood_witness_context_with_auth(&witness, &auth) {
+            Ok(_) => panic!("final spend without accumulator input must fail"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("final spend requires"));
+    }
+
+    #[test]
+    fn universal_auth_final_below_threshold_rejects() {
+        let (witness, auth) = final_fixture(1, 2);
+        let material = auth_material(&witness, &auth);
+        assert_auth_material_rejects(&material, "below-threshold final spend must reject");
+    }
+
+    #[test]
+    fn universal_auth_final_rejects_non_neutral_next_payload() {
+        let (witness, auth) = final_fixture(2, 2);
+        let mut material = auth_material(&witness, &auth);
+        let layout = SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1());
+        mutate_auth_row(&mut material, bridge_auth_signer_row(layout), 1);
+        assert_auth_material_rejects(
+            &material,
+            "final mode approval-only signer payload must be neutral",
+        );
+    }
+
+    #[test]
+    fn universal_auth_final_rejects_wrong_included_intent_field() {
+        let (witness, auth) = final_fixture(2, 2);
+        let mut material = auth_material(&witness, &auth);
+        let version_idx = material.public_statement.public_values.len() - 1;
+        material.public_statement.public_values[version_idx] ^= 1;
+        material.linear_constraints = build_packed_bridge_linear_constraints(
+            &material.public_statement,
+            SmallwoodFrontendShape::bridge64_v1(),
+        );
+        assert_auth_material_rejects(
+            &material,
+            "changed included intent field must reject final mode",
+        );
+    }
+
+    #[test]
+    fn universal_auth_public_statement_length_unchanged() {
+        let (witness, auth) = valid_approval_fixture();
+        let material = auth_material(&witness, &auth);
+        assert_eq!(
+            material.public_statement.public_values.len(),
+            SMALLWOOD_BASE_PUBLIC_VALUE_COUNT
+        );
+    }
+
+    #[test]
+    fn smallwood_commitment_inputs_use_shared_core_preimage() {
+        let note = &sample_witness().outputs[0].note;
+        assert_eq!(
+            commitment_inputs(note),
+            note_commitment_inputs(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.rho,
+                &note.r,
+                &note.pk_auth,
+            )
+        );
+    }
+
+    #[test]
+    fn smallwood_nullifier_inputs_use_shared_core_preimage() {
+        let witness = sample_witness();
+        let input = &witness.inputs[0];
+        let prf = Felt::from_u64(123);
+        assert_eq!(
+            nullifier_inputs(prf, input),
+            core_nullifier_inputs(prf, &input.note.rho, input.position)
+        );
+    }
+
+    #[test]
+    fn smallwood_spend_authorization_matches_lean_vectors_when_present() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_SMALLWOOD_SPEND_AUTHORIZATION_VECTORS") else {
+            return;
+        };
+        let bytes = std::fs::read(&path).unwrap_or_else(|err| {
+            panic!("failed to read Lean SmallWood auth vectors {path}: {err}")
+        });
+        let vectors: LeanSmallwoodSpendAuthorizationVectors = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|err| {
+                panic!("failed to parse Lean SmallWood auth vectors {path}: {err}")
+            });
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.field_modulus,
+            transaction_core::constants::FIELD_MODULUS_U64
+        );
+        assert!(
+            !vectors.smallwood_spend_authorization_cases.is_empty(),
+            "Lean SmallWood auth vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_spend_authorization_cases {
+            assert_eq!(
+                smallwood_active_auth_link_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood auth vector case {} disagreed with Rust Goldilocks auth-link check",
+                case.name
+            );
+        }
+        assert!(
+            !vectors.smallwood_spend_boundary_cases.is_empty(),
+            "Lean SmallWood spend boundary vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_spend_boundary_cases {
+            assert_eq!(
+                smallwood_spend_boundary_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood spend boundary vector case {} disagreed with Rust row-boundary check",
+                case.name
+            );
+        }
+        assert!(
+            !vectors.smallwood_output_binding_cases.is_empty(),
+            "Lean SmallWood output binding vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_output_binding_cases {
+            assert_eq!(
+                smallwood_output_binding_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood output binding vector case {} disagreed with Rust row-boundary check",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production() {
+        let vectors = load_smallwood_candidate_wrapper_admission_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors
+                .smallwood_candidate_wrapper_admission_cases
+                .is_empty(),
+            "Lean SmallWood wrapper admission bundle must contain at least one case"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.smallwood_candidate_wrapper_admission_cases {
+            assert!(names.insert(case.name.clone()));
+            let modeled = modeled_smallwood_candidate_wrapper_outcome(case);
+            assert_eq!(
+                modeled.0, case.expected_valid,
+                "Lean SmallWood wrapper case {} has inconsistent expected_valid",
+                case.name
+            );
+            assert_eq!(
+                modeled.1.as_deref(),
+                case.expected_kind.as_deref(),
+                "Lean SmallWood wrapper case {} has inconsistent expected_kind",
+                case.name
+            );
+            assert_eq!(
+                modeled.2.as_deref(),
+                case.expected_rejection.as_deref(),
+                "Lean SmallWood wrapper case {} has inconsistent expected_rejection",
+                case.name
+            );
+
+            let actual = production_smallwood_candidate_wrapper_outcome(&case.fixture);
+            assert_eq!(
+                actual.0, case.expected_valid,
+                "production SmallWood wrapper fixture {} disagreed with Lean validity for {}",
+                case.fixture, case.name
+            );
+            assert_eq!(
+                actual.1.as_deref(),
+                case.expected_kind.as_deref(),
+                "production SmallWood wrapper fixture {} disagreed with Lean selected kind for {}",
+                case.fixture,
+                case.name
+            );
+            assert_eq!(
+                actual.2.as_deref(),
+                case.expected_rejection.as_deref(),
+                "production SmallWood wrapper fixture {} disagreed with Lean rejection for {}",
+                case.fixture,
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn smallwood_candidate_wrapper_rejects_outer_auxiliary_witness_words() {
+        // This is only an outer-wrapper guard. The inner SmallWood proof trace can
+        // still carry public opening auxiliary words, so hidden auth data must not
+        // be routed through either channel.
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let leaky_wrapper = bincode::serialize(&SmallwoodCandidateProof {
+            arithmetization,
+            ark_proof: vec![1, 2, 3, 4],
+            auxiliary_witness_words: vec![0xfeed, 0xbeef],
+        })
+        .expect("encode leaky current wrapper");
+
+        let decode_err = decode_smallwood_candidate_proof(&leaky_wrapper)
+            .expect_err("outer candidate wrapper must reject auxiliary witness words");
+        assert!(
+            format!("{decode_err}").contains("must not carry auxiliary witness words"),
+            "unexpected error for leaky outer wrapper: {decode_err}"
+        );
+
+        let encode_err =
+            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3, 4], &[0xfeed])
+                .expect_err("encoder must not emit auxiliary witness words in outer wrapper");
+        assert!(
+            format!("{encode_err}").contains("must not carry auxiliary witness words"),
+            "unexpected encode error for leaky outer wrapper: {encode_err}"
+        );
+    }
+
+    fn modeled_smallwood_candidate_wrapper_outcome(
+        case: &LeanSmallwoodCandidateWrapperAdmissionCase,
+    ) -> (bool, Option<String>, Option<String>) {
+        let current_accepts = case.current_decode_ok
+            && case.current_exact_consumption
+            && case.current_canonical_reencode;
+        let legacy_accepts = case.legacy_decode_ok
+            && case.legacy_exact_consumption
+            && case.legacy_canonical_reencode;
+        if current_accepts {
+            if !case.current_auxiliary_witness_words_empty {
+                (
+                    false,
+                    Some("current".to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                )
+            } else if case.current_ark_proof_bytes_present {
+                (true, Some("current".to_string()), None)
+            } else {
+                (
+                    false,
+                    Some("current".to_string()),
+                    Some("missing_ark_proof_bytes".to_string()),
+                )
+            }
+        } else if legacy_accepts {
+            if !case.legacy_auxiliary_witness_words_empty {
+                (
+                    false,
+                    Some("legacy".to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                )
+            } else if case.legacy_ark_proof_bytes_present {
+                (true, Some("legacy".to_string()), None)
+            } else {
+                (
+                    false,
+                    Some("legacy".to_string()),
+                    Some("missing_ark_proof_bytes".to_string()),
+                )
+            }
+        } else {
+            (false, None, Some("no_canonical_wrapper".to_string()))
+        }
+    }
+
+    fn production_smallwood_candidate_wrapper_outcome(
+        fixture: &str,
+    ) -> (bool, Option<String>, Option<String>) {
+        let bytes = smallwood_candidate_wrapper_fixture_bytes(fixture);
+        match decode_exact_current_smallwood_candidate_proof(&bytes) {
+            Ok(candidate) => {
+                let kind = Some(SmallwoodCandidateWrapperKind::Current.label().to_string());
+                if candidate.ark_proof.is_empty() {
+                    return (false, kind, Some("missing_ark_proof_bytes".to_string()));
+                }
+                return (true, kind, None);
+            }
+            Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood candidate proof wrapper must not carry auxiliary witness words",
+            )) => {
+                return (
+                    false,
+                    Some(SmallwoodCandidateWrapperKind::Current.label().to_string()),
+                    Some("auxiliary_witness_words_present".to_string()),
+                );
+            }
+            Err(_) => {}
+        }
+        match decode_smallwood_candidate_proof_with_kind(&bytes) {
+            Ok((candidate, kind)) => {
+                let kind = Some(kind.label().to_string());
+                if candidate.ark_proof.is_empty() {
+                    (false, kind, Some("missing_ark_proof_bytes".to_string()))
+                } else {
+                    (true, kind, None)
+                }
+            }
+            Err(_) => (false, None, Some("no_canonical_wrapper".to_string())),
+        }
+    }
+
+    fn smallwood_candidate_wrapper_fixture_bytes(fixture: &str) -> Vec<u8> {
+        let current_arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        match fixture {
+            "current_valid" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: vec![1, 2, 3, 4],
+                auxiliary_witness_words: Vec::new(),
+            })
+            .expect("encode current SmallWood wrapper fixture"),
+            "current_nonempty" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: vec![1, 2, 3, 4],
+                auxiliary_witness_words: vec![9, 10],
+            })
+            .expect("encode current SmallWood wrapper fixture"),
+            "legacy_nonempty" => encode_smallwood_candidate_proof(
+                SmallwoodArithmetization::Bridge64V1,
+                vec![1, 2, 3, 4],
+                &[],
+            )
+            .expect("encode legacy SmallWood wrapper fixture"),
+            "current_empty_ark" => bincode::serialize(&SmallwoodCandidateProof {
+                arithmetization: current_arithmetization,
+                ark_proof: Vec::new(),
+                auxiliary_witness_words: Vec::new(),
+            })
+            .expect("encode empty current SmallWood wrapper fixture"),
+            "legacy_empty_ark" => encode_smallwood_candidate_proof(
+                SmallwoodArithmetization::Bridge64V1,
+                Vec::new(),
+                &[],
+            )
+            .expect("encode empty legacy SmallWood wrapper fixture"),
+            "malformed" => vec![0xff, 0x00, 0x01],
+            "current_trailing" => {
+                let mut bytes = bincode::serialize(&SmallwoodCandidateProof {
+                    arithmetization: current_arithmetization,
+                    ark_proof: vec![1, 2, 3, 4],
+                    auxiliary_witness_words: vec![9],
+                })
+                .expect("encode current trailing SmallWood wrapper fixture");
+                bytes.push(0);
+                bytes
+            }
+            "legacy_trailing" => {
+                let mut bytes = encode_smallwood_candidate_proof(
+                    SmallwoodArithmetization::Bridge64V1,
+                    vec![1, 2, 3, 4],
+                    &[],
+                )
+                .expect("encode legacy trailing SmallWood wrapper fixture");
+                bytes.push(0);
+                bytes
+            }
+            other => panic!("unknown Lean SmallWood wrapper fixture {other}"),
+        }
+    }
+
+    #[derive(Debug)]
+    struct SmallwoodVerifierStatementProjectionFacts {
+        candidate_wrapper_accepted: bool,
+        public_statement_binding_accepted: bool,
+        transcript_binding_accepted: bool,
+        arithmetization_matches: bool,
+        public_values_match: bool,
+        row_count_matches: bool,
+        packing_factor_matches: bool,
+        constraint_degree_matches: bool,
+        linear_constraint_offsets_match: bool,
+        linear_constraint_indices_match: bool,
+        linear_constraint_coefficients_match: bool,
+        linear_constraint_targets_match: bool,
+        auxiliary_witness_limb_count_matches: bool,
+        profile_material_matches: bool,
+        transcript_bytes_match: bool,
+        proof_bytes_nonempty: bool,
+        verifier_accepted: bool,
+    }
+
+    fn mutate_u32_vec(mut values: Vec<u32>) -> Vec<u32> {
+        if let Some(value) = values.first_mut() {
+            *value = value.wrapping_add(1);
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mutate_u64_vec(mut values: Vec<u64>) -> Vec<u64> {
+        if let Some(value) = values.first_mut() {
+            *value = value.wrapping_add(1);
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mutate_bytes(mut values: Vec<u8>) -> Vec<u8> {
+        if let Some(value) = values.first_mut() {
+            *value ^= 1;
+        } else {
+            values.push(1);
+        }
+        values
+    }
+
+    fn mismatched_smallwood_arithmetization(
+        arithmetization: SmallwoodArithmetization,
+    ) -> SmallwoodArithmetization {
+        if arithmetization == SmallwoodArithmetization::DirectPacked64V1 {
+            SmallwoodArithmetization::Bridge64V1
+        } else {
+            SmallwoodArithmetization::DirectPacked64V1
+        }
+    }
+
+    fn vec_u32_projection_matches(actual: &[u32], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_u32_vec(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn vec_u64_projection_matches(actual: &[u64], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_u64_vec(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn bytes_projection_matches(actual: &[u8], should_match: bool) -> bool {
+        let expected = if should_match {
+            actual.to_vec()
+        } else {
+            mutate_bytes(actual.to_vec())
+        };
+        actual == expected.as_slice()
+    }
+
+    fn production_verifier_statement_projection_facts(
+        case: &LeanSmallwoodVerifierStatementProjectionCase,
+    ) -> SmallwoodVerifierStatementProjectionFacts {
+        use crate::smallwood_semantics::SmallwoodConstraintAdapter;
+
+        let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+        let mut witness = match case.fixture.as_str() {
+            "active_inline_merkle" => sample_witness(),
+            "stablecoin_inline_merkle" => stablecoin_witness(),
+            other => panic!("unknown Lean SmallWood verifier statement fixture {other}"),
+        };
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+
+        let context =
+            build_smallwood_witness_context(&witness).expect("build SmallWood witness context");
+        let surface = build_smallwood_candidate_profile_surface_for_arithmetization(
+            &witness,
+            arithmetization,
+        )
+        .expect("build SmallWood candidate profile surface");
+        let transcript_binding = smallwood_transcript_binding(
+            &surface.public_statement,
+            witness.version,
+            arithmetization,
+        )
+        .expect("build SmallWood transcript binding");
+        let profile_material =
+            smallwood_candidate_verifier_profile_material(witness.version, arithmetization);
+        let packed_statement = if uses_inline_merkle_auxiliary(arithmetization) {
+            crate::smallwood_semantics::PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &surface.public_statement.public_values,
+                surface.public_statement.lppc_row_count as usize,
+                surface.public_statement.lppc_packing_factor as usize,
+                surface.public_statement.effective_constraint_degree as usize,
+                &surface.linear_constraints.term_offsets,
+                &surface.linear_constraints.term_indices,
+                &surface.linear_constraints.term_coefficients,
+                &surface.linear_constraints.targets,
+                &[],
+                surface.auxiliary_witness_limb_count,
+            )
+        } else {
+            crate::smallwood_semantics::PackedStatement::new(
+                arithmetization,
+                &surface.public_statement.public_values,
+                surface.public_statement.lppc_row_count as usize,
+                surface.public_statement.lppc_packing_factor as usize,
+                surface.public_statement.effective_constraint_degree as usize,
+                &surface.linear_constraints.term_offsets,
+                &surface.linear_constraints.term_indices,
+                &surface.linear_constraints.term_coefficients,
+                &surface.linear_constraints.targets,
+            )
+        };
+
+        assert_eq!(packed_statement.arithmetization(), arithmetization);
+        assert_eq!(
+            packed_statement.row_count(),
+            surface.public_statement.lppc_row_count as usize
+        );
+        assert_eq!(
+            packed_statement.packing_factor(),
+            surface.public_statement.lppc_packing_factor as usize
+        );
+        assert_eq!(
+            packed_statement.constraint_degree(),
+            surface.public_statement.effective_constraint_degree as usize
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_offsets(),
+            surface.linear_constraints.term_offsets.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_indices(),
+            surface.linear_constraints.term_indices.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_constraint_coefficients(),
+            surface.linear_constraints.term_coefficients.as_slice()
+        );
+        assert_eq!(
+            packed_statement.linear_targets(),
+            surface.linear_constraints.targets.as_slice()
+        );
+
+        let auxiliary_limb_count = packed_statement
+            .auxiliary_witness_limb_count()
+            .unwrap_or_default();
+        assert_eq!(auxiliary_limb_count, surface.auxiliary_witness_limb_count);
+
+        let auxiliary_words = if uses_inline_merkle_auxiliary(arithmetization) {
+            vec![0u64; surface.auxiliary_witness_limb_count]
+        } else {
+            Vec::new()
+        };
+        let wrapper_bytes = if case.candidate_wrapper_accepted {
+            let _ = auxiliary_words;
+            encode_smallwood_candidate_proof(arithmetization, vec![1, 2, 3], &[])
+                .expect("encode SmallWood candidate wrapper")
+        } else {
+            vec![0xff, 0x00, 0x01]
+        };
+        let candidate_wrapper_accepted = decode_smallwood_candidate_proof(&wrapper_bytes)
+            .map(|candidate| !candidate.ark_proof.is_empty())
+            .unwrap_or(false);
+
+        let expected_public_values =
+            smallwood_public_statement_values_for_p3(&context.public_inputs_p3, witness.version);
+        let public_statement_binding_expected = if case.public_statement_binding_accepted {
+            expected_public_values.clone()
+        } else {
+            mutate_u64_vec(expected_public_values.clone())
+        };
+        let public_statement_binding_accepted = surface.public_statement.public_values
+            == public_statement_binding_expected
+            && surface.public_statement.public_value_count as usize == expected_public_values.len();
+
+        let transcript_binding_accepted =
+            bytes_projection_matches(&transcript_binding, case.transcript_binding_accepted);
+        let arithmetization_expected = if case.arithmetization_matches {
+            arithmetization
+        } else {
+            mismatched_smallwood_arithmetization(arithmetization)
+        };
+        let public_values_expected = if case.public_values_match {
+            expected_public_values
+        } else {
+            mutate_u64_vec(expected_public_values)
+        };
+        let row_count_expected = if case.row_count_matches {
+            packed_statement.row_count()
+        } else {
+            packed_statement.row_count() + 1
+        };
+        let packing_factor_expected = if case.packing_factor_matches {
+            packed_statement.packing_factor()
+        } else {
+            packed_statement.packing_factor() + 1
+        };
+        let constraint_degree_expected = if case.constraint_degree_matches {
+            packed_statement.constraint_degree()
+        } else {
+            packed_statement.constraint_degree() + 1
+        };
+        let auxiliary_limb_count_expected = if case.auxiliary_witness_limb_count_matches {
+            auxiliary_limb_count
+        } else {
+            auxiliary_limb_count + 1
+        };
+        let proof_bytes = if case.proof_bytes_nonempty {
+            vec![1, 2, 3]
+        } else {
+            Vec::new()
+        };
+
+        SmallwoodVerifierStatementProjectionFacts {
+            candidate_wrapper_accepted,
+            public_statement_binding_accepted,
+            transcript_binding_accepted,
+            arithmetization_matches: packed_statement.arithmetization() == arithmetization_expected,
+            public_values_match: surface.public_statement.public_values == public_values_expected,
+            row_count_matches: packed_statement.row_count() == row_count_expected,
+            packing_factor_matches: packed_statement.packing_factor() == packing_factor_expected,
+            constraint_degree_matches: packed_statement.constraint_degree()
+                == constraint_degree_expected,
+            linear_constraint_offsets_match: vec_u32_projection_matches(
+                packed_statement.linear_constraint_offsets(),
+                case.linear_constraint_offsets_match,
+            ),
+            linear_constraint_indices_match: vec_u32_projection_matches(
+                packed_statement.linear_constraint_indices(),
+                case.linear_constraint_indices_match,
+            ),
+            linear_constraint_coefficients_match: vec_u64_projection_matches(
+                packed_statement.linear_constraint_coefficients(),
+                case.linear_constraint_coefficients_match,
+            ),
+            linear_constraint_targets_match: vec_u64_projection_matches(
+                packed_statement.linear_targets(),
+                case.linear_constraint_targets_match,
+            ),
+            auxiliary_witness_limb_count_matches: auxiliary_limb_count
+                == auxiliary_limb_count_expected,
+            profile_material_matches: bytes_projection_matches(
+                &profile_material,
+                case.profile_material_matches,
+            ),
+            transcript_bytes_match: bytes_projection_matches(
+                &transcript_binding,
+                case.transcript_bytes_match,
+            ),
+            proof_bytes_nonempty: !proof_bytes.is_empty(),
+            verifier_accepted: case.verifier_accepted,
+        }
+    }
+
+    fn smallwood_verifier_statement_projection_rejection(
+        facts: &SmallwoodVerifierStatementProjectionFacts,
+    ) -> Option<&'static str> {
+        if !facts.candidate_wrapper_accepted {
+            Some("candidate_wrapper_rejected")
+        } else if !facts.public_statement_binding_accepted {
+            Some("public_statement_binding_rejected")
+        } else if !facts.transcript_binding_accepted {
+            Some("transcript_binding_rejected")
+        } else if !facts.arithmetization_matches {
+            Some("arithmetization_mismatch")
+        } else if !facts.public_values_match {
+            Some("public_values_mismatch")
+        } else if !facts.row_count_matches {
+            Some("row_count_mismatch")
+        } else if !facts.packing_factor_matches {
+            Some("packing_factor_mismatch")
+        } else if !facts.constraint_degree_matches {
+            Some("constraint_degree_mismatch")
+        } else if !facts.linear_constraint_offsets_match {
+            Some("linear_constraint_offsets_mismatch")
+        } else if !facts.linear_constraint_indices_match {
+            Some("linear_constraint_indices_mismatch")
+        } else if !facts.linear_constraint_coefficients_match {
+            Some("linear_constraint_coefficients_mismatch")
+        } else if !facts.linear_constraint_targets_match {
+            Some("linear_constraint_targets_mismatch")
+        } else if !facts.auxiliary_witness_limb_count_matches {
+            Some("auxiliary_witness_limb_count_mismatch")
+        } else if !facts.profile_material_matches {
+            Some("profile_material_mismatch")
+        } else if !facts.transcript_bytes_match {
+            Some("transcript_bytes_mismatch")
+        } else if !facts.proof_bytes_nonempty {
+            Some("proof_bytes_empty")
+        } else if !facts.verifier_accepted {
+            Some("verifier_rejected")
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_verifier_statement_projection_vectors_match_production() {
+        let vectors = load_smallwood_verifier_statement_projection_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.active_circuit_version,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit
+        );
+        assert_eq!(
+            vectors.active_crypto_suite,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto
+        );
+        assert!(
+            !vectors
+                .smallwood_verifier_statement_projection_cases
+                .is_empty(),
+            "Lean SmallWood verifier statement projection bundle must contain at least one case"
+        );
+
+        let mut names = std::collections::BTreeSet::new();
+        for case in &vectors.smallwood_verifier_statement_projection_cases {
+            assert!(names.insert(case.name.clone()));
+            let facts = production_verifier_statement_projection_facts(case);
+            assert_eq!(
+                facts.candidate_wrapper_accepted, case.candidate_wrapper_accepted,
+                "{}: production wrapper admission fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.public_statement_binding_accepted, case.public_statement_binding_accepted,
+                "{}: production public-statement binding fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.transcript_binding_accepted, case.transcript_binding_accepted,
+                "{}: production transcript binding fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.arithmetization_matches, case.arithmetization_matches,
+                "{}: production arithmetization projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.public_values_match, case.public_values_match,
+                "{}: production public-value projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.row_count_matches, case.row_count_matches,
+                "{}: production row-count projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.packing_factor_matches, case.packing_factor_matches,
+                "{}: production packing-factor projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.constraint_degree_matches, case.constraint_degree_matches,
+                "{}: production constraint-degree projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_offsets_match, case.linear_constraint_offsets_match,
+                "{}: production linear-offset projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_indices_match, case.linear_constraint_indices_match,
+                "{}: production linear-index projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_coefficients_match,
+                case.linear_constraint_coefficients_match,
+                "{}: production linear-coefficient projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.linear_constraint_targets_match, case.linear_constraint_targets_match,
+                "{}: production linear-target projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.auxiliary_witness_limb_count_matches,
+                case.auxiliary_witness_limb_count_matches,
+                "{}: production auxiliary-limb projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.profile_material_matches, case.profile_material_matches,
+                "{}: production profile-material projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.transcript_bytes_match, case.transcript_bytes_match,
+                "{}: production transcript-byte projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.proof_bytes_nonempty, case.proof_bytes_nonempty,
+                "{}: production proof-byte projection fact drifted",
+                case.name
+            );
+            assert_eq!(
+                facts.verifier_accepted, case.verifier_accepted,
+                "{}: explicit verifier-result handoff fact drifted",
+                case.name
+            );
+
+            let rejection = smallwood_verifier_statement_projection_rejection(&facts);
+            assert_eq!(
+                rejection.is_none(),
+                case.expected_valid,
+                "{}: Rust projection validity disagreed with Lean",
+                case.name
+            );
+            assert_eq!(
+                rejection,
+                case.expected_rejection.as_deref(),
+                "{}: Rust projection rejection disagreed with Lean",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
+        let vectors = load_smallwood_transcript_binding_vectors();
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_binding_transcript_domain_hex),
+            SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN
+        );
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_public_statement_domain_hex),
+            SMALLWOOD_PUBLIC_STATEMENT_DOMAIN
+        );
+        assert_eq!(
+            decode_hex_bytes(&vectors.smallwood_field_xof_domain_hex),
+            b"hegemon.blake3-field-xof.v1"
+        );
+        assert!(
+            !vectors.smallwood_transcript_binding_cases.is_empty(),
+            "Lean SmallWood transcript binding bundle must contain at least one case"
+        );
+
+        let mut active_binding = None;
+        let mut statement_mutation_binding = None;
+        let mut version_mutation_profile = None;
+        let mut legacy_arith_profile = None;
+        let mut covered_arithmetization_tags = std::collections::BTreeSet::new();
+
+        for case in &vectors.smallwood_transcript_binding_cases {
+            let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+            covered_arithmetization_tags.insert(case.arithmetization);
+            let version = VersionBinding {
+                circuit: case.circuit_version,
+                crypto: case.crypto_suite,
+            };
+            let statement_bytes = decode_hex_bytes(&case.statement_bytes_hex);
+            let profile_material =
+                smallwood_candidate_verifier_profile_material(version, arithmetization);
+            let unpadded = [
+                SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN,
+                profile_material.as_slice(),
+                statement_bytes.as_slice(),
+            ]
+            .concat();
+            let transcript = smallwood_transcript_binding_from_serialized_statement(
+                &statement_bytes,
+                version,
+                arithmetization,
+            );
+            let expected_profile = decode_hex_bytes(&case.expected_profile_material_hex);
+            let expected_unpadded = decode_hex_bytes(&case.expected_unpadded_transcript_hex);
+            let expected_transcript = decode_hex_bytes(&case.expected_transcript_binding_hex);
+
+            assert_eq!(
+                profile_material, expected_profile,
+                "Lean SmallWood transcript case {} disagreed on verifier profile material",
+                case.name
+            );
+            assert_eq!(
+                unpadded, expected_unpadded,
+                "Lean SmallWood transcript case {} disagreed on unpadded transcript bytes",
+                case.name
+            );
+            assert_eq!(
+                transcript, expected_transcript,
+                "Lean SmallWood transcript case {} disagreed on padded transcript bytes",
+                case.name
+            );
+            assert_eq!(
+                transcript.len().is_multiple_of(8),
+                case.expected_aligned_to_eight,
+                "Lean SmallWood transcript case {} disagreed on eight-byte alignment",
+                case.name
+            );
+            assert_eq!(
+                transcript.len() - unpadded.len(),
+                case.expected_padding_len,
+                "Lean SmallWood transcript case {} disagreed on padding length",
+                case.name
+            );
+            assert_eq!(
+                &transcript[unpadded.len()..],
+                case.expected_padding_bytes.as_slice(),
+                "Lean SmallWood transcript case {} disagreed on zero padding bytes",
+                case.name
+            );
+
+            match case.name.as_str() {
+                "active-inline-merkle-binding" => active_binding = Some(transcript),
+                "statement-byte-mutation-changes-binding" => {
+                    statement_mutation_binding = Some(transcript)
+                }
+                "version-mutation-changes-profile-material" => {
+                    version_mutation_profile = Some(profile_material)
+                }
+                "legacy-direct-packed-arithmetization-changes-profile-material" => {
+                    legacy_arith_profile = Some(profile_material)
+                }
+                _ => {}
+            }
+        }
+
+        let expected_arithmetization_tags = std::collections::BTreeSet::from([
+            SmallwoodArithmetization::Bridge64V1 as u64,
+            SmallwoodArithmetization::DirectPacked64V1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1 as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+        ]);
+        assert_eq!(
+            covered_arithmetization_tags, expected_arithmetization_tags,
+            "Lean SmallWood transcript vectors must cover every production-recognized arithmetization tag"
+        );
+
+        let active_binding = active_binding.expect("active transcript vector missing");
+        assert_ne!(
+            active_binding,
+            statement_mutation_binding.expect("statement mutation transcript vector missing"),
+            "statement byte mutation must alter the transcript binding"
+        );
+        let active_profile = smallwood_candidate_verifier_profile_material(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        for tag in expected_arithmetization_tags {
+            if tag
+                == SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                    as u64
+            {
+                continue;
+            }
+            let arithmetization = smallwood_arithmetization_from_vector(tag);
+            assert_ne!(
+                active_profile,
+                smallwood_candidate_verifier_profile_material(
+                    SMALLWOOD_CANDIDATE_VERSION_BINDING,
+                    arithmetization,
+                ),
+                "active SmallWood profile material must not alias arithmetization tag {tag}"
+            );
+        }
+        assert_ne!(
+            active_profile,
+            version_mutation_profile.expect("version mutation profile vector missing"),
+            "version mutation must alter verifier profile material"
+        );
+        assert_ne!(
+            active_profile,
+            legacy_arith_profile.expect("arithmetization mutation profile vector missing"),
+            "arithmetization mutation must alter verifier profile material"
+        );
+
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        let serialized_statement = bincode::serialize(&material.public_statement)
+            .expect("serialize SmallWood public statement");
+        assert_eq!(
+            material.transcript_binding,
+            smallwood_transcript_binding(
+                &material.public_statement,
+                witness.version,
+                arithmetization
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            material.transcript_binding,
+            smallwood_transcript_binding_from_serialized_statement(
+                &serialized_statement,
+                witness.version,
+                arithmetization
+            ),
+            "production statement serialization must feed the modeled transcript boundary"
+        );
+
+        let mut mutated_statement = serialized_statement.clone();
+        mutated_statement[0] ^= 1;
+        assert_ne!(
+            material.transcript_binding,
+            smallwood_transcript_binding_from_serialized_statement(
+                &mutated_statement,
+                witness.version,
+                arithmetization
+            ),
+            "serialized statement byte mutation must alter production binding"
+        );
+
+        let mut ciphertext_mutated_witness = witness.clone();
+        ciphertext_mutated_witness.ciphertext_hashes[0][0] ^= 1;
+        let ciphertext_mutated_material =
+            build_packed_smallwood_frontend_material_with_shape_from_witness(
+                &ciphertext_mutated_witness,
+                SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+            )
+            .unwrap();
+        assert_ne!(
+            material.transcript_binding, ciphertext_mutated_material.transcript_binding,
+            "ciphertext hash mutation must alter the public statement transcript binding"
+        );
+    }
+
+    fn stablecoin_witness() -> TransactionWitness {
+        let sk_spend = [8u8; 32];
+        let pk_auth = spend_auth_key_bytes(&sk_spend);
+        let input_note_native = NoteData {
+            value: 5,
+            asset_id: crate::constants::NATIVE_ASSET_ID,
+            pk_recipient: [1u8; 32],
+            pk_auth,
+            rho: [2u8; 32],
+            r: [3u8; 32],
+        };
+        let leaf0 = input_note_native.commitment();
+        let leaf1 = [Felt::ZERO; 6];
+        let mut siblings0 = vec![leaf1];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            current = merkle_node(current, zero);
+        }
+        let output_stablecoin = OutputNoteWitness {
+            note: NoteData {
+                value: 5,
+                asset_id: 4242,
+                pk_recipient: [4u8; 32],
+                pk_auth: [104u8; 32],
+                rho: [5u8; 32],
+                r: [6u8; 32],
+            },
+        };
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note_native,
+                position: 0,
+                rho_seed: [7u8; 32],
+                merkle_path: MerklePath {
+                    siblings: siblings0,
+                },
+            }],
+            outputs: vec![output_stablecoin],
+            ciphertext_hashes: vec![[9u8; 48]; 1],
+            sk_spend,
+            merkle_root: felts_to_bytes48(&current),
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding {
+                enabled: true,
+                asset_id: 4242,
+                policy_hash: [10u8; 48],
+                oracle_commitment: [11u8; 48],
+                attestation_commitment: [12u8; 48],
+                issuance_delta: -5,
+                policy_version: 1,
+            },
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn nonzero_value_balance_witness() -> TransactionWitness {
+        let mut witness = sample_witness();
+        witness.outputs[0].note.value = 2;
+        witness.value_balance = -1;
+        let leaf0 = witness.inputs[0].note.commitment();
+        let leaf1 = witness.inputs[1].note.commitment();
+        let mut siblings0 = vec![leaf1];
+        let mut siblings1 = vec![leaf0];
+        let mut current = merkle_node(leaf0, leaf1);
+        for _ in 1..MERKLE_TREE_DEPTH {
+            let zero = [Felt::ZERO; 6];
+            siblings0.push(zero);
+            siblings1.push(zero);
+            current = merkle_node(current, zero);
+        }
+        witness.inputs[0].merkle_path = MerklePath {
+            siblings: siblings0,
+        };
+        witness.inputs[1].merkle_path = MerklePath {
+            siblings: siblings1,
+        };
+        witness.merkle_root = felts_to_bytes48(&current);
+        witness
+    }
+
+    #[test]
+    fn smallwood_frontend_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let statement = build_smallwood_public_statement_from_witness(&witness).unwrap();
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 66_578);
+        assert_eq!(statement.lppc_row_count, 66_578);
+        assert_eq!(statement.lppc_packing_factor, 1);
+        assert_eq!(statement.effective_constraint_degree, 8);
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let bridge = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 102_656);
+        assert_eq!(statement.lppc_row_count, 1_604);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+        assert_eq!(material.public_statement, bridge.public_statement);
+        assert_eq!(material.packed_expanded_witness, bridge.packed_witness_rows);
+        assert_eq!(
+            material.linear_constraints.targets,
+            bridge.linear_constraints.targets
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 100_672);
+        assert_eq!(statement.lppc_row_count, 1_573);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed16_compact_bindings_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed16_compact_bindings_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 74_320);
+        assert_eq!(statement.lppc_row_count, 4_645);
+        assert_eq!(statement.lppc_packing_factor, 16);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed32_compact_bindings_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed32_compact_bindings_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 87_200);
+        assert_eq!(statement.lppc_row_count, 2_725);
+        assert_eq!(statement.lppc_packing_factor, 32);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed128_compact_bindings_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed128_compact_bindings_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 152_192);
+        assert_eq!(statement.lppc_row_count, 1_189);
+        assert_eq!(statement.lppc_packing_factor, 128);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_skip_initial_mds_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 421);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 98_368);
+        assert_eq!(statement.lppc_row_count, 1_537);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_inline_merkle_skip_initial_mds_matches_expected_shape(
+    ) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 241);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 86_848);
+        assert_eq!(statement.lppc_row_count, 1_357);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed128_compact_bindings_inline_merkle_skip_initial_mds_matches_expected_shape(
+    ) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed128_compact_bindings_inline_merkle_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 241);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_332);
+        assert_eq!(statement.expanded_witness_len, 126_080);
+        assert_eq!(statement.lppc_row_count, 985);
+        assert_eq!(statement.lppc_packing_factor, 128);
+        assert_eq!(statement.effective_constraint_degree, 8);
+        assert_eq!(
+            material.packed_expanded_witness.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed16_compact_bindings_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed16_compact_bindings_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked16CompactBindingsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed32_compact_bindings_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed32_compact_bindings_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked32CompactBindingsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed128_compact_bindings_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed128_compact_bindings_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked128CompactBindingsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_skip_initial_mds_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_with_shape_from_witness(
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_skip_initial_mds_v1(),
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_compact_bindings_inline_merkle_skip_initial_mds_witness_satisfies_constraints(
+    ) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        witness.sk_spend = [99u8; 32];
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let err = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .expect_err("mismatched spend secret and input pk_auth must fail");
+        assert!(err.to_string().contains("smallwood"));
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_packed128_compact_bindings_inline_merkle_skip_initial_mds_witness_satisfies_constraints(
+    ) {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_aux_words_match_explicit_helper_rows() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let explicit = build_packed_smallwood_frontend_material_from_context_with_shape(
+            &context,
+            &witness,
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_skip_initial_mds_v1(),
+            SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1,
+        )
+        .unwrap();
+        let inline = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let layout = SmallwoodBridgeRowLayout::for_shape(
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_skip_initial_mds_v1(),
+        );
+        let packing_factor = explicit.public_statement.lppc_packing_factor as usize;
+        for input in 0..MAX_INPUTS {
+            for level in 0..MERKLE_TREE_DEPTH {
+                let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+                let lane = packed_bridge_permutation_lane(merkle0, packing_factor);
+                let current = explicit.packed_expanded_witness
+                    [bridge_row_input_current_agg(layout, input, level) * packing_factor + lane];
+                let left = explicit.packed_expanded_witness
+                    [bridge_row_input_left_agg(layout, input, level) * packing_factor + lane];
+                let right = explicit.packed_expanded_witness
+                    [bridge_row_input_right_agg(layout, input, level) * packing_factor + lane];
+                assert_eq!(
+                    inline.auxiliary_witness_words[bridge_aux_input_current_agg(input, level)],
+                    current,
+                    "inline current aggregate mismatch at input {input} level {level}"
+                );
+                assert_eq!(
+                    inline.auxiliary_witness_words[bridge_aux_input_left_agg(input, level)],
+                    left,
+                    "inline left aggregate mismatch at input {input} level {level}"
+                );
+                assert_eq!(
+                    inline.auxiliary_witness_words[bridge_aux_input_right_agg(input, level)],
+                    right,
+                    "inline right aggregate mismatch at input {input} level {level}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_aux_constraints_match_targets() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let shape =
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let base_constraints =
+            build_packed_bridge_linear_constraints(&material.public_statement, shape);
+        let witness_size = material.public_statement.lppc_row_count as usize
+            * material.public_statement.lppc_packing_factor as usize;
+        let eval_constraint = |check: usize| -> Felt {
+            let start = material.linear_constraints.term_offsets[check] as usize;
+            let end = material.linear_constraints.term_offsets[check + 1] as usize;
+            let mut acc = Felt::ZERO;
+            for term_idx in start..end {
+                let idx = material.linear_constraints.term_indices[term_idx] as usize;
+                let coeff = Felt::from_u64(material.linear_constraints.term_coefficients[term_idx]);
+                let value = if idx < witness_size {
+                    material.packed_expanded_witness[idx]
+                } else {
+                    material.auxiliary_witness_words[idx - witness_size]
+                };
+                acc += coeff * Felt::from_u64(value);
+            }
+            acc
+        };
+
+        for check in base_constraints.targets.len()..material.linear_constraints.targets.len() {
+            let got = eval_constraint(check);
+            let expected = Felt::from_u64(material.linear_constraints.targets[check]);
+            let rel = check - base_constraints.targets.len();
+            let input = rel / (MERKLE_TREE_DEPTH * 3);
+            let level = (rel / 3) % MERKLE_TREE_DEPTH;
+            let kind = match rel % 3 {
+                0 => "current",
+                1 => "left",
+                _ => "right",
+            };
+            assert_eq!(
+                got, expected,
+                "inline-merkle auxiliary constraint mismatch at check {check} (input {input}, level {level}, kind {kind})"
+            );
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_inline_merkle_aux_constraints_support_padded_inputs() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+        )
+        .expect("inline-merkle auxiliary constraints must hold with padded dummy inputs");
+    }
+
+    fn assert_inline_merkle_relation_rejects(
+        label: &str,
+        statement: &SmallwoodPublicStatement,
+        packed_expanded_witness: &[u64],
+        linear_constraints: &SmallwoodLinearConstraints,
+        auxiliary_witness_words: &[u64],
+    ) {
+        let result = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &statement.public_values,
+            packed_expanded_witness,
+            statement.lppc_row_count as usize,
+            statement.lppc_packing_factor as usize,
+            statement.effective_constraint_degree,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+            auxiliary_witness_words,
+        );
+        let err = match result {
+            Ok(()) => panic!("inline-merkle SmallWood accepted mutation for {label}"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("smallwood"), "{label}: {err}");
+    }
+
+    fn overwrite_poseidon_permutation_rows(
+        material: &mut PackedSmallwoodAuxFrontendMaterial,
+        layout: SmallwoodBridgeRowLayout,
+        permutation: usize,
+        rows: &[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION],
+    ) {
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let lane = packed_bridge_permutation_lane(permutation, packing_factor);
+        for logical_row in 0..layout.poseidon_rows_per_permutation() {
+            let source_row = layout.poseidon_trace_row(logical_row);
+            for (limb, value) in rows[source_row].iter().enumerate() {
+                let row =
+                    bridge_poseidon_row(packing_factor, layout, permutation, logical_row, limb);
+                material.packed_expanded_witness[row * packing_factor + lane] = *value;
+            }
+        }
+    }
+
+    fn overwrite_input_merkle_permutation_rows(
+        material: &mut PackedSmallwoodAuxFrontendMaterial,
+        layout: SmallwoodBridgeRowLayout,
+        input: usize,
+        poseidon_rows: &[[[u64; POSEIDON2_WIDTH]; SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION]],
+    ) {
+        for level in 0..MERKLE_TREE_DEPTH {
+            for chunk in 0..2 {
+                let permutation = bridge_input_merkle_permutation(input, level, chunk);
+                overwrite_poseidon_permutation_rows(
+                    material,
+                    layout,
+                    permutation,
+                    &poseidon_rows[permutation],
+                );
+            }
+        }
+    }
+
+    fn inline_merkle_material_for_test(
+        witness: &TransactionWitness,
+    ) -> (
+        SmallwoodFrontendShape,
+        SmallwoodBridgeRowLayout,
+        PackedSmallwoodAuxFrontendMaterial,
+    ) {
+        let context = build_smallwood_witness_context(witness).unwrap();
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let shape =
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1();
+        let material =
+            build_compact_aux_merkle_material_from_context(&context, witness, arithmetization)
+                .unwrap();
+        let layout = SmallwoodBridgeRowLayout::for_shape(shape);
+        (shape, layout, material)
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_active_input_note_value_and_commitment_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (_shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let commitment0 = bridge_input_commitment_permutation(0, 0);
+        let commitment2 = bridge_input_commitment_permutation(0, 2);
+        let commitment_lane = packed_bridge_permutation_lane(commitment0, packing_factor);
+        let output_lane = packed_bridge_permutation_lane(commitment2, packing_factor);
+
+        let mut mutated_value_rows = material.packed_expanded_witness.clone();
+        let value_row = bridge_row_input_value(layout, 0);
+        mutated_value_rows[value_row * packing_factor + commitment_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active input note value row mutation",
+            &material.public_statement,
+            &mutated_value_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+
+        let mut mutated_commitment_rows = material.packed_expanded_witness.clone();
+        let commitment_row = bridge_poseidon_row(
+            packing_factor,
+            layout,
+            commitment2,
+            layout.poseidon_last_row(),
+            0,
+        );
+        mutated_commitment_rows[commitment_row * packing_factor + output_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active input note commitment row mutation",
+            &material.public_statement,
+            &mutated_commitment_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_nullifier_position_and_rho_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+        let nullifier = bridge_input_nullifier_permutation(0);
+        let nullifier_lane = packed_bridge_permutation_lane(nullifier, packing_factor);
+        let (prf_hash, _) =
+            trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &bytes_to_felts(&witness.sk_spend));
+        let prf = prf_hash[0];
+
+        let mut position_material = material.clone();
+        let mut position_input = witness.inputs[0].clone();
+        position_input.position ^= 1;
+        let (position_nullifier, position_traces) = trace_sponge_hash(
+            NULLIFIER_DOMAIN_TAG,
+            &nullifier_inputs(prf, &position_input),
+        );
+        overwrite_poseidon_permutation_rows(
+            &mut position_material,
+            layout,
+            nullifier,
+            &position_traces[0],
+        );
+        for (limb, value) in position_nullifier
+            .iter()
+            .enumerate()
+            .take(SMALLWOOD_WORDS_PER_48_BYTES)
+        {
+            position_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
+                value.as_canonical_u64();
+        }
+        let direction_row = bridge_row_input_direction(layout, 0, 0);
+        position_material.packed_expanded_witness
+            [direction_row * packing_factor + nullifier_lane] ^= 1;
+        position_material.auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &witness,
+                &position_material.public_statement.public_values,
+            )
+            .unwrap();
+        position_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &position_material.public_statement,
+                shape,
+                position_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input nullifier position row mutation",
+            &position_material.public_statement,
+            &position_material.packed_expanded_witness,
+            &position_material.linear_constraints,
+            &position_material.auxiliary_witness_words,
+        );
+
+        let mut rho_material = material.clone();
+        let mut rho_input = witness.inputs[0].clone();
+        rho_input.note.rho[0] ^= 1;
+        let (rho_nullifier, rho_traces) =
+            trace_sponge_hash(NULLIFIER_DOMAIN_TAG, &nullifier_inputs(prf, &rho_input));
+        overwrite_poseidon_permutation_rows(&mut rho_material, layout, nullifier, &rho_traces[0]);
+        for (limb, value) in rho_nullifier
+            .iter()
+            .enumerate()
+            .take(SMALLWOOD_WORDS_PER_48_BYTES)
+        {
+            rho_material.public_statement.public_values[PUB_NULLIFIERS + limb] =
+                value.as_canonical_u64();
+        }
+        rho_material.auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+            &witness,
+            &rho_material.public_statement.public_values,
+        )
+        .unwrap();
+        rho_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &rho_material.public_statement,
+                shape,
+                rho_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input nullifier rho row mutation",
+            &rho_material.public_statement,
+            &rho_material.packed_expanded_witness,
+            &rho_material.linear_constraints,
+            &rho_material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_merkle_sibling_and_root_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+
+        let mut root_material = material.clone();
+        root_material.public_statement.public_values[PUB_MERKLE_ROOT] ^= 1;
+        root_material.auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+            &witness,
+            &root_material.public_statement.public_values,
+        )
+        .unwrap();
+        root_material.linear_constraints =
+            build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &root_material.public_statement,
+                shape,
+                root_material.auxiliary_witness_words.len(),
+            );
+        assert_inline_merkle_relation_rejects(
+            "active input public Merkle root mutation",
+            &root_material.public_statement,
+            &root_material.packed_expanded_witness,
+            &root_material.linear_constraints,
+            &root_material.auxiliary_witness_words,
+        );
+
+        let mut sibling_material = material.clone();
+        let mut sibling_witness = witness.clone();
+        sibling_witness.inputs[0].merkle_path.siblings[0][0] += Felt::ONE;
+        let tampered_poseidon_rows = poseidon_subtrace_rows(&sibling_witness).unwrap();
+        overwrite_input_merkle_permutation_rows(
+            &mut sibling_material,
+            layout,
+            0,
+            &tampered_poseidon_rows,
+        );
+        sibling_material.auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &sibling_witness,
+                &sibling_material.public_statement.public_values,
+            )
+            .unwrap();
+        assert_inline_merkle_relation_rejects(
+            "active input Merkle sibling row mutation",
+            &sibling_material.public_statement,
+            &sibling_material.packed_expanded_witness,
+            &sibling_material.linear_constraints,
+            &sibling_material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_inactive_nonzero_public_nullifier() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, _layout, material) = inline_merkle_material_for_test(&witness);
+        let mut statement = material.public_statement.clone();
+        statement.public_values[PUB_NULLIFIERS + SMALLWOOD_WORDS_PER_48_BYTES] = 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        assert_inline_merkle_relation_rejects(
+            "inactive input public nullifier mutation",
+            &statement,
+            &material.packed_expanded_witness,
+            &linear_constraints,
+            &auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_active_output_binding_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, layout, material) = inline_merkle_material_for_test(&witness);
+        let packing_factor = material.public_statement.lppc_packing_factor as usize;
+
+        for (public_index, label) in [
+            (PUB_COMMITMENTS, "active output public commitment"),
+            (
+                PUB_CIPHERTEXT_HASHES,
+                "active output public ciphertext hash",
+            ),
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let auxiliary_witness_words = smallwood_compact_bridge_merkle_aggregate_rows_v1(
+                &witness,
+                &statement.public_values,
+            )
+            .unwrap();
+            let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+                &statement,
+                shape,
+                auxiliary_witness_words.len(),
+            );
+            assert_inline_merkle_relation_rejects(
+                label,
+                &statement,
+                &material.packed_expanded_witness,
+                &linear_constraints,
+                &auxiliary_witness_words,
+            );
+        }
+
+        let commitment0 = bridge_output_commitment_permutation(0, 0);
+        let commitment2 = bridge_output_commitment_permutation(0, 2);
+        let lane0 = packed_bridge_permutation_lane(commitment0, packing_factor);
+        let output_lane = packed_bridge_permutation_lane(commitment2, packing_factor);
+
+        let mut mutated_commitment_rows = material.packed_expanded_witness.clone();
+        let commitment_row = bridge_poseidon_row(
+            packing_factor,
+            layout,
+            commitment2,
+            layout.poseidon_last_row(),
+            0,
+        );
+        mutated_commitment_rows[commitment_row * packing_factor + output_lane] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active output commitment row mutation",
+            &material.public_statement,
+            &mutated_commitment_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+
+        let mut mutated_ciphertext_rows = material.packed_expanded_witness.clone();
+        let ciphertext_row = bridge_output_base(layout, 0) + 2;
+        mutated_ciphertext_rows[ciphertext_row * packing_factor + lane0] ^= 1;
+        assert_inline_merkle_relation_rejects(
+            "active output ciphertext row mutation",
+            &material.public_statement,
+            &mutated_ciphertext_rows,
+            &material.linear_constraints,
+            &material.auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash() {
+        let mut witness = sample_witness();
+        witness.inputs.truncate(1);
+        witness.outputs.truncate(1);
+        witness.ciphertext_hashes.truncate(1);
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let (shape, _layout, material) = inline_merkle_material_for_test(&witness);
+        let mut statement = material.public_statement.clone();
+        statement.public_values[PUB_CIPHERTEXT_HASHES + SMALLWOOD_WORDS_PER_48_BYTES] = 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        assert_inline_merkle_relation_rejects(
+            "inactive output public ciphertext hash mutation",
+            &statement,
+            &material.packed_expanded_witness,
+            &linear_constraints,
+            &auxiliary_witness_words,
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_witness_rejects_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let mut material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        material.packed_expanded_witness[SMALLWOOD_BASE_PUBLIC_VALUE_COUNT + 17] ^= 1;
+        let err = test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &material.public_statement.public_values,
+            &material.packed_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .expect_err("mutated packed smallwood frontend must fail");
+        assert!(err.to_string().contains("smallwood"));
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_rejects_public_binding_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        for public_index in [
+            PUB_CIPHERTEXT_HASHES,
+            PUB_NULLIFIERS,
+            PUB_COMMITMENTS,
+            PUB_MERKLE_ROOT,
+            PUB_STABLE_POLICY_HASH,
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let linear_constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodFrontendShape::bridge64_v1(),
+            );
+            let err = test_candidate_witness(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &statement.public_values,
+                &material.packed_expanded_witness,
+                statement.lppc_row_count as usize,
+                statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &linear_constraints.term_offsets,
+                &linear_constraints.term_indices,
+                &linear_constraints.term_coefficients,
+                &linear_constraints.targets,
+            )
+            .expect_err("mutated public binding must fail");
+            assert!(err.to_string().contains("smallwood"));
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_rejects_enabled_stablecoin_binding_mutation() {
+        let mut witness = stablecoin_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
+        for public_index in [
+            PUB_STABLE_POLICY_VERSION,
+            PUB_STABLE_POLICY_HASH,
+            PUB_STABLE_ORACLE,
+            PUB_STABLE_ATTESTATION,
+        ] {
+            let mut statement = material.public_statement.clone();
+            statement.public_values[public_index] ^= 1;
+            let linear_constraints = build_packed_bridge_linear_constraints(
+                &statement,
+                SmallwoodFrontendShape::bridge64_v1(),
+            );
+            let err = test_candidate_witness(
+                SmallwoodArithmetization::DirectPacked64V1,
+                &statement.public_values,
+                &material.packed_expanded_witness,
+                statement.lppc_row_count as usize,
+                statement.lppc_packing_factor as usize,
+                SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+                &linear_constraints.term_offsets,
+                &linear_constraints.term_indices,
+                &linear_constraints.term_coefficients,
+                &linear_constraints.targets,
+            )
+            .expect_err("mutated stablecoin-enabled public binding must fail");
+            assert!(err.to_string().contains("smallwood"));
+        }
+    }
+
+    fn assert_inline_merkle_public_balance_mutation_rejects(
+        mut witness: TransactionWitness,
+        public_index: usize,
+        label: &str,
+    ) {
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let material = build_compact_aux_merkle_material_from_context(
+            &context,
+            &witness,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        )
+        .unwrap();
+        let shape =
+            SmallwoodFrontendShape::direct_packed64_compact_bindings_inline_merkle_skip_initial_mds_v1();
+        let mut statement = material.public_statement.clone();
+        statement.public_values[public_index] ^= 1;
+        let auxiliary_witness_words =
+            smallwood_compact_bridge_merkle_aggregate_rows_v1(&witness, &statement.public_values)
+                .unwrap();
+        let linear_constraints = build_packed_bridge_linear_constraints_with_auxiliary_merkle(
+            &statement,
+            shape,
+            auxiliary_witness_words.len(),
+        );
+        let result = test_candidate_witness_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            &statement.public_values,
+            &material.packed_expanded_witness,
+            statement.lppc_row_count as usize,
+            statement.lppc_packing_factor as usize,
+            statement.effective_constraint_degree,
+            &linear_constraints.term_offsets,
+            &linear_constraints.term_indices,
+            &linear_constraints.term_coefficients,
+            &linear_constraints.targets,
+            &auxiliary_witness_words,
+        );
+        let err = match result {
+            Ok(()) => {
+                panic!(
+                    "inline-merkle SmallWood accepted public balance mutation for {label}; \
+                 recomputed auxiliary Merkle rows must not be enough to satisfy constraints"
+                )
+            }
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("smallwood"), "{label}: {err}");
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_public_balance_mutation() {
+        let witness = sample_witness();
+        for (public_index, label) in [
+            (PUB_FEE, "fee"),
+            (PUB_VALUE_BALANCE_MAG, "value_balance_magnitude"),
+            (PUB_BALANCE_SLOT_ASSETS, "balance_slot_asset_0"),
+        ] {
+            assert_inline_merkle_public_balance_mutation_rejects(
+                witness.clone(),
+                public_index,
+                label,
+            );
+        }
+        assert_inline_merkle_public_balance_mutation_rejects(
+            nonzero_value_balance_witness(),
+            PUB_VALUE_BALANCE_SIGN,
+            "nonzero_value_balance_sign",
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation() {
+        let witness = stablecoin_witness();
+        for (public_index, label) in [
+            (PUB_STABLE_ENABLED, "stablecoin_enabled"),
+            (PUB_STABLE_ASSET, "stablecoin_asset"),
+            (PUB_STABLE_ISSUANCE_SIGN, "stablecoin_issuance_sign"),
+            (PUB_STABLE_ISSUANCE_MAG, "stablecoin_issuance_magnitude"),
+        ] {
+            assert_inline_merkle_public_balance_mutation_rejects(
+                witness.clone(),
+                public_index,
+                label,
+            );
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_frontend_and_bridge_share_witness_context() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+        let direct =
+            build_packed_smallwood_frontend_material_from_context(&context, &witness).unwrap();
+        let bridge =
+            build_packed_smallwood_bridge_material_from_context(&context, &witness).unwrap();
+
+        assert_eq!(
+            direct.public_statement.public_values,
+            bridge.public_statement.public_values
+        );
+        assert_eq!(direct.public_statement, bridge.public_statement);
+        assert_eq!(bridge.public_inputs, context.public_inputs);
+        assert_eq!(
+            bridge.serialized_public_inputs,
+            context.serialized_public_inputs
+        );
+        assert_eq!(direct.packed_expanded_witness, bridge.packed_witness_rows);
+        assert_eq!(
+            direct.linear_constraints.targets,
+            bridge.linear_constraints.targets
+        );
+
+        test_candidate_witness(
+            SmallwoodArithmetization::DirectPacked64V1,
+            &direct.public_statement.public_values,
+            &direct.packed_expanded_witness,
+            direct.public_statement.lppc_row_count as usize,
+            direct.public_statement.lppc_packing_factor as usize,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &direct.linear_constraints.term_offsets,
+            &direct.linear_constraints.term_indices,
+            &direct.linear_constraints.term_coefficients,
+            &direct.linear_constraints.targets,
+        )
+        .unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
+            &bridge.public_statement.public_values,
+            &bridge.packed_witness_rows,
+            bridge.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &bridge.linear_constraints.term_offsets,
+            &bridge.linear_constraints.term_indices,
+            &bridge.linear_constraints.term_coefficients,
+            &bridge.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn serialized_public_inputs_canonicalize_padding_asset_ids() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let context = build_smallwood_witness_context(&witness).unwrap();
+
+        assert_eq!(
+            context.serialized_public_inputs.balance_slot_asset_ids,
+            vec![0, 1, 4_294_967_294, 4_294_967_294]
+        );
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_material_matches_expected_shape() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let statement = &material.public_statement;
+        assert_eq!(statement.public_value_count, 78);
+        assert_eq!(statement.raw_witness_len, 452);
+        assert_eq!(statement.poseidon_permutation_count, 172);
+        assert_eq!(statement.poseidon_state_row_count, 5_504);
+        assert_eq!(statement.expanded_witness_len, 102_656);
+        assert_eq!(statement.lppc_packing_factor, 64);
+        assert_eq!(statement.lppc_row_count, 1_604);
+        assert_eq!(
+            material.packed_witness_rows.len(),
+            statement.lppc_row_count as usize * statement.lppc_packing_factor as usize
+        );
+        assert_eq!(material.linear_constraints.term_indices[0], 1);
+        assert_eq!(material.linear_constraints.term_indices[1], 0);
+        assert_eq!(material.linear_constraints.targets[0], 0);
+    }
+
+    #[test]
+    #[ignore = "bridge witness proving is diagnostic only; default boundary is pinned by projection/tag tests"]
+    fn packed_smallwood_bridge_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
+            &material.public_statement.public_values,
+            &material.packed_witness_rows,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_BRIDGE_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_groups_poseidon_rows_correctly() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
+        let group_rows_start =
+            SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
+        for (permutation, permutation_rows) in poseidon_rows.iter().enumerate() {
+            let group = permutation / SMALLWOOD_BRIDGE_PACKING_FACTOR;
+            let lane = permutation % SMALLWOOD_BRIDGE_PACKING_FACTOR;
+            for (step, step_rows) in permutation_rows
+                .iter()
+                .enumerate()
+                .take(SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION)
+            {
+                for (limb, &value) in step_rows.iter().enumerate().take(POSEIDON2_WIDTH) {
+                    let row = group_rows_start
+                        + (group * SMALLWOOD_POSEIDON_STATE_ROWS_PER_PERMUTATION + step)
+                            * POSEIDON2_WIDTH
+                        + limb;
+                    assert_eq!(
+                        material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR + lane],
+                        value
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_first_group_transition_matches_source_trace() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let poseidon_rows = poseidon_subtrace_rows(&witness).unwrap();
+        let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+        for (limb, slot) in state.iter_mut().enumerate() {
+            *slot = Felt::from_u64(poseidon_rows[0][29][limb]);
+        }
+        poseidon2_step(&mut state, 29);
+        for limb in 0..POSEIDON2_WIDTH {
+            assert_eq!(state[limb].as_canonical_u64(), poseidon_rows[0][30][limb]);
+        }
+    }
+
+    #[test]
+    fn packed_smallwood_bridge_first_group_transition_matches_packed_rows() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
+        let group_rows_start =
+            SMALLWOOD_PUBLIC_ROWS + material.public_statement.raw_witness_len as usize;
+        let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
+        for (limb, slot) in state.iter_mut().enumerate().take(POSEIDON2_WIDTH) {
+            let row = group_rows_start + 29 * POSEIDON2_WIDTH + limb;
+            *slot =
+                Felt::from_u64(material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR]);
+        }
+        poseidon2_step(&mut state, 29);
+        for (limb, &value) in state.iter().enumerate().take(POSEIDON2_WIDTH) {
+            let row = group_rows_start + 30 * POSEIDON2_WIDTH + limb;
+            assert_eq!(
+                value.as_canonical_u64(),
+                material.packed_witness_rows[row * SMALLWOOD_BRIDGE_PACKING_FACTOR]
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "experimental SmallWood packed candidate release proving is still too slow for the default test profile"]
+    fn smallwood_candidate_roundtrip_verifies() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let proof = prove_smallwood_candidate(&witness).unwrap();
+        eprintln!(
+            "smallwood candidate proof bytes: {}",
+            proof.stark_proof.len()
+        );
+        let report = verify_smallwood_candidate_transaction_proof(&proof).unwrap();
+        assert!(report.verified);
+    }
+
+    #[test]
+    fn smallwood_candidate_direct_packed_roundtrip_verifies() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let proof = prove_smallwood_candidate_with_arithmetization(
+            &witness,
+            SmallwoodArithmetization::DirectPacked64V1,
+        )
+        .unwrap();
+        let report = verify_smallwood_candidate_transaction_proof(&proof).unwrap();
+        assert!(report.verified);
+        assert!(
+            proof.stark_proof.len() < 524_288,
+            "direct packed candidate proof bytes {} exceed native tx-leaf cap",
+            proof.stark_proof.len()
+        );
+    }
+
+    #[test]
+    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 64-lane bridge"]
+    fn smallwood_candidate_witness_satisfies_constraints() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let material = build_smallwood_frontend_material(&witness).unwrap();
+        test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
+            &material.public_statement.public_values,
+            &material.padded_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_LPPC_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    #[ignore = "scalar SmallWood frontend is diagnostic only; the live candidate uses the packed 64-lane bridge"]
+    fn smallwood_candidate_witness_rejects_mutation() {
+        let mut witness = sample_witness();
+        witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+        let mut material = build_smallwood_frontend_material(&witness).unwrap();
+        material.padded_expanded_witness[0] ^= 1;
+        let err = test_candidate_witness(
+            SmallwoodArithmetization::Bridge64V1,
+            &material.public_statement.public_values,
+            &material.padded_expanded_witness,
+            material.public_statement.lppc_row_count as usize,
+            SMALLWOOD_LPPC_PACKING_FACTOR,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+        )
+        .expect_err("mutated smallwood witness must fail");
+        assert!(err.to_string().contains("witness test failed"));
+    }
+}

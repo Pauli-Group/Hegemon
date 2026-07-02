@@ -1,6 +1,6 @@
-# VPS node operations runbook (Substrate node)
+# VPS node operations runbook (Hegemon node)
 
-Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer port, start the Substrate-based `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
+Use this playbook to provision a virtual private server (VPS), expose the peer-to-peer port, start the native `hegemon-node` binary, and supervise it under `systemd`. These steps assume a fresh Ubuntu 22.04 host with a static or long-lived public IP.
 
 > **Note:** The node currently refuses to start without `--dev` (non-dev profiles are disabled). This runbook includes `--dev` on startup until non-dev mode is re-enabled.
 
@@ -50,19 +50,19 @@ Create an environment file for node options:
 ```bash
 sudo tee /etc/default/hegemon-node <<'ENV'
 NODE_NAME=my-vps-node
-# Note: Substrate node names cannot contain '.' or '@' (use '-' / '_' instead).
+# Note: Hegemon node names cannot contain '.' or '@' (use '-' / '_' instead).
 NODE_BASE_PATH=/var/lib/hegemon-node
 NODE_PORT=30333
 NODE_RPC_PORT=9944
 # Approved shared seed list. All miners/operators should use the same value.
-HEGEMON_SEEDS=hegemon.pauli.group:30333
+HEGEMON_SEEDS=devnet.hegemonprotocol.com:30333
 # Set to 1 to mine on this host.
 HEGEMON_MINE=0
 ENV
 sudo chown node:node /etc/default/hegemon-node
 ```
 
-- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions. If this host is the first public authoring node after a fresh reset, leave `HEGEMON_SEEDS` empty until the node is already live.
+- `HEGEMON_SEEDS` must match the approved list used by other miners to avoid forks/partitions. If this host is the first public authoring node after a fresh reset, leave `HEGEMON_SEEDS` empty only with the explicit `HEGEMON_BOOTSTRAP_AUTHORING=1` override; remove that override and publish the approved seed list before any additional miner joins.
 - Keep chrony/NTP healthy on every mining host so timestamps stay valid.
 
 ## 5. Systemd unit
@@ -72,7 +72,7 @@ Create a unit that reads the environment file and restarts on failure:
 ```bash
 sudo tee /etc/systemd/system/hegemon-node.service <<'UNIT'
 [Unit]
-Description=Hegemon Substrate Node
+Description=Hegemon Native Node
 After=network-online.target
 Wants=network-online.target
 
@@ -116,9 +116,14 @@ journalctl -u hegemon-node.service -f
 Confirm the node is reachable and syncing:
 
 ```bash
-# Health (includes peer count / syncing)
+# Consensus sync state
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_consensusStatus"}' \
+  http://127.0.0.1:9944
+
+# Mining gate state, on authoring hosts
+curl -s -H "Content-Type: application/json" \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_miningStatus"}' \
   http://127.0.0.1:9944
 
 # Latest block
@@ -129,6 +134,8 @@ curl -s -H "Content-Type: application/json" \
 # Time sync status
 chronyc tracking
 ```
+
+Use logs or host-level TCP checks for P2P connectivity. Do not expose unsafe topology RPCs or treat static peer fields as authoritative liveness evidence on public nodes.
 
 For upgrades, stop the service, replace the binary, then start:
 

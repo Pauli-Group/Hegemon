@@ -14,6 +14,7 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 transaction-circuit = { path = "../transaction", default-features = false }
 p3-field = { workspace = true }
+protocol-versioning = { path = "../../protocol/versioning" }
 
 [lints]
 workspace = true

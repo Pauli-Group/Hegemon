@@ -14,7 +14,7 @@ The unified `hegemon` binary is the canonical way to exercise the node and walle
 | --- | --- | --- |
 | PQ primitives (`crypto/`) | Rust 1.75+ | `cargo fmt --all`, `cargo test -p synthetic-crypto` |
 | Core circuits (`circuits/block`, `circuits/transaction`, `circuits/disclosure`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo test -p disclosure-circuit` |
-| Node/runtime/network (`node`, `runtime`, `network`, `consensus`) | Rust 1.75+ | `cargo test -p consensus`, `cargo test -p network`, `cargo test -p runtime`, `cargo test -p hegemon-node --lib`, `cargo build -p hegemon-node --release` |
+| Node/protocol/network (`node`, `protocol/*`, `network`, `consensus`) | Rust 1.75+ | `cargo test -p consensus`, `cargo test -p network`, `cargo test -p protocol-kernel`, `cargo test -p protocol-shielded-pool`, `cargo test -p hegemon-node --lib`, `cargo build -p hegemon-node --release` |
 | Wallet (`wallet`) | Rust 1.75+ | `cargo test -p wallet`, `cargo test --test security_pipeline -- --nocapture` |
 | Manual simulators/benchmarks (`circuits/bench`, `wallet/bench`, `consensus/bench`) | Rust + Go 1.21 | `cargo run -p circuits-bench -- --smoke`, `cargo run -p wallet-bench -- --smoke`, `go test ./...` inside `consensus/bench`, `go run ./cmd/netbench --smoke` |
 
@@ -27,21 +27,24 @@ The correctness/build commands below are what CI enforces by default. Performanc
 GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 
 - `rust-lints`: runs the lean formatting/lint gate through `./scripts/check-core.sh lint`.
+- `dependency-audit`: runs `./scripts/dependency-audit-gate.sh`; unwaived advisories or yanked crates block release build.
+- `formal-core`: runs `bash scripts/check_formal_core.sh`; the gate builds the pinned Lean proof kernel, checks generated Lean-to-Rust bridge message-root/replay, bridge checkpoint-output canonical/journal bytes, bridge long-range proof-shape, bridge header-MMR opening-shape, bridge header-MMR parent/root transcript, bridge FlyClient sampling transcript/index, shielded-nullifier, consensus fork-choice, consensus PoW-admission, consensus header-preimage, consensus PoW miner-identity, native miner-identity, consensus version-policy, consensus proof-policy, consensus native tx-leaf admission, consensus receipt-root admission, consensus recursive-block admission, consensus recursive public replay, consensus recursive semantic inputs, consensus block tree-transition, consensus DA-root byte binding, consensus proven-batch binding, consensus aggregation V5 header admission, supply-accounting, consensus supply-chain invariant, native action-ordering, native action request projection admission, native action hash/count admission, native action-root transcript binding, native action-state/stream planning, native action-plan application admission, native action wire-replay projection admission, native announced-block admission, native mined-work admission, native storage-durability admission, native codec admission, native action scope admission, native bridge action payload admission, native RISC Zero release-verifier fail-closed admission, native transfer action payload admission, native transfer state admission, native coinbase accounting admission, native coinbase action payload admission, native mineable action admission, native resource-budget admission, native RPC admission, native sidecar upload admission, network secure-channel key schedule, PQ Noise key schedule/signing transcript, release PQ-binary policy, dependency-audit waiver policy, native candidate artifact admission, native candidate artifact coupling admission, native block artifact binding admission, native block commitment admission, native block replay refinement, native tx-leaf artifact, native receipt-root, wallet note-ciphertext wire, transaction-balance, transaction Merkle-path, transaction public-input shape, transaction public-input binding, transaction proof-wrapper admission, and transaction statement-hash conformance vectors, validates the formal/security claims ledger, blueprint DAG, formal model inventory, independent bridge vectors, native backend reference vectors, and the packaged native backend candidate-under-review release posture. Claim changes must update both `config/formal-security-claims.json` and `config/formal-security-blueprint.json` so status, dependencies, target review, implementation bindings, Lean theorem evidence, falsification cases, and residual risks stay synchronized.
 - `core-tests`: runs the fast shipping-path Rust tests through `./scripts/check-core.sh test`.
+- `security-adversarial`: runs `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`, including hostile proving regressions plus review-package parity checks.
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.
 
-Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping InlineTx node, runtime, wallet, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
+Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping native node, wallet, protocol, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
 The expensive `circuits/batch` proving tests are intentionally `#[ignore]` because that auxiliary batch lane is not part of the live path; default CI keeps only cheap structural sanity coverage for that crate.
 
-Operator-scenario harnesses such as `./scripts/test-substrate.sh restart-recovery` remain available for manual debugging, but they are not part of the default blocking CI gate.
+Operator-scenario harnesses such as `./scripts/test-node.sh two-node-restart` remain available for manual debugging, but they are not part of the default blocking CI gate.
 Benchmark, simulator, and profiling harnesses such as `circuits-bench`, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
-Manual adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, and `cargo test -p wallet --test address_fuzz` are also kept out of the default gate unless you are touching those surfaces.
+The merge-blocking hostile minimum is `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. Heavier adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, `cargo test -p wallet --test address_fuzz`, and `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` remain manual unless you are hardening those surfaces or preparing a release.
 
 When you add a new crate or language toolchain, extend CI accordingly **and** document the new step here and in `METHODS.md`.
 
 ## Dependency advisories
 
-Use `./scripts/dependency-audit.sh --record` to run `cargo audit` and append the output to `docs/DEPENDENCY_AUDITS.md`. This is advisory-only for now, so use it to track risk and open follow-up issues without blocking normal development.
+Use `./scripts/dependency-audit-gate.sh` before opening security-sensitive PRs. It fails on unwaived cargo-audit findings. Use `./scripts/dependency-audit.sh --record` to append a human-readable snapshot to `docs/DEPENDENCY_AUDITS.md` after updating the waiver policy.
 
 ## Benchmarks
 
@@ -60,6 +63,7 @@ Each harness supports `--iterations <N>` and `--prove/--no-prove` toggles for de
 - Only ML-DSA/SLH-DSA signatures and ML-KEM encryption are allowed (see `DESIGN.md §1`).
 - Hash-based commitments and STARK-friendly hashes drive all circuits; never introduce ECC primitives.
 - Default symmetric key sizes are 256-bit to maintain ≥128-bit quantum security after Grover reductions.
+- Native JSON-RPC resource hardening includes the 8 MiB HTTP body cap, 8 in-flight request cap, batch caps, and byte parser caps; keep `native RPC admission` and `native sidecar upload admission` formal-core coverage synchronized when changing those limits.
 - Threat mitigations from `THREAT_MODEL.md` (network DoS budgets, wallet key-rotation cadence, and memory-hard proving limits in the remaining offline circuit tooling) must be satisfied by code and tests.
 
 Document any deviations in both `DESIGN.md` and `METHODS.md` before landing code.

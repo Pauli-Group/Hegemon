@@ -1,14 +1,7 @@
-//! PQ Network Backend for Substrate
+//! PQ Network Backend
 //!
-//! Custom network backend that integrates PQ-secure transport with
-//! Substrate's sc-network infrastructure.
-//!
-//! # Phase 3.5 Implementation
-//!
-//! This module implements Task 3.5.2 of the substrate migration plan:
-//! - Custom NetworkBackend with PQ transport
-//! - Connection manager with PQ handshake
-//! - Peer management with PQ identity verification
+//! Native backend that integrates PQ-secure TCP transport, peer admission,
+//! connection lifecycle events, and protocol message delivery.
 //!
 //! # Architecture
 //!
@@ -27,7 +20,7 @@
 //! │  ┌─────────────────────────▼─────────────────────────────────┐  │
 //! │  │              PQ Transport Layer                            │  │
 //! │  │  ┌─────────────────────────────────────────────────────┐  │  │
-//! │  │  │  SubstratePqTransport (PQ-only handshake)           │  │  │
+//! │  │  │  NativePqTransport (PQ-only handshake)           │  │  │
 //! │  │  └─────────────────────────────────────────────────────┘  │  │
 //! │  └───────────────────────────────────────────────────────────┘  │
 //! │                            │                                    │
@@ -40,23 +33,31 @@
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 
+use crate::native_transport::{NativePqTransport, NativePqTransportConfig, PqConnectionInfo};
 use crate::pq_transport::PqPeerIdentity;
-use crate::substrate_transport::{
-    PqConnectionInfo, SubstratePqTransport, SubstratePqTransportConfig,
-};
+use crate::wire;
+use pq_noise::session::SESSION_MAX_PLAINTEXT_LEN;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{Notify, RwLock, mpsc};
+use tokio::sync::{Notify, RwLock, Semaphore, mpsc, oneshot};
 use tokio::time::{sleep, timeout};
 
 const BOOTSTRAP_RECONNECT_BASE: Duration = Duration::from_secs(2);
 const BOOTSTRAP_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const BOOTSTRAP_CONNECTED_POLL: Duration = Duration::from_secs(1);
 const BOOTSTRAP_IDLE_POLL: Duration = Duration::from_secs(5);
+const LIFECYCLE_EVENT_CHANNEL_CAPACITY: usize = 512;
+const MESSAGE_EVENT_CHANNEL_CAPACITY: usize = 192;
+const EVENT_CHANNEL_MAX_QUEUED_BYTES: usize = 32 * 1024 * 1024;
+const PEER_SEND_QUEUE_CAPACITY: usize = 64;
+const PEER_SEND_QUEUE_MAX_QUEUED_BYTES: usize = 8 * 1024 * 1024;
+const PEER_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+const MIN_CONCURRENT_HANDSHAKES: usize = 8;
 
 /// A configured bootstrap seed plus all socket addresses it currently resolves to.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,7 +131,7 @@ impl PqNetworkBackendConfig {
 }
 
 /// Events emitted by the network backend
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum PqNetworkEvent {
     /// A new peer connected
     PeerConnected {
@@ -154,12 +155,126 @@ pub enum PqNetworkEvent {
     ConnectionFailed { addr: SocketAddr, reason: String },
 }
 
+impl PqNetworkEvent {
+    fn queued_bytes(&self) -> usize {
+        match self {
+            Self::MessageReceived { protocol, data, .. } => {
+                protocol.len().saturating_add(data.len())
+            }
+            _ => 0,
+        }
+    }
+}
+
+/// Receiver wrapper that releases the queue byte budget when events leave the
+/// internal backend channel.
+pub struct PqNetworkEventReceiver {
+    lifecycle_rx: mpsc::Receiver<PqNetworkEvent>,
+    message_rx: mpsc::Receiver<PqNetworkEvent>,
+    queued_event_bytes: Arc<AtomicUsize>,
+    prefer_lifecycle: bool,
+    lifecycle_closed: bool,
+    message_closed: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct BorrowedFramedMessage<'a> {
+    protocol: Cow<'a, str>,
+    #[serde(borrow)]
+    data: &'a [u8],
+}
+
+impl PqNetworkEventReceiver {
+    fn try_recv_lifecycle(&mut self) -> Option<PqNetworkEvent> {
+        match self.lifecycle_rx.try_recv() {
+            Ok(event) => {
+                self.prefer_lifecycle = false;
+                Some(event)
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                self.lifecycle_closed = true;
+                None
+            }
+        }
+    }
+
+    fn try_recv_message(&mut self) -> Option<PqNetworkEvent> {
+        match self.message_rx.try_recv() {
+            Ok(event) => {
+                release_queue_bytes(&self.queued_event_bytes, event.queued_bytes());
+                self.prefer_lifecycle = true;
+                Some(event)
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                self.message_closed = true;
+                None
+            }
+        }
+    }
+
+    pub async fn recv(&mut self) -> Option<PqNetworkEvent> {
+        loop {
+            if self.prefer_lifecycle {
+                if let Some(event) = self.try_recv_lifecycle() {
+                    return Some(event);
+                }
+                if let Some(event) = self.try_recv_message() {
+                    return Some(event);
+                }
+            } else {
+                if let Some(event) = self.try_recv_message() {
+                    return Some(event);
+                }
+                if let Some(event) = self.try_recv_lifecycle() {
+                    return Some(event);
+                }
+            }
+
+            if self.lifecycle_closed && self.message_closed {
+                return None;
+            }
+
+            tokio::select! {
+                event = self.lifecycle_rx.recv(), if !self.lifecycle_closed => {
+                    match event {
+                        Some(event) => {
+                            self.prefer_lifecycle = false;
+                            return Some(event);
+                        }
+                        None => self.lifecycle_closed = true,
+                    }
+                }
+                event = self.message_rx.recv(), if !self.message_closed => {
+                    match event {
+                        Some(event) => {
+                            release_queue_bytes(&self.queued_event_bytes, event.queued_bytes());
+                            self.prefer_lifecycle = true;
+                            return Some(event);
+                        }
+                        None => self.message_closed = true,
+                    }
+                }
+            }
+
+            if self.lifecycle_closed && self.message_closed {
+                return None;
+            }
+        }
+    }
+}
+
 /// Active peer connection state - only stores write channel, connection moved to dedicated task
 struct PeerConnection {
     /// Connection info
     info: PqConnectionInfo,
     /// Message sender for this peer - used for all writes to avoid deadlock
     msg_tx: mpsc::Sender<Vec<u8>>,
+    /// Total bytes currently queued for this peer's writer task.
+    queued_bytes: Arc<AtomicUsize>,
+    /// Explicit shutdown path for terminating the per-peer socket task.
+    close_tx: Option<oneshot::Sender<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -172,20 +287,26 @@ enum PeerAdmission {
 
 /// PQ Network Backend
 ///
-/// Manages PQ-secure peer connections for Substrate networking.
+/// Manages PQ-secure peer connections for native networking.
 pub struct PqNetworkBackend {
     /// Transport for establishing connections
-    transport: SubstratePqTransport,
+    transport: NativePqTransport,
     /// Configuration
     config: PqNetworkBackendConfig,
     /// Active peer connections
     peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
-    /// Event sender
-    event_tx: mpsc::Sender<PqNetworkEvent>,
-    /// Event receiver (for external consumers)
-    /// Note: Consumed by start() which returns a new receiver for the caller
+    /// Lifecycle event sender
+    lifecycle_event_tx: mpsc::Sender<PqNetworkEvent>,
+    /// Message event sender
+    message_event_tx: mpsc::Sender<PqNetworkEvent>,
+    /// Lifecycle event receiver (consumed by `start`)
     #[allow(dead_code)]
-    event_rx: mpsc::Receiver<PqNetworkEvent>,
+    lifecycle_event_rx: mpsc::Receiver<PqNetworkEvent>,
+    /// Message event receiver (consumed by `start`)
+    #[allow(dead_code)]
+    message_event_rx: mpsc::Receiver<PqNetworkEvent>,
+    /// Total bytes currently queued in the global event channel.
+    queued_event_bytes: Arc<AtomicUsize>,
     /// Shutdown signal
     shutdown_tx: Option<mpsc::Sender<()>>,
     /// Shutdown flag for background tasks (bootstrap reconnection, etc.)
@@ -194,6 +315,132 @@ pub struct PqNetworkBackend {
     shutdown_notify: Arc<Notify>,
     /// Local peer ID
     local_peer_id: [u8; 32],
+}
+
+fn try_reserve_queue_bytes(
+    queued_bytes: &AtomicUsize,
+    max_queued_bytes: usize,
+    bytes: usize,
+) -> Result<(), &'static str> {
+    if bytes > max_queued_bytes {
+        return Err("message exceeds byte budget");
+    }
+
+    let mut current = queued_bytes.load(Ordering::Acquire);
+    loop {
+        let next = current
+            .checked_add(bytes)
+            .ok_or("queue byte counter overflow")?;
+        if next > max_queued_bytes {
+            return Err("queue byte budget exceeded");
+        }
+        match queued_bytes.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => return Ok(()),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+fn release_queue_bytes(queued_bytes: &AtomicUsize, bytes: usize) {
+    if bytes == 0 {
+        return;
+    }
+
+    let previous = queued_bytes.fetch_sub(bytes, Ordering::AcqRel);
+    debug_assert!(previous >= bytes, "queue byte counter underflow");
+}
+
+fn try_send_bounded<T>(
+    tx: &mpsc::Sender<T>,
+    queued_bytes: &AtomicUsize,
+    max_queued_bytes: usize,
+    bytes: usize,
+    item: T,
+) -> Result<(), &'static str> {
+    try_reserve_queue_bytes(queued_bytes, max_queued_bytes, bytes)?;
+    match tx.try_send(item) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            release_queue_bytes(queued_bytes, bytes);
+            Err("queue is full")
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            release_queue_bytes(queued_bytes, bytes);
+            Err("queue is closed")
+        }
+    }
+}
+
+fn try_send_message_event(
+    tx: &mpsc::Sender<PqNetworkEvent>,
+    queued_event_bytes: &AtomicUsize,
+    peer_id: [u8; 32],
+    protocol: Cow<'_, str>,
+    payload: &[u8],
+) -> Result<(), &'static str> {
+    let reserved = protocol.len().saturating_add(payload.len());
+    try_reserve_queue_bytes(queued_event_bytes, EVENT_CHANNEL_MAX_QUEUED_BYTES, reserved)?;
+    let event = PqNetworkEvent::MessageReceived {
+        peer_id,
+        protocol: protocol.into_owned(),
+        data: payload.to_vec(),
+    };
+    match tx.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            release_queue_bytes(queued_event_bytes, reserved);
+            Err("queue is full")
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+            release_queue_bytes(queued_event_bytes, reserved);
+            Err("queue is closed")
+        }
+    }
+}
+
+fn try_send_lifecycle_event(
+    tx: &mpsc::Sender<PqNetworkEvent>,
+    event: PqNetworkEvent,
+) -> Result<(), &'static str> {
+    match tx.try_send(event) {
+        Ok(()) => Ok(()),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => Err("queue is full"),
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err("queue is closed"),
+    }
+}
+
+async fn disconnect_peer_connection(
+    peers: &Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
+    lifecycle_event_tx: &mpsc::Sender<PqNetworkEvent>,
+    peer_id: [u8; 32],
+    reason: impl Into<String>,
+) {
+    let reason = reason.into();
+    if let Some(mut peer) = peers.write().await.remove(&peer_id) {
+        if let Some(close_tx) = peer.close_tx.take() {
+            let _ = close_tx.send(());
+        }
+        if let Err(send_reason) = try_send_lifecycle_event(
+            lifecycle_event_tx,
+            PqNetworkEvent::PeerDisconnected {
+                peer_id,
+                reason: reason.clone(),
+            },
+        ) {
+            tracing::warn!(
+                peer_id = %hex::encode(peer_id),
+                reason = %reason,
+                send_error = send_reason,
+                "Dropped peer-disconnect lifecycle event"
+            );
+        }
+        tracing::warn!(
+            peer_id = %hex::encode(peer_id),
+            reason = %reason,
+            "Dropped peer connection"
+        );
+    }
 }
 
 impl PqNetworkBackend {
@@ -220,23 +467,29 @@ impl PqNetworkBackend {
 
     /// Create a new PQ network backend
     pub fn new(identity: &PqPeerIdentity, config: PqNetworkBackendConfig) -> Self {
-        let transport_config = SubstratePqTransportConfig {
+        let transport_config = NativePqTransportConfig {
             connection_timeout: config.connection_timeout,
             handshake_timeout: Duration::from_secs(30),
             verbose_logging: config.verbose_logging,
+            require_pq: true,
             protocol_id: "/hegemon/pq/1".to_string(),
         };
 
-        let transport = SubstratePqTransport::new(identity, transport_config);
+        let transport = NativePqTransport::new(identity, transport_config);
         let local_peer_id = transport.local_peer_id();
-        let (event_tx, event_rx) = mpsc::channel(1024);
+        let (lifecycle_event_tx, lifecycle_event_rx) =
+            mpsc::channel(LIFECYCLE_EVENT_CHANNEL_CAPACITY);
+        let (message_event_tx, message_event_rx) = mpsc::channel(MESSAGE_EVENT_CHANNEL_CAPACITY);
 
         Self {
             transport,
             config,
             peers: Arc::new(RwLock::new(HashMap::new())),
-            event_tx,
-            event_rx,
+            lifecycle_event_tx,
+            message_event_tx,
+            lifecycle_event_rx,
+            message_event_rx,
+            queued_event_bytes: Arc::new(AtomicUsize::new(0)),
             shutdown_tx: None,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             shutdown_notify: Arc::new(Notify::new()),
@@ -272,7 +525,7 @@ impl PqNetworkBackend {
     /// Start the network backend
     ///
     /// Returns a receiver for network events.
-    pub async fn start(&mut self) -> Result<mpsc::Receiver<PqNetworkEvent>, std::io::Error> {
+    pub async fn start(&mut self) -> Result<PqNetworkEventReceiver, std::io::Error> {
         let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
         self.shutdown_tx = Some(shutdown_tx);
 
@@ -286,21 +539,27 @@ impl PqNetworkBackend {
             "PQ network backend started"
         );
 
-        let _ = self
-            .event_tx
-            .send(PqNetworkEvent::Started {
+        if let Err(reason) = try_send_lifecycle_event(
+            &self.lifecycle_event_tx,
+            PqNetworkEvent::Started {
                 listen_addr: actual_addr,
-            })
-            .await;
+            },
+        ) {
+            tracing::warn!(error = reason, "Dropped network started lifecycle event");
+        }
 
         // Spawn listener task
         let transport = self.transport.clone();
         let peers = self.peers.clone();
-        let event_tx = self.event_tx.clone();
+        let lifecycle_event_tx = self.lifecycle_event_tx.clone();
+        let message_event_tx = self.message_event_tx.clone();
         let max_peers = self.config.max_peers;
         let verbose_logging = self.config.verbose_logging;
         let shutdown_flag = self.shutdown_flag.clone();
         let shutdown_notify = self.shutdown_notify.clone();
+        let queued_event_bytes = self.queued_event_bytes.clone();
+        let inbound_handshake_slots =
+            Arc::new(Semaphore::new(max_peers.max(MIN_CONCURRENT_HANDSHAKES)));
 
         tokio::spawn(async move {
             loop {
@@ -323,14 +582,31 @@ impl PqNetworkBackend {
 
                                 let transport = transport.clone();
                                 let peers = peers.clone();
-                                let event_tx = event_tx.clone();
+                                let lifecycle_event_tx = lifecycle_event_tx.clone();
+                                let message_event_tx = message_event_tx.clone();
+                                let queued_event_bytes = queued_event_bytes.clone();
+                                let Ok(handshake_permit) =
+                                    inbound_handshake_slots.clone().try_acquire_owned()
+                                else {
+                                    tracing::warn!(
+                                        addr = %addr,
+                                        max_handshakes = max_peers.max(MIN_CONCURRENT_HANDSHAKES),
+                                        "Rejecting inbound connection: handshake concurrency saturated"
+                                    );
+                                    continue;
+                                };
 
                                     tokio::spawn(async move {
                                         match transport.upgrade_inbound(socket, addr).await {
                                             Ok(conn) => {
+                                                drop(handshake_permit);
                                                 let peer_id = conn.peer_id();
                                                 let info = PqConnectionInfo::from(&conn);
-                                                let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
+                                                let (msg_tx, mut msg_rx) =
+                                                    mpsc::channel::<Vec<u8>>(PEER_SEND_QUEUE_CAPACITY);
+                                                let peer_queued_bytes =
+                                                    Arc::new(AtomicUsize::new(0));
+                                                let (close_tx, mut close_rx) = oneshot::channel();
                                                 let admission = Self::admit_peer(
                                                     &peers,
                                                     transport.local_peer_id(),
@@ -338,6 +614,8 @@ impl PqNetworkBackend {
                                                     PeerConnection {
                                                         info: info.clone(),
                                                         msg_tx,
+                                                        queued_bytes: peer_queued_bytes.clone(),
+                                                        close_tx: Some(close_tx),
                                                     },
                                                     max_peers,
                                                 )
@@ -371,27 +649,54 @@ impl PqNetworkBackend {
                                                     PeerAdmission::Inserted => {}
                                                 }
 
-                                            let send_result = event_tx.send(PqNetworkEvent::PeerConnected {
-                                                peer_id,
-                                                addr,
-                                                is_outbound: false,
-                                            }).await;
+                                            if let Err(reason) = try_send_lifecycle_event(
+                                                &lifecycle_event_tx,
+                                                PqNetworkEvent::PeerConnected {
+                                                    peer_id,
+                                                    addr,
+                                                    is_outbound: false,
+                                                },
+                                            ) {
+                                                tracing::warn!(
+                                                    peer_id = %hex::encode(peer_id),
+                                                    addr = %addr,
+                                                    error = reason,
+                                                    "Dropping inbound peer because lifecycle queue cannot accept PeerConnected"
+                                                );
+                                                disconnect_peer_connection(
+                                                    &peers,
+                                                    &lifecycle_event_tx,
+                                                    peer_id,
+                                                    "PeerConnected event dropped",
+                                                )
+                                                .await;
+                                                return;
+                                            }
 
                                             tracing::info!(
                                                 peer_id = %hex::encode(peer_id),
                                                 addr = %addr,
-                                                send_ok = send_result.is_ok(),
-                                                "Inbound peer connected via PQ handshake - event sent"
+                                                "Inbound peer connected via PQ handshake"
                                             );
 
                                             // Spawn combined read/write loop for this peer
                                             // Connection is owned by this task, writes come via msg_rx channel
-                                            let event_tx_for_task = event_tx.clone();
+                                            let lifecycle_event_tx_for_task = lifecycle_event_tx.clone();
+                                            let message_event_tx_for_task = message_event_tx.clone();
                                             let peers_for_task = peers.clone();
+                                            let queued_event_bytes_for_task =
+                                                queued_event_bytes.clone();
                                             tokio::spawn(async move {
                                                 let mut conn = conn;
                                                 loop {
                                                     tokio::select! {
+                                                        _ = &mut close_rx => {
+                                                            tracing::debug!(
+                                                                peer_id = %hex::encode(peer_id),
+                                                                "Peer connection closed by backend"
+                                                            );
+                                                            break;
+                                                        }
                                                         // Handle incoming data
                                                         recv_result = conn.recv() => {
                                                             match recv_result {
@@ -409,18 +714,23 @@ impl PqNetworkBackend {
                                                                             );
                                                                     }
                                                                     // Decode framed message
-                                                                    #[derive(serde::Deserialize)]
-                                                                    struct FramedMessage {
-                                                                        protocol: String,
-                                                                        data: Vec<u8>,
-                                                                    }
-
-                                                                    if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
-                                                                        let _ = event_tx_for_task.send(PqNetworkEvent::MessageReceived {
+                                                                    if let Ok(msg) =
+                                                                        wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_PLAINTEXT_LEN)
+                                                                    {
+                                                                        if let Err(reason) = try_send_message_event(
+                                                                            &message_event_tx_for_task,
+                                                                            queued_event_bytes_for_task.as_ref(),
                                                                             peer_id,
-                                                                            protocol: msg.protocol,
-                                                                            data: msg.data,
-                                                                        }).await;
+                                                                            msg.protocol,
+                                                                            msg.data,
+                                                                        ) {
+                                                                            tracing::warn!(
+                                                                                peer_id = %hex::encode(peer_id),
+                                                                                error = reason,
+                                                                                "Dropping peer because inbound event queue is saturated"
+                                                                            );
+                                                                            break;
+                                                                        }
                                                                     } else {
                                                                         tracing::trace!(
                                                                             peer_id = %hex::encode(peer_id),
@@ -448,13 +758,28 @@ impl PqNetworkBackend {
                                                         }
                                                         // Handle outgoing data from channel
                                                         Some(data) = msg_rx.recv() => {
-                                                            if let Err(e) = conn.send(&data).await {
-                                                                tracing::debug!(
-                                                                    peer_id = %hex::encode(peer_id),
-                                                                    error = %e,
-                                                                    "Failed to send to peer"
-                                                                );
-                                                                break;
+                                                            release_queue_bytes(
+                                                                peer_queued_bytes.as_ref(),
+                                                                data.len(),
+                                                            );
+                                                            match timeout(PEER_SEND_TIMEOUT, conn.send(&data)).await {
+                                                                Ok(Ok(())) => {}
+                                                                Ok(Err(e)) => {
+                                                                    tracing::debug!(
+                                                                        peer_id = %hex::encode(peer_id),
+                                                                        error = %e,
+                                                                        "Failed to send to peer"
+                                                                    );
+                                                                    break;
+                                                                }
+                                                                Err(_) => {
+                                                                    tracing::warn!(
+                                                                        peer_id = %hex::encode(peer_id),
+                                                                        timeout_secs = PEER_SEND_TIMEOUT.as_secs(),
+                                                                        "Timed out sending to peer"
+                                                                    );
+                                                                    break;
+                                                                }
                                                             }
                                                             if let Some(peer) = peers_for_task
                                                                 .write()
@@ -473,18 +798,38 @@ impl PqNetworkBackend {
                                                 }
 
                                                 // Clean up on disconnect
-                                                peers_for_task.write().await.remove(&peer_id);
-                                                let _ = event_tx_for_task.send(PqNetworkEvent::PeerDisconnected {
-                                                    peer_id,
-                                                    reason: "Connection closed".to_string(),
-                                                }).await;
+                                                if peers_for_task.write().await.remove(&peer_id).is_some()
+                                                    && let Err(reason) = try_send_lifecycle_event(
+                                                        &lifecycle_event_tx_for_task,
+                                                        PqNetworkEvent::PeerDisconnected {
+                                                            peer_id,
+                                                            reason: "Connection closed".to_string(),
+                                                        },
+                                                    )
+                                                {
+                                                    tracing::warn!(
+                                                        peer_id = %hex::encode(peer_id),
+                                                        error = reason,
+                                                        "Dropped peer-disconnect lifecycle event"
+                                                    );
+                                                }
                                             });
                                         }
                                         Err(e) => {
-                                            let _ = event_tx.send(PqNetworkEvent::ConnectionFailed {
-                                                addr,
-                                                reason: e.to_string(),
-                                            }).await;
+                                            drop(handshake_permit);
+                                            if let Err(reason) = try_send_lifecycle_event(
+                                                &lifecycle_event_tx,
+                                                PqNetworkEvent::ConnectionFailed {
+                                                    addr,
+                                                    reason: e.to_string(),
+                                                },
+                                            ) {
+                                                tracing::debug!(
+                                                    addr = %addr,
+                                                    error = reason,
+                                                    "Dropped connection-failed lifecycle event"
+                                                );
+                                            }
                                         }
                                     }
                                 });
@@ -509,18 +854,22 @@ impl PqNetworkBackend {
             let bootstrap_nodes = self.config.bootstrap_nodes.clone();
             let peers = self.peers.clone();
             let transport = self.transport.clone();
-            let event_tx = self.event_tx.clone();
+            let lifecycle_event_tx = self.lifecycle_event_tx.clone();
+            let message_event_tx = self.message_event_tx.clone();
             let max_peers = self.config.max_peers;
             let connection_timeout = self.config.connection_timeout;
             let shutdown_flag = self.shutdown_flag.clone();
             let shutdown_notify = self.shutdown_notify.clone();
+            let queued_event_bytes = self.queued_event_bytes.clone();
 
             for bootstrap in bootstrap_nodes {
                 let peers = peers.clone();
                 let transport = transport.clone();
-                let event_tx = event_tx.clone();
+                let lifecycle_event_tx = lifecycle_event_tx.clone();
+                let message_event_tx = message_event_tx.clone();
                 let shutdown_flag = shutdown_flag.clone();
                 let shutdown_notify = shutdown_notify.clone();
+                let queued_event_bytes = queued_event_bytes.clone();
 
                 tokio::spawn(async move {
                     let mut backoff = BOOTSTRAP_RECONNECT_BASE;
@@ -572,7 +921,9 @@ impl PqNetworkBackend {
                                 res = Self::connect_outbound_inner(
                                     transport.clone(),
                                     peers.clone(),
-                                    event_tx.clone(),
+                                    lifecycle_event_tx.clone(),
+                                    message_event_tx.clone(),
+                                    queued_event_bytes.clone(),
                                     addr,
                                     connection_timeout,
                                     max_peers,
@@ -637,20 +988,29 @@ impl PqNetworkBackend {
             }
         }
 
-        // Take ownership of the event receiver and return it to the caller.
-        // The caller will receive all events sent via self.event_tx.
-        // We replace with a dummy receiver to satisfy the struct's field requirement.
-        let (dummy_tx, dummy_rx) = mpsc::channel(1);
-        drop(dummy_tx); // Drop immediately, we don't need it
-        let event_rx = std::mem::replace(&mut self.event_rx, dummy_rx);
+        let (dummy_lifecycle_tx, dummy_lifecycle_rx) = mpsc::channel(1);
+        let (dummy_message_tx, dummy_message_rx) = mpsc::channel(1);
+        drop(dummy_lifecycle_tx);
+        drop(dummy_message_tx);
+        let lifecycle_rx = std::mem::replace(&mut self.lifecycle_event_rx, dummy_lifecycle_rx);
+        let message_rx = std::mem::replace(&mut self.message_event_rx, dummy_message_rx);
 
-        Ok(event_rx)
+        Ok(PqNetworkEventReceiver {
+            lifecycle_rx,
+            message_rx,
+            queued_event_bytes: self.queued_event_bytes.clone(),
+            prefer_lifecycle: true,
+            lifecycle_closed: false,
+            message_closed: false,
+        })
     }
 
     async fn connect_outbound_inner(
-        transport: SubstratePqTransport,
+        transport: NativePqTransport,
         peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
-        event_tx: mpsc::Sender<PqNetworkEvent>,
+        lifecycle_event_tx: mpsc::Sender<PqNetworkEvent>,
+        message_event_tx: mpsc::Sender<PqNetworkEvent>,
+        queued_event_bytes: Arc<AtomicUsize>,
         addr: SocketAddr,
         connection_timeout: Duration,
         max_peers: usize,
@@ -674,7 +1034,9 @@ impl PqNetworkBackend {
 
         let peer_id = conn.peer_id();
         let info = PqConnectionInfo::from(&conn);
-        let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (msg_tx, mut msg_rx) = mpsc::channel::<Vec<u8>>(PEER_SEND_QUEUE_CAPACITY);
+        let peer_queued_bytes = Arc::new(AtomicUsize::new(0));
+        let (close_tx, mut close_rx) = oneshot::channel();
         let admission = Self::admit_peer(
             &peers,
             transport.local_peer_id(),
@@ -682,6 +1044,8 @@ impl PqNetworkBackend {
             PeerConnection {
                 info: info.clone(),
                 msg_tx,
+                queued_bytes: peer_queued_bytes.clone(),
+                close_tx: Some(close_tx),
             },
             max_peers,
         )
@@ -709,13 +1073,29 @@ impl PqNetworkBackend {
             PeerAdmission::Inserted => {}
         }
 
-        let _ = event_tx
-            .send(PqNetworkEvent::PeerConnected {
+        if let Err(reason) = try_send_lifecycle_event(
+            &lifecycle_event_tx,
+            PqNetworkEvent::PeerConnected {
                 peer_id,
                 addr,
                 is_outbound: true,
-            })
+            },
+        ) {
+            tracing::warn!(
+                peer_id = %hex::encode(peer_id),
+                addr = %addr,
+                error = reason,
+                "Dropping outbound peer because lifecycle queue cannot accept PeerConnected"
+            );
+            disconnect_peer_connection(
+                &peers,
+                &lifecycle_event_tx,
+                peer_id,
+                "PeerConnected event dropped",
+            )
             .await;
+            return Err(format!("PeerConnected event dropped: {reason}"));
+        }
 
         tracing::info!(
             peer_id = %hex::encode(peer_id),
@@ -725,12 +1105,21 @@ impl PqNetworkBackend {
 
         // Spawn combined read/write loop for this peer.
         // Connection is owned by this task, writes come via msg_rx channel.
-        let event_tx_for_task = event_tx.clone();
+        let lifecycle_event_tx_for_task = lifecycle_event_tx.clone();
+        let message_event_tx_for_task = message_event_tx.clone();
         let peers_for_task = peers.clone();
+        let queued_event_bytes_for_task = queued_event_bytes.clone();
         tokio::spawn(async move {
             let mut conn = conn;
             loop {
                 tokio::select! {
+                    _ = &mut close_rx => {
+                        tracing::debug!(
+                            peer_id = %hex::encode(peer_id),
+                            "Peer connection closed by backend"
+                        );
+                        break;
+                    }
                     // Handle incoming data
                     recv_result = conn.recv() => {
                         match recv_result {
@@ -744,18 +1133,23 @@ impl PqNetworkBackend {
                                         .saturating_add(data.len() as u64);
                                 }
                                 // Decode framed message
-                                #[derive(serde::Deserialize)]
-                                struct FramedMessage {
-                                    protocol: String,
-                                    data: Vec<u8>,
-                                }
-
-                                if let Ok(msg) = bincode::deserialize::<FramedMessage>(&data) {
-                                    let _ = event_tx_for_task.send(PqNetworkEvent::MessageReceived {
+                                if let Ok(msg) =
+                                    wire::decode_borrowed::<BorrowedFramedMessage<'_>>(&data, SESSION_MAX_PLAINTEXT_LEN)
+                                {
+                                    if let Err(reason) = try_send_message_event(
+                                        &message_event_tx_for_task,
+                                        queued_event_bytes_for_task.as_ref(),
                                         peer_id,
-                                        protocol: msg.protocol,
-                                        data: msg.data,
-                                    }).await;
+                                        msg.protocol,
+                                        msg.data,
+                                    ) {
+                                        tracing::warn!(
+                                            peer_id = %hex::encode(peer_id),
+                                            error = reason,
+                                            "Dropping peer because inbound event queue is saturated"
+                                        );
+                                        break;
+                                    }
                                 } else {
                                     tracing::trace!(
                                         peer_id = %hex::encode(peer_id),
@@ -783,13 +1177,25 @@ impl PqNetworkBackend {
                     }
                     // Handle outgoing data from channel
                     Some(data) = msg_rx.recv() => {
-                        if let Err(e) = conn.send(&data).await {
-                            tracing::debug!(
-                                peer_id = %hex::encode(peer_id),
-                                error = %e,
-                                "Failed to send to peer"
-                            );
-                            break;
+                        release_queue_bytes(peer_queued_bytes.as_ref(), data.len());
+                        match timeout(PEER_SEND_TIMEOUT, conn.send(&data)).await {
+                            Ok(Ok(())) => {}
+                            Ok(Err(e)) => {
+                                tracing::debug!(
+                                    peer_id = %hex::encode(peer_id),
+                                    error = %e,
+                                    "Failed to send to peer"
+                                );
+                                break;
+                            }
+                            Err(_) => {
+                                tracing::warn!(
+                                    peer_id = %hex::encode(peer_id),
+                                    timeout_secs = PEER_SEND_TIMEOUT.as_secs(),
+                                    "Timed out sending to peer"
+                                );
+                                break;
+                            }
                         }
                         if let Some(peer) = peers_for_task.write().await.get_mut(&peer_id) {
                             peer.info.bytes_sent = peer
@@ -802,13 +1208,21 @@ impl PqNetworkBackend {
             }
 
             // Clean up on disconnect
-            peers_for_task.write().await.remove(&peer_id);
-            let _ = event_tx_for_task
-                .send(PqNetworkEvent::PeerDisconnected {
-                    peer_id,
-                    reason: "Connection closed".to_string(),
-                })
-                .await;
+            if peers_for_task.write().await.remove(&peer_id).is_some()
+                && let Err(reason) = try_send_lifecycle_event(
+                    &lifecycle_event_tx_for_task,
+                    PqNetworkEvent::PeerDisconnected {
+                        peer_id,
+                        reason: "Connection closed".to_string(),
+                    },
+                )
+            {
+                tracing::warn!(
+                    peer_id = %hex::encode(peer_id),
+                    error = reason,
+                    "Dropped peer-disconnect lifecycle event"
+                );
+            }
         });
 
         Ok(peer_id)
@@ -819,7 +1233,9 @@ impl PqNetworkBackend {
         Self::connect_outbound_inner(
             self.transport.clone(),
             self.peers.clone(),
-            self.event_tx.clone(),
+            self.lifecycle_event_tx.clone(),
+            self.message_event_tx.clone(),
+            self.queued_event_bytes.clone(),
             addr,
             self.config.connection_timeout,
             self.config.max_peers,
@@ -829,62 +1245,93 @@ impl PqNetworkBackend {
 
     /// Disconnect from a peer
     pub async fn disconnect(&self, peer_id: [u8; 32], reason: &str) {
-        if self.peers.write().await.remove(&peer_id).is_some() {
-            let _ = self
-                .event_tx
-                .send(PqNetworkEvent::PeerDisconnected {
-                    peer_id,
-                    reason: reason.to_string(),
-                })
-                .await;
-
-            tracing::info!(
-                peer_id = %hex::encode(peer_id),
-                reason = reason,
-                "Peer disconnected"
-            );
-        }
+        disconnect_peer_connection(&self.peers, &self.lifecycle_event_tx, peer_id, reason).await;
     }
 
     /// Send a message to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        let peers = self.peers.read().await;
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
+            return Err(format!(
+                "Message exceeds PQ frame limit ({} > {})",
+                data.len(),
+                SESSION_MAX_PLAINTEXT_LEN
+            ));
+        }
 
-        if let Some(peer) = peers.get(&peer_id) {
-            peer.msg_tx
-                .send(data)
-                .await
-                .map_err(|_| "Failed to send to peer channel".to_string())?;
-            Ok(())
-        } else {
-            Err("Peer not found".to_string())
+        let peer = {
+            let peers = self.peers.read().await;
+            peers
+                .get(&peer_id)
+                .map(|peer| (peer.msg_tx.clone(), peer.queued_bytes.clone()))
+        };
+
+        let Some((msg_tx, queued_bytes)) = peer else {
+            return Err("Peer not found".to_string());
+        };
+
+        match try_send_bounded(
+            &msg_tx,
+            queued_bytes.as_ref(),
+            PEER_SEND_QUEUE_MAX_QUEUED_BYTES,
+            data.len(),
+            data,
+        ) {
+            Ok(()) => Ok(()),
+            Err(reason) => {
+                disconnect_peer_connection(&self.peers, &self.lifecycle_event_tx, peer_id, reason)
+                    .await;
+                Err(reason.to_string())
+            }
         }
     }
 
     /// Broadcast a message to all connected peers via channels
     pub async fn broadcast(&self, data: Vec<u8>) -> Vec<[u8; 32]> {
-        let mut failed = Vec::new();
-        let peers = self.peers.read().await;
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
+            tracing::error!(
+                size = data.len(),
+                limit = SESSION_MAX_PLAINTEXT_LEN,
+                "Refusing to broadcast message larger than PQ frame limit"
+            );
+            return Vec::new();
+        }
 
-        for (peer_id, peer) in peers.iter() {
-            if peer.msg_tx.send(data.clone()).await.is_err() {
-                failed.push(*peer_id);
+        let mut failed = Vec::new();
+        let peers: Vec<_> = {
+            let peers = self.peers.read().await;
+            peers
+                .iter()
+                .map(|(peer_id, peer)| (*peer_id, peer.msg_tx.clone(), peer.queued_bytes.clone()))
+                .collect()
+        };
+
+        for (peer_id, msg_tx, queued_bytes) in peers {
+            if let Err(reason) = try_send_bounded(
+                &msg_tx,
+                queued_bytes.as_ref(),
+                PEER_SEND_QUEUE_MAX_QUEUED_BYTES,
+                data.len(),
+                data.clone(),
+            ) {
+                tracing::debug!(
+                    peer_id = %hex::encode(peer_id),
+                    error = reason,
+                    "Failed to enqueue broadcast message"
+                );
+                failed.push(peer_id);
             }
         }
-        drop(peers);
 
         // Remove failed peers
         if !failed.is_empty() {
-            let mut peers_mut = self.peers.write().await;
             for peer_id in &failed {
-                peers_mut.remove(peer_id);
-                let _ = self
-                    .event_tx
-                    .send(PqNetworkEvent::PeerDisconnected {
-                        peer_id: *peer_id,
-                        reason: "Send failed".to_string(),
-                    })
-                    .await;
+                disconnect_peer_connection(
+                    &self.peers,
+                    &self.lifecycle_event_tx,
+                    *peer_id,
+                    "Send failed",
+                )
+                .await;
             }
         }
 
@@ -906,7 +1353,11 @@ impl PqNetworkBackend {
             self.disconnect(peer_id, "Shutdown").await;
         }
 
-        let _ = self.event_tx.send(PqNetworkEvent::Stopped).await;
+        if let Err(reason) =
+            try_send_lifecycle_event(&self.lifecycle_event_tx, PqNetworkEvent::Stopped)
+        {
+            tracing::debug!(error = reason, "Dropped network stopped lifecycle event");
+        }
     }
 
     /// Create a handle to the network backend
@@ -917,7 +1368,7 @@ impl PqNetworkBackend {
         PqNetworkHandle {
             local_peer_id: self.local_peer_id,
             peers: self.peers.clone(),
-            event_tx: self.event_tx.clone(),
+            lifecycle_event_tx: self.lifecycle_event_tx.clone(),
         }
     }
 }
@@ -929,8 +1380,8 @@ pub struct PqNetworkHandle {
     local_peer_id: [u8; 32],
     /// Peers reference
     peers: Arc<RwLock<HashMap<[u8; 32], PeerConnection>>>,
-    /// Event sender for sending custom events
-    event_tx: mpsc::Sender<PqNetworkEvent>,
+    /// Lifecycle event sender for emitting disconnect notifications.
+    lifecycle_event_tx: mpsc::Sender<PqNetworkEvent>,
 }
 
 impl PqNetworkHandle {
@@ -951,21 +1402,7 @@ impl PqNetworkHandle {
 
     /// Disconnect a peer and emit a disconnection event.
     pub async fn disconnect(&self, peer_id: [u8; 32], reason: &str) {
-        if self.peers.write().await.remove(&peer_id).is_some() {
-            let _ = self
-                .event_tx
-                .send(PqNetworkEvent::PeerDisconnected {
-                    peer_id,
-                    reason: reason.to_string(),
-                })
-                .await;
-
-            tracing::info!(
-                peer_id = %hex::encode(peer_id),
-                reason = reason,
-                "Peer disconnected via handle"
-            );
-        }
+        disconnect_peer_connection(&self.peers, &self.lifecycle_event_tx, peer_id, reason).await;
     }
 
     /// Broadcast data to all connected peers via channels
@@ -985,7 +1422,7 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = match bincode::serialize(&framed) {
+        let encoded = match wire::encode(&framed, SESSION_MAX_PLAINTEXT_LEN) {
             Ok(e) => e,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to serialize broadcast message");
@@ -993,36 +1430,53 @@ impl PqNetworkHandle {
             }
         };
 
-        let mut failed = Vec::new();
-        let peers = self.peers.read().await;
+        if encoded.len() > SESSION_MAX_PLAINTEXT_LEN {
+            tracing::error!(
+                protocol = %protocol,
+                size = encoded.len(),
+                limit = SESSION_MAX_PLAINTEXT_LEN,
+                "Refusing to broadcast oversized PQ frame"
+            );
+            return Vec::new();
+        }
 
-        for (peer_id, peer) in peers.iter() {
-            if let Err(e) = peer.msg_tx.send(encoded.clone()).await {
+        let mut failed = Vec::new();
+        let peers: Vec<_> = {
+            let peers = self.peers.read().await;
+            peers
+                .iter()
+                .map(|(peer_id, peer)| (*peer_id, peer.msg_tx.clone(), peer.queued_bytes.clone()))
+                .collect()
+        };
+
+        for (peer_id, msg_tx, queued_bytes) in peers {
+            if let Err(e) = try_send_bounded(
+                &msg_tx,
+                queued_bytes.as_ref(),
+                PEER_SEND_QUEUE_MAX_QUEUED_BYTES,
+                encoded.len(),
+                encoded.clone(),
+            ) {
                 tracing::debug!(
                     peer_id = %hex::encode(peer_id),
                     protocol = %protocol,
                     error = %e,
                     "Failed to send message to peer channel"
                 );
-                failed.push(*peer_id);
+                failed.push(peer_id);
             }
         }
-        drop(peers);
 
         // Remove failed peers
         if !failed.is_empty() {
-            let mut peers_mut = self.peers.write().await;
             for peer_id in &failed {
-                if peers_mut.remove(peer_id).is_some() {
-                    // Send disconnect event
-                    let _ = self
-                        .event_tx
-                        .send(PqNetworkEvent::PeerDisconnected {
-                            peer_id: *peer_id,
-                            reason: "Send failed during broadcast".to_string(),
-                        })
-                        .await;
-                }
+                disconnect_peer_connection(
+                    &self.peers,
+                    &self.lifecycle_event_tx,
+                    *peer_id,
+                    "Send failed during broadcast",
+                )
+                .await;
             }
 
             tracing::warn!(
@@ -1037,16 +1491,38 @@ impl PqNetworkHandle {
 
     /// Send data to a specific peer via channel (non-blocking)
     pub async fn send_to_peer(&self, peer_id: [u8; 32], data: Vec<u8>) -> Result<(), String> {
-        let peers = self.peers.read().await;
+        if data.len() > SESSION_MAX_PLAINTEXT_LEN {
+            return Err(format!(
+                "Message exceeds PQ frame limit ({} > {})",
+                data.len(),
+                SESSION_MAX_PLAINTEXT_LEN
+            ));
+        }
 
-        if let Some(peer) = peers.get(&peer_id) {
-            peer.msg_tx
-                .send(data)
-                .await
-                .map_err(|_| "Failed to send to peer channel".to_string())?;
-            Ok(())
-        } else {
-            Err("Peer not found".to_string())
+        let peer = {
+            let peers = self.peers.read().await;
+            peers
+                .get(&peer_id)
+                .map(|peer| (peer.msg_tx.clone(), peer.queued_bytes.clone()))
+        };
+
+        let Some((msg_tx, queued_bytes)) = peer else {
+            return Err("Peer not found".to_string());
+        };
+
+        match try_send_bounded(
+            &msg_tx,
+            queued_bytes.as_ref(),
+            PEER_SEND_QUEUE_MAX_QUEUED_BYTES,
+            data.len(),
+            data,
+        ) {
+            Ok(()) => Ok(()),
+            Err(reason) => {
+                disconnect_peer_connection(&self.peers, &self.lifecycle_event_tx, peer_id, reason)
+                    .await;
+                Err(reason.to_string())
+            }
         }
     }
 
@@ -1072,8 +1548,16 @@ impl PqNetworkHandle {
         }
 
         let framed = FramedMessage { protocol, data };
-        let encoded = bincode::serialize(&framed)
+        let encoded = wire::encode(&framed, SESSION_MAX_PLAINTEXT_LEN)
             .map_err(|e| format!("Failed to serialize message: {}", e))?;
+
+        if encoded.len() > SESSION_MAX_PLAINTEXT_LEN {
+            return Err(format!(
+                "Serialized message exceeds PQ frame limit ({} > {})",
+                encoded.len(),
+                SESSION_MAX_PLAINTEXT_LEN
+            ));
+        }
 
         self.send_to_peer(peer_id, encoded).await
     }
@@ -1200,6 +1684,8 @@ mod tests {
                     protocol: "/hegemon/pq/1".to_string(),
                 },
                 msg_tx,
+                queued_bytes: Arc::new(AtomicUsize::new(0)),
+                close_tx: None,
             }
         };
 
@@ -1237,6 +1723,8 @@ mod tests {
                 protocol: "/hegemon/pq/1".to_string(),
             },
             msg_tx,
+            queued_bytes: Arc::new(AtomicUsize::new(0)),
+            close_tx: None,
         };
 
         assert_eq!(
@@ -1244,5 +1732,376 @@ mod tests {
             PeerAdmission::SelfPeer
         );
         assert_eq!(peers.read().await.len(), 0);
+    }
+
+    #[test]
+    fn test_try_send_bounded_enforces_byte_budget() {
+        let (tx, _rx) = mpsc::channel::<Vec<u8>>(4);
+        let queued_bytes = AtomicUsize::new(0);
+
+        assert!(try_send_bounded(&tx, &queued_bytes, 4, 4, vec![1, 2, 3, 4]).is_ok());
+        assert_eq!(queued_bytes.load(Ordering::Acquire), 4);
+
+        let err = try_send_bounded(&tx, &queued_bytes, 4, 1, vec![9]).unwrap_err();
+        assert_eq!(err, "queue byte budget exceeded");
+        assert_eq!(queued_bytes.load(Ordering::Acquire), 4);
+    }
+
+    #[test]
+    fn test_try_send_lifecycle_event_is_bounded() {
+        let (tx, _rx) = mpsc::channel::<PqNetworkEvent>(1);
+
+        assert!(try_send_lifecycle_event(&tx, PqNetworkEvent::Stopped).is_ok());
+
+        let err = try_send_lifecycle_event(&tx, PqNetworkEvent::Stopped).unwrap_err();
+        assert_eq!(err, "queue is full");
+    }
+
+    #[tokio::test]
+    async fn test_event_receiver_releases_message_bytes() {
+        let (tx, rx) = mpsc::channel(1);
+        let (_lifecycle_tx, lifecycle_rx) = mpsc::channel(1);
+        let queued_event_bytes = Arc::new(AtomicUsize::new(0));
+        let event = PqNetworkEvent::MessageReceived {
+            peer_id: [0x11; 32],
+            protocol: "/test/protocol".to_string(),
+            data: vec![1, 2, 3, 4],
+        };
+        let reserved = event.queued_bytes();
+        assert!(
+            try_send_bounded(&tx, queued_event_bytes.as_ref(), reserved, reserved, event).is_ok()
+        );
+        assert_eq!(queued_event_bytes.load(Ordering::Acquire), reserved);
+
+        let mut receiver = PqNetworkEventReceiver {
+            lifecycle_rx,
+            message_rx: rx,
+            queued_event_bytes: queued_event_bytes.clone(),
+            prefer_lifecycle: true,
+            lifecycle_closed: false,
+            message_closed: false,
+        };
+        let event = receiver.recv().await.expect("event");
+        assert!(matches!(event, PqNetworkEvent::MessageReceived { .. }));
+        assert_eq!(queued_event_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn test_event_receiver_round_robins_ready_queues() {
+        let (lifecycle_tx, lifecycle_rx) = mpsc::channel(2);
+        let (message_tx, message_rx) = mpsc::channel(2);
+        let queued_event_bytes = Arc::new(AtomicUsize::new(0));
+
+        lifecycle_tx
+            .try_send(PqNetworkEvent::Stopped)
+            .expect("lifecycle event");
+
+        let event = PqNetworkEvent::MessageReceived {
+            peer_id: [0x22; 32],
+            protocol: "/test/protocol".to_string(),
+            data: vec![9, 8, 7],
+        };
+        let reserved = event.queued_bytes();
+        assert!(
+            try_send_bounded(
+                &message_tx,
+                queued_event_bytes.as_ref(),
+                reserved,
+                reserved,
+                event,
+            )
+            .is_ok()
+        );
+
+        let mut receiver = PqNetworkEventReceiver {
+            lifecycle_rx,
+            message_rx,
+            queued_event_bytes: queued_event_bytes.clone(),
+            prefer_lifecycle: true,
+            lifecycle_closed: false,
+            message_closed: false,
+        };
+
+        let first = receiver.recv().await.expect("first event");
+        assert!(matches!(first, PqNetworkEvent::Stopped));
+
+        let second = receiver.recv().await.expect("second event");
+        assert!(matches!(second, PqNetworkEvent::MessageReceived { .. }));
+        assert_eq!(queued_event_bytes.load(Ordering::Acquire), 0);
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueResourceVectorFile {
+        schema_version: u32,
+        constants: Vec<LeanQueueResourceConstant>,
+        reserve_cases: Vec<LeanQueueReserveCase>,
+        send_cases: Vec<LeanQueueSendCase>,
+        rate_limit_state_cases: Vec<LeanRateLimitStateCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueResourceConstant {
+        kind: String,
+        max_queued_bytes: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueReserveCase {
+        name: String,
+        current_queued_bytes: usize,
+        max_queued_bytes: usize,
+        message_bytes: usize,
+        usize_max: usize,
+        expected_valid: bool,
+        expected_reject: Option<String>,
+        expected_queued_after: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanQueueSendCase {
+        name: String,
+        current_queued_bytes: usize,
+        max_queued_bytes: usize,
+        message_bytes: usize,
+        usize_max: usize,
+        send_outcome: String,
+        expected_valid: bool,
+        expected_reject: serde_json::Value,
+        expected_queued_after: usize,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LeanRateLimitStateCase {
+        name: String,
+        current_entries: usize,
+        max_entries: usize,
+        expected_retained_before_insert: usize,
+        expected_entries_after_insert: usize,
+        expected_valid: bool,
+    }
+
+    fn lean_queue_kind_max(kind: &str) -> Option<usize> {
+        match kind {
+            "peer_send" => Some(PEER_SEND_QUEUE_MAX_QUEUED_BYTES),
+            "message_event" => Some(EVENT_CHANNEL_MAX_QUEUED_BYTES),
+            _ => None,
+        }
+    }
+
+    fn lean_reserve_reject_to_error(reject: Option<&str>) -> Option<&'static str> {
+        match reject {
+            None => None,
+            Some("message_exceeds_byte_budget") => Some("message exceeds byte budget"),
+            Some("queue_byte_counter_overflow") => Some("queue byte counter overflow"),
+            Some("queue_byte_budget_exceeded") => Some("queue byte budget exceeded"),
+            Some(other) => panic!("unknown Lean queue reserve rejection {other}"),
+        }
+    }
+
+    fn lean_send_reject_to_error(reject: &serde_json::Value) -> Option<&'static str> {
+        if reject.is_null() {
+            return None;
+        }
+        if let Some(label) = reject.as_str() {
+            return match label {
+                "queue_full" => Some("queue is full"),
+                "queue_closed" => Some("queue is closed"),
+                other => panic!("unknown Lean queue send rejection {other}"),
+            };
+        }
+        if let Some(inner) = reject
+            .as_object()
+            .and_then(|object| object.get("reserve_rejected"))
+            .and_then(|value| value.as_str())
+        {
+            return lean_reserve_reject_to_error(Some(inner));
+        }
+        panic!("malformed Lean queue send rejection {reject}");
+    }
+
+    fn assert_lean_reserve_case_matches_production(case: &LeanQueueReserveCase) {
+        assert_eq!(
+            case.usize_max,
+            usize::MAX,
+            "{} must be generated for this target width",
+            case.name
+        );
+        let queued = AtomicUsize::new(case.current_queued_bytes);
+        let result = try_reserve_queue_bytes(&queued, case.max_queued_bytes, case.message_bytes);
+        let expected_error = lean_reserve_reject_to_error(case.expected_reject.as_deref());
+        assert_eq!(result.is_ok(), case.expected_valid, "{}", case.name);
+        match (result, expected_error) {
+            (Ok(()), None) => {}
+            (Err(actual), Some(expected)) => assert_eq!(actual, expected, "{}", case.name),
+            (Ok(()), Some(expected)) => {
+                panic!("{} accepted but Lean expected {expected}", case.name)
+            }
+            (Err(actual), None) => {
+                panic!(
+                    "{} rejected with {actual} but Lean expected accept",
+                    case.name
+                )
+            }
+        }
+        assert_eq!(
+            queued.load(Ordering::Acquire),
+            case.expected_queued_after,
+            "{}",
+            case.name
+        );
+    }
+
+    fn assert_lean_send_case_matches_production(case: &LeanQueueSendCase) {
+        assert_eq!(
+            case.usize_max,
+            usize::MAX,
+            "{} must be generated for this target width",
+            case.name
+        );
+        let queued = AtomicUsize::new(case.current_queued_bytes);
+        let (tx, rx) = mpsc::channel::<Vec<u8>>(1);
+        match case.send_outcome.as_str() {
+            "accepted" => {
+                let _rx = rx;
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            "full" => {
+                tx.try_send(Vec::new()).expect("prefill send queue");
+                let _rx = rx;
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            "closed" => {
+                drop(rx);
+                let result = try_send_bounded(
+                    &tx,
+                    &queued,
+                    case.max_queued_bytes,
+                    case.message_bytes,
+                    Vec::new(),
+                );
+                assert_lean_send_result(case, result, &queued);
+            }
+            other => panic!("unknown Lean send outcome {other} in {}", case.name),
+        }
+    }
+
+    fn assert_lean_send_result(
+        case: &LeanQueueSendCase,
+        result: Result<(), &'static str>,
+        queued: &AtomicUsize,
+    ) {
+        let expected_error = lean_send_reject_to_error(&case.expected_reject);
+        assert_eq!(result.is_ok(), case.expected_valid, "{}", case.name);
+        match (result, expected_error) {
+            (Ok(()), None) => {}
+            (Err(actual), Some(expected)) => assert_eq!(actual, expected, "{}", case.name),
+            (Ok(()), Some(expected)) => {
+                panic!("{} accepted but Lean expected {expected}", case.name)
+            }
+            (Err(actual), None) => {
+                panic!(
+                    "{} rejected with {actual} but Lean expected accept",
+                    case.name
+                )
+            }
+        }
+        assert_eq!(
+            queued.load(Ordering::Acquire),
+            case.expected_queued_after,
+            "{}",
+            case.name
+        );
+    }
+
+    fn assert_lean_rate_limit_state_case_matches_production(case: &LeanRateLimitStateCase) {
+        let retained = crate::service::rate_limit_state_retained_before_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        let after_insert = crate::service::rate_limit_state_entries_after_insert(
+            case.current_entries,
+            case.max_entries,
+        );
+        assert_eq!(
+            retained, case.expected_retained_before_insert,
+            "{} rate-limit state retained count drifted from Lean",
+            case.name
+        );
+        assert_eq!(
+            after_insert, case.expected_entries_after_insert,
+            "{} rate-limit state post-insert count drifted from Lean",
+            case.name
+        );
+        assert_eq!(
+            after_insert <= case.max_entries,
+            case.expected_valid,
+            "{} rate-limit state bound validity drifted from Lean",
+            case.name
+        );
+    }
+
+    #[test]
+    fn lean_generated_queue_resource_admission_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_QUEUE_RESOURCE_ADMISSION_VECTORS") else {
+            eprintln!("skipping Lean queue-resource vectors; env var not set");
+            return;
+        };
+        let contents = std::fs::read_to_string(path).expect("read Lean queue-resource vectors");
+        let vectors: LeanQueueResourceVectorFile =
+            serde_json::from_str(&contents).expect("parse Lean queue-resource vectors");
+        assert_eq!(vectors.schema_version, 1);
+
+        for constant in &vectors.constants {
+            let expected = lean_queue_kind_max(&constant.kind)
+                .unwrap_or_else(|| panic!("unknown Lean queue kind {}", constant.kind));
+            assert_eq!(
+                constant.max_queued_bytes, expected,
+                "{} queue byte cap drifted from Lean",
+                constant.kind
+            );
+        }
+
+        for case in &vectors.reserve_cases {
+            assert_lean_reserve_case_matches_production(case);
+        }
+
+        for case in &vectors.send_cases {
+            assert_lean_send_case_matches_production(case);
+        }
+
+        for case in &vectors.rate_limit_state_cases {
+            assert_lean_rate_limit_state_case_matches_production(case);
+        }
+
+        let (tx, mut rx) = mpsc::channel(1);
+        let queued_event_bytes = AtomicUsize::new(0);
+        let protocol = "/hegemon/test";
+        let payload = [1u8, 2, 3, 4, 5];
+        try_send_message_event(
+            &tx,
+            &queued_event_bytes,
+            [0x42; 32],
+            Cow::Borrowed(protocol),
+            &payload,
+        )
+        .expect("message event enqueue should pass");
+        let reserved = protocol.len() + payload.len();
+        assert_eq!(queued_event_bytes.load(Ordering::Acquire), reserved);
+        let event = rx.try_recv().expect("queued message event");
+        assert_eq!(event.queued_bytes(), reserved);
     }
 }

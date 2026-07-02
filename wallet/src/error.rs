@@ -81,11 +81,10 @@ impl WalletError {
     pub fn suggested_action(&self) -> Option<String> {
         match self {
             Self::NullifierSpent { .. } => {
-                Some("Run: wallet substrate-sync --force-rescan to resync wallet state".to_string())
+                Some("Run: wallet node-sync --force-rescan to resync wallet state".to_string())
             }
             Self::ChainMismatch { .. } => Some(
-                "Run: wallet substrate-sync --force-rescan to reset wallet for new chain"
-                    .to_string(),
+                "Run: wallet node-sync --force-rescan to reset wallet for new chain".to_string(),
             ),
             Self::TooManyInputs { .. } => {
                 Some("Add --auto-consolidate flag to automatically merge notes first".to_string())

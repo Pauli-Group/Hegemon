@@ -1,0 +1,29 @@
+[package]
+name = "hegemon-native-backend-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+p3-goldilocks = { workspace = true }
+protocol-versioning = { path = "../protocol/versioning" }
+superneo-backend-lattice = { path = "../circuits/superneo-backend-lattice" }
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
+superneo-ring = { path = "../circuits/superneo-ring" }
+transaction-circuit = { path = "../circuits/transaction" }
+
+[[bin]]
+name = "native_tx_leaf_artifact"
+path = "fuzz_targets/native_tx_leaf_artifact.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "receipt_root_artifact"
+path = "fuzz_targets/receipt_root_artifact.rs"
+test = false
+doc = false

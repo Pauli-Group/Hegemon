@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,10 +34,13 @@ use wallet::{
     },
     is_ambiguous_submission_error,
     keys::{DerivedKeys, RootSecret},
+    node_rpc::NodeRpcClient,
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     parse_recipients, precheck_nullifiers_with_binding, provisional_pending_tx_id,
-    store::{OutgoingDisclosureRecord, PendingStatus, TransferRecipient, WalletMode, WalletStore},
-    substrate_rpc::SubstrateRpcClient,
+    store::{
+        open_private_append_file, write_private_file, OutgoingDisclosureRecord, PendingStatus,
+        TransferRecipient, WalletMode, WalletStore,
+    },
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
@@ -94,12 +96,12 @@ enum Commands {
         out: Option<PathBuf>,
     },
     Init(InitArgs),
-    /// Sync wallet using Substrate WebSocket RPC
-    #[command(name = "substrate-sync")]
-    SubstrateSync(SubstrateSyncArgs),
-    /// Run daemon using Substrate WebSocket RPC with real-time subscriptions
-    #[command(name = "substrate-daemon")]
-    SubstrateDaemon(SubstrateDaemonArgs),
+    /// Sync wallet using native node RPC
+    #[command(name = "node-sync")]
+    NodeSync(NodeSyncArgs),
+    /// Run daemon using native node WebSocket RPC with real-time subscriptions
+    #[command(name = "node-daemon")]
+    NodeDaemon(NodeDaemonArgs),
     /// Show wallet status (syncs first by default)
     Status(StatusArgs),
     /// Print account ID (hex) for signed extrinsics
@@ -108,12 +110,12 @@ enum Commands {
     /// Reset wallet sync state (keeps keys and addresses)
     #[command(name = "reset-sync")]
     ResetSync(StoreArgs),
-    /// Send using Substrate WebSocket RPC
-    #[command(name = "substrate-send")]
-    SubstrateSend(SubstrateSendArgs),
+    /// Send using native node RPC
+    #[command(name = "node-send")]
+    NodeSend(NodeSendArgs),
     /// Send multiple transactions in a single batched proof
-    #[command(name = "substrate-batch-send")]
-    SubstrateBatchSend(SubstrateBatchSendArgs),
+    #[command(name = "node-batch-send")]
+    NodeBatchSend(NodeBatchSendArgs),
     /// Mint stablecoin via signed shielded transfer
     #[command(name = "stablecoin-mint")]
     StablecoinMint(StablecoinMintArgs),
@@ -130,9 +132,6 @@ enum Commands {
 struct InitArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     #[arg(long)]
     root_hex: Option<String>,
     #[arg(long)]
@@ -143,20 +142,14 @@ struct InitArgs {
 struct StoreArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
 }
 
 #[derive(Parser)]
 struct StatusArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Skip sync and show cached status
     #[arg(long, default_value_t = false)]
@@ -167,9 +160,6 @@ struct StatusArgs {
 struct ExportArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -185,11 +175,8 @@ enum PaymentProofCommands {
 struct PaymentProofCreateArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Transaction hash (0x-prefixed hex)
     #[arg(long)]
@@ -207,8 +194,8 @@ struct PaymentProofVerifyArgs {
     /// Disclosure package JSON file
     #[arg(long)]
     proof: PathBuf,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Optional JSONL ledger file to append verified deposits
     #[arg(long)]
@@ -222,9 +209,6 @@ struct PaymentProofVerifyArgs {
 struct PaymentProofPurgeArgs {
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
     /// Transaction hash (0x-prefixed hex)
     #[arg(long)]
     tx: Option<String>,
@@ -236,17 +220,14 @@ struct PaymentProofPurgeArgs {
     all: bool,
 }
 
-/// Arguments for Substrate WebSocket sync
+/// Arguments for native node one-shot sync
 #[derive(Parser)]
-struct SubstrateSyncArgs {
+struct NodeSyncArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Force rescan: reset wallet sync state if chain has changed.
     /// Use this after wiping chain data to re-sync from scratch.
@@ -254,17 +235,14 @@ struct SubstrateSyncArgs {
     force_rescan: bool,
 }
 
-/// Arguments for Substrate WebSocket daemon
+/// Arguments for native node WebSocket daemon
 #[derive(Parser)]
-struct SubstrateDaemonArgs {
+struct NodeDaemonArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Use block subscriptions for real-time sync (vs polling)
     #[arg(long, default_value_t = true)]
@@ -274,17 +252,14 @@ struct SubstrateDaemonArgs {
     finalized_only: bool,
 }
 
-/// Arguments for Substrate WebSocket send
+/// Arguments for native node send
 #[derive(Parser)]
-struct SubstrateSendArgs {
+struct NodeSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Path to recipients JSON file
     #[arg(long)]
@@ -306,17 +281,14 @@ struct SubstrateSendArgs {
     no_sync: bool,
 }
 
-/// Arguments for Substrate batch send (multiple transactions in one proof)
+/// Arguments for native node batch send (multiple transactions in one proof)
 #[derive(Parser)]
-struct SubstrateBatchSendArgs {
+struct NodeBatchSendArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Paths to recipient JSON files (one per transaction, 2-16 files required)
     #[arg(long, num_args = 2..=16)]
@@ -338,11 +310,8 @@ struct StablecoinMintArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
-    #[arg(long, default_value = "ws://127.0.0.1:9944")]
+    /// Hegemon node RPC URL (e.g., http://127.0.0.1:9944 or ws://127.0.0.1:9944)
+    #[arg(long, default_value = "http://127.0.0.1:9944")]
     ws_url: String,
     /// Recipient shielded address
     #[arg(long)]
@@ -370,10 +339,7 @@ struct StablecoinBurnArgs {
     /// Path to wallet store file
     #[arg(long)]
     store: PathBuf,
-    /// Wallet passphrase (prompts interactively if not provided)
-    #[arg(long, env = "HEGEMON_WALLET_PASSPHRASE")]
-    passphrase: Option<String>,
-    /// Substrate node WebSocket URL (e.g., ws://127.0.0.1:9944)
+    /// Hegemon node WebSocket URL (e.g., ws://127.0.0.1:9944)
     #[arg(long, default_value = "ws://127.0.0.1:9944")]
     ws_url: String,
     /// Stablecoin amount to burn
@@ -390,43 +356,30 @@ struct StablecoinBurnArgs {
     dry_run: bool,
 }
 
-/// Get passphrase from argument, or prompt interactively if not provided.
+/// Get wallet passphrase from the controlling terminal.
 /// Uses rpassword to hide input from terminal.
-fn get_passphrase(passphrase: Option<String>, prompt: &str) -> Result<String> {
-    match passphrase {
-        Some(p) => Ok(p),
-        None => {
-            eprint!("{}", prompt);
-            let pass =
-                rpassword::read_password().context("Failed to read passphrase from terminal")?;
-            if pass.is_empty() {
-                anyhow::bail!("Passphrase cannot be empty");
-            }
-            Ok(pass)
-        }
+fn get_passphrase(prompt: &str) -> Result<String> {
+    eprint!("{}", prompt);
+    let pass = rpassword::read_password().context("Failed to read passphrase from terminal")?;
+    if pass.is_empty() {
+        anyhow::bail!("Passphrase cannot be empty");
     }
+    Ok(pass)
 }
 
 /// Get passphrase for wallet init (prompts twice for confirmation)
-fn get_new_passphrase(passphrase: Option<String>) -> Result<String> {
-    match passphrase {
-        Some(p) => Ok(p),
-        None => {
-            eprint!("Enter new wallet passphrase: ");
-            let pass1 =
-                rpassword::read_password().context("Failed to read passphrase from terminal")?;
-            if pass1.is_empty() {
-                anyhow::bail!("Passphrase cannot be empty");
-            }
-            eprint!("Confirm passphrase: ");
-            let pass2 =
-                rpassword::read_password().context("Failed to read passphrase confirmation")?;
-            if pass1 != pass2 {
-                anyhow::bail!("Passphrases do not match");
-            }
-            Ok(pass1)
-        }
+fn get_new_passphrase() -> Result<String> {
+    eprint!("Enter new wallet passphrase: ");
+    let pass1 = rpassword::read_password().context("Failed to read passphrase from terminal")?;
+    if pass1.is_empty() {
+        anyhow::bail!("Passphrase cannot be empty");
     }
+    eprint!("Confirm passphrase: ");
+    let pass2 = rpassword::read_password().context("Failed to read passphrase confirmation")?;
+    if pass1 != pass2 {
+        anyhow::bail!("Passphrases do not match");
+    }
+    Ok(pass1)
 }
 
 fn main() -> Result<()> {
@@ -455,13 +408,13 @@ fn main() -> Result<()> {
         }),
         Commands::Scan { ivk, ledger, out } => cmd_scan(&ivk, &ledger, out.as_deref()),
         Commands::Init(args) => cmd_init(args),
-        Commands::SubstrateSync(args) => cmd_substrate_sync(args),
-        Commands::SubstrateDaemon(args) => cmd_substrate_daemon(args),
+        Commands::NodeSync(args) => cmd_node_sync(args),
+        Commands::NodeDaemon(args) => cmd_node_daemon(args),
         Commands::Status(args) => cmd_status(args),
         Commands::AccountId(args) => cmd_account_id(args),
         Commands::ResetSync(args) => cmd_reset_sync(args),
-        Commands::SubstrateSend(args) => cmd_substrate_send(args),
-        Commands::SubstrateBatchSend(args) => cmd_substrate_batch_send(args),
+        Commands::NodeSend(args) => cmd_node_send(args),
+        Commands::NodeBatchSend(args) => cmd_node_batch_send(args),
         Commands::StablecoinMint(args) => cmd_stablecoin_mint(args),
         Commands::StablecoinBurn(args) => cmd_stablecoin_burn(args),
         Commands::ExportViewingKey(args) => cmd_export_viewing_key(args),
@@ -476,7 +429,8 @@ fn cmd_generate(count: u32, out: Option<PathBuf>) -> Result<()> {
     let export = WalletExport::from_keys(&root, &keys, count)?;
     let json = serde_json::to_string_pretty(&export)?;
     if let Some(path) = out {
-        fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(&path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -563,7 +517,8 @@ fn cmd_scan(ivk_path: &Path, ledger_path: &Path, out: Option<&Path>) -> Result<(
     let report = BalanceReport { totals, recovered };
     let json = serde_json::to_string_pretty(&report)?;
     if let Some(path) = out {
-        fs::write(path, &json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -574,7 +529,7 @@ fn cmd_init(args: InitArgs) -> Result<()> {
     if args.viewing_key.is_some() && args.root_hex.is_some() {
         anyhow::bail!("specify either --root-hex or --viewing-key");
     }
-    let passphrase = get_new_passphrase(args.passphrase)?;
+    let passphrase = get_new_passphrase()?;
     let store = if let Some(path) = args.viewing_key {
         let ivk: IncomingViewingKey = read_json(&path)?;
         WalletStore::import_viewing_key(&args.store, &passphrase, ivk)?
@@ -604,7 +559,7 @@ fn cmd_init(args: InitArgs) -> Result<()> {
 }
 
 fn cmd_status(args: StatusArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let mut metadata_map: BTreeMap<u64, String> = BTreeMap::new();
     // Sync first unless --no-sync is specified
     if !args.no_sync {
@@ -616,7 +571,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
         metadata_map = runtime.block_on(async {
             println!("Syncing with {}...", args.ws_url);
             let client = Arc::new(
-                SubstrateRpcClient::connect(&args.ws_url)
+                NodeRpcClient::connect(&args.ws_url)
                     .await
                     .map_err(|e| anyhow!("Failed to connect: {}", e))?,
             );
@@ -654,7 +609,7 @@ fn cmd_status(args: StatusArgs) -> Result<()> {
 }
 
 fn cmd_reset_sync(args: StoreArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     store.reset_sync_state()?;
     println!("wallet sync state reset (keys preserved)");
@@ -789,15 +744,12 @@ fn show_status(store: &WalletStore, metadata: Option<&BTreeMap<u64, String>>) ->
 
 /// Print just the hex account ID (for use in shell command substitution)
 fn cmd_account_id(args: StoreArgs) -> Result<()> {
-    use wallet::extrinsic::ExtrinsicBuilder;
-
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
 
     if let Ok(Some(derived)) = store.derived_keys() {
         let signing_seed = derived.spend.to_bytes();
-        let builder = ExtrinsicBuilder::from_seed(&signing_seed);
-        let account_id = builder.account_id();
+        let account_id = wallet::ml_dsa_account_id_from_seed(&signing_seed);
         // Print ONLY the hex, no label, no newline decorations - for shell substitution
         println!("{}", hex::encode(account_id));
         Ok(())
@@ -807,12 +759,13 @@ fn cmd_account_id(args: StoreArgs) -> Result<()> {
 }
 
 fn cmd_export_viewing_key(args: ExportArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     let ivk = store.incoming_key()?;
     let json = serde_json::to_string_pretty(&ivk)?;
     if let Some(path) = args.out {
-        fs::write(&path, json).with_context(|| format!("failed to write {}", path.display()))?;
+        write_private_file(&path, json.as_bytes())
+            .with_context(|| format!("failed to write {}", path.display()))?;
     } else {
         println!("{}", json);
     }
@@ -828,7 +781,7 @@ fn cmd_payment_proof(args: PaymentProofCommands) -> Result<()> {
 }
 
 fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot create payment proofs");
@@ -843,7 +796,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -929,7 +882,7 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
         };
 
         let json = package.to_pretty_json()?;
-        fs::write(&args.out, json)
+        write_private_file(&args.out, json.as_bytes())
             .with_context(|| format!("failed to write {}", args.out.display()))?;
         println!("Wrote disclosure package to {}", args.out.display());
         Ok(())
@@ -944,10 +897,8 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
         anyhow::bail!("unsupported disclosure package version {}", package.version);
     }
 
-    let recipient = ShieldedAddress::decode(&package.claim.recipient_address)?;
-    if recipient.pk_recipient != package.claim.pk_recipient {
-        anyhow::bail!("recipient address does not match pk_recipient");
-    }
+    let bound_recipient = decode_bound_recipient_address(&package.claim)?;
+    ensure_canonical_asset_id(package.claim.asset_id)?;
 
     ensure_canonical_bytes48("commitment", &package.claim.commitment)?;
     ensure_canonical_bytes48("anchor", &package.confirmation.anchor)?;
@@ -992,7 +943,7 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
 
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
-        let client = SubstrateRpcClient::connect(&args.ws_url)
+        let client = NodeRpcClient::connect(&args.ws_url)
             .await
             .map_err(|e| anyhow!("Failed to connect: {}", e))?;
 
@@ -1023,29 +974,37 @@ fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
     };
 
     verify_payment_disclosure(&bundle).map_err(|e| anyhow!(e.to_string()))?;
+    let verified_claim = bundle.claim.clone();
+    let recipient_address = map_wallet(bound_recipient.encode())?;
 
-    let commitment_hex = format!("0x{}", hex::encode(package.claim.commitment));
+    let commitment_hex = format!("0x{}", hex::encode(verified_claim.commitment));
     let anchor_hex = format!("0x{}", hex::encode(package.confirmation.anchor));
     let chain_hex = format!("0x{}", hex::encode(package.chain.genesis_hash));
     println!(
         "VERIFIED paid value={} asset_id={} to={} commitment={} anchor={} chain={}",
-        package.claim.value,
-        package.claim.asset_id,
-        package.claim.recipient_address,
+        verified_claim.value,
+        verified_claim.asset_id,
+        recipient_address,
         commitment_hex,
         anchor_hex,
         chain_hex
     );
 
     if let Some(path) = args.credit_ledger {
-        append_credit_record(&path, &package, args.case_id.as_deref())?;
+        append_credit_record(
+            &path,
+            &package,
+            &verified_claim,
+            &recipient_address,
+            args.case_id.as_deref(),
+        )?;
     }
 
     Ok(())
 }
 
 fn cmd_payment_proof_purge(args: PaymentProofPurgeArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
 
     if args.all {
@@ -1088,6 +1047,24 @@ fn ensure_canonical_bytes48(label: &str, bytes: &[u8; 48]) -> Result<()> {
         anyhow::bail!("{} is not a canonical field encoding", label);
     }
     Ok(())
+}
+
+fn ensure_canonical_asset_id(asset_id: u64) -> Result<()> {
+    if !transaction_circuit::constants::is_canonical_asset_id(asset_id) {
+        anyhow::bail!("asset_id is not a canonical circuit asset identifier");
+    }
+    Ok(())
+}
+
+fn decode_bound_recipient_address(claim: &DisclosureClaim) -> Result<ShieldedAddress> {
+    let recipient = ShieldedAddress::decode(&claim.recipient_address)?;
+    if recipient.pk_recipient != claim.pk_recipient {
+        anyhow::bail!("recipient address does not match pk_recipient");
+    }
+    if recipient.pk_auth != claim.pk_auth {
+        anyhow::bail!("recipient address does not match pk_auth");
+    }
+    Ok(recipient)
 }
 
 fn parse_hex_32(input: &str) -> Result<[u8; 32]> {
@@ -1136,9 +1113,12 @@ fn parse_merkle_root(input: &str) -> Result<[u8; 48]> {
 fn append_credit_record(
     path: &Path,
     package: &DisclosurePackage,
+    verified_claim: &PaymentDisclosureClaim,
+    recipient_address: &str,
     case_id: Option<&str>,
 ) -> Result<()> {
-    let idempotence_key = format!("0x{}", hex::encode(package.claim.commitment));
+    let idempotence_key = format!("0x{}", hex::encode(verified_claim.commitment));
+    let deposit_account_id = proof_bound_recipient_id(verified_claim);
 
     if path.exists() {
         let file = fs::File::open(path)?;
@@ -1158,25 +1138,34 @@ fn append_credit_record(
 
     let record = json!({
         "idempotence_key": idempotence_key,
-        "deposit_account_id": package.claim.recipient_address.as_str(),
-        "value": package.claim.value,
-        "asset_id": package.claim.asset_id,
-        "commitment": format!("0x{}", hex::encode(package.claim.commitment)),
+        "deposit_account_id": deposit_account_id,
+        "recipient_address": recipient_address,
+        "value": verified_claim.value,
+        "asset_id": verified_claim.asset_id,
+        "commitment": format!("0x{}", hex::encode(verified_claim.commitment)),
         "anchor": format!("0x{}", hex::encode(package.confirmation.anchor)),
         "chain_genesis_hash": format!("0x{}", hex::encode(package.chain.genesis_hash)),
         "verified_at": Utc::now().to_rfc3339(),
         "case_id": case_id,
     });
 
-    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = open_private_append_file(path)?;
     writeln!(file, "{}", record)?;
     Ok(())
 }
 
-fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
+fn proof_bound_recipient_id(claim: &PaymentDisclosureClaim) -> String {
+    format!(
+        "disclosure-v1:{}:{}",
+        hex::encode(claim.pk_recipient),
+        hex::encode(claim.pk_auth)
+    )
+}
+
+fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
     if !cfg!(feature = "batch-proofs") {
         anyhow::bail!(
-            "substrate-batch-send requires --features batch-proofs (disabled in production builds)"
+            "node-batch-send requires --features batch-proofs (disabled in production builds)"
         );
     }
 
@@ -1190,7 +1179,7 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
         );
     }
 
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
@@ -1205,7 +1194,7 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
         // Connect and sync first
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1410,9 +1399,9 @@ fn cmd_substrate_batch_send(args: SubstrateBatchSendArgs) -> Result<()> {
     })
 }
 
-/// Sync wallet using Substrate WebSocket RPC
-fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+/// Sync wallet using native node RPC
+fn cmd_node_sync(args: NodeSyncArgs) -> Result<()> {
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
     // Build async runtime
@@ -1422,10 +1411,10 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
         .context("failed to create tokio runtime")?;
 
     runtime.block_on(async {
-        // Connect to Substrate node
+        // Connect to Hegemon node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1449,9 +1438,9 @@ fn cmd_substrate_sync(args: SubstrateSyncArgs) -> Result<()> {
     })
 }
 
-/// Run wallet daemon with Substrate WebSocket RPC
-fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+/// Run wallet daemon with native node WebSocket RPC
+fn cmd_node_daemon(args: NodeDaemonArgs) -> Result<()> {
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = Arc::new(WalletStore::open(&args.store, &passphrase)?);
 
     let runtime = RuntimeBuilder::new_multi_thread()
@@ -1460,14 +1449,14 @@ fn cmd_substrate_daemon(args: SubstrateDaemonArgs) -> Result<()> {
         .context("failed to create tokio runtime")?;
 
     runtime.block_on(async {
-        // Connect to Substrate node
+        // Connect to Hegemon node
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
-        println!("Connected to Substrate node!");
+        println!("Connected to Hegemon node!");
 
         // Create sync engine
         let engine = AsyncWalletSyncEngine::new(client, store);
@@ -1541,7 +1530,7 @@ fn is_invalid_anchor_submission(msg: &str) -> bool {
 }
 
 async fn submit_bundle_with_fallback(
-    client: &SubstrateRpcClient,
+    client: &NodeRpcClient,
     bundle: &wallet::TransactionBundle,
     use_da_sidecar: bool,
     mut use_proof_sidecar: bool,
@@ -1576,9 +1565,9 @@ async fn submit_bundle_with_fallback(
     }
 }
 
-/// Send transaction using Substrate WebSocket RPC
-fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+/// Send transaction using native node RPC
+fn cmd_node_send(args: NodeSendArgs) -> Result<()> {
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot send");
@@ -1593,7 +1582,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
         // Connect and sync first
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -1721,8 +1710,8 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
             return Err(anyhow!(e));
         }
 
-        // Build transaction (creates STARK proof)
-        println!("Building shielded transaction with STARK proof...");
+        // Build transaction (creates the active tx proof backend payload).
+        println!("Building shielded transaction proof...");
         let mut built = build_transaction(&store_arc, &recipients, args.fee)?;
         if built.bundle.value_balance != 0 {
             return Err(anyhow!(
@@ -1870,7 +1859,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
                             args.fee,
                         )?;
                         return Err(anyhow!(
-                            "Transaction submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                            "Transaction submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                             e
                         ));
                     }
@@ -1883,7 +1872,7 @@ fn cmd_substrate_send(args: SubstrateSendArgs) -> Result<()> {
 }
 
 fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot mint");
@@ -1903,7 +1892,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -2002,7 +1991,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
                         args.fee,
                     )?;
                     return Err(anyhow!(
-                        "Mint submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        "Mint submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                         e
                     ));
                 }
@@ -2014,7 +2003,7 @@ fn cmd_stablecoin_mint(args: StablecoinMintArgs) -> Result<()> {
 }
 
 fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
-    let passphrase = get_passphrase(args.passphrase, "Enter wallet passphrase: ")?;
+    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
         anyhow::bail!("watch-only wallets cannot burn");
@@ -2034,7 +2023,7 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
     runtime.block_on(async {
         println!("Connecting to {}...", args.ws_url);
         let client = Arc::new(
-            SubstrateRpcClient::connect(&args.ws_url)
+            NodeRpcClient::connect(&args.ws_url)
                 .await
                 .map_err(|e| anyhow!("Failed to connect: {}", e))?,
         );
@@ -2113,7 +2102,7 @@ fn cmd_stablecoin_burn(args: StablecoinBurnArgs) -> Result<()> {
                         args.fee,
                     )?;
                     return Err(anyhow!(
-                        "Burn submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run substrate-sync to reconcile. Original error: {}",
+                        "Burn submission status unknown (timeout/transport). Notes remain pending to prevent double-spend; run node-sync to reconcile. Original error: {}",
                         e
                     ));
                 }
@@ -2141,7 +2130,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
 
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     let data = serde_json::to_vec_pretty(value)?;
-    fs::write(path, data).with_context(|| format!("failed to write {}", path.display()))
+    write_private_file(path, &data).with_context(|| format!("failed to write {}", path.display()))
 }
 
 fn map_wallet<T>(value: std::result::Result<T, wallet::WalletError>) -> Result<T> {

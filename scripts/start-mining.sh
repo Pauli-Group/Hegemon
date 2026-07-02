@@ -114,16 +114,82 @@ echo ""
 export HEGEMON_MINE=1
 export HEGEMON_MINER_ADDRESS="$SHIELDED_ADDR"
 
+check_time_sync() {
+    if command -v timedatectl >/dev/null 2>&1; then
+        if [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null || true)" == "yes" ]]; then
+            echo "  Time sync: timedatectl reports synchronized"
+            return
+        fi
+        echo "WARNING: timedatectl does not report synchronized time. Enable NTP/chrony before mining." >&2
+        return
+    fi
+    if command -v chronyc >/dev/null 2>&1; then
+        if chronyc tracking >/dev/null 2>&1; then
+            echo "  Time sync: chrony responds"
+            return
+        fi
+        echo "WARNING: chrony is installed but not healthy. Fix time sync before mining." >&2
+        return
+    fi
+    if command -v systemsetup >/dev/null 2>&1; then
+        if systemsetup -getusingnetworktime 2>/dev/null | grep -qi 'on'; then
+            echo "  Time sync: macOS network time is enabled"
+            return
+        fi
+        echo "WARNING: could not confirm macOS network time. Enable NTP before mining." >&2
+        return
+    fi
+    echo "WARNING: could not verify NTP/chrony status. Miners must keep time synchronized." >&2
+}
+
+seed_from_bootnode() {
+    local bootnode="$1"
+    if [[ "$bootnode" == /ip4/* ]]; then
+        local ip
+        local port
+        ip=$(echo "$bootnode" | sed -n 's|/ip4/\([^/]*\)/.*|\1|p')
+        port=$(echo "$bootnode" | sed -n 's|.*/tcp/\([0-9]*\).*|\1|p')
+        if [[ -z "$ip" || -z "$port" ]]; then
+            echo "ERROR: could not parse BOOTNODE multiaddr: $bootnode" >&2
+            exit 1
+        fi
+        echo "${ip}:${port}"
+    else
+        echo "$bootnode"
+    fi
+}
+
+LOCAL_DEV_MINING="${HEGEMON_LOCAL_DEV_MINING:-0}"
+if [[ "$LOCAL_DEV_MINING" == "1" || "$LOCAL_DEV_MINING" == "true" ]]; then
+    echo "Mode: local dev mining (--dev). This is intentionally isolated."
+    export HEGEMON_BOOTSTRAP_AUTHORING=1
+else
+    if [[ -n "${BOOTNODE:-}" ]]; then
+        export HEGEMON_SEEDS="$(seed_from_bootnode "$BOOTNODE")"
+    else
+        export HEGEMON_SEEDS="${HEGEMON_SEEDS:-devnet.hegemonprotocol.com:30333}"
+    fi
+    if [[ -z "$HEGEMON_SEEDS" ]]; then
+        echo "ERROR: HEGEMON_SEEDS is empty. Use HEGEMON_SEEDS=\"devnet.hegemonprotocol.com:30333\" or set HEGEMON_LOCAL_DEV_MINING=1 for isolated dev mining." >&2
+        exit 1
+    fi
+    echo "Mode: shared mining"
+    echo "  HEGEMON_SEEDS=$HEGEMON_SEEDS"
+    echo "  All miners on this network must share the same seed list to avoid forks."
+    check_time_sync
+fi
+
 # Build node arguments
 NODE_ARGS=(
-    --dev
     --base-path "$NODE_PATH"
-    --chain config/dev-chainspec.json
     --rpc-port 9944
     --rpc-methods "${HEGEMON_RPC_METHODS:-safe}"
-    --listen-addr /ip4/0.0.0.0/tcp/30333
+    --listen-addr 0.0.0.0:30333
     --name "HegemonMiner"
 )
+if [[ "$LOCAL_DEV_MINING" == "1" || "$LOCAL_DEV_MINING" == "true" ]]; then
+    NODE_ARGS+=(--dev)
+fi
 
 # RPC hardening: default is localhost-only, safe methods.
 # To explicitly expose RPC beyond localhost (not recommended), set:
@@ -134,25 +200,6 @@ if [[ "${HEGEMON_RPC_EXTERNAL:-0}" == "1" || "${HEGEMON_RPC_EXTERNAL:-}" == "tru
 fi
 if [[ -n "${HEGEMON_RPC_CORS:-}" ]]; then
     NODE_ARGS+=(--rpc-cors "${HEGEMON_RPC_CORS}")
-fi
-
-# Handle bootnode connection
-# BOOTNODE can be either:
-#   - Simple host:port format: "hegemon.pauli.group:30333"
-#   - Multiaddr format: "/ip4/1.2.3.4/tcp/31333/p2p/..." (peer ID ignored)
-if [[ -n "$BOOTNODE" ]]; then
-    # Extract IP:port from multiaddr if needed
-    if [[ "$BOOTNODE" == /ip4/* ]]; then
-        # Parse /ip4/X.X.X.X/tcp/PORT/...
-        IP=$(echo "$BOOTNODE" | sed -n 's|/ip4/\([^/]*\)/.*|\1|p')
-        PORT=$(echo "$BOOTNODE" | sed -n 's|.*/tcp/\([0-9]*\).*|\1|p')
-        SEED_ADDR="${IP}:${PORT}"
-    else
-        # Assume it's already IP:port format
-        SEED_ADDR="$BOOTNODE"
-    fi
-    echo "Connecting to seed node: $SEED_ADDR"
-    export HEGEMON_SEEDS="$SEED_ADDR"
 fi
 
 exec "$NODE_BIN" "${NODE_ARGS[@]}"

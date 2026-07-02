@@ -4,10 +4,11 @@ use disclosure_circuit::{
 };
 use rand::{rngs::StdRng, SeedableRng};
 use state_merkle::CommitmentTree;
-use transaction_circuit::hashing_pq::{
-    bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes,
-};
 use transaction_circuit::note::{MerklePath, MERKLE_TREE_DEPTH};
+use transaction_circuit::{
+    constants::{is_canonical_asset_id, BALANCE_SLOT_PADDING_FIELD_ID},
+    hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
+};
 use wallet::address::ShieldedAddress;
 use wallet::disclosure::{
     decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
@@ -98,6 +99,9 @@ fn verify_package(
     if recipient.pk_auth != package.claim.pk_auth {
         return Err("recipient address does not match pk_auth".to_string());
     }
+    if !is_canonical_asset_id(package.claim.asset_id) {
+        return Err("asset_id is not a canonical circuit asset identifier".to_string());
+    }
 
     if !is_canonical_bytes48(&package.claim.commitment) {
         return Err("commitment is not a canonical field encoding".to_string());
@@ -186,4 +190,27 @@ fn disclosure_package_tamper_rejects() {
     assert!(verify_package(&package, other_genesis, true).is_err());
 
     assert!(verify_package(&package, genesis_hash, false).is_err());
+}
+
+#[test]
+fn disclosure_package_recipient_address_must_bind_auth_key() {
+    let mut package = build_package();
+    let genesis_hash = package.chain.genesis_hash;
+    let mut recipient =
+        ShieldedAddress::decode(&package.claim.recipient_address).expect("decode recipient");
+    recipient.pk_auth[0] ^= 0x80;
+    package.claim.recipient_address = recipient.encode().expect("encode recipient");
+
+    let err = verify_package(&package, genesis_hash, true).unwrap_err();
+    assert!(err.contains("pk_auth"));
+}
+
+#[test]
+fn disclosure_package_rejects_noncanonical_asset_alias() {
+    let mut package = build_package();
+    let genesis_hash = package.chain.genesis_hash;
+    package.claim.asset_id = BALANCE_SLOT_PADDING_FIELD_ID;
+
+    let err = verify_package(&package, genesis_hash, true).unwrap_err();
+    assert!(err.contains("canonical circuit asset"));
 }

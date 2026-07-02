@@ -1,10 +1,12 @@
 use disclosure_circuit::{
     prove_payment_disclosure, verify_payment_disclosure, DisclosureCircuitError,
-    PaymentDisclosureClaim, PaymentDisclosureWitness,
+    DisclosureVerifyError, PaymentDisclosureClaim, PaymentDisclosureWitness,
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-use transaction_core::hashing_pq::note_commitment_bytes;
+use transaction_core::{
+    constants::BALANCE_SLOT_PADDING_FIELD_ID, hashing_pq::note_commitment_bytes,
+};
 
 fn sample_claim_and_witness() -> (PaymentDisclosureClaim, PaymentDisclosureWitness) {
     let mut rng = StdRng::seed_from_u64(42);
@@ -73,12 +75,54 @@ fn tamper_commitment_rejects() {
 }
 
 #[test]
+fn trailing_bytes_in_disclosure_proof_reject() {
+    let (claim, witness) = sample_claim_and_witness();
+    let mut bundle = prove_payment_disclosure(&claim, &witness).expect("proof");
+    bundle.proof_bytes.extend_from_slice(&[0xde, 0xad]);
+    assert!(verify_payment_disclosure(&bundle).is_err());
+}
+
+#[test]
 fn reject_non_canonical_commitment() {
     let (mut claim, witness) = sample_claim_and_witness();
     claim.commitment = [0xFF; 48];
     let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
     match err {
         DisclosureCircuitError::NonCanonicalCommitment => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn reject_padding_field_alias_asset_id() {
+    let (mut claim, witness) = sample_claim_and_witness();
+    claim.asset_id = BALANCE_SLOT_PADDING_FIELD_ID;
+    claim.commitment = note_commitment_bytes(
+        claim.value,
+        claim.asset_id,
+        &claim.pk_recipient,
+        &claim.pk_auth,
+        &witness.rho,
+        &witness.r,
+    );
+    let err = prove_payment_disclosure(&claim, &witness).unwrap_err();
+    match err {
+        DisclosureCircuitError::InvalidAssetId => {}
+        other => panic!("unexpected error: {other:?}"),
+    }
+}
+
+#[test]
+fn verifier_rejects_padding_field_alias_asset_id() {
+    let (claim, witness) = sample_claim_and_witness();
+    let mut bundle = prove_payment_disclosure(&claim, &witness).expect("proof");
+    bundle.claim.asset_id = BALANCE_SLOT_PADDING_FIELD_ID;
+
+    let err = verify_payment_disclosure(&bundle).unwrap_err();
+    match err {
+        DisclosureVerifyError::InvalidPublicInputs(message) => {
+            assert!(message.contains("asset identifier"));
+        }
         other => panic!("unexpected error: {other:?}"),
     }
 }

@@ -7,7 +7,10 @@ mod verifier;
 
 use p3_field::PrimeCharacteristicRing;
 use serde::{Deserialize, Serialize};
-use transaction_core::hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes};
+use transaction_core::{
+    constants::is_canonical_asset_id,
+    hashing_pq::{bytes48_to_felts, is_canonical_bytes48, note_commitment_bytes},
+};
 
 use crate::air::DisclosurePublicInputsP3;
 use crate::constants::expected_air_hash;
@@ -41,6 +44,8 @@ pub struct PaymentDisclosureProofBundle {
 pub enum DisclosureCircuitError {
     #[error("commitment bytes are not canonical")]
     NonCanonicalCommitment,
+    #[error("asset identifier is not a canonical circuit field element")]
+    InvalidAssetId,
     #[error("commitment does not match claim and witness")]
     CommitmentMismatch,
     #[error("invalid witness: {0}")]
@@ -67,6 +72,9 @@ pub fn prove_payment_disclosure(
 ) -> Result<PaymentDisclosureProofBundle, DisclosureCircuitError> {
     if !is_canonical_bytes48(&claim.commitment) {
         return Err(DisclosureCircuitError::NonCanonicalCommitment);
+    }
+    if !is_canonical_asset_id(claim.asset_id) {
+        return Err(DisclosureCircuitError::InvalidAssetId);
     }
 
     let expected = note_commitment_bytes(
@@ -107,6 +115,12 @@ pub fn verify_payment_disclosure(
 pub(crate) fn claim_to_public_inputs(
     claim: &PaymentDisclosureClaim,
 ) -> Result<DisclosurePublicInputsP3, DisclosureVerifyError> {
+    if !is_canonical_asset_id(claim.asset_id) {
+        return Err(DisclosureVerifyError::InvalidPublicInputs(
+            "asset identifier is not a canonical circuit field element".into(),
+        ));
+    }
+
     let commitment = bytes48_to_felts(&claim.commitment).ok_or(
         DisclosureVerifyError::InvalidPublicInputs("commitment bytes are not canonical".into()),
     )?;

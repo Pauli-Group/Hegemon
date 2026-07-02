@@ -1,6 +1,6 @@
 [package]
 name = "wallet"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 
 [dependencies]
@@ -16,38 +16,40 @@ clap = { version = "4", features = ["derive", "env"] }
 codec = { workspace = true }
 futures = "0.3"
 bs58 = "0.5"
-frame-metadata = "23"
 hex = "0.4"
-jsonrpsee = { version = "0.24", features = ["ws-client", "client"] }
+jsonrpsee-core = { version = "0.24", default-features = false, features = ["client"], optional = true }
+jsonrpsee-http-client = { version = "0.24", default-features = false, optional = true }
+jsonrpsee-ws-client = { version = "0.24", default-features = false, optional = true }
 rand = { version = "0.8", features = ["std"] }
 rpassword = "7.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_bytes = "0.11"
-scale-info = { workspace = true }
 sha2 = "0.10"
-sp-crypto-hashing = "0.1"
 state-merkle = { path = "../state/merkle" }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 transaction-circuit = { path = "../circuits/transaction", default-features = false, features = ["plonky3"] }
 disclosure-circuit = { path = "../circuits/disclosure" }
 batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
+superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
 protocol-kernel = { path = "../protocol/kernel" }
-pallet-shielded-pool = { path = "../pallets/shielded-pool", default-features = false, features = ["std"] }
+protocol-shielded-pool = { path = "../protocol/shielded-pool" }
 twox-hash = "1.6"
 zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"
+p3-field = { workspace = true }
 predicates = "3"
 tempfile = "3"
 proptest = "1"
 
 [features]
-default = []
+default = ["rpc-client"]
+rpc-client = ["dep:jsonrpsee-core", "dep:jsonrpsee-http-client", "dep:jsonrpsee-ws-client"]
 batch-proofs = ["batch-circuit"]
 
 [lints]

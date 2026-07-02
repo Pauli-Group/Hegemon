@@ -3,21 +3,21 @@
 These guidelines explain how to use HEGEMON (HGN) software in a way that preserves the post-quantum privacy guarantees described in `README.md`, `DESIGN.md`, `METHODS.md`, and `docs/THREAT_MODEL.md`. Treat this document as the living owner’s manual for privacy hygiene: every new wallet feature, networking mode, or protocol-control surface must be reflected here so that end users can make informed operational decisions.
 
 ## 1. Purpose and scope
-- **Audience** – Wallet operators, PoW miners, release operators, and auditors who interact with HGN infrastructure or artifacts derived from it.
+- **Audience** – Wallet operators, PoW miners, release operators, and anyone who verifies HGN proofs of disclosure or disclosure artifacts.
 - **Goals** – Minimize metadata leakage, protect secret material, and keep shielded transactions unlinkable even when an adversary controls networks or compromised devices as described in the threat model.
 - **Maintenance rule** – Any change to shielded-pool semantics, wallet key handling, networking transports, or disclosure tooling must update these guidelines before the feature is considered shippable.
 
 ## 2. Core principles
 1. **Local custody first** – Generate and store spending/view keys only inside wallets you control. Never paste keys into remote tooling.
 2. **Version parity** – Use the same release channel for wallet, consensus, and release artifacts so that circuit bindings and privacy patches land simultaneously.
-3. **Least disclosure** – Share selective-disclosure proofs or decrypted memos only with entities that can prove a regulatory or contractual requirement.
+3. **Least disclosure** – Share proofs of disclosure or decrypted memos only when a counterparty or verifier needs proof of a specific claim or contract outcome.
 4. **Documented workflows** – Follow the official runbooks (e.g., `runbooks/security_testing.md`) whenever a security workflow or audit is triggered; ad-hoc steps often leak metadata.
 
 ## 3. Wallet hygiene checklist
 | Phase | Required actions |
 | --- | --- |
 | Provisioning | Verify signatures for `wallet/` binaries, run `make wallet-demo` on an air-gapped machine to inspect note/memo handling, and create wallets inside full-disk encrypted storage. |
-| Key management | Generate spend/view keys offline, record mnemonic backups using Shamir or multi-location sealed envelopes, and rotate viewing keys every time a new auditor is added. |
+| Key management | Generate spend/view keys offline, record mnemonic backups using Shamir or multi-location sealed envelopes, and rotate viewing keys every time a new verifier is added. |
 | Daily use | Sync via shielded RPC calls only, disable analytics/telemetry on the host OS, and randomize transaction batching (wallet CLI flag `--randomize-memo-order`) to avoid deterministic memo ordering. |
 | Recovery | When restoring from mnemonic, re-run the wallet adversarial tests referenced in `runbooks/security_testing.md` and rotate nullifier-derivation salts so compromised backups cannot track new notes. |
 
@@ -27,21 +27,21 @@ Additional wallet-specific recommendations:
 - Enable `wallet send --randomize-memo-order` (or set the flag in wrapper scripts) before the public alpha launch so deterministic memo ordering never reveals which recipients were co-batched in a shielded transaction.
 - Never re-use transparent fallback addresses when shielded notes are available. Transparent outputs should remain disabled.
 - Treat disclosure packages from `wallet payment-proof create` as sensitive receipts: they reveal value, asset id, recipient address, commitment, and anchor. Store them encrypted, share only with the requesting party, and avoid copying them into broad email/chat logs.
-- Use `wallet payment-proof purge` once a payment proof is delivered or once its retention window expires; the wallet store retains outgoing note openings specifically so on-demand proofs are possible.
+- Use `wallet payment-proof purge` once a proof of disclosure is delivered or once its retention window expires; the wallet store retains outgoing note openings specifically so on-demand proofs are possible.
 - Disclosed memos are not bound by the ZK proof. Only include memos when required by policy, and transmit them over the same secure channel as the disclosure package.
 
 ## 4. Node and network hygiene
 - **Run your own light/full node** – Point wallets at self-hosted RPC endpoints hardened with TLS and mutual authentication. Shared endpoints can log note commitment deltas.
 - **Network privacy layers** – Route RPC and gossip traffic through mixnets, Tor, or VPNs that do not share exit IPs with personal browsing. Monitor bandwidth padding in `consensus/bench` to ensure timing obfuscation stays enabled.
-- **Log discipline** – Sanitize or disable disk logs that contain nullifiers, note commitments, IPs, or release-operator activity. If logs must be retained for compliance, encrypt them with ML-KEM session keys and rotate every epoch.
+- **Log discipline** – Sanitize or disable disk logs that contain nullifiers, note commitments, IPs, or release-operator activity. If logs must be retained for operational, contractual, or legal reasons, encrypt them with ML-KEM session keys and rotate every epoch.
 - **Software updates** – Subscribe to release feeds and apply critical patches (especially ones touching `crypto/` or `wallet/`) within 24 hours. Always restart both wallet and node processes so that patched privacy parameters take effect.
 
 ## 5. Crafting private transactions
 1. **Fresh addresses per counterparty** – Use diversified addresses for each relationship; the wallet CLI’s `addr new --purpose shielded` command keeps derivations deterministic without re-use.
 2. **Value obfuscation** – When protocol fees allow, split large payments into randomized shards executed over multiple blocks to defeat value correlation.
-3. **Memo discipline** – Prefer encrypted memos with structured data fields (recipient, invoice hash, compliance tag). Avoid free-form text that could leak identity clues.
+3. **Memo discipline** – Prefer encrypted memos with structured data fields (recipient, invoice hash, proof tag). Avoid free-form text that could leak identity clues.
 4. **Timing randomness** – Introduce randomized delays (1–30 minutes) between proof generation and broadcast to prevent timing correlation with real-world events.
-5. **Selective disclosure** – When an auditor requires insight, export view keys scoped to specific accounts and expiration heights rather than the global wallet view key.
+5. **Proof of disclosure** – When a counterparty, verifier, or auditor needs proof, export view keys scoped to specific accounts and expiration heights rather than the global wallet view key.
 
 ## 6. Device, supply-chain, and physical security
 - Use hardware with verified boot and keep firmware hashes recorded in an operator log.

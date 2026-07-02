@@ -1,0 +1,1124 @@
+{
+  "summary": {
+    "current_total_bytes": 354081,
+    "current_opening_bytes": 349177,
+    "current_non_opening_bytes": 4904,
+    "tx_trace_rows": 8192,
+    "tx_starting_rate_bits": 4,
+    "release_gate": "Provable only; protocol_security_level >= 128; zero required STIR proof-of-work bits",
+    "best_release_supported_candidate": "provable_nogrind_k16_stop64_p128",
+    "best_release_supported_projected_total_bytes": 273145,
+    "best_release_supported_projected_total_shrink_vs_current": 1.2963114829120064,
+    "any_release_candidate_hits_2x_total_reduction": false,
+    "best_overall_candidate": "conjectural_k16_stop64_p106"
+  },
+  "candidates": [
+    {
+      "label": "provable_nogrind_k4_stop64_p128",
+      "stir": {
+        "proof_bytes": 72228,
+        "prover_ms": 74.073209,
+        "verifier_ms": 2.642667,
+        "prover_hashes": 122876,
+        "verifier_hashes": 1767
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 32.23375,
+        "verifier_ms": 0.943209,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 4,
+        "num_rounds": 3,
+        "rates": [
+          4,
+          5,
+          6,
+          7
+        ],
+        "repetitions": [
+          64,
+          52,
+          43,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 1.2777158626545666,
+      "projected_hegemon_opening_bytes": 446149,
+      "projected_hegemon_total_bytes": 451053,
+      "projected_total_shrink_vs_current": 0.7850097438660202,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k4_stop32_p128",
+      "stir": {
+        "proof_bytes": 72228,
+        "prover_ms": 72.75429199999999,
+        "verifier_ms": 1.633125,
+        "prover_hashes": 122876,
+        "verifier_hashes": 1767
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 31.949666,
+        "verifier_ms": 0.781708,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 32,
+        "starting_rate_bits": 4,
+        "folding_factor": 4,
+        "num_rounds": 3,
+        "rates": [
+          4,
+          5,
+          6,
+          7
+        ],
+        "repetitions": [
+          64,
+          52,
+          43,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 1.2777158626545666,
+      "projected_hegemon_opening_bytes": 446149,
+      "projected_hegemon_total_bytes": 451053,
+      "projected_total_shrink_vs_current": 0.7850097438660202,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k4_stop128_p128",
+      "stir": {
+        "proof_bytes": 61195,
+        "prover_ms": 68.576875,
+        "verifier_ms": 1.457166,
+        "prover_hashes": 114685,
+        "verifier_hashes": 1499
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 29.386667000000003,
+        "verifier_ms": 0.624459,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 128,
+        "starting_rate_bits": 4,
+        "folding_factor": 4,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          5,
+          6
+        ],
+        "repetitions": [
+          64,
+          52,
+          43
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 1.3627658389934305,
+      "projected_hegemon_opening_bytes": 475847,
+      "projected_hegemon_total_bytes": 480751,
+      "projected_total_shrink_vs_current": 0.736516408702218,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k4_stop256_p128",
+      "stir": {
+        "proof_bytes": 61195,
+        "prover_ms": 64.005916,
+        "verifier_ms": 1.258792,
+        "prover_hashes": 114685,
+        "verifier_hashes": 1499
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 30.051125000000003,
+        "verifier_ms": 0.694083,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 256,
+        "starting_rate_bits": 4,
+        "folding_factor": 4,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          5,
+          6
+        ],
+        "repetitions": [
+          64,
+          52,
+          43
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 1.3627658389934305,
+      "projected_hegemon_opening_bytes": 475847,
+      "projected_hegemon_total_bytes": 480751,
+      "projected_total_shrink_vs_current": 0.736516408702218,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k8_stop64_p128",
+      "stir": {
+        "proof_bytes": 53787,
+        "prover_ms": 41.037292,
+        "verifier_ms": 1.3029579999999998,
+        "prover_hashes": 57341,
+        "verifier_hashes": 1199
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 31.742125,
+        "verifier_ms": 0.82175,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          6,
+          8
+        ],
+        "repetitions": [
+          64,
+          43,
+          32
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9514939234729077,
+      "projected_hegemon_opening_bytes": 332240,
+      "projected_hegemon_total_bytes": 337144,
+      "projected_total_shrink_vs_current": 1.0502366941129013,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k8_stop32_p128",
+      "stir": {
+        "proof_bytes": 53787,
+        "prover_ms": 37.279917000000005,
+        "verifier_ms": 1.133834,
+        "prover_hashes": 57341,
+        "verifier_hashes": 1199
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 29.463959000000003,
+        "verifier_ms": 0.813709,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 32,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          6,
+          8
+        ],
+        "repetitions": [
+          64,
+          43,
+          32
+        ],
+        "pow_bits": [
+          0,
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9514939234729077,
+      "projected_hegemon_opening_bytes": 332240,
+      "projected_hegemon_total_bytes": 337144,
+      "projected_total_shrink_vs_current": 1.0502366941129013,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k8_stop128_p128",
+      "stir": {
+        "proof_bytes": 42818,
+        "prover_ms": 32.916959000000006,
+        "verifier_ms": 1.0730410000000001,
+        "prover_hashes": 49150,
+        "verifier_hashes": 949
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 28.531042,
+        "verifier_ms": 0.7265830000000001,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 128,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          6
+        ],
+        "repetitions": [
+          64,
+          43
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9535241064469435,
+      "projected_hegemon_opening_bytes": 332949,
+      "projected_hegemon_total_bytes": 337853,
+      "projected_total_shrink_vs_current": 1.0480327242913339,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k8_stop256_p128",
+      "stir": {
+        "proof_bytes": 42818,
+        "prover_ms": 33.18425,
+        "verifier_ms": 0.930333,
+        "prover_hashes": 49150,
+        "verifier_hashes": 949
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 29.282959,
+        "verifier_ms": 0.6308750000000001,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 256,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          6
+        ],
+        "repetitions": [
+          64,
+          43
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9535241064469435,
+      "projected_hegemon_opening_bytes": 332949,
+      "projected_hegemon_total_bytes": 337853,
+      "projected_total_shrink_vs_current": 1.0480327242913339,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k16_stop64_p128",
+      "stir": {
+        "proof_bytes": 43426,
+        "prover_ms": 24.736583,
+        "verifier_ms": 0.995,
+        "prover_hashes": 24574,
+        "verifier_hashes": 808
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 30.265334000000003,
+        "verifier_ms": 0.8739169999999999,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          64,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.7682074687328628,
+      "projected_hegemon_opening_bytes": 268241,
+      "projected_hegemon_total_bytes": 273145,
+      "projected_total_shrink_vs_current": 1.2963114829120064,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k16_stop32_p128",
+      "stir": {
+        "proof_bytes": 43426,
+        "prover_ms": 25.293416999999998,
+        "verifier_ms": 1.27075,
+        "prover_hashes": 24574,
+        "verifier_hashes": 808
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 29.837958,
+        "verifier_ms": 0.699375,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 32,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          64,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.7682074687328628,
+      "projected_hegemon_opening_bytes": 268241,
+      "projected_hegemon_total_bytes": 273145,
+      "projected_total_shrink_vs_current": 1.2963114829120064,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k16_stop128_p128",
+      "stir": {
+        "proof_bytes": 43426,
+        "prover_ms": 24.526540999999998,
+        "verifier_ms": 1.167291,
+        "prover_hashes": 24574,
+        "verifier_hashes": 808
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 29.790834,
+        "verifier_ms": 0.638167,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 128,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          64,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9670638013584233,
+      "projected_hegemon_opening_bytes": 337677,
+      "projected_hegemon_total_bytes": 342581,
+      "projected_total_shrink_vs_current": 1.0335687034599117,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k16_stop256_p128",
+      "stir": {
+        "proof_bytes": 43426,
+        "prover_ms": 25.537209,
+        "verifier_ms": 1.0717079999999999,
+        "prover_hashes": 24574,
+        "verifier_hashes": 808
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 28.446416,
+        "verifier_ms": 0.6202920000000001,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 256,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          64,
+          37
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9670638013584233,
+      "projected_hegemon_opening_bytes": 337677,
+      "projected_hegemon_total_bytes": 342581,
+      "projected_total_shrink_vs_current": 1.0335687034599117,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k32_stop64_p128",
+      "stir": {
+        "proof_bytes": 51522,
+        "prover_ms": 15.724959,
+        "verifier_ms": 1.279458,
+        "prover_hashes": 12286,
+        "verifier_hashes": 708
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 30.763125,
+        "verifier_ms": 0.770208,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 32,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          8
+        ],
+        "repetitions": [
+          64,
+          32
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9114259937377276,
+      "projected_hegemon_opening_bytes": 318249,
+      "projected_hegemon_total_bytes": 323153,
+      "projected_total_shrink_vs_current": 1.0957069870928013,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k32_stop32_p128",
+      "stir": {
+        "proof_bytes": 51522,
+        "prover_ms": 15.868125000000001,
+        "verifier_ms": 1.263959,
+        "prover_hashes": 12286,
+        "verifier_hashes": 708
+      },
+      "fri_control": {
+        "proof_bytes": 56529,
+        "prover_ms": 29.4345,
+        "verifier_ms": 0.714,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1195
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 32,
+        "starting_rate_bits": 4,
+        "folding_factor": 32,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          8
+        ],
+        "repetitions": [
+          64,
+          32
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.9114259937377276,
+      "projected_hegemon_opening_bytes": 318249,
+      "projected_hegemon_total_bytes": 323153,
+      "projected_total_shrink_vs_current": 1.0957069870928013,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k32_stop128_p128",
+      "stir": {
+        "proof_bytes": 51522,
+        "prover_ms": 15.547,
+        "verifier_ms": 1.295916,
+        "prover_hashes": 12286,
+        "verifier_hashes": 708
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 28.391792,
+        "verifier_ms": 0.636209,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 128,
+        "starting_rate_bits": 4,
+        "folding_factor": 32,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          8
+        ],
+        "repetitions": [
+          64,
+          32
+        ],
+        "pow_bits": [
+          0,
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 1.1473555283376016,
+      "projected_hegemon_opening_bytes": 400631,
+      "projected_hegemon_total_bytes": 405535,
+      "projected_total_shrink_vs_current": 0.8731206924186569,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_nogrind_k32_stop256_p128",
+      "stir": {
+        "proof_bytes": 35321,
+        "prover_ms": 11.494875,
+        "verifier_ms": 0.6409159999999999,
+        "prover_hashes": 8191,
+        "verifier_hashes": 463
+      },
+      "fri_control": {
+        "proof_bytes": 44905,
+        "prover_ms": 28.240167,
+        "verifier_ms": 0.675791,
+        "prover_hashes": 36862,
+        "verifier_hashes": 985
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 128,
+        "starting_degree": 8192,
+        "stopping_degree": 256,
+        "starting_rate_bits": 4,
+        "folding_factor": 32,
+        "num_rounds": 0,
+        "rates": [
+          4
+        ],
+        "repetitions": [
+          64
+        ],
+        "pow_bits": [
+          0
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 1,
+        "repetitions": 64,
+        "pow_bits": 0
+      },
+      "stir_vs_fri_ratio": 0.786571651263779,
+      "projected_hegemon_opening_bytes": 274653,
+      "projected_hegemon_total_bytes": 279557,
+      "projected_total_shrink_vs_current": 1.2665789087735237,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": true,
+      "release_support_reason": "supported: provable candidate with protocol_security_level >= 128 and zero required STIR proof-of-work bits"
+    },
+    {
+      "label": "provable_grinding_k16_stop64_p112",
+      "stir": {
+        "proof_bytes": 37938,
+        "prover_ms": 29.856834,
+        "verifier_ms": 0.890625,
+        "prover_hashes": 24574,
+        "verifier_hashes": 710
+      },
+      "fri_control": {
+        "proof_bytes": 50457,
+        "prover_ms": 34.775791,
+        "verifier_ms": 0.666042,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1074
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 112,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          56,
+          32
+        ],
+        "pow_bits": [
+          16,
+          16
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 56,
+        "pow_bits": 16
+      },
+      "stir_vs_fri_ratio": 0.7518877460015458,
+      "projected_hegemon_opening_bytes": 262542,
+      "projected_hegemon_total_bytes": 267446,
+      "projected_total_shrink_vs_current": 1.323934551273902,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": false,
+      "release_support_reason": "unsupported: candidate requires STIR proof-of-work bits [16, 16]; Hegemon release gate does not count grinding toward the 128-bit bar"
+    },
+    {
+      "label": "provable_grinding_k8_stop64_p112",
+      "stir": {
+        "proof_bytes": 48995,
+        "prover_ms": 139.814458,
+        "verifier_ms": 0.9957500000000001,
+        "prover_hashes": 57341,
+        "verifier_hashes": 1106
+      },
+      "fri_control": {
+        "proof_bytes": 50457,
+        "prover_ms": 32.793791000000006,
+        "verifier_ms": 0.658208,
+        "prover_hashes": 37373,
+        "verifier_hashes": 1074
+      },
+      "stir_security": {
+        "soundness_type": "provable",
+        "security_level": 128,
+        "protocol_security_level": 112,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          6,
+          8
+        ],
+        "repetitions": [
+          56,
+          38,
+          28
+        ],
+        "pow_bits": [
+          16,
+          14,
+          16
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 56,
+        "pow_bits": 16
+      },
+      "stir_vs_fri_ratio": 0.9710248330261411,
+      "projected_hegemon_opening_bytes": 339060,
+      "projected_hegemon_total_bytes": 343964,
+      "projected_total_shrink_vs_current": 1.029412961821586,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": false,
+      "release_support_reason": "unsupported: candidate requires STIR proof-of-work bits [16, 14, 16]; Hegemon release gate does not count grinding toward the 128-bit bar"
+    },
+    {
+      "label": "conjectural_k16_stop64_p106",
+      "stir": {
+        "proof_bytes": 20162,
+        "prover_ms": 551.807458,
+        "verifier_ms": 0.40125,
+        "prover_hashes": 24574,
+        "verifier_hashes": 389
+      },
+      "fri_control": {
+        "proof_bytes": 26905,
+        "prover_ms": 30.710292,
+        "verifier_ms": 0.39775,
+        "prover_hashes": 37373,
+        "verifier_hashes": 593
+      },
+      "stir_security": {
+        "soundness_type": "conjecture",
+        "security_level": 128,
+        "protocol_security_level": 106,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 16,
+        "num_rounds": 1,
+        "rates": [
+          4,
+          7
+        ],
+        "repetitions": [
+          27,
+          16
+        ],
+        "pow_bits": [
+          20,
+          16
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 27,
+        "pow_bits": 20
+      },
+      "stir_vs_fri_ratio": 0.7493774391377067,
+      "projected_hegemon_opening_bytes": 261666,
+      "projected_hegemon_total_bytes": 266570,
+      "projected_total_shrink_vs_current": 1.328285253404359,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": false,
+      "release_support_reason": "unsupported: conjectural STIR soundness is not accepted for Hegemon release use"
+    },
+    {
+      "label": "conjectural_k8_stop64_p106",
+      "stir": {
+        "proof_bytes": 25427,
+        "prover_ms": 1454.455209,
+        "verifier_ms": 0.559583,
+        "prover_hashes": 57341,
+        "verifier_hashes": 583
+      },
+      "fri_control": {
+        "proof_bytes": 26905,
+        "prover_ms": 48.97625,
+        "verifier_ms": 0.6675,
+        "prover_hashes": 37373,
+        "verifier_hashes": 593
+      },
+      "stir_security": {
+        "soundness_type": "conjecture",
+        "security_level": 128,
+        "protocol_security_level": 106,
+        "starting_degree": 8192,
+        "stopping_degree": 64,
+        "starting_rate_bits": 4,
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "rates": [
+          4,
+          6,
+          8
+        ],
+        "repetitions": [
+          27,
+          18,
+          14
+        ],
+        "pow_bits": [
+          20,
+          20,
+          16
+        ],
+        "out_of_domain_samples": 2
+      },
+      "fri_security": {
+        "folding_factor": 8,
+        "num_rounds": 2,
+        "repetitions": 27,
+        "pow_bits": 20
+      },
+      "stir_vs_fri_ratio": 0.9450659728674967,
+      "projected_hegemon_opening_bytes": 329996,
+      "projected_hegemon_total_bytes": 334900,
+      "projected_total_shrink_vs_current": 1.0572738130785309,
+      "projected_hits_2x_total_reduction": false,
+      "projected_hits_3x_total_reduction": false,
+      "release_supported": false,
+      "release_support_reason": "unsupported: conjectural STIR soundness is not accepted for Hegemon release use"
+    }
+  ]
+}

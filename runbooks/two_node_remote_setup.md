@@ -16,7 +16,7 @@ This guide walks you through setting up a peer-to-peer HEGEMON network between y
 
 | Port | Protocol | Purpose | Who Opens |
 |------|----------|---------|-----------|
-| **30333** | TCP | P2P networking (Substrate) | **Both** (required) |
+| **30333** | TCP | Native PQ P2P networking | **Both** (required) |
 | **9944** | TCP | RPC/WebSocket API | Neither (local access only) |
 
 > **Important:** Only port **30333** needs to be forwarded in your router. Port 9944 is for local RPC access (`127.0.0.1:9944`) and should NOT be exposed to the internet for security reasons.
@@ -129,15 +129,14 @@ One person starts first and becomes the initial bootnode.
 # Create a data directory
 mkdir -p /tmp/my-hegemon-node
 
-# If switching to a chainspec that upgrades commitment/nullifier encoding,
-# wipe any existing node.db and wallet stores before starting.
+# If switching to a fresh native genesis, wipe any existing node base path
+# and wallet stores before starting.
 
 # Start your mining node
 HEGEMON_MINE=1 HEGEMON_MINE_THREADS=4 \
 ./target/release/hegemon-node \
   --dev \
   --base-path /tmp/my-hegemon-node \
-  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --name "MyNode"
@@ -189,13 +188,12 @@ HEGEMON_SEEDS="<YOUR_PUBLIC_IP>:30333" \
 ./target/release/hegemon-node \
   --dev \
   --base-path /tmp/friend-hegemon-node \
-  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --name "FriendNode"
 ```
 
-Use the same agreed `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks. If you are joining the shared public fresh testnet instead of bootstrapping your own two-node network, the current approved public join seed is `hegemon.pauli.group:30333`.
+Use the same agreed `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks. If you are joining the shared public fresh testnet instead of bootstrapping your own two-node network, the current approved public join seed is `devnet.hegemonprotocol.com:30333`.
 
 ---
 
@@ -255,7 +253,6 @@ HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333" \
 ./target/release/hegemon-node \
   --dev \
   --base-path /tmp/my-hegemon-node \
-  --chain config/dev-chainspec.json \
   --port 30333 \
   --rpc-port 9944 \
   --name "MyNode"
@@ -271,9 +268,12 @@ This ensures both nodes can reconnect if either restarts.
 
 Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 
-1. Add a remote connection to the node's RPC endpoint (for example `ws://<NODE_IP>:9944`).
-2. Create or open a wallet store.
-3. Sync the wallet and send funds to your friend's address.
+1. Run a local relay node that connects over P2P to the remote miner. For ad hoc two-node tests, set `HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333"`; for the shared testnet, use the approved seed list instead: `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"`.
+2. Point the desktop app at the local relay RPC endpoint, for example `ws://127.0.0.1:9944`.
+3. Create or open a wallet store.
+4. Sync the wallet and send funds to your friend's address.
+
+Do not enter a public node RPC address into the desktop app. The app accepts only localhost RPC endpoints. For desktop wallet testing without SSH, run a local relay node with the approved seeds and let it sync over P2P; operate remote hosts directly with operator CLI on that host.
 
 ### Option B: Using walletd
 
@@ -458,5 +458,5 @@ rm -rf /tmp/friend-hegemon-node
 ## Next Steps
 
 - For VPS/production deployment, see `runbooks/p2p_node_vps.md`
-- For local multi-node testing, see `runbooks/substrate_integration_testing.md`
+- For local multi-node testing, run `./scripts/test-node.sh two-node`
 - For wallet operations, see `runbooks/miner_wallet_quickstart.md`

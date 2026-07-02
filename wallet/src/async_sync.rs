@@ -1,7 +1,7 @@
-//! Async Wallet Sync Engine for Substrate RPC
+//! Async Wallet Sync Engine for native node RPC
 //!
 //! This module provides an async synchronization engine that syncs wallet state
-//! using the Substrate WebSocket RPC client. It replaces the blocking sync engine
+//! using the Hegemon WebSocket RPC client. It replaces the blocking sync engine
 //! for use with async runtimes.
 //!
 //! # Features
@@ -14,11 +14,11 @@
 //!
 //! ```no_run
 //! use std::sync::Arc;
-//! use wallet::{SubstrateRpcClient, WalletStore};
+//! use wallet::{NodeRpcClient, WalletStore};
 //! use wallet::async_sync::AsyncWalletSyncEngine;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let client = Arc::new(SubstrateRpcClient::connect("ws://127.0.0.1:9944").await?);
+//! let client = Arc::new(NodeRpcClient::connect("ws://127.0.0.1:9944").await?);
 //! let store = Arc::new(WalletStore::open("wallet.dat", "password")?);
 //! let engine = AsyncWalletSyncEngine::new(client, store);
 //! let outcome = engine.sync_once().await?;
@@ -27,7 +27,6 @@
 //! # }
 //! ```
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 // StreamExt is required for Subscription::next()
@@ -36,19 +35,23 @@ use futures::StreamExt;
 use tokio::sync::RwLock;
 
 use crate::error::WalletError;
+use crate::node_rpc::{CiphertextEntry, NodeRpcClient};
 use crate::notes::NoteCiphertext;
 use crate::store::WalletStore;
-use crate::substrate_rpc::SubstrateRpcClient;
 use crate::sync::SyncOutcome;
 use crate::viewing::{FullViewingKey, IncomingViewingKey, RecoveredNote};
 
+pub const WALLET_SYNC_EXPECTED_TREE_DEPTH: u64 =
+    transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH as u64;
+pub const WALLET_SYNC_MAX_SNAPSHOT_GAP: u64 = 1_048_576;
+
 /// Async wallet synchronization engine
 ///
-/// This engine syncs wallet state with a Substrate node using WebSocket RPC.
+/// This engine syncs wallet state with a Hegemon node using WebSocket RPC.
 /// It supports both one-shot synchronization and continuous sync via subscriptions.
 pub struct AsyncWalletSyncEngine {
     /// RPC client for node communication
-    client: Arc<SubstrateRpcClient>,
+    client: Arc<NodeRpcClient>,
     /// Wallet store (wrapped for interior mutability)
     store: Arc<WalletStore>,
     /// Page size for fetching commitments/ciphertexts
@@ -62,9 +65,9 @@ impl AsyncWalletSyncEngine {
     ///
     /// # Arguments
     ///
-    /// * `client` - Substrate RPC client
+    /// * `client` - native node RPC client
     /// * `store` - Wallet store
-    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+    pub fn new(client: Arc<NodeRpcClient>, store: Arc<WalletStore>) -> Self {
         Self {
             client,
             store,
@@ -142,6 +145,13 @@ impl AsyncWalletSyncEngine {
 
             // Get current note status from node
             let note_status = self.client.note_status().await?;
+            let mut commitment_cursor = self.store.next_commitment_index()?;
+            validate_note_status_snapshot(
+                &note_status,
+                commitment_cursor,
+                self.store.next_ciphertext_index()?,
+                WALLET_SYNC_MAX_SNAPSHOT_GAP,
+            )?;
             self.store.set_tree_depth(note_status.depth as u32)?;
 
             // Detect if our cursor is ahead of the chain. This can happen if:
@@ -149,7 +159,6 @@ impl AsyncWalletSyncEngine {
             // - we experienced a reorg that removed commitments we had already scanned.
             //
             // In either case, the safest behavior is to reset and rescan from scratch.
-            let mut commitment_cursor = self.store.next_commitment_index()?;
             if commitment_cursor > note_status.leaf_count {
                 eprintln!(
                     "Wallet cursor ahead of chain ({} > {}); resetting wallet sync state...",
@@ -252,55 +261,31 @@ impl AsyncWalletSyncEngine {
                     .client
                     .ciphertexts(ciphertext_cursor, self.page_limit)
                     .await?;
+                cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 if entries.is_empty() {
-                    if let Ok(archive_entries) = self
+                    entries = self
                         .client
                         .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                        .await
-                    {
-                        entries = archive_entries;
-                    }
-                }
-                if entries.is_empty() {
-                    break;
-                }
-                let mut expected = ciphertext_cursor;
-                let mut gap_at = None;
-                for entry in &entries {
-                    if entry.index != expected {
-                        gap_at = Some(expected);
-                        break;
-                    }
-                    expected = expected
-                        .checked_add(1)
-                        .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
-                }
-                if entries.first().map(|entry| entry.index) != Some(ciphertext_cursor)
-                    || gap_at.is_some()
-                {
-                    if let Ok(archive_entries) = self
-                        .client
-                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
-                        .await
-                    {
-                        if !archive_entries.is_empty() {
-                            entries = archive_entries;
-                        }
-                    }
-                }
-                if entries.is_empty() {
-                    break;
+                        .await?;
+                    cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 }
 
-                let first_index = entries.first().map(|entry| entry.index).unwrap_or(expected);
-                if first_index > ciphertext_cursor {
-                    eprintln!(
-                        "Ciphertext gap detected at index {} (skipping to {}).",
-                        ciphertext_cursor, first_index
-                    );
-                    self.store.advance_ciphertext_cursor(first_index)?;
-                    ciphertext_cursor = first_index;
+                if !ciphertext_page_is_contiguous(
+                    ciphertext_cursor,
+                    note_status.next_index,
+                    &entries,
+                )? {
+                    entries = self
+                        .client
+                        .archive_ciphertexts(ciphertext_cursor, self.page_limit)
+                        .await?;
+                    cap_ciphertext_page_to_snapshot(&mut entries, note_status.next_index);
                 }
+                require_ciphertext_page_contiguous(
+                    ciphertext_cursor,
+                    note_status.next_index,
+                    &entries,
+                )?;
 
                 let start_index = ciphertext_cursor;
                 let mut expected = start_index;
@@ -310,8 +295,7 @@ impl AsyncWalletSyncEngine {
 
                 for entry in entries {
                     if entry.index != expected {
-                        eprintln!("Ciphertext gap detected at index {} (skipping).", expected);
-                        break;
+                        return Err(WalletError::InvalidState("ciphertext page gap"));
                     }
                     outcome.ciphertexts += 1;
 
@@ -375,8 +359,7 @@ impl AsyncWalletSyncEngine {
             }
 
             // Sync nullifiers
-            let nullifiers = self.client.nullifiers().await?;
-            let nullifier_set: HashSet<[u8; 48]> = nullifiers.into_iter().collect();
+            let nullifier_set = self.client.nullifiers().await?;
             outcome.spent += self.store.mark_nullifiers(&nullifier_set)?;
 
             // Update pending transactions
@@ -466,6 +449,12 @@ impl AsyncWalletSyncEngine {
 
 fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    if trimmed.len() != 64 {
+        return Err(WalletError::Serialization(format!(
+            "invalid hash hex length: expected 64 chars, got {}",
+            trimmed.len()
+        )));
+    }
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid hash hex: {e}")))?;
     if bytes.len() != 32 {
@@ -481,6 +470,12 @@ fn parse_hash_32(input: &str) -> Result<[u8; 32], WalletError> {
 
 fn parse_hash_48(input: &str) -> Result<[u8; 48], WalletError> {
     let trimmed = input.strip_prefix("0x").unwrap_or(input);
+    if trimmed.len() != 96 {
+        return Err(WalletError::Serialization(format!(
+            "invalid 48-byte hex length: expected 96 chars, got {}",
+            trimmed.len()
+        )));
+    }
     let bytes = hex::decode(trimmed)
         .map_err(|e| WalletError::Serialization(format!("Invalid 48-byte hex: {e}")))?;
     if bytes.len() != 48 {
@@ -492,6 +487,98 @@ fn parse_hash_48(input: &str) -> Result<[u8; 48], WalletError> {
     let mut out = [0u8; 48];
     out.copy_from_slice(&bytes);
     Ok(out)
+}
+
+pub(crate) fn validate_note_status_snapshot(
+    note_status: &crate::node_rpc::NoteStatus,
+    commitment_cursor: u64,
+    ciphertext_cursor: u64,
+    max_snapshot_gap: u64,
+) -> Result<(), WalletError> {
+    if note_status.depth != WALLET_SYNC_EXPECTED_TREE_DEPTH {
+        return Err(WalletError::InvalidState(
+            "wallet note status depth mismatch",
+        ));
+    }
+    let tree_capacity = 1u128
+        .checked_shl(
+            u32::try_from(note_status.depth)
+                .map_err(|_| WalletError::InvalidState("wallet note status depth too large"))?,
+        )
+        .ok_or(WalletError::InvalidState(
+            "wallet note status capacity overflow",
+        ))?;
+    if u128::from(note_status.leaf_count) > tree_capacity {
+        return Err(WalletError::InvalidState(
+            "wallet note status leaf count exceeds tree capacity",
+        ));
+    }
+    if u128::from(note_status.next_index) > tree_capacity {
+        return Err(WalletError::InvalidState(
+            "wallet note status ciphertext index exceeds tree capacity",
+        ));
+    }
+    if note_status.leaf_count.saturating_sub(commitment_cursor) > max_snapshot_gap {
+        return Err(WalletError::InvalidState(
+            "wallet note status commitment snapshot too large",
+        ));
+    }
+    if note_status.next_index.saturating_sub(ciphertext_cursor) > max_snapshot_gap {
+        return Err(WalletError::InvalidState(
+            "wallet note status ciphertext snapshot too large",
+        ));
+    }
+    Ok(())
+}
+
+fn ciphertext_page_is_contiguous(
+    start: u64,
+    next_index: u64,
+    entries: &[CiphertextEntry],
+) -> Result<bool, WalletError> {
+    match require_ciphertext_page_contiguous(start, next_index, entries) {
+        Ok(()) => Ok(true),
+        Err(WalletError::InvalidState("ciphertext page missing"))
+        | Err(WalletError::InvalidState("ciphertext page gap")) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
+fn cap_ciphertext_page_to_snapshot(entries: &mut Vec<CiphertextEntry>, next_index: u64) {
+    let Some(end) = entries.iter().position(|entry| entry.index >= next_index) else {
+        return;
+    };
+    entries.truncate(end);
+}
+
+fn require_ciphertext_page_contiguous(
+    start: u64,
+    next_index: u64,
+    entries: &[CiphertextEntry],
+) -> Result<(), WalletError> {
+    if start >= next_index {
+        return Ok(());
+    }
+    if entries.is_empty() {
+        return Err(WalletError::InvalidState("ciphertext page missing"));
+    }
+
+    let mut expected = start;
+    for entry in entries {
+        if entry.index != expected {
+            return Err(WalletError::InvalidState("ciphertext page gap"));
+        }
+        expected = expected
+            .checked_add(1)
+            .ok_or(WalletError::InvalidState("ciphertext index overflow"))?;
+        if expected > next_index {
+            return Err(WalletError::InvalidState(
+                "ciphertext page beyond chain tip",
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 fn decrypt_recovered_note(
@@ -514,7 +601,7 @@ pub struct SharedSyncEngine {
 
 impl SharedSyncEngine {
     /// Create a new shared sync engine
-    pub fn new(client: Arc<SubstrateRpcClient>, store: Arc<WalletStore>) -> Self {
+    pub fn new(client: Arc<NodeRpcClient>, store: Arc<WalletStore>) -> Self {
         Self {
             inner: RwLock::new(AsyncWalletSyncEngine::new(client, store)),
         }
@@ -536,6 +623,17 @@ mod tests {
         notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     };
     use rand::{rngs::StdRng, SeedableRng};
+    use serde::Deserialize;
+
+    fn sample_ciphertext_entry(index: u64) -> CiphertextEntry {
+        let root = RootSecret::from_bytes([index as u8; 32]);
+        let keys = root.derive();
+        let address = keys.address(0).unwrap().shielded_address();
+        let mut rng = StdRng::seed_from_u64(index + 100);
+        let note = NotePlaintext::random(1 + index, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        CiphertextEntry { index, ciphertext }
+    }
 
     #[test]
     fn test_sync_outcome_default() {
@@ -567,5 +665,237 @@ mod tests {
         let recovered_incoming =
             decrypt_recovered_note(None, &ivk, &ciphertext).expect("incoming key decrypt");
         assert_eq!(recovered_incoming.note_data.pk_auth, [0u8; 32]);
+    }
+
+    #[test]
+    fn ciphertext_page_validation_accepts_contiguous_pages() {
+        let entries = vec![sample_ciphertext_entry(0), sample_ciphertext_entry(1)];
+        require_ciphertext_page_contiguous(0, 4, &entries).expect("contiguous prefix");
+        assert!(ciphertext_page_is_contiguous(0, 4, &entries).expect("classification succeeds"));
+
+        let final_page = vec![sample_ciphertext_entry(3)];
+        require_ciphertext_page_contiguous(3, 4, &final_page).expect("contiguous final page");
+        require_ciphertext_page_contiguous(4, 4, &[]).expect("empty page past tip");
+    }
+
+    #[test]
+    fn ciphertext_page_validation_rejects_missing_substituted_and_overrun_pages() {
+        let missing = require_ciphertext_page_contiguous(0, 2, &[]).unwrap_err();
+        assert!(matches!(
+            missing,
+            WalletError::InvalidState("ciphertext page missing")
+        ));
+        assert!(!ciphertext_page_is_contiguous(0, 2, &[]).unwrap());
+
+        let substituted = vec![sample_ciphertext_entry(1)];
+        let err = require_ciphertext_page_contiguous(0, 2, &substituted).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page gap")
+        ));
+        assert!(!ciphertext_page_is_contiguous(0, 2, &substituted).unwrap());
+
+        let gapped = vec![sample_ciphertext_entry(0), sample_ciphertext_entry(2)];
+        let err = require_ciphertext_page_contiguous(0, 3, &gapped).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page gap")
+        ));
+
+        let overrun = vec![
+            sample_ciphertext_entry(0),
+            sample_ciphertext_entry(1),
+            sample_ciphertext_entry(2),
+        ];
+        let err = require_ciphertext_page_contiguous(0, 2, &overrun).unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("ciphertext page beyond chain tip")
+        ));
+    }
+
+    #[test]
+    fn ciphertext_page_cap_ignores_rows_beyond_sync_snapshot() {
+        let mut entries = vec![
+            sample_ciphertext_entry(0),
+            sample_ciphertext_entry(1),
+            sample_ciphertext_entry(2),
+        ];
+
+        cap_ciphertext_page_to_snapshot(&mut entries, 2);
+
+        assert_eq!(entries.len(), 2);
+        require_ciphertext_page_contiguous(0, 2, &entries).expect("snapshot prefix is complete");
+        assert!(ciphertext_page_is_contiguous(0, 2, &entries).expect("classification succeeds"));
+    }
+
+    fn sample_note_status(
+        leaf_count: u64,
+        depth: u64,
+        next_index: u64,
+    ) -> crate::node_rpc::NoteStatus {
+        crate::node_rpc::NoteStatus {
+            leaf_count,
+            depth,
+            root: format!("0x{}", hex::encode([0u8; 48])),
+            next_index,
+        }
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanCiphertextArchiveBoundaryVectorFile {
+        schema_version: u32,
+        wallet_sync_snapshot_admission_cases: Vec<LeanWalletSyncSnapshotAdmissionCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct LeanWalletSyncSnapshotAdmissionCase {
+        name: String,
+        expected_depth: u64,
+        depth: u64,
+        leaf_count: u64,
+        next_index: u64,
+        commitment_cursor: u64,
+        ciphertext_cursor: u64,
+        max_snapshot_gap: u64,
+        expected_valid: bool,
+        expected_error: Option<String>,
+    }
+
+    fn note_status_snapshot_error_label(err: WalletError) -> &'static str {
+        match err {
+            WalletError::InvalidState("wallet note status depth mismatch") => "depth_mismatch",
+            WalletError::InvalidState("wallet note status leaf count exceeds tree capacity") => {
+                "leaf_count_exceeds_tree_capacity"
+            }
+            WalletError::InvalidState(
+                "wallet note status ciphertext index exceeds tree capacity",
+            ) => "ciphertext_index_exceeds_tree_capacity",
+            WalletError::InvalidState("wallet note status commitment snapshot too large") => {
+                "commitment_snapshot_too_large"
+            }
+            WalletError::InvalidState("wallet note status ciphertext snapshot too large") => {
+                "ciphertext_snapshot_too_large"
+            }
+            other => panic!("unexpected wallet sync snapshot error {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lean_generated_wallet_sync_snapshot_vectors_match_production_helper() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_CIPHERTEXT_ARCHIVE_BOUNDARY_VECTORS not set; skipping wallet sync snapshot vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean ciphertext archive boundary vectors");
+        let vectors: LeanCiphertextArchiveBoundaryVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean wallet sync snapshot vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.wallet_sync_snapshot_admission_cases.is_empty(),
+            "Lean wallet sync snapshot admission cases must not be empty"
+        );
+
+        for case in &vectors.wallet_sync_snapshot_admission_cases {
+            assert_eq!(
+                case.expected_depth, WALLET_SYNC_EXPECTED_TREE_DEPTH,
+                "{} Lean expected depth drifted from production helper",
+                case.name
+            );
+            let actual = validate_note_status_snapshot(
+                &sample_note_status(case.leaf_count, case.depth, case.next_index),
+                case.commitment_cursor,
+                case.ciphertext_cursor,
+                case.max_snapshot_gap,
+            );
+            let actual_error = actual.err().map(note_status_snapshot_error_label);
+            assert_eq!(
+                actual_error.is_none(),
+                case.expected_valid,
+                "{} wallet sync snapshot validity drifted from production helper",
+                case.name
+            );
+            assert_eq!(
+                actual_error,
+                case.expected_error.as_deref(),
+                "{} wallet sync snapshot rejection drifted from production helper",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn note_status_snapshot_admission_rejects_unbounded_remote_counts() {
+        validate_note_status_snapshot(
+            &sample_note_status(10, WALLET_SYNC_EXPECTED_TREE_DEPTH, 10),
+            0,
+            0,
+            WALLET_SYNC_MAX_SNAPSHOT_GAP,
+        )
+        .expect("bounded status accepted");
+
+        let err = validate_note_status_snapshot(
+            &sample_note_status(10, WALLET_SYNC_EXPECTED_TREE_DEPTH + 1, 10),
+            0,
+            0,
+            WALLET_SYNC_MAX_SNAPSHOT_GAP,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("wallet note status depth mismatch")
+        ));
+
+        let over_capacity = 1u64 << WALLET_SYNC_EXPECTED_TREE_DEPTH;
+        let err = validate_note_status_snapshot(
+            &sample_note_status(
+                over_capacity,
+                WALLET_SYNC_EXPECTED_TREE_DEPTH,
+                over_capacity.saturating_add(1),
+            ),
+            0,
+            0,
+            WALLET_SYNC_MAX_SNAPSHOT_GAP,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("wallet note status ciphertext index exceeds tree capacity")
+        ));
+
+        let err = validate_note_status_snapshot(
+            &sample_note_status(
+                WALLET_SYNC_MAX_SNAPSHOT_GAP + 2,
+                WALLET_SYNC_EXPECTED_TREE_DEPTH,
+                10,
+            ),
+            0,
+            0,
+            WALLET_SYNC_MAX_SNAPSHOT_GAP,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("wallet note status commitment snapshot too large")
+        ));
+
+        let err = validate_note_status_snapshot(
+            &sample_note_status(
+                10,
+                WALLET_SYNC_EXPECTED_TREE_DEPTH,
+                WALLET_SYNC_MAX_SNAPSHOT_GAP + 2,
+            ),
+            0,
+            0,
+            WALLET_SYNC_MAX_SNAPSHOT_GAP,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::InvalidState("wallet note status ciphertext snapshot too large")
+        ));
     }
 }

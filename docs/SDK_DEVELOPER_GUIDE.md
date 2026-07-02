@@ -6,8 +6,8 @@ This guide explains how to build against the Rust SDK crates in this monorepo af
 
 - `wallet/` – client primitives for note selection, proof construction, note encryption, sync, and Hegemon RPC submission.
 - `network/` – PQ transport and peer-to-peer helpers used by nodes and tooling. This is not a libp2p product surface.
-- `protocol/` – protocol constants, versioning helpers, and transaction-format definitions shared across crates.
-- `runtime/manifest.rs` – the compiled protocol manifest that seeds runtime/chainspec defaults.
+- `protocol/` – protocol constants, versioning helpers, shielded-pool types, and transaction-format definitions shared across crates.
+- `protocol/kernel/src/manifest.rs` – the compiled protocol manifest that seeds native protocol defaults.
 
 When adding a new SDK surface:
 
@@ -28,19 +28,19 @@ That means new client code should prefer:
 
 - `hegemon_submitAction` for protocol action submission, including shielded sends
 - standard `chain_*`, `state_*`, and `system_*` RPC for inspection and sync
-- runtime/manifest lookups when the client needs protocol defaults
+- protocol manifest lookups when the client needs protocol defaults
 
 It should not introduce:
 
 - account-based fee assumptions
 - `FeatureFlags`-style staged rollout logic
-- reliance on treasury, identity, settlement, or archive-market pallets that are no longer part of the live runtime
+- reliance on treasury, identity, settlement, or archive-market modules that are no longer part of the live native state machine
 
 ## Developer checklist
 
 - Run `cargo fmt` and `cargo clippy --workspace --all-targets --all-features` before pushing.
 - Add integration tests that cover real Hegemon RPC submission or decoding behavior for any new client surface.
-- When changing protocol defaults, update `runtime/src/manifest.rs` and the node/runtime chainspec builders in the same change.
-- When changing submission semantics, verify both `cargo test -p wallet substrate_rpc -- --nocapture` and `cargo test -p hegemon-node shielded -- --nocapture`.
+- When changing protocol defaults, update `protocol/kernel/src/manifest.rs` and the native node tests in the same change.
+- When changing submission semantics, verify both `cargo test -p wallet node_rpc -- --nocapture` and `cargo test -p hegemon-node --lib`.
 
 The SDK should make the proof-native model easier to use, not hide a second account-native model behind convenience wrappers.

@@ -4,7 +4,8 @@ use common::{
     BftBlockParams, PowBlockParams, assemble_bft_block, assemble_pow_block, dummy_coinbase,
     dummy_transaction, make_validators, validator_set,
 };
-use consensus::{BftConsensus, CommitmentTreeState, HashVerifier, NullifierSet, PowConsensus};
+use consensus::proof::HashVerifier;
+use consensus::{BftConsensus, CommitmentTreeState, NullifierSet, PowConsensus};
 use network::{GossipMessage, GossipRouter, PeerIdentity, establish_secure_channel};
 use tokio::time::{Duration, timeout};
 
@@ -89,7 +90,7 @@ async fn bft_consensus_liveness_and_slashing() {
 fn pow_chain_accepts_valid_work() {
     let mut miners = make_validators(1, 0);
     let miner = miners.remove(0);
-    let pow_bits = 0x3f00ffff; // extremely easy target
+    let pow_bits = 0x20ff_ffff; // largest valid 256-bit test target
     let genesis_tree = CommitmentTreeState::default();
     let mut consensus = PowConsensus::with_genesis_pow_bits(
         vec![miner.validator.public_key().clone()],

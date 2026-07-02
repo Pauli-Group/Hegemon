@@ -8,7 +8,6 @@ export type NodeConnection = {
   participationRole?: NodeParticipationRole;
   wsUrl: string;
   httpUrl?: string;
-  chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
   basePath?: string;
@@ -33,6 +32,7 @@ export type NodeConnection = {
 export type DialogOpenOptions = {
   title?: string;
   defaultPath?: string;
+  baseDirectory?: 'home' | 'walletStore';
   buttonLabel?: string;
   filters?: Array<{ name: string; extensions: string[] }>;
   properties?: Array<
@@ -78,6 +78,13 @@ export type NodeConfigSnapshot = {
   maxPeers: number;
 };
 
+export type NodePeerSnapshot = {
+  peerId: string;
+  addr: string;
+  connected: boolean;
+  protocols?: number[];
+};
+
 export type NodeSummary = {
   connectionId: string;
   label: string;
@@ -90,11 +97,18 @@ export type NodeSummary = {
   bestNumber: number | null;
   genesisHash: string | null;
   mining: boolean | null;
+  minerAddress: string | null;
   miningThreads: number | null;
+  miningSyncGateOpen: boolean | null;
+  bootstrapAuthoring: boolean | null;
   hashRate: number | null;
   blocksFound: number | null;
   difficulty: number | null;
+  nextDifficulty: number | null;
   blockHeight: number | null;
+  syncTargetHeight: number | null;
+  pendingExtrinsics: number | null;
+  peerList: NodePeerSnapshot[] | null;
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;
   telemetry: NodeTelemetry | null;
@@ -218,6 +232,7 @@ export type WalletStatus = {
   lastSyncedHeight: number;
   balances: WalletBalance[];
   pending: WalletPending[];
+  recent?: WalletPending[];
   notes?: WalletNotes | null;
   noteDetails?: WalletNoteDetail[] | null;
   genesisHash?: string | null;
@@ -279,11 +294,13 @@ export type Contact = {
   verified: boolean;
   notes?: string;
   lastUsed?: string;
+  chainSpecId?: string;
+  chainSpecName?: string;
+  protocolVersion?: string;
 };
 
 export type NodeStartOptions = {
   connectionId?: string;
-  chainSpecPath?: string;
   dev?: boolean;
   tmp?: boolean;
   basePath?: string;

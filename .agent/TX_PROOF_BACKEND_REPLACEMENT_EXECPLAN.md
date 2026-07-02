@@ -1,0 +1,277 @@
+# Transaction Proof Backend Replacement
+
+This ExecPlan is a living document. The sections `Progress`, `Surprises & Discoveries`, `Decision Log`, and `Outcomes & Retrospective` must be kept up to date as work proceeds.
+
+Reference: repository root `.agent/PLANS.md` defines the ExecPlan format and maintenance requirements. Every update to this file must remain consistent with that guidance.
+
+This plan starts from the current product reality: Hegemon ships a Plonky3 transaction proof, wraps that proof into a native `tx_leaf`, and then aggregates verified leaves into one `receipt_root` through the lattice folding layer. The user-visible goal of this plan is to make that per-transaction proof backend replaceable without destabilizing the block-level aggregation lane, then push the SmallWood branch forward until it either produces a real smaller tx proof under the `128-bit` post-quantum rule or gets killed honestly.
+
+## Purpose / Big Picture
+
+After this plan, a developer will be able to do three concrete things. First, they will be able to inspect the protocol manifest and see the active transaction-proof backend as a version-owned protocol parameter instead of a hard-coded assumption. Second, they will be able to verify that native `tx_leaf` artifacts carry enough information to dispatch to the correct transaction-proof verifier family while remaining backward-compatible with old artifacts. Third, they will have a dedicated SmallWood frontend implementation path that plugs into the same `tx_leaf -> receipt_root` aggregation lane without rewriting the lattice folding layer.
+
+The observable result is not merely “support SmallWood someday.” The observable result is:
+
+1. the current Plonky3 tx proof still builds and verifies,
+2. a mutated `SmallwoodCandidate` tx proof or native `tx_leaf` fails cleanly instead of aliasing the current backend,
+3. future backend work can land behind one explicit seam instead of touching wallet, node, pallet, and folding code independently.
+
+## Progress
+
+- [x] (2026-04-09T22:16Z) Fixed the remaining profile-routing seams from the last review. `transaction_verifier_profile_digest` now fail-closes if a SmallWood wrapper cannot be decoded for arithmetization binding instead of silently downgrading to `Bridge64V1`, and the public `tx_leaf` bridge now validates the canonical receipt profile it is actually given instead of incorrectly recomputing a bridge-only SmallWood profile from version alone. Added focused regressions for malformed SmallWood wrapper rejection and for direct SmallWood profile acceptance through the public `tx_leaf` witness path.
+- [x] (2026-04-09T21:48Z) Closed the latest SmallWood statement-completeness and profile-binding gaps from redteam review. The row-aligned live relation now has dedicated secret rows plus sparse linear bindings for active output ciphertext hashes and enabled stablecoin policy version / policy hash / oracle / attestation commitments, `transaction_public_inputs_p3_from_parts` now rejects wrapper-vs-serialized public-input mismatches on Merkle root / fee / value balance / balance-slot assets / stablecoin binding, and proof-specific verifier-profile digests now bind the actual SmallWood arithmetization tag instead of hard-coding `Bridge64V1`. The live compact geometry is now `raw_witness_len = 295`, `expanded_witness_len = 92608`, `lppc_row_count = 1447`; the candidate projects to `108012` bytes, the passing release roundtrip emits `108012` bytes in about `1.93s`, and the wrapped `tx_leaf` seam passes in about `3.30s`.
+- [x] (2026-04-07T18:10Z) Re-read `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, and the checked-in SmallWood notes before making architecture changes.
+- [x] (2026-04-07T18:10Z) Identified the real switch points: `protocol/versioning`, `runtime/src/manifest.rs`, `circuits/transaction/src/proof.rs`, and `circuits/superneo-hegemon/src/lib.rs`.
+- [x] (2026-04-07T18:25Z) Added a version-owned `TxProofBackend` enum to `protocol/versioning` and projected it into the runtime manifest so the active tx proof family is now part of the protocol commitment surface.
+- [x] (2026-04-07T18:25Z) Added a backend field to `TransactionProof`, made the proof digest bind the backend id, and changed high-level verification to dispatch on the backend instead of assuming “proof bytes means Plonky3.”
+- [x] (2026-04-07T18:25Z) Added a trailing tx-proof-backend selector byte to native `tx_leaf` artifacts with backward-compatible decoding that defaults missing bytes to the current Plonky3 backend.
+- [x] (2026-04-07T18:25Z) Added regression coverage for unsupported-backend rejection and backward-compatible native artifact decode.
+- [x] (2026-04-07T19:12Z) Fixed the native `tx_leaf` builder to use the release tx-proof profile even in debug builds; the old path was silently generating fast-profile proofs that the native verifier rejected.
+- [x] (2026-04-08T03:32Z) Implemented a semantic SmallWood frontend in `transaction-circuit` that rebuilds the exact `NativeTxValidityRelation` witness surface, expands it with the fixed-width Poseidon2 subtrace, and commits to LPPC packing metadata/digests without touching the folding layer.
+- [x] (2026-04-08T03:32Z) Added a real `SmallwoodCandidate` prover/verifier adapter behind the backend seam. The candidate proof bytes now contain a real SmallWood PCS/ARK transcript over the packed expanded native witness, not an “unimplemented backend” placeholder.
+- [x] (2026-04-08T03:32Z) Added an explicit non-default `SMALLWOOD_CANDIDATE_VERSION_BINDING` so candidate tx proofs remain version-owned instead of bypassing the manifest-owned backend seam.
+- [x] (2026-04-08T09:15Z) Replaced the old witness-carrying random-linear-check envelope with a witness-free public SmallWood statement: direct `TransactionPublicInputsP3` field values plus fixed witness-shape metadata, bound through sparse public selector constraints.
+- [x] (2026-04-08T09:15Z) Raised the candidate to the first exact no-grinding profile that clears the current term-wise `128-bit` bar for the then-implemented statement: `nb_opened_evals = 3`, `decs_nb_opened_evals = 37`, `decs_eta = 10`, `rho = 2`, `beta = 3`, zero grinding bits.
+- [x] (2026-04-08T09:15Z) Wrote the exact no-grinding note for the implemented witness-free statement in `docs/crypto/tx_proof_smallwood_no_grinding_soundness.md`.
+- [x] (2026-04-08T17:02Z) Replaced the zero-polynomial placeholder with a real semantic SmallWood arithmetization over the native witness surface: duplicated scalar rows, Poseidon2 subtrace constraints, note-commitment/nullifier/Merkle bindings, spend-auth binding, selector routing, and balance equations.
+- [x] (2026-04-08T17:02Z) Added a fast LPPC witness-check entry point and wired the candidate prover to preflight the semantic witness before invoking the expensive PCS/ARK prover.
+- [x] (2026-04-08T20:41Z) Benchmarked the first full-semantic scalar SmallWood candidate honestly and found the first critical blocker: end-to-end proving works, but proofs were about `2.8 MB`, far above the shipped `354081`-byte Plonky3 baseline.
+- [x] (2026-04-08T23:58Z) Replaced the scalar fallback with the real `64`-lane packed semantic relation, fixed randomized-constraint interpolation and public-target ordering in the bridge, and got full packed candidate prove/verify roundtrips green.
+- [x] (2026-04-09T10:21Z) Added an exact serialized-proof projection for the packed candidate and locked it with fast tests. After the Rust engine fixes for randomized interpolation, full-row openings, and opening-point collisions, the current Rust SmallWood candidate first projected to `242124` bytes and emitted `242132` proof bytes under the narrower frozen-target-style note.
+- [x] (2026-04-09T12:04Z) Cut the first real prover hot spots. Witness interpolation is now parallel, DECS no longer Horner-evaluates every committed polynomial on all `4096` leaf points, and the bridge reuses a consecutive-domain evaluation cache for commit/open. This work moved the hot path into DECS domain-evaluation extension and PIOP construction.
+- [x] (2026-04-09T15:18Z) Corrected the no-grinding note to the active integrated bridge geometry and then cut the live bridge down again. The active integrated backend now proves `raw_witness_len = 276`, `lppc_row_count = 1430`, `nb_lvcs_cols = 484` instead of the earlier `2982`/`1001` bridge. The same no-grinding point (`decs_nb_evals = 4096`, `decs_nb_opened_evals = 65`) remains conservative on that smaller geometry. Under the active profile, the current candidate now projects to `224220` bytes, emits `224228` proof bytes on the passing release roundtrip, stays below both the shipped `354081`-byte tx proof and the `524288`-byte native `tx_leaf` cap, and the focused release runtimes are now about `1.9s` both directly and through the wrapped `tx_leaf` seam.
+- [x] (2026-04-09T19:41Z) Refactored the Rust SmallWood engine/native seam around an explicit `SmallwoodConstraintAdapter` statement object. The bridge path still proves `Bridge64V1`, but the prover, verifier, and projected-size path no longer take raw `(row_count, packing_factor, offsets, indices, coeffs)` tuples directly; they now consume a statement adapter that exposes the row-polynomial shape and nonlinear constraint kernel explicitly. This keeps the current bridge backend behavior unchanged, keeps `DirectPacked64V1` fail-closed, and isolates bridge-specific nonlinear assumptions to one adapter boundary instead of smearing them through the PCS plumbing.
+- [x] (2026-04-08T19:22Z) Retuned the active no-grinding DECS profile against the real `1430`-row bridge geometry instead of keeping the older rescue point. The current exact point is `decs_nb_evals = 32768`, `decs_nb_opened_evals = 22`, `decs_eta = 4`; it still clears the active term-wise `128-bit` floor, now projects to `108772` bytes, emits `108780` proof bytes on the passing release roundtrip, and beats the shipped `354081`-byte Plonky3 proof by about `3.25x`.
+- [x] (2026-04-08T23:41Z) Performed runtime surgery on the live Rust SmallWood engine without touching the active no-grinding profile or proof semantics: replaced the old generic `% p` field kernel with Goldilocks-native reductions/inversion, remeasured the traced release hot path, and cut the warmed direct roundtrip to about `3.7s` and the wrapped `tx_leaf` seam to about `4.1s`. The dominant `decs_commit -> domain_evals` stage on the direct warmed run dropped to about `3.4s`.
+- [x] (2026-04-08T23:58Z) Cleaned the dead bridge-helper warning surface in the Rust SmallWood frontend/semantics files and then attacked the actual remaining hot path instead of another micro-kernel: retuned the DECS point to the smallest power-of-two evaluation domain that still clears the no-grinding `128-bit` floor for the live `1430`-row bridge. The new exact point is `decs_nb_evals = 16384`, `decs_nb_opened_evals = 26`, `decs_eta = 3`; it projects to `112716` bytes, emits `112724` proof bytes on the passing release roundtrip, keeps the `3x` regression gate green, and cuts the traced direct `decs_commit -> domain_evals` stage to about `1.9s` with the full direct release roundtrip at about `2.1s`.
+- [x] (2026-04-09T16:11Z) Kept the same no-grinding `128-bit` DECS point and attacked the remaining DECS construction overhead directly. `decs_commit` now fills preallocated domain-evaluation rows with thread-local scratch instead of allocating and growing fresh vectors per row. The active proof still projects to `110844` bytes and emits `110852` bytes on the passing release roundtrip, the `3x` size gate stays green, the traced direct `decs_commit -> domain_evals` stage dropped again to about `1.96s`, the full direct release roundtrip is about `2.19s`, and the wrapped `superneo-hegemon` `tx_leaf` seam passes in about `2.19s`.
+- [x] (2026-04-09T17:26Z) Landed the first honest frontend shrink that the current row-polynomial engine can actually prove: the packed bridge no longer stores duplicated input-position rows, and the nullifier path now reconstructs position directly from the `32` Merkle direction bits through a linear constraint. The live integrated bridge is now `raw_witness_len = 274`, `lppc_row_count = 1428`, `nb_polys = 1432`, and `nb_lvcs_cols = 483`. Under the same no-grinding `16384 / 26 / 3` DECS point, the candidate now projects to `110772` bytes, emits `110780` proof bytes on the passing release roundtrip, the traced direct release roundtrip is about `1.30s`, and the warmed wrapped `superneo-hegemon` `tx_leaf` seam passes in about `1.33s`.
+- [x] (2026-04-09T18:54Z) Landed the second honest frontend shrink that the current row-polynomial engine can actually prove: the packed bridge no longer stores duplicated stable-selector rows, and the semantic kernel now derives the stable selector directly from the public balance-slot assets plus the stablecoin binding. The live integrated bridge is now `raw_witness_len = 272`, `lppc_row_count = 1426`, `nb_polys = 1430`, and `nb_lvcs_cols = 482`. Under the same no-grinding `16384 / 26 / 3` DECS point, the candidate now projects to `110700` bytes, emits `110708` proof bytes on the passing release roundtrip, the warmed direct release roundtrip is about `1.86s`, and the warmed wrapped `superneo-hegemon` `tx_leaf` seam passes in about `1.86s`.
+- [x] (2026-04-09T20:28Z) Landed the third honest frontend shrink and promoted the first secure `beta = 2` operating point. The packed bridge no longer stores duplicated input/output selector rows, and the semantic kernel now derives routing weights directly from the duplicated asset rows and the public balance-slot assets with low-degree slot-membership polynomials. The live integrated bridge is now `raw_witness_len = 264`, `lppc_row_count = 1418`, `nb_polys = 1422`, and `nb_lvcs_cols = 719`. The first `beta = 2` point at `16384 / 26 / 3` produced `102236` projected / `102244` actual bytes but only about `116.6` bits on the LVCS term, so it was rejected. The promoted exact no-grinding point is `beta = 2`, `decs_nb_evals = 16384`, `decs_nb_opened_evals = 29`, `decs_eta = 3`: it now projects to `106940` bytes, emits `106948` proof bytes on the passing release roundtrip, clears the term-wise `128-bit` floor again, and the warmed release runtimes are about `1.74s` directly and `1.98s` through the wrapped `superneo-hegemon` `tx_leaf` seam.
+- [x] (2026-04-08) Landed the fourth honest bridge shrink on the live compact path. The packed bridge no longer stores duplicated public witness rows; public values are now carried explicitly in the statement/native/semantic/engine boundary, and the stale bridge row-index helpers were corrected to use the full per-input secret span. The live integrated bridge is now `raw_witness_len = 264`, `expanded_witness_len = 90624`, `lppc_row_count = 1416`, `nb_polys = 1420`, and `nb_lvcs_cols = 718`. Under the same exact no-grinding `beta = 2`, `decs_nb_evals = 16384`, `decs_nb_opened_evals = 29`, `decs_eta = 3` point, the candidate now projects to `106881` bytes, emits `106881` proof bytes on the passing release roundtrip, clears the `524288`-byte native `tx_leaf` cap again, and the wrapped `superneo-hegemon` seam still passes in about `1.98s`.
+- [x] (2026-04-09T00:45Z) Forced the live candidate path to depend on the frozen packed frontend as a real invariant instead of leaving it as a dead test-only branch. The candidate prover and projected-size path now build one shared SmallWood witness context, validate the direct `934`-row packed object with `test_candidate_witness`, and only then build/prove the narrower bridge statement from the same context. This does not yet remove the bridge arithmetization, but it removes duplicate frontend derivations and turns direct/bridge divergence into an immediate failure instead of silent drift.
+- [x] (2026-04-09T01:12Z) Split the SmallWood engine API by explicit arithmetization mode. The Rust engine, native wrapper, and semantic witness-check path now distinguish `Bridge64V1` from `DirectPacked64V1` instead of implicitly overloading `row_count`, and the direct packed mode now fails explicitly in the proof engine rather than silently aliasing bridge semantics. This does not finish the direct packed prover rewrite, but it removes the last implicit engine-side lie about the `934`-row target.
+- [x] (2026-04-09T21:14Z) Materialized the frozen direct-packed statement as an explicit in-repo program surface instead of a pile of magic offsets. `smallwood_semantics.rs` now exposes `DirectPackedRange`, `DirectPackedInputPlan`, `DirectPackedOutputPlan`, and `DirectPackedProgram` for the canonical `934 x 64` matrix, and the live direct-packed witness checker now consumes that program to validate public/range/poseidon segments. This is not the final direct proving engine, but it gives the next matrix/gadget rewrite a concrete committed-object layout to target.
+- [x] (2026-04-08) Cut the first real direct-engine boundary instead of another bridge tweak. The repo now carries an explicit `DirectPackedPoseidonProgram` for the frozen `934 x 64` object, the direct witness checker validates those poseidon spans against the canonical witness-derived trace instead of one monolithic flat equality, and the SmallWood engine/semantics boundary now uses a typed, point-aware nonlinear evaluation view plus an explicit opened-witness bundle instead of smuggling raw row slices and naked `all_evals` vectors through the proof path. `Bridge64V1` is still the only proving mode, but the engine surface is now shaped for the direct-packed rewrite instead of hard-wiring the scalar-row assumption everywhere.
+- [x] (2026-04-09T22:11Z) Replaced the old ad hoc direct packed frontend checker with a real semantics-side matrix-aware nonlinear adapter. `test_candidate_witness_rust` now drives `DirectPacked64V1` through `PackedStatement::compute_constraints_u64` on a `DirectPackedMatrix` view, canonical raw-witness reserialization, public-input recomputation, and span-local poseidon checks all live behind that adapter, and the stale duplicate direct-check helpers are gone. This still does not make `DirectPacked64V1` a proving mode: the proof engine continues to fail closed because the current row-polynomial PCS/opening path only exposes one scalar per row polynomial to the verifier.
+- [x] (2026-04-08T23:34Z) Integrated `DirectPacked64V1` as a real alternate proof envelope instead of a dead engine mode. The engine now serializes a direct raw-witness payload bound to the transcript material, the frontend wrapper now carries the explicit arithmetization tag, and the verifier routes bridge vs direct mode honestly through the normal `TransactionProof` seam. Focused tests measured about `32109` bytes for the direct payload versus `106881` projected / `106881` actual bytes for the compact bridge path, so the shipped candidate backend remains on `Bridge64V1`.
+- [x] (2026-04-09T23:58Z) Rebuilt the direct alternate envelope around a real matrix-aware opening design instead of the earlier “raw witness only” placeholder. `DirectPacked64V1` proofs now carry an explicit opened-witness mode, the bridge path remains pinned to `RowScalars`, and the direct alternate path now carries a transcript-bound sampled matrix-opening bundle (`matrix_root`, derived row schedule, opened rows, auth paths) alongside the raw witness payload. Focused tests now measure about `39009` bytes for the direct alternate envelope, while the compact bridge candidate moved slightly to `106885` projected / `106885` actual bytes because the proof object now carries an explicit opening-mode tag and bridge/direct mode mismatches fail closed.
+- [x] (2026-04-10T00:24Z) Hardened the new matrix-aware direct opening contract. The sampled matrix-opening schedule is now derived from the direct raw-witness payload digest instead of raw transcript bytes alone, `DirectPacked64V1` no longer accepts a missing matrix-opening payload, and focused regressions now reject tampered direct auth paths instead of only proving the happy path.
+- [x] (2026-04-09T19:09Z) Hit the hard-stop condition honestly and killed the witness-carrying direct lane. `DirectPacked64V1` now reuses the same row-aligned `1416`-row local-gate geometry and the same normal row-scalar PCS/opening path as `Bridge64V1`, with no raw-witness payload and no matrix-opening side payload. Focused regressions require the direct projection to stay at or below the compact bridge baseline; the current live projection is `106884` bytes, the passing release roundtrip emits `106884` proof bytes, the compact direct release run finishes in about `2.23s`, and the wrapped `superneo-hegemon` seam finishes in about `2.69s`.
+- [x] (2026-04-09T17:52Z) Took the first real locality step inside the direct semantics kernel. `compute_direct_packed_constraints_u64` no longer treats the whole public vector as one monolithic replay check: public nullifiers, output commitments, and the Merkle root are now bound locally from the named Poseidon span outputs of the canonical `934 x 64` program, while the remaining public prefix stays under the aggregate equality check. Added focused regressions that mutate those direct public slots and require the direct witness checker to fail cleanly.
+- [x] (2026-04-08T22:14Z) Fixed the candidate bridge so polynomial constraints are interpolated from randomized witness-polynomial evaluations instead of constant coefficients. The fast LPPC witness checks stay green, the scalar candidate no longer dies in the old transcript-mismatch path, and the remaining blocker is now the scalar geometry itself plus the cost of full prove/verify.
+- [x] (2026-04-08T20:41Z) Fixed two real vendor/adapter bugs exposed by that run: uninitialized polynomial coefficients in `get_constraint_pol_polynomials`, and a `piop_recompute_transcript` corner case where the linear recompute path underflowed `degree - nb_evals` when `out_plin_degree == nb_opened_evals`.
+- [x] (2026-04-08T23:29Z) Built the real packed SmallWood frontend material in Rust. `transaction-circuit` now reconstructs the exact native raw witness (`3991` elements), adds the missing `balance_tag` Poseidon2 hash trace, and packs the expanded witness into the frozen `64`-lane / `934`-row statement shape used by the size probe.
+- [x] (2026-04-09T02:08Z) Killed the recursive-compression detour and restored `SmallwoodCandidate` to the direct packed SmallWood/native bridge path. The active backend seam no longer routes through `recursive_candidate.rs`, and the fast packed-bridge witness check is green on the restored path.
+- [x] (2026-04-09T03:11Z) Moved packed SmallWood semantic witness checking out of the C bridge and into a new Rust kernel (`smallwood_semantics.rs`). `test_candidate_witness` now validates the active packed `64`-lane bridge relation in Rust, so the remaining vendor/FFI wall is the proof engine and proof bytes, not the semantic constraint checker.
+- [x] (2026-04-09T05:40Z) Removed the dead C/vendor SmallWood build path. `transaction-circuit` no longer compiles `build.rs`, `smallwood_candidate.c`, or `vendor/smallwood-prototype`; the active candidate backend is now Rust-native end to end.
+- [x] Cut the current Rust SmallWood prover runtime to something operationally sane for the active focused release path. The live no-grinding profile and proof semantics are unchanged, but the Rust engine now uses Goldilocks-native arithmetic and the warmed release roundtrip is down in the low single-digit seconds.
+
+## Surprises & Discoveries
+
+- Observation: the smallest safe migration seam is not the lattice folding layer. It is the per-transaction proof object plus the native `tx_leaf` artifact format.
+  Evidence: `circuits/superneo-hegemon/src/lib.rs` verifies `receipt_root` by replaying verified leaves, so the fold path only needs a stable verified-leaf object and does not care which tx prover produced it.
+
+- Observation: adding explicit backend identity to the canonical receipt itself would have changed the tx-leaf relation statement surface immediately and forced a wider migration than necessary.
+  Evidence: `CanonicalTxValidityReceiptRelation` binds the receipt bytes directly into the tx-leaf statement digest. Appending the backend byte to the native artifact and binding it through `proof_digest` gives a safer first seam.
+
+- Observation: backward compatibility for native `tx_leaf` artifacts is cheap if the backend selector is appended at the end of the artifact instead of inserted in the middle.
+  Evidence: old artifacts can be decoded by checking for trailing bytes after the leaf proof section and defaulting to `Plonky3Fri` when no selector byte is present.
+
+- Observation: the old native `tx_leaf` builder was not actually release-honest in debug builds.
+  Evidence: the first backward-compatibility test failed with `proof FRI profile mismatch: expected log_blowup=4 num_queries=32, got log_blowup=3 num_queries=8`, which came from `build_native_tx_leaf_artifact_bytes_with_params` using `TransactionProofParams::production_for_version` instead of a release-bound profile.
+
+- Observation: the old candidate no-grinding profile did not actually clear `128` bits once the `ε3` and `ε4` terms were instantiated honestly.
+  Evidence: with `nb_opened_evals = 2`, `ε3` only landed around `2^-110`, and with `decs_nb_opened_evals = 21`, `ε4` only landed around `2^-76`, so the exact no-grinding note forced a parameter bump before the milestone could be called complete.
+
+- Observation: the scalar semantic fallback was useful for proving the relation, but it killed the SmallWood proof-size story.
+  Evidence: the scalar fallback proved the real native relation but landed around `2.8 MB` because `packing_factor = 1` left `55,526` witness rows and forced the proof to ship three opened evaluation vectors over essentially the whole scalar witness. The later packed Rust candidate first cut the exact serialized envelope to `242124` bytes under the stale narrower note, then regressed to the wider `2982`-row bridge, then dropped to `224220` projected / `224228` actual on the corrected `1430`-row integrated bridge, then hit `108772` projected / `108780` actual at the first exact no-grinding DECS retune, then moved to `112716` projected / `112724` actual at the faster `16384 / 26 / 3` DECS point, then sat at `110772` projected / `110780` actual after the first real bridge-frontend shrink (`1428` rows instead of `1430`), then at `110700` projected / `110708` actual after the second valid bridge shrink (`1426` rows instead of `1428`), then at `106940` projected / `106948` actual after the third valid bridge shrink (`1418` rows instead of `1426`) plus the promoted secure `beta = 2`, `16384 / 29 / 3` point, and now at `106881` projected / `106881` actual after removing the duplicated public witness rows and threading public values explicitly through the live bridge statement.
+
+- Observation: the current blocker moved again, from size to proving cost.
+  Evidence: a release trace of the packed Rust candidate reports about `24s` in `witness_polys` and about `49s` in `pcs_commit` before the later PIOP/opening stages. The current bottleneck is the prover’s material/interpolation path, not proof bytes.
+
+- Observation: the generic `% p` arithmetic was still a real runtime bug even after the earlier structural cuts.
+  Evidence: once the live Rust engine switched to Goldilocks-native reductions and inversion, the warmed direct release roundtrip dropped to about `3.7s`, the wrapped `tx_leaf` seam dropped to about `4.1s`, and the direct `decs_commit -> domain_evals` stage alone fell to about `3.4s`.
+
+- Observation: after the Goldilocks-native arithmetic pass, the next big runtime lever was the DECS parameter point itself, not more local arithmetic tricks.
+  Evidence: moving from `32768 / 22 / 4` to `16384 / 26 / 3` kept the term-wise no-grinding `128-bit` floor, moved the projected proof from `108772` bytes to `112716` bytes, and cut the traced direct `decs_commit -> domain_evals` stage from about `3.4s` to about `1.9s` with the full direct release roundtrip dropping to about `2.1s`. The later bridge shrinks kept the same DECS point, then moved the proof to `110772` projected / `110780` actual at `1428` rows with a traced warmed direct roundtrip around `1.30s`, then to `110700` projected / `110708` actual at `1426` rows with a traced warmed direct roundtrip around `1.86s` and `domain_evals` around `1.64s`. The promoted secure `beta = 2` point then kept `N = 16384` but raised `ℓ` from `26` to `29`, landing at `106940` projected / `106948` actual with traced warmed direct runtime around `1.74s` and `domain_evals` around `1.54s`; the later public-row removal then cut the compact bridge again to `106881` projected / `106881` actual while keeping the wrapped `tx_leaf` seam at about `1.98s`.
+
+- Observation: the missing blocker moved from “prove the right thing” to “prove it fast enough.”
+  Evidence: the new LPPC witness-check path accepts the honest witness and rejects a one-word mutation immediately, the randomized-constraint interpolation bug in the scalar bridge is fixed, but the integrated candidate is still too large and too expensive to treat as a normal test-path backend.
+
+- Observation: the packed frontend numbers were not aspirational; they were reproducible from code once the builder stopped using the 536-word shortcut.
+  Evidence: `build_packed_smallwood_frontend_material_from_witness` now lands exactly on `public_value_count = 78`, `raw_witness_len = 3991`, `poseidon_permutation_count = 145`, `expanded_witness_len = 59749`, `lppc_row_count = 934`, and `lppc_packing_factor = 64`, and the unit test `packed_smallwood_frontend_matches_expected_shape` passes on the real sample witness.
+
+- Observation: the first SmallWood backend bugs were in Hegemon’s bridge/recompute logic, not just in theory.
+  Evidence: `piop_recompute_transcript` tried to call `poly_restore` with `degree = 3` and `nb_points = 4` in the linear recompute path, which underflowed `degree - nb_evals`. The repo now patches that path to interpolate directly when there are no high-degree terms, and the active engine is Rust-native.
+
+- Observation: the version-owned backend seam was correct; the test failure was the point.
+  Evidence: a candidate `tx_leaf` built under the default version was rejected with `native tx-leaf proof backend mismatch`, which forced the correct fix: add an explicit candidate version binding instead of weakening backend dispatch.
+
+## Decision Log
+
+- Decision: treat tx proof backend selection as a version-owned protocol parameter.
+  Rationale: the backend choice is part of the consensus/security claim and must be committed in the manifest just like the release FRI profile.
+  Date/Author: 2026-04-07 / Codex
+
+- Decision: keep the lattice folding layer unchanged while replacing the per-transaction proof backend.
+  Rationale: the folding layer is already the stable verified-leaf aggregation surface. Replacing both layers at once would mix two independent risks and make attribution impossible.
+  Date/Author: 2026-04-07 / Codex
+
+- Decision: carry the tx proof backend explicitly in native `tx_leaf` artifacts, but bind it to the canonical receipt indirectly through the proof digest.
+  Rationale: this preserves the existing tx-leaf statement structure while still preventing backend aliasing.
+  Date/Author: 2026-04-07 / Codex
+
+- Decision: make `SmallwoodCandidate` fail closed everywhere until the semantic frontend and verifier exist.
+  Rationale: an explicit unsupported error is better than accidental acceptance or half-routed proofs.
+  Date/Author: 2026-04-07 / Codex
+
+- Decision: force the native `tx_leaf` builder onto the release tx-proof profile, even in debug builds.
+  Rationale: native product artifacts must reflect the release verifier surface. A debug-fast tx proof is useful for local proving experiments, but it is the wrong thing to embed in a native artifact that claims to be product-valid.
+  Date/Author: 2026-04-07 / Codex
+
+- Decision: replace the old random-linear-check envelope with a witness-free public statement before doing any more semantic work.
+  Rationale: carrying the witness in proof bytes and binding it with dense transcript-derived checks was the wrong surface for a long-lived backend seam. The correct candidate surface is direct public values plus fixed witness-shape metadata.
+  Date/Author: 2026-04-08 / Codex
+
+- Decision: tune the candidate SmallWood parameters to the first exact no-grinding profile that clears the term-wise `128-bit` bar for the implemented statement.
+  Rationale: an “exact no-grinding note” that merely records failure would have been lazy here because the parameter fix was local and cheap. The later active-geometry correction matters too: the first successful point for the live integrated backend was `nb_opened_evals = 3`, `decs_nb_evals = 4096`, `decs_nb_opened_evals = 65`, `decs_eta = 10`, `rho = 2`, `beta = 3`, the first materially smaller active point was `nb_opened_evals = 3`, `decs_nb_evals = 32768`, `decs_nb_opened_evals = 22`, `decs_eta = 4`, `rho = 2`, `beta = 3`, and the current faster live point is `nb_opened_evals = 3`, `decs_nb_evals = 16384`, `decs_nb_opened_evals = 26`, `decs_eta = 3`, `rho = 2`, `beta = 3`.
+  Date/Author: 2026-04-08 / Codex
+
+- Decision: bind `SmallwoodCandidate` to an explicit non-default protocol version instead of accepting it under the current shipped version.
+  Rationale: backend selection is consensus-relevant. The candidate path should use the same version-owned contract as the shipped Plonky3 path.
+  Date/Author: 2026-04-08 / Codex
+
+## Outcomes & Retrospective
+
+The second milestone is now complete too. The repo no longer just “has a seam.” It has a working candidate backend that proves and verifies a witness-free public SmallWood statement over a duplicated-column semantic native witness, dispatches through the version-owned backend selector, builds native `tx_leaf` artifacts, and participates in `receipt_root` aggregation without changing the folding layer. The shipped lane still defaults to the current Plonky3 family, and the candidate lane is isolated under its own non-default version binding.
+
+This still does not make SmallWood the default shipped backend, but it materially changes the state of the branch. The current candidate statement now has both an exact no-grinding `128-bit` note and a real semantic arithmetization over the native witness surface, the active integrated packed frontend projects to an exact serialized proof envelope of `108012` bytes while the passing release roundtrip emits `108012` proof bytes, and the latest focused release runs are about `1.93s` directly and `3.30s` through the wrapped `tx_leaf` seam. That is about `3.28x` smaller than the shipped `354081`-byte tx-proof baseline, still below the `524288`-byte native `tx_leaf` cap, and no longer stuck in the multi-second-high-single-digit range on runtime. What remains open is product hardening and future structural research toward the frozen `934`-row target, not proof-size feasibility.
+
+One dead branch is now explicitly gone: recursive compression of the shipped tx STARK is no longer the active `SmallwoodCandidate` path. That experiment attacked the wrong object, was too memory-heavy for normal local iteration, and did not belong in the live backend seam. The active candidate path is back where it should be: direct proving over the compact native witness surface.
+
+## Context and Orientation
+
+The files that matter are tightly scoped.
+
+`protocol/versioning/src/lib.rs` defines version-owned protocol parameters. It now owns both the tx proof backend id and the release FRI profile for the current backend. Anything that claims to be consensus-relevant must start here.
+
+`runtime/src/manifest.rs` projects those version-owned parameters into the protocol manifest and kernel family parameter commitment. If a tx proof backend is meant to be real, it must be visible here.
+
+`circuits/transaction/src/proof.rs` defines the high-level transaction proof object used across the wallet, node, and native leaf builder. This is the correct place to stop assuming that every proof byte string is a Plonky3 proof.
+
+`circuits/superneo-hegemon/src/lib.rs` is the bridge between per-transaction proofs and the lattice folding layer. The native `tx_leaf` artifact format lives here, and this file is the right place to carry the backend selector into product-visible artifacts.
+
+`docs/crypto/tx_proof_smallwood_size_probe.md` and `docs/crypto/tx_proof_smallwood_investigation.md` record why the target backend is SmallWood and why the target witness is `NativeTxValidityRelation`, not the old AIR trace.
+
+A “backend” in this plan means the family of per-transaction proof system used to prove tx validity. Today that backend is the shipped Plonky3 STARK. The future candidate is SmallWood. The block-level lattice folding backend is a different layer and is not being replaced by this plan.
+
+## Plan of Work
+
+The first phase is the seam, which is now landed. Keep the protocol manifest authoritative for tx proof backend selection, keep `TransactionProof` carrying explicit backend identity, and keep native `tx_leaf` artifacts carrying the backend selector byte. Any future tx proof backend must route through those seams.
+
+The second phase is the witness-free SmallWood frontend. The scalar prototype already served its purpose: it proved the real semantics, exposed the early bridge/prover bugs, and then got superseded by the packed row-aligned frontend that the current PCS can actually prove succinctly. This work does not alter the lattice folding layer. It only changes the per-transaction proof producer and verifier.
+
+The third phase is the backend adapter. That part is now landed: `SmallwoodCandidate` proves and verifies behind the explicit backend dispatch in `circuits/transaction/src/proof.rs`, the exact no-grinding note is checked in, and the fast LPPC witness-check validates the semantic statement before the heavy prover runs. The earlier witness-carrying direct alternate envelope is also dead now. `DirectPacked64V1` uses the same succinct row-scalar PCS/opening path as `Bridge64V1`, and regressions require it to stay at or below the compact bridge baseline instead of smuggling witness material through the proof wrapper.
+
+The current final phase is product hardening and honest stop conditions. Keep the live compact path green, keep direct mode succinct with no side payloads, and only pursue future structural work if it materially improves on the current `108012`-byte baseline without breaking the exact no-grinding `128-bit` profile.
+
+## Concrete Steps
+
+Work from the repository root.
+
+1. Validate the architecture seam:
+
+       cargo test -p runtime manifest_includes_default_tx_stark_profile kernel_manifest_commits_tx_stark_profiles -- --nocapture
+       cargo test -p transaction-circuit --test transaction verification_fails_for_unimplemented_backend --features plonky3-e2e --release -- --nocapture
+       cargo test -p superneo-hegemon native_tx_leaf_artifact_defaults_missing_backend_byte_to_plonky3 native_tx_leaf_artifact_rejects_unimplemented_backend -- --nocapture
+
+2. Keep the compact and direct SmallWood paths locked to the same succinct row-scalar PCS geometry:
+
+       cargo test -p transaction-circuit packed_smallwood_frontend_ -- --nocapture
+       cargo test -p transaction-circuit direct_packed_ -- --nocapture
+       cargo test -p transaction-circuit smallwood_candidate_direct_ -- --nocapture
+
+3. Reconfirm the live performance and size floor whenever the arithmetization changes:
+
+       cargo test -p transaction-circuit smallwood_candidate_proof_reaches_three_x_reduction_against_shipped_plonky3 -- --nocapture
+       CARGO_TARGET_DIR=/tmp/hegemon-smallwood-rowaligned cargo test -p transaction-circuit --release --test transaction smallwood_candidate_roundtrip_verifies -- --ignored --nocapture
+       CARGO_TARGET_DIR=/tmp/hegemon-smallwood-rowaligned cargo test -p superneo-hegemon --release native_tx_leaf_artifact_accepts_smallwood_candidate_backend -- --ignored --nocapture
+
+## Validation and Acceptance
+
+This plan’s current milestone is complete only if all of the following are true.
+
+The runtime manifest commits the tx proof backend family and the tx FRI profile together.
+
+The current Plonky3 transaction proof still builds and verifies.
+
+Changing a proof or native artifact to `SmallwoodCandidate` fails cleanly with an unsupported-backend error instead of misrouting into the Plonky3 verifier.
+
+Removing the trailing backend byte from a freshly built native `tx_leaf` artifact still verifies, proving backward-compatible decode.
+
+The current hard-stop milestone is complete only if any alternate direct arithmetization remains succinct: no raw-witness payload, no matrix-opening payload, and proof size at or below the compact bridge baseline. If that condition stops holding, the direct lane should be deleted instead of being kept alive as a fake success.
+
+## Idempotence and Recovery
+
+The current seam changes are additive and safe to rerun. The tests above do not mutate persistent state. Native artifact backward compatibility is preserved by defaulting missing backend bytes to the current Plonky3 backend.
+
+If the SmallWood branch later fails, the seam still remains valuable: it leaves the current shipped backend untouched while preserving a clean migration boundary for future proof families.
+
+## Artifacts and Notes
+
+The current measured proof-size motivation remains:
+
+    current tx proof: 354081 bytes
+    SmallWood structural probe: roughly 75128 .. 120568 bytes
+
+The seam landed in the files below:
+
+    protocol/versioning/src/lib.rs
+    runtime/src/manifest.rs
+    circuits/transaction/src/proof.rs
+    circuits/superneo-hegemon/src/lib.rs
+
+## Interfaces and Dependencies
+
+The following interfaces must exist and remain stable after this milestone:
+
+In `protocol/versioning/src/lib.rs`, define:
+
+    pub enum TxProofBackend {
+        Plonky3Fri,
+        SmallwoodCandidate,
+    }
+
+    pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend>
+
+In `circuits/transaction/src/proof.rs`, keep:
+
+    pub struct TransactionProof {
+        pub backend: TxProofBackend,
+        pub stark_proof: Vec<u8>,
+        ...
+    }
+
+    pub fn transaction_proof_digest_from_parts(
+        backend: TxProofBackend,
+        proof_bytes: &[u8],
+    ) -> [u8; 48]
+
+    pub fn verify_transaction_proof_bytes_for_backend(
+        backend: TxProofBackend,
+        proof_bytes: &[u8],
+        pub_inputs: &TransactionPublicInputsP3,
+        version: VersionBinding,
+    ) -> Result<(), TransactionCircuitError>
+
+In `circuits/superneo-hegemon/src/lib.rs`, keep:
+
+    pub struct NativeTxLeafArtifact {
+        pub proof_backend: TxProofBackend,
+        ...
+    }
+
+and keep decoding backward-compatible by defaulting missing backend bytes to `Plonky3Fri`.
+
+Update note at 2026-04-07T18:25Z: this plan was created after the first backend-replacement seam had already landed. It now serves as the authoritative guide for finishing the SmallWood migration without destabilizing the shipped lattice folding path.

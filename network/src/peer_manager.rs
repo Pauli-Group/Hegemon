@@ -1,18 +1,40 @@
 use crate::PeerId;
-use crate::p2p::WireMessage;
+use crate::p2p::{CoordinationMessage, WireMessage};
+use crate::queue_budget::{ByteBudget, BytePermit};
+use crate::{GossipMessage, ProtocolMessage};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 const DEFAULT_MAX_PEERS: usize = 64;
+const MAX_ADDRESS_BOOK_PEERS: usize = 1024;
+const MAX_ADDRESSES_PER_PEER: usize = 64;
+const MAX_STATIC_ADDRESSES: usize = 1024;
+const MAX_PEER_OUTBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+
+pub type PeerSessionId = u64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AddPeerResult {
+    Accepted,
+    Replaced(PeerSessionId),
+    RejectedAtCapacity,
+}
 
 struct PeerEntry {
     peer_id: PeerId,
     addr: SocketAddr,
-    tx: mpsc::Sender<WireMessage>,
+    tx: mpsc::Sender<QueuedWireMessage>,
+    session_id: PeerSessionId,
     last_seen: Instant,
     score: i32,
+}
+
+pub struct QueuedWireMessage {
+    pub(crate) msg: WireMessage,
+    _permit: BytePermit,
 }
 
 pub struct PeerManager {
@@ -21,6 +43,7 @@ pub struct PeerManager {
     static_addresses: HashSet<SocketAddr>,
     advertised: HashMap<PeerId, HashSet<SocketAddr>>,
     max_peers: usize,
+    outbound_budget: ByteBudget,
 }
 
 impl Default for PeerManager {
@@ -37,6 +60,7 @@ impl PeerManager {
             static_addresses: HashSet::new(),
             advertised: HashMap::new(),
             max_peers,
+            outbound_budget: ByteBudget::new(MAX_PEER_OUTBOUND_QUEUE_BYTES),
         }
     }
 
@@ -44,25 +68,32 @@ impl PeerManager {
         self.peers.len()
     }
 
-    pub fn add_peer(&mut self, peer_id: PeerId, addr: SocketAddr, tx: mpsc::Sender<WireMessage>) {
-        self.record_addresses(peer_id, [addr]);
-
+    pub fn try_add_peer(
+        &mut self,
+        peer_id: PeerId,
+        addr: SocketAddr,
+        tx: mpsc::Sender<QueuedWireMessage>,
+        session_id: PeerSessionId,
+        dialable_addr: bool,
+    ) -> AddPeerResult {
+        if dialable_addr {
+            self.record_addresses(peer_id, [addr]);
+        }
         if let std::collections::hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer_id) {
+            let old_session = entry.get().session_id;
             entry.insert(PeerEntry {
                 peer_id,
                 tx,
                 addr,
+                session_id,
                 last_seen: Instant::now(),
                 score: 0,
             });
-            return;
+            return AddPeerResult::Replaced(old_session);
         }
 
-        if self.max_peers > 0
-            && self.peers.len() >= self.max_peers
-            && let Some(evicted) = self.lowest_score_peer()
-        {
-            self.peers.remove(&evicted);
+        if self.max_peers > 0 && self.peers.len() >= self.max_peers {
+            return AddPeerResult::RejectedAtCapacity;
         }
 
         self.peers.insert(
@@ -71,15 +102,31 @@ impl PeerManager {
                 peer_id,
                 tx,
                 addr,
+                session_id,
                 last_seen: Instant::now(),
                 score: 0,
             },
         );
+        AddPeerResult::Accepted
     }
 
     pub fn remove_peer(&mut self, peer_id: &PeerId) {
         self.peers.remove(peer_id);
         self.advertised.remove(peer_id);
+    }
+
+    pub fn remove_peer_session(
+        &mut self,
+        peer_id: &PeerId,
+        session_id: PeerSessionId,
+    ) -> Option<SocketAddr> {
+        let addr = match self.peers.get(peer_id) {
+            Some(entry) if entry.session_id == session_id => entry.addr,
+            _ => return None,
+        };
+        self.peers.remove(peer_id);
+        self.advertised.remove(peer_id);
+        Some(addr)
     }
 
     pub fn max_peers(&self) -> usize {
@@ -92,6 +139,12 @@ impl PeerManager {
 
     pub fn peer_address(&self, peer_id: &PeerId) -> Option<SocketAddr> {
         self.peers.get(peer_id).map(|entry| entry.addr)
+    }
+
+    pub fn is_active_session(&self, peer_id: &PeerId, session_id: PeerSessionId) -> bool {
+        self.peers
+            .get(peer_id)
+            .is_some_and(|entry| entry.session_id == session_id)
     }
 
     pub fn connected_peers(&self) -> Vec<(PeerId, SocketAddr)> {
@@ -109,20 +162,55 @@ impl PeerManager {
     }
 
     pub async fn broadcast(&self, msg: WireMessage) {
+        self.broadcast_except(None, msg).await;
+    }
+
+    pub async fn broadcast_except(&self, exclude: Option<&PeerId>, msg: WireMessage) {
         for entry in self.peers.values() {
-            let _ = entry.tx.send(msg.clone()).await;
+            if exclude.is_some_and(|peer_id| peer_id == &entry.peer_id) {
+                continue;
+            }
+            self.try_queue_to_entry(entry, msg.clone());
         }
     }
 
     pub async fn send_to(&self, peer_id: &PeerId, msg: WireMessage) {
         if let Some(entry) = self.peers.get(peer_id) {
-            let _ = entry.tx.send(msg).await;
+            self.try_queue_to_entry(entry, msg);
         }
     }
 
     pub async fn ping_all(&self) {
         for entry in self.peers.values() {
-            let _ = entry.tx.send(WireMessage::Ping).await;
+            self.try_queue_to_entry(entry, WireMessage::Ping);
+        }
+    }
+
+    fn try_queue_to_entry(&self, entry: &PeerEntry, msg: WireMessage) {
+        let bytes = wire_message_queue_bytes(&msg);
+        let Some(permit) = self.outbound_budget.try_acquire(bytes) else {
+            warn!(
+                peer = ?entry.peer_id,
+                addr = %entry.addr,
+                bytes,
+                "dropping outbound peer message over byte queue budget"
+            );
+            return;
+        };
+        if entry
+            .tx
+            .try_send(QueuedWireMessage {
+                msg,
+                _permit: permit,
+            })
+            .is_err()
+        {
+            warn!(
+                peer = ?entry.peer_id,
+                addr = %entry.addr,
+                bytes,
+                "dropping outbound peer message because queue is full or closed"
+            );
         }
     }
 
@@ -150,14 +238,31 @@ impl PeerManager {
         peer_id: PeerId,
         addrs: impl IntoIterator<Item = SocketAddr>,
     ) {
+        if !self.address_book.contains_key(&peer_id)
+            && self.address_book.len() >= MAX_ADDRESS_BOOK_PEERS
+        {
+            return;
+        }
         let entry = self.address_book.entry(peer_id).or_default();
         for addr in addrs {
+            if entry.len() >= MAX_ADDRESSES_PER_PEER {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             entry.insert(addr);
         }
     }
 
     pub fn record_static_addresses(&mut self, addrs: impl IntoIterator<Item = SocketAddr>) {
         for addr in addrs {
+            if self.static_addresses.len() >= MAX_STATIC_ADDRESSES {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             self.static_addresses.insert(addr);
         }
     }
@@ -173,6 +278,12 @@ impl PeerManager {
     ) {
         let entry = self.advertised.entry(peer_id).or_default();
         for addr in addrs {
+            if entry.len() >= MAX_ADDRESSES_PER_PEER {
+                break;
+            }
+            if !is_recordable_addr(addr) {
+                continue;
+            }
             entry.insert(addr);
         }
     }
@@ -220,18 +331,63 @@ impl PeerManager {
         exclude.insert(local_addr);
         self.sample_addresses(limit, &exclude)
     }
+}
 
-    fn lowest_score_peer(&self) -> Option<PeerId> {
-        self.peers
-            .values()
-            .min_by_key(|entry| entry.score)
-            .map(|entry| entry.peer_id)
+fn is_recordable_addr(addr: SocketAddr) -> bool {
+    addr.port() != 0 && !addr.ip().is_unspecified()
+}
+
+fn wire_message_queue_bytes(msg: &WireMessage) -> usize {
+    const OVERHEAD: usize = 128;
+    match msg {
+        WireMessage::Ping | WireMessage::Pong => OVERHEAD,
+        WireMessage::Gossip(msg) => OVERHEAD + gossip_message_bytes(msg),
+        WireMessage::Proto(msg) => OVERHEAD + protocol_message_bytes(msg),
+        WireMessage::AddrExchange(addrs) => OVERHEAD + compact_address_list_bytes(addrs.len()),
+        WireMessage::Coordinate(msg) => OVERHEAD + coordination_message_bytes(msg),
     }
+}
+
+fn protocol_message_bytes(msg: &ProtocolMessage) -> usize {
+    16usize.saturating_add(msg.payload.len())
+}
+
+fn gossip_message_bytes(msg: &GossipMessage) -> usize {
+    match msg {
+        GossipMessage::Transaction(payload)
+        | GossipMessage::Block(payload)
+        | GossipMessage::Evidence(payload) => payload.len(),
+        GossipMessage::Addresses(addrs) => compact_address_list_bytes(addrs.len()),
+    }
+}
+
+fn coordination_message_bytes(msg: &CoordinationMessage) -> usize {
+    match msg {
+        CoordinationMessage::GetAddr { .. } => 8,
+        CoordinationMessage::Addr { addrs } => compact_address_list_bytes(addrs.len()),
+        CoordinationMessage::PunchRequest { .. } | CoordinationMessage::PunchResponse { .. } => 64,
+        CoordinationMessage::RelayRegistration { reachable } => {
+            compact_address_list_bytes(reachable.len())
+        }
+    }
+}
+
+fn compact_address_list_bytes(count: usize) -> usize {
+    count.saturating_mul(24).saturating_add(8)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queued_for_test(msg: WireMessage) -> QueuedWireMessage {
+        let budget = ByteBudget::new(1024);
+        let permit = budget.try_acquire(1).expect("test permit");
+        QueuedWireMessage {
+            msg,
+            _permit: permit,
+        }
+    }
 
     #[test]
     fn samples_addresses_with_exclusions() {
@@ -271,5 +427,103 @@ mod tests {
         let candidates = manager.address_candidates(local, &connected, 4);
 
         assert_eq!(candidates, vec![addr_known]);
+    }
+
+    #[test]
+    fn record_addresses_filters_and_caps_per_peer_entries() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [4u8; 32];
+        let mut addrs = (0..(MAX_ADDRESSES_PER_PEER + 8))
+            .map(|i| format!("127.0.0.1:{}", 10_000 + i).parse().unwrap())
+            .collect::<Vec<SocketAddr>>();
+        addrs.push("0.0.0.0:30333".parse().unwrap());
+        addrs.push("127.0.0.1:0".parse().unwrap());
+
+        manager.record_addresses(peer, addrs);
+        let mut exclude = HashSet::new();
+        let sample = manager.sample_addresses(MAX_ADDRESSES_PER_PEER + 16, &exclude);
+        assert_eq!(sample.len(), MAX_ADDRESSES_PER_PEER);
+
+        exclude.extend(sample);
+        assert!(manager.sample_addresses(1, &exclude).is_empty());
+    }
+
+    #[tokio::test]
+    async fn peer_sends_do_not_await_full_queues() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [5u8; 32];
+        let addr: SocketAddr = "127.0.0.1:9301".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        tx.try_send(queued_for_test(WireMessage::Ping))
+            .expect("fill queue");
+        assert_eq!(
+            manager.try_add_peer(peer, addr, tx, 1, true),
+            AddPeerResult::Accepted
+        );
+
+        manager.send_to(&peer, WireMessage::Pong).await;
+        manager.broadcast(WireMessage::Pong).await;
+        manager.ping_all().await;
+    }
+
+    #[tokio::test]
+    async fn peer_capacity_rejects_without_evicting_live_session() {
+        let mut manager = PeerManager::new(1);
+        let peer_a: PeerId = [6u8; 32];
+        let peer_b: PeerId = [7u8; 32];
+        let addr_a: SocketAddr = "127.0.0.1:9401".parse().unwrap();
+        let addr_b: SocketAddr = "127.0.0.1:9402".parse().unwrap();
+        let (tx_a, mut rx_a) = mpsc::channel(4);
+        let (tx_b, mut rx_b) = mpsc::channel(4);
+
+        assert_eq!(
+            manager.try_add_peer(peer_a, addr_a, tx_a, 10, true),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            manager.try_add_peer(peer_b, addr_b, tx_b, 20, true),
+            AddPeerResult::RejectedAtCapacity
+        );
+        assert!(manager.is_active_session(&peer_a, 10));
+        assert!(!manager.is_active_session(&peer_b, 20));
+
+        manager.broadcast(WireMessage::Ping).await;
+        assert!(matches!(
+            rx_a.try_recv().map(|queued| queued.msg),
+            Ok(WireMessage::Ping)
+        ));
+        assert!(rx_b.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn replacing_same_peer_closes_old_session_and_ignores_stale_remove() {
+        let mut manager = PeerManager::new(2);
+        let peer: PeerId = [8u8; 32];
+        let old_addr: SocketAddr = "127.0.0.1:9501".parse().unwrap();
+        let new_addr: SocketAddr = "127.0.0.1:9502".parse().unwrap();
+        let (old_tx, mut old_rx) = mpsc::channel(4);
+        let (new_tx, mut new_rx) = mpsc::channel(4);
+
+        assert_eq!(
+            manager.try_add_peer(peer, old_addr, old_tx, 101, true),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            manager.try_add_peer(peer, new_addr, new_tx, 202, true),
+            AddPeerResult::Replaced(101)
+        );
+        assert!(old_rx.recv().await.is_none());
+        assert!(!manager.is_active_session(&peer, 101));
+        assert!(manager.is_active_session(&peer, 202));
+        assert_eq!(manager.remove_peer_session(&peer, 101), None);
+        assert!(manager.is_active_session(&peer, 202));
+
+        manager.send_to(&peer, WireMessage::Pong).await;
+        assert!(matches!(
+            new_rx.recv().await.map(|queued| queued.msg),
+            Some(WireMessage::Pong)
+        ));
+        assert_eq!(manager.remove_peer_session(&peer, 202), Some(new_addr));
+        assert_eq!(manager.peer_count(), 0);
     }
 }

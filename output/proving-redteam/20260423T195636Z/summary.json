@@ -1,0 +1,14 @@
+{
+  "mode": "ci",
+  "output_dir": "/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z",
+  "overall": "pass",
+  "campaigns": [
+    {"name":"parser-malleability","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/parser-malleability.log"},
+    {"name":"semantic-aliasing","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/semantic-aliasing.log"},
+    {"name":"staged-proof-abuse","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/staged-proof-abuse.log"},
+    {"name":"recursive-block-mismatch","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/recursive-block-mismatch.log"},
+    {"name":"receipt-root-tamper","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/receipt-root-tamper.log"},
+    {"name":"prover-configuration-downgrade","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/prover-configuration-downgrade.log"},
+    {"name":"review-package-parity","status":"pass","log":"/Users/pldd/Projects/Reflexivity/Hegemon/output/proving-redteam/20260423T195636Z/review-package-parity.log"}
+  ]
+}

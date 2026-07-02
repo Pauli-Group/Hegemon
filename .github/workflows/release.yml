@@ -11,30 +11,112 @@ env:
   CARGO_HTTP_TIMEOUT: "600"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-linux:
+  security-gates:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.91.1"
+          components: rust-src
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          printf '%s  elan-init.sh\n' "$ELAN_INIT_SHA256" | sha256sum -c -
+          sh elan-init.sh -y --default-toolchain none
+
+      - name: Dependency audit waiver gate
+        run: ./scripts/dependency-audit-gate.sh
+
+      - name: Formal-core release gate
+        run: bash scripts/check_formal_core.sh
+
+      - name: Native backend review package verification
+        run: ./scripts/verify_native_backend_review_package.sh
+
+      - name: Native backend release posture gate
+        run: ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+
+  app-no-ssh-e2e:
+    runs-on: ubuntu-latest
+    needs: security-gates
+    env:
+      HEGEMON_E2E_MINE_THREADS: "4"
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install app dependencies
+        run: npm ci --prefix hegemon-app
+
+      - name: App UI guard gate
+        run: npm --prefix hegemon-app run check:ui-guards
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler libclang-dev
-      
-      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
+          components: rust-src
+
+      - name: App no-SSH release workflow
+        run: ./scripts/check-app-no-ssh-e2e.sh
+
+  build-linux:
+    runs-on: ubuntu-latest
+    needs:
+      - security-gates
+      - app-no-ssh-e2e
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+      
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: "1.91.1"
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
+
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
       - name: Package binary
         run: |
@@ -45,32 +127,39 @@ jobs:
           sha256sum hegemon-node-linux-x86_64 > hegemon-node-linux-x86_64.sha256
           sha256sum wallet-linux-x86_64 > wallet-linux-x86_64.sha256
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: linux-binary
           path: release/
 
   build-macos-intel:
     runs-on: macos-15  # Cross-compile for Intel from ARM runner
+    needs:
+      - security-gates
+      - app-no-ssh-e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       
       - name: Install dependencies
         run: |
-          brew install protobuf llvm
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+          brew install protobuf
       
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown,x86_64-apple-darwin
+          targets: x86_64-apple-darwin
           components: rust-src
       
       - name: Build node binary (cross-compile for Intel)
-        run: cargo build -p hegemon-node --features substrate --release --target x86_64-apple-darwin
+        run: cargo build -p hegemon-node --release --target x86_64-apple-darwin
 
-      - name: Build wallet binary (cross-compile for Intel)
-        run: cargo build -p wallet --release --target x86_64-apple-darwin
+      - name: Build wallet binaries (cross-compile for Intel)
+        run: cargo build -p wallet -p walletd --release --target x86_64-apple-darwin
+
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
       
       - name: Package binary
         run: |
@@ -81,32 +170,38 @@ jobs:
           shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
           shasum -a 256 wallet-macos-x86_64 > wallet-macos-x86_64.sha256
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-intel-binary
           path: release/
 
   build-macos-arm:
     runs-on: macos-14  # Apple Silicon runner
+    needs:
+      - security-gates
+      - app-no-ssh-e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       
       - name: Install dependencies
         run: |
-          brew install protobuf llvm
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> $GITHUB_ENV
+          brew install protobuf
       
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
+
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
       - name: Package binary
         run: |
@@ -117,15 +212,20 @@ jobs:
           shasum -a 256 hegemon-node-macos-arm64 > hegemon-node-macos-arm64.sha256
           shasum -a 256 wallet-macos-arm64 > wallet-macos-arm64.sha256
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-arm-binary
           path: release/
 
   build-windows:
     runs-on: windows-latest
+    needs:
+      - security-gates
+      - app-no-ssh-e2e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       
       - name: Install LLVM
         run: choco install llvm -y
@@ -133,17 +233,20 @@ jobs:
       - name: Install Protobuf
         run: choco install protoc -y
       
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           toolchain: "1.91.1"
-          targets: wasm32-unknown-unknown
           components: rust-src
       
       - name: Build node binary
-        run: cargo build -p hegemon-node --features substrate --release
+        run: cargo build -p hegemon-node --release
 
-      - name: Build wallet binary
-        run: cargo build -p wallet --release
+      - name: Build wallet binaries
+        run: cargo build -p wallet -p walletd --release
+
+      - name: Release PQ binary audit
+        shell: bash
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe
       
       - name: Package binary
         shell: pwsh
@@ -155,7 +258,7 @@ jobs:
           Get-FileHash hegemon-node-windows-x86_64.exe -Algorithm SHA256 | Format-List > hegemon-node-windows-x86_64.exe.sha256
           Get-FileHash wallet-windows-x86_64.exe -Algorithm SHA256 | Format-List > wallet-windows-x86_64.exe.sha256
       
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: windows-binary
           path: release/
@@ -163,11 +266,15 @@ jobs:
   create-release:
     needs: [build-linux, build-macos-intel, build-macos-arm, build-windows]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: artifacts
       
@@ -181,7 +288,7 @@ jobs:
           ls -la release-assets/
       
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           draft: true
           generate_release_notes: true

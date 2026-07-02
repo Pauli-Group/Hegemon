@@ -8,6 +8,7 @@ use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove_with_preprocessed, setup_preprocessed};
 use state_merkle::CommitmentTree;
 use transaction_circuit::constants::MAX_INPUTS;
+use transaction_circuit::proof::transaction_statement_hash_checked;
 use transaction_circuit::TransactionProof;
 use transaction_core::constants::{POSEIDON2_RATE, POSEIDON2_STEPS, POSEIDON2_WIDTH};
 use transaction_core::hashing_pq::{felts_to_bytes48, is_canonical_bytes48, Commitment};
@@ -31,7 +32,7 @@ use crate::p3_commitment_air::{
     CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, CYCLE_BITS, PREPROCESSED_WIDTH,
     TRACE_WIDTH,
 };
-use transaction_circuit::p3_config::{config_with_fri, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use transaction_circuit::p3_config::{config_with_fri, default_build_tx_fri_profile};
 
 type Val = Goldilocks;
 
@@ -322,8 +323,9 @@ impl CommitmentBlockProverP3 {
         let num_public_values = pub_inputs_vec.len();
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&air, PREPROCESSED_WIDTH, num_public_values, 0);
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let degree_bits = trace.height().ilog2() as usize;
         let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
             .expect("CommitmentBlockAirP3 preprocessed trace missing");
@@ -574,41 +576,15 @@ fn statement_hashes_from_transactions(
     transactions: &[TransactionProof],
 ) -> Result<Vec<Commitment>, BlockError> {
     let mut hashes = Vec::with_capacity(transactions.len());
-    for tx in transactions {
-        hashes.push(statement_hash_from_proof(tx));
+    for (index, tx) in transactions.iter().enumerate() {
+        let hash = transaction_statement_hash_checked(tx).map_err(|err| {
+            BlockError::CommitmentProofInvalidInputs(format!(
+                "transaction {index} statement hash derivation failed: {err}"
+            ))
+        })?;
+        hashes.push(hash);
     }
     Ok(hashes)
-}
-
-fn statement_hash_from_proof(proof: &TransactionProof) -> Commitment {
-    let mut hasher = Blake3Hasher::new();
-    let public = &proof.public_inputs;
-    hasher.update(b"tx-statement-v1");
-    hasher.update(&public.merkle_root);
-    for nf in &public.nullifiers {
-        hasher.update(nf);
-    }
-    for cm in &public.commitments {
-        hasher.update(cm);
-    }
-    for ct in &public.ciphertext_hashes {
-        hasher.update(ct);
-    }
-    hasher.update(&public.native_fee.to_le_bytes());
-    hasher.update(&public.value_balance.to_le_bytes());
-    hasher.update(&public.balance_tag);
-    hasher.update(&public.circuit_version.to_le_bytes());
-    hasher.update(&public.crypto_suite.to_le_bytes());
-    hasher.update(&[public.stablecoin.enabled as u8]);
-    hasher.update(&public.stablecoin.asset_id.to_le_bytes());
-    hasher.update(&public.stablecoin.policy_hash);
-    hasher.update(&public.stablecoin.oracle_commitment);
-    hasher.update(&public.stablecoin.attestation_commitment);
-    hasher.update(&public.stablecoin.issuance_delta.to_le_bytes());
-    hasher.update(&public.stablecoin.policy_version.to_le_bytes());
-    let mut out = [0u8; 48];
-    hasher.finalize_xof().fill(&mut out);
-    out
 }
 
 fn nullifiers_from_transactions(
@@ -789,4 +765,50 @@ fn nullifier_root_from_transactions(
         data.extend_from_slice(&entry);
     }
     Ok(blake3_384(&data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol_versioning::TxProofBackend;
+    use transaction_circuit::proof::transaction_statement_hash_checked;
+    use transaction_circuit::TransactionPublicInputs;
+
+    fn sample_transaction_proof() -> TransactionProof {
+        let public_inputs = TransactionPublicInputs::default();
+        TransactionProof {
+            nullifiers: public_inputs.nullifiers.clone(),
+            commitments: public_inputs.commitments.clone(),
+            balance_slots: public_inputs.balance_slots.clone(),
+            public_inputs,
+            backend: TxProofBackend::SmallwoodCandidate,
+            stark_proof: vec![1, 2, 3, 4],
+            stark_public_inputs: None,
+        }
+    }
+
+    #[test]
+    fn block_commitment_statement_hash_uses_shared_transaction_helper() {
+        let proof = sample_transaction_proof();
+
+        assert_eq!(
+            statement_hashes_from_transactions(std::slice::from_ref(&proof))
+                .expect("block statement hashes"),
+            vec![transaction_statement_hash_checked(&proof).expect("shared statement hash")]
+        );
+    }
+
+    #[test]
+    fn block_commitment_statement_hash_rejects_oversized_public_inputs_without_panic() {
+        let mut proof = sample_transaction_proof();
+        proof.public_inputs.nullifiers.push([7u8; 48]);
+
+        let err = statement_hashes_from_transactions(&[proof])
+            .expect_err("oversized public inputs must reject before block commitment proving");
+        let message = err.to_string();
+        assert!(
+            message.contains("transaction 0 statement hash derivation failed"),
+            "unexpected error: {message}"
+        );
+    }
 }

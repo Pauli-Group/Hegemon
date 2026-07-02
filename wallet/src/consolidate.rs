@@ -5,9 +5,9 @@
 
 use crate::async_sync::AsyncWalletSyncEngine;
 use crate::error::WalletError;
+use crate::node_rpc::NodeRpcClient;
 use crate::store::{TransferRecipient, WalletStore};
 use crate::submission::{is_ambiguous_submission_error, provisional_pending_tx_id};
-use crate::substrate_rpc::SubstrateRpcClient;
 use crate::tx_builder::build_consolidation_transaction;
 use std::sync::Arc;
 
@@ -134,13 +134,13 @@ fn is_sidecar_method_unavailable(msg: &str) -> bool {
 }
 
 async fn submit_consolidation_bundle(
-    rpc: &Arc<SubstrateRpcClient>,
+    rpc: &Arc<NodeRpcClient>,
     bundle: &crate::rpc::TransactionBundle,
     config: &mut ConsolidationBatchConfig,
     verbose: bool,
 ) -> Result<[u8; 32], WalletError> {
     if !config.use_da_sidecar {
-        return rpc.submit_shielded_transfer_unsigned(bundle).await;
+        return rpc.submit_transaction(bundle).await;
     }
 
     match rpc
@@ -169,7 +169,7 @@ async fn submit_consolidation_bundle(
             }
             config.use_da_sidecar = false;
             config.use_proof_sidecar = false;
-            rpc.submit_shielded_transfer_unsigned(bundle).await
+            rpc.submit_transaction(bundle).await
         }
         Err(err) => Err(err),
     }
@@ -302,7 +302,7 @@ impl ConsolidationPlan {
 /// 5. Go to step 1
 pub async fn execute_consolidation(
     store: Arc<WalletStore>,
-    rpc: &Arc<SubstrateRpcClient>,
+    rpc: &Arc<NodeRpcClient>,
     target_value: u64,
     fee_per_tx: u64,
     verbose: bool,
@@ -519,7 +519,7 @@ pub async fn execute_consolidation(
 
 async fn wait_for_nullifiers_spent(
     engine: &AsyncWalletSyncEngine,
-    rpc: &Arc<SubstrateRpcClient>,
+    rpc: &Arc<NodeRpcClient>,
     store: &Arc<WalletStore>,
     nullifiers: &[[u8; 48]],
 ) -> Result<u64, WalletError> {

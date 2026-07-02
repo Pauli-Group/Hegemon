@@ -5,16 +5,21 @@ use p3_goldilocks::Goldilocks;
 use p3_matrix::dense::RowMajorMatrix;
 use p3_matrix::Matrix;
 use p3_uni_stark::{get_log_num_quotient_chunks, prove};
+use protocol_versioning::{TxFriProfile, VersionBinding};
 
 use crate::constants::{
     CIRCUIT_MERKLE_DEPTH, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, MERKLE_DOMAIN_TAG,
     NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
 };
 use crate::hashing_pq::{
-    bytes48_to_felts, merkle_node, note_commitment, nullifier, prf_key, spend_auth_key, HashFelt,
+    bytes48_to_felts, merkle_node, note_commitment, note_commitment_inputs, nullifier,
+    nullifier_inputs as core_nullifier_inputs, prf_key, spend_auth_key, HashFelt,
 };
 use crate::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
-use crate::p3_config::{config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES};
+use crate::p3_config::{
+    build_tx_fri_profile_for_version, config_with_profile, default_build_tx_fri_profile,
+    release_tx_fri_profile_for_version, TransactionProofP3,
+};
 use crate::witness::TransactionWitness;
 use crate::TransactionCircuitError;
 use transaction_core::constants::POSEIDON2_STEPS;
@@ -62,9 +67,26 @@ pub struct TransactionProofParams {
 
 impl TransactionProofParams {
     pub fn production() -> Self {
+        let profile = default_build_tx_fri_profile();
         Self {
-            log_blowup: FRI_LOG_BLOWUP,
-            num_queries: FRI_NUM_QUERIES,
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
+        }
+    }
+
+    pub fn production_for_version(version: VersionBinding) -> Self {
+        let profile = build_tx_fri_profile_for_version(version);
+        Self {
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
+        }
+    }
+
+    pub fn release_for_version(version: VersionBinding) -> Self {
+        let profile = release_tx_fri_profile_for_version(version);
+        Self {
+            log_blowup: profile.log_blowup_usize(),
+            num_queries: profile.num_queries_usize(),
         }
     }
 
@@ -693,7 +715,11 @@ impl TransactionProverP3 {
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
         let log_blowup = params.log_blowup.max(log_chunks);
-        let config = config_with_fri(log_blowup, params.num_queries);
+        let config = config_with_profile(TxFriProfile::new(
+            log_blowup as u8,
+            params.num_queries as u8,
+            0,
+        ));
         prove(&config.config, &TransactionAirP3, trace, &pub_inputs_vec)
     }
 
@@ -811,22 +837,18 @@ fn bytes48_to_vals(bytes: &[u8; 48]) -> Result<[Val; 6], TransactionCircuitError
 }
 
 fn commitment_inputs(note: &NoteData) -> Vec<Val> {
-    let mut inputs = Vec::new();
-    inputs.push(Val::from_u64(note.value));
-    inputs.push(Val::from_u64(note.asset_id));
-    inputs.extend(bytes_to_vals(&note.pk_recipient));
-    inputs.extend(bytes_to_vals(&note.rho));
-    inputs.extend(bytes_to_vals(&note.r));
-    inputs.extend(bytes_to_vals(&note.pk_auth));
-    inputs
+    note_commitment_inputs(
+        note.value,
+        note.asset_id,
+        &note.pk_recipient,
+        &note.rho,
+        &note.r,
+        &note.pk_auth,
+    )
 }
 
 fn nullifier_inputs(prf: Val, input: &InputNoteWitness) -> Vec<Val> {
-    let mut inputs = Vec::new();
-    inputs.push(prf);
-    inputs.push(Val::from_u64(input.position));
-    inputs.extend(bytes_to_vals(&input.note.rho));
-    inputs
+    core_nullifier_inputs(prf, &input.note.rho, input.position)
 }
 
 fn pad_inputs(inputs: &[InputNoteWitness]) -> (Vec<InputNoteWitness>, [bool; MAX_INPUTS]) {
@@ -1017,15 +1039,15 @@ fn build_cycle_specs(
     let mut cycles = Vec::with_capacity(TOTAL_USED_CYCLES - DUMMY_CYCLES);
 
     for (idx, input) in inputs.iter().enumerate() {
-        let commitment_inputs = commitment_inputs(&input.note);
+        let commitment_preimage = commitment_inputs(&input.note);
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            let take = commitment_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&commitment_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1077,15 +1099,15 @@ fn build_cycle_specs(
             pos >>= 1;
         }
 
-        let nullifier_inputs = nullifier_inputs(prf, input);
+        let nullifier_preimage = nullifier_inputs(prf, input);
         for chunk_idx in 0..NULLIFIER_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NULLIFIER_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = nullifier_inputs.len().saturating_sub(start).min(6);
+            let take = nullifier_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&nullifier_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&nullifier_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1097,15 +1119,15 @@ fn build_cycle_specs(
     }
 
     for output in outputs.iter() {
-        let commitment_inputs = commitment_inputs(&output.note);
+        let commitment_preimage = commitment_inputs(&output.note);
         for chunk_idx in 0..COMMITMENT_ABSORB_CYCLES {
             let reset = chunk_idx == 0;
             let domain = if reset { NOTE_DOMAIN_TAG } else { 0 };
             let mut chunk = [Val::ZERO; 6];
             let start = chunk_idx * 6;
-            let take = commitment_inputs.len().saturating_sub(start).min(6);
+            let take = commitment_preimage.len().saturating_sub(start).min(6);
             if take > 0 {
-                chunk[..take].copy_from_slice(&commitment_inputs[start..start + take]);
+                chunk[..take].copy_from_slice(&commitment_preimage[start..start + take]);
             }
             cycles.push(CycleSpec {
                 reset,
@@ -1124,11 +1146,124 @@ fn build_cycle_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashing_pq::{felts_to_bytes48, merkle_node, note_commitment, HashFelt};
+    use crate::hashing_pq::{
+        felts_to_bytes48, merkle_node, note_commitment, note_commitment_inputs, HashFelt,
+    };
     use crate::note::{MerklePath, NoteData};
     use crate::p3_verifier::verify_transaction_proof_p3;
     use crate::StablecoinPolicyBinding;
+    use serde::Deserialize;
     use std::panic::catch_unwind;
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAirBalanceBoundaryVectorFile {
+        schema_version: u32,
+        air_balance_final_row_cases: Vec<LeanAirBalanceFinalRowCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAirBalanceFinalRowCase {
+        name: String,
+        source: String,
+        slot_in: Vec<i128>,
+        slot_out: Vec<i128>,
+        slot_assets: Vec<i128>,
+        fee: i128,
+        value_balance_sign: i128,
+        value_balance_magnitude: i128,
+        stablecoin_enabled: i128,
+        stablecoin_asset: i128,
+        stablecoin_policy_version: i128,
+        stablecoin_issuance_sign: i128,
+        stablecoin_issuance_magnitude: i128,
+        stablecoin_policy_hash: Vec<i128>,
+        stablecoin_oracle_commitment: Vec<i128>,
+        stablecoin_attestation_commitment: Vec<i128>,
+        stablecoin_slot_bits: Vec<i128>,
+        expected_selector_weights: Vec<i128>,
+        expected_signed_value_balance: i128,
+        expected_signed_stablecoin_issuance: i128,
+        expected_native_delta: i128,
+        expected_selected_stablecoin_delta: i128,
+        expected_accepted: bool,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct AirBalanceSurface {
+        slot_in: [i128; 4],
+        slot_out: [i128; 4],
+        slot_assets: [i128; 4],
+        fee: i128,
+        value_balance_sign: i128,
+        value_balance_magnitude: i128,
+        stablecoin_enabled: i128,
+        stablecoin_asset: i128,
+        stablecoin_policy_version: i128,
+        stablecoin_issuance_sign: i128,
+        stablecoin_issuance_magnitude: i128,
+        stablecoin_policy_hash: [i128; 6],
+        stablecoin_oracle_commitment: [i128; 6],
+        stablecoin_attestation_commitment: [i128; 6],
+        stablecoin_slot_bits: [i128; 2],
+    }
+
+    impl AirBalanceSurface {
+        fn slot_delta(&self, slot: usize) -> i128 {
+            self.slot_in[slot] - self.slot_out[slot]
+        }
+
+        fn selector_weight(&self, slot: usize) -> i128 {
+            let bit0 = self.stablecoin_slot_bits[0];
+            let bit1 = self.stablecoin_slot_bits[1];
+            match slot {
+                0 => (1 - bit0) * (1 - bit1),
+                1 => bit0 * (1 - bit1),
+                2 => (1 - bit0) * bit1,
+                3 => bit0 * bit1,
+                _ => 0,
+            }
+        }
+
+        fn selector_weights(&self) -> [i128; 4] {
+            [
+                self.selector_weight(0),
+                self.selector_weight(1),
+                self.selector_weight(2),
+                self.selector_weight(3),
+            ]
+        }
+
+        fn selected_stablecoin_delta(&self) -> i128 {
+            (1..4)
+                .map(|slot| self.selector_weight(slot) * self.slot_delta(slot))
+                .sum()
+        }
+
+        fn signed_value_balance(&self) -> i128 {
+            signed_magnitude(self.value_balance_sign, self.value_balance_magnitude)
+        }
+
+        fn signed_stablecoin_issuance(&self) -> i128 {
+            signed_magnitude(
+                self.stablecoin_issuance_sign,
+                self.stablecoin_issuance_magnitude,
+            )
+        }
+
+        fn stablecoin_metadata_values(&self) -> Vec<i128> {
+            let mut values = Vec::with_capacity(22);
+            values.push(self.stablecoin_asset);
+            values.push(self.stablecoin_policy_version);
+            values.push(self.stablecoin_issuance_sign);
+            values.push(self.stablecoin_issuance_magnitude);
+            values.extend_from_slice(&self.stablecoin_policy_hash);
+            values.extend_from_slice(&self.stablecoin_oracle_commitment);
+            values.extend_from_slice(&self.stablecoin_attestation_commitment);
+            values
+        }
+    }
 
     fn compute_merkle_root_from_path(leaf: HashFelt, position: u64, path: &MerklePath) -> HashFelt {
         let mut current = leaf;
@@ -1192,6 +1327,303 @@ mod tests {
         }
     }
 
+    fn stablecoin_issuance_witness() -> TransactionWitness {
+        let sk_spend = [18u8; 32];
+        let pk_auth = crate::hashing_pq::spend_auth_key_bytes(&sk_spend);
+        let input_note = NoteData {
+            value: 5,
+            asset_id: 0,
+            pk_recipient: [11u8; 32],
+            pk_auth,
+            rho: [12u8; 32],
+            r: [13u8; 32],
+        };
+        let output_note = NoteData {
+            value: 5,
+            asset_id: 4242,
+            pk_recipient: [14u8; 32],
+            pk_auth: [15u8; 32],
+            rho: [16u8; 32],
+            r: [17u8; 32],
+        };
+        let merkle_path = MerklePath::default();
+        let leaf = note_commitment(
+            input_note.value,
+            input_note.asset_id,
+            &input_note.pk_recipient,
+            &input_note.pk_auth,
+            &input_note.rho,
+            &input_note.r,
+        );
+        let merkle_root = felts_to_bytes48(&compute_merkle_root_from_path(leaf, 0, &merkle_path));
+
+        TransactionWitness {
+            inputs: vec![InputNoteWitness {
+                note: input_note,
+                position: 0,
+                rho_seed: [19u8; 32],
+                merkle_path,
+            }],
+            outputs: vec![OutputNoteWitness { note: output_note }],
+            ciphertext_hashes: vec![[20u8; 48]; 1],
+            sk_spend,
+            merkle_root,
+            fee: 5,
+            value_balance: 0,
+            stablecoin: StablecoinPolicyBinding {
+                enabled: true,
+                asset_id: 4242,
+                policy_hash: [21u8; 48],
+                oracle_commitment: [22u8; 48],
+                attestation_commitment: [23u8; 48],
+                issuance_delta: -5,
+                policy_version: 1,
+            },
+            version: TransactionWitness::default_version_binding(),
+        }
+    }
+
+    fn signed_magnitude(sign: i128, magnitude: i128) -> i128 {
+        magnitude - sign * magnitude * 2
+    }
+
+    fn boolean_field(value: i128) -> bool {
+        value == 0 || value == 1
+    }
+
+    fn air_balance_surface_accepts(surface: &AirBalanceSurface) -> bool {
+        boolean_field(surface.value_balance_sign)
+            && boolean_field(surface.stablecoin_enabled)
+            && boolean_field(surface.stablecoin_issuance_sign)
+            && boolean_field(surface.stablecoin_slot_bits[0])
+            && boolean_field(surface.stablecoin_slot_bits[1])
+            && surface.selector_weights()[1..].iter().sum::<i128>() == surface.stablecoin_enabled
+            && (1..4).all(|slot| {
+                surface.selector_weight(slot)
+                    * (surface.slot_assets[slot] - surface.stablecoin_asset)
+                    == 0
+            })
+            && surface.selected_stablecoin_delta() == surface.signed_stablecoin_issuance()
+            && (1..4)
+                .all(|slot| surface.slot_delta(slot) * (1 - surface.selector_weight(slot)) == 0)
+            && surface
+                .stablecoin_metadata_values()
+                .into_iter()
+                .all(|value| (1 - surface.stablecoin_enabled) * value == 0)
+            && surface.slot_delta(0) == surface.fee - surface.signed_value_balance()
+            && (1..4).all(|slot| (1 - surface.stablecoin_enabled) * surface.slot_delta(slot) == 0)
+    }
+
+    fn array4(values: &[i128], name: &str) -> [i128; 4] {
+        values
+            .try_into()
+            .unwrap_or_else(|_| panic!("{name} must have exactly 4 entries"))
+    }
+
+    fn array6(values: &[i128], name: &str) -> [i128; 6] {
+        values
+            .try_into()
+            .unwrap_or_else(|_| panic!("{name} must have exactly 6 entries"))
+    }
+
+    fn array2(values: &[i128], name: &str) -> [i128; 2] {
+        values
+            .try_into()
+            .unwrap_or_else(|_| panic!("{name} must have exactly 2 entries"))
+    }
+
+    fn surface_from_lean_case(case: &LeanAirBalanceFinalRowCase) -> AirBalanceSurface {
+        AirBalanceSurface {
+            slot_in: array4(&case.slot_in, "slot_in"),
+            slot_out: array4(&case.slot_out, "slot_out"),
+            slot_assets: array4(&case.slot_assets, "slot_assets"),
+            fee: case.fee,
+            value_balance_sign: case.value_balance_sign,
+            value_balance_magnitude: case.value_balance_magnitude,
+            stablecoin_enabled: case.stablecoin_enabled,
+            stablecoin_asset: case.stablecoin_asset,
+            stablecoin_policy_version: case.stablecoin_policy_version,
+            stablecoin_issuance_sign: case.stablecoin_issuance_sign,
+            stablecoin_issuance_magnitude: case.stablecoin_issuance_magnitude,
+            stablecoin_policy_hash: array6(&case.stablecoin_policy_hash, "stablecoin_policy_hash"),
+            stablecoin_oracle_commitment: array6(
+                &case.stablecoin_oracle_commitment,
+                "stablecoin_oracle_commitment",
+            ),
+            stablecoin_attestation_commitment: array6(
+                &case.stablecoin_attestation_commitment,
+                "stablecoin_attestation_commitment",
+            ),
+            stablecoin_slot_bits: array2(&case.stablecoin_slot_bits, "stablecoin_slot_bits"),
+        }
+    }
+
+    fn felt_to_i128(value: Val) -> i128 {
+        i128::from(value.as_canonical_u64())
+    }
+
+    fn hash_to_i128s(hash: [Val; 6]) -> [i128; 6] {
+        [
+            felt_to_i128(hash[0]),
+            felt_to_i128(hash[1]),
+            felt_to_i128(hash[2]),
+            felt_to_i128(hash[3]),
+            felt_to_i128(hash[4]),
+            felt_to_i128(hash[5]),
+        ]
+    }
+
+    fn production_air_balance_surface(witness: &TransactionWitness) -> AirBalanceSurface {
+        witness.validate().expect("witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(witness).expect("public inputs");
+        let final_row = trace.height().saturating_sub(2);
+        let read = |col| felt_to_i128(get_trace(&trace, col, final_row));
+
+        AirBalanceSurface {
+            slot_in: [
+                read(COL_SLOT0_IN),
+                read(COL_SLOT1_IN),
+                read(COL_SLOT2_IN),
+                read(COL_SLOT3_IN),
+            ],
+            slot_out: [
+                read(COL_SLOT0_OUT),
+                read(COL_SLOT1_OUT),
+                read(COL_SLOT2_OUT),
+                read(COL_SLOT3_OUT),
+            ],
+            slot_assets: [
+                felt_to_i128(pub_inputs.balance_slot_assets[0]),
+                felt_to_i128(pub_inputs.balance_slot_assets[1]),
+                felt_to_i128(pub_inputs.balance_slot_assets[2]),
+                felt_to_i128(pub_inputs.balance_slot_assets[3]),
+            ],
+            fee: read(COL_FEE),
+            value_balance_sign: read(COL_VALUE_BALANCE_SIGN),
+            value_balance_magnitude: read(COL_VALUE_BALANCE_MAG),
+            stablecoin_enabled: felt_to_i128(pub_inputs.stablecoin_enabled),
+            stablecoin_asset: felt_to_i128(pub_inputs.stablecoin_asset),
+            stablecoin_policy_version: felt_to_i128(pub_inputs.stablecoin_policy_version),
+            stablecoin_issuance_sign: felt_to_i128(pub_inputs.stablecoin_issuance_sign),
+            stablecoin_issuance_magnitude: felt_to_i128(pub_inputs.stablecoin_issuance_magnitude),
+            stablecoin_policy_hash: hash_to_i128s(pub_inputs.stablecoin_policy_hash),
+            stablecoin_oracle_commitment: hash_to_i128s(pub_inputs.stablecoin_oracle_commitment),
+            stablecoin_attestation_commitment: hash_to_i128s(
+                pub_inputs.stablecoin_attestation_commitment,
+            ),
+            stablecoin_slot_bits: [
+                read(COL_STABLECOIN_SLOT_BIT0),
+                read(COL_STABLECOIN_SLOT_BIT1),
+            ],
+        }
+    }
+
+    fn production_surface_for_source(source: &str) -> Option<AirBalanceSurface> {
+        match source {
+            "sample_witness" => Some(production_air_balance_surface(&sample_witness())),
+            "stablecoin_issuance_witness" => Some(production_air_balance_surface(
+                &stablecoin_issuance_witness(),
+            )),
+            "manual" => None,
+            other => panic!("unknown AIR balance source {other}"),
+        }
+    }
+
+    #[test]
+    fn lean_generated_air_balance_boundary_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_AIR_BALANCE_BOUNDARY_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_AIR_BALANCE_BOUNDARY_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path).expect("read generated Lean AIR balance vectors");
+        let vectors: LeanAirBalanceBoundaryVectorFile =
+            serde_json::from_str(&raw).expect("parse generated Lean AIR balance vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert!(
+            !vectors.air_balance_final_row_cases.is_empty(),
+            "Lean AIR balance final-row cases must not be empty"
+        );
+
+        for case in &vectors.air_balance_final_row_cases {
+            let surface = surface_from_lean_case(case);
+            if let Some(production) = production_surface_for_source(&case.source) {
+                assert_eq!(
+                    production, surface,
+                    "{} production P3 trace/public-input surface drifted from Lean",
+                    case.name
+                );
+            }
+
+            assert_eq!(
+                surface.selector_weights().to_vec(),
+                case.expected_selector_weights,
+                "{} selector weights drifted",
+                case.name
+            );
+            assert_eq!(
+                surface.signed_value_balance(),
+                case.expected_signed_value_balance,
+                "{} signed value balance drifted",
+                case.name
+            );
+            assert_eq!(
+                surface.signed_stablecoin_issuance(),
+                case.expected_signed_stablecoin_issuance,
+                "{} signed stablecoin issuance drifted",
+                case.name
+            );
+            assert_eq!(
+                surface.slot_delta(0),
+                case.expected_native_delta,
+                "{} native delta drifted",
+                case.name
+            );
+            assert_eq!(
+                surface.selected_stablecoin_delta(),
+                case.expected_selected_stablecoin_delta,
+                "{} selected stablecoin delta drifted",
+                case.name
+            );
+            assert_eq!(
+                air_balance_surface_accepts(&surface),
+                case.expected_accepted,
+                "{} AIR final-row acceptance drifted from Lean",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn p3_commitment_inputs_use_shared_core_preimage() {
+        let note = &sample_witness().outputs[0].note;
+        assert_eq!(
+            commitment_inputs(note),
+            note_commitment_inputs(
+                note.value,
+                note.asset_id,
+                &note.pk_recipient,
+                &note.rho,
+                &note.r,
+                &note.pk_auth,
+            )
+        );
+    }
+
+    #[test]
+    fn p3_nullifier_inputs_use_shared_core_preimage() {
+        let witness = sample_witness();
+        let input = &witness.inputs[0];
+        let prf = prf_key(&witness.sk_spend);
+        assert_eq!(
+            nullifier_inputs(prf, input),
+            core_nullifier_inputs(prf, &input.note.rho, input.position)
+        );
+    }
+
     #[test]
     fn build_trace_roundtrip_p3() {
         let witness = sample_witness();
@@ -1229,8 +1661,9 @@ mod tests {
         let pub_inputs_vec = pub_inputs.to_vec();
         let log_chunks =
             get_log_num_quotient_chunks::<Val, _>(&TransactionAirP3, 0, pub_inputs_vec.len(), 0);
-        let log_blowup = transaction_core::p3_config::FRI_LOG_BLOWUP.max(log_chunks);
-        let num_queries = transaction_core::p3_config::FRI_NUM_QUERIES;
+        let profile = transaction_core::p3_config::default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let num_queries = profile.num_queries_usize();
         let proof = prover.prove(trace, &pub_inputs);
         let proof_bytes = postcard::to_allocvec(&proof).expect("serialize proof");
         println!(
@@ -1316,6 +1749,31 @@ mod tests {
         assert!(
             verify_transaction_proof_p3(&proof, &tampered).is_err(),
             "verification should fail when ciphertext hashes are modified"
+        );
+    }
+
+    #[test]
+    fn p3_air_balance_public_field_mutations_rejected() {
+        let witness = stablecoin_issuance_witness();
+        witness.validate().expect("stablecoin witness valid");
+        let prover = TransactionProverP3::new();
+        let trace = prover.build_trace(&witness).expect("trace build");
+        let pub_inputs = prover.public_inputs(&witness).expect("public inputs");
+        let proof = prover.prove(trace, &pub_inputs);
+        verify_transaction_proof_p3(&proof, &pub_inputs).expect("verification should pass");
+
+        let mut bad_value_balance = pub_inputs.clone();
+        bad_value_balance.value_balance_magnitude += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &bad_value_balance).is_err(),
+            "verification should fail when verifier-facing value-balance magnitude changes"
+        );
+
+        let mut bad_stablecoin_issuance = pub_inputs;
+        bad_stablecoin_issuance.stablecoin_issuance_magnitude += Val::ONE;
+        assert!(
+            verify_transaction_proof_p3(&proof, &bad_stablecoin_issuance).is_err(),
+            "verification should fail when verifier-facing stablecoin issuance magnitude changes"
         );
     }
 

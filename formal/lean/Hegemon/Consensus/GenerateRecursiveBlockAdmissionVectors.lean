@@ -1,0 +1,107 @@
+import Hegemon.Consensus.RecursiveBlockAdmission
+
+open Hegemon.Consensus.RecursiveBlockAdmission
+
+def boolJson (value : Bool) : String :=
+  if value then "true" else "false"
+
+def artifactKindJson : ArtifactKind -> String
+  | ArtifactKind.inlineTx => "inline_tx"
+  | ArtifactKind.txLeaf => "tx_leaf"
+  | ArtifactKind.receiptRoot => "receipt_root"
+  | ArtifactKind.recursiveBlockV1 => "recursive_block_v1"
+  | ArtifactKind.recursiveBlockV2 => "recursive_block_v2"
+
+def artifactRejectJson : Option ArtifactReject -> String
+  | none => "null"
+  | some ArtifactReject.artifactKindMismatch => "\"artifact_kind_mismatch\""
+  | some ArtifactReject.verifierProfileMismatch => "\"verifier_profile_mismatch\""
+  | some ArtifactReject.artifactTooLarge => "\"artifact_too_large\""
+  | some ArtifactReject.artifactDecodeFailed => "\"artifact_decode_failed\""
+  | some ArtifactReject.headerVersionMismatch => "\"header_version_mismatch\""
+  | some ArtifactReject.txCountMismatch => "\"tx_count_mismatch\""
+  | some ArtifactReject.statementCommitmentMismatch => "\"statement_commitment_mismatch\""
+  | some ArtifactReject.publicReplayMismatch => "\"public_replay_mismatch\""
+
+def directVerifierRejectJson : Option DirectVerifierReject -> String
+  | none => "null"
+  | some DirectVerifierReject.requiresSemanticReplay => "\"requires_semantic_replay\""
+
+def artifactCaseJson (name : String) (input : ArtifactAdmissionInput) : String :=
+  let rejection := evaluateArtifactRejection input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"expected_kind\": \"" ++ artifactKindJson input.expectedKind ++ "\",\n"
+    ++ "      \"envelope_kind\": \"" ++ artifactKindJson input.envelopeKind ++ "\",\n"
+    ++ "      \"verifier_profile_matches\": "
+    ++ boolJson input.verifierProfileMatches ++ ",\n"
+    ++ "      \"artifact_bytes_len\": " ++ toString input.artifactBytesLen ++ ",\n"
+    ++ "      \"max_artifact_bytes\": " ++ toString input.maxArtifactBytes ++ ",\n"
+    ++ "      \"artifact_decoded\": " ++ boolJson input.artifactDecoded ++ ",\n"
+    ++ "      \"header_version_matches\": " ++ boolJson input.headerVersionMatches ++ ",\n"
+    ++ "      \"tx_count_matches\": " ++ boolJson input.txCountMatches ++ ",\n"
+    ++ "      \"statement_commitment_matches\": "
+    ++ boolJson input.statementCommitmentMatches ++ ",\n"
+    ++ "      \"public_replay_matches\": " ++ boolJson input.publicReplayMatches ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
+    ++ "      \"expected_rejection\": " ++ artifactRejectJson rejection ++ "\n"
+    ++ "    }"
+
+def directVerifierCaseJson (name : String) (kind : ArtifactKind) : String :=
+  let rejection := evaluateDirectVerifierRejection kind
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"kind\": \"" ++ artifactKindJson kind ++ "\",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (rejection == none) ++ ",\n"
+    ++ "      \"expected_rejection\": " ++ directVerifierRejectJson rejection ++ "\n"
+    ++ "    }"
+
+def vectorJson : String :=
+  "{\n"
+    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"artifact_cases\": [\n"
+    ++ artifactCaseJson "valid-recursive-block-v2" validV2Artifact ++ ",\n"
+    ++ artifactCaseJson "valid-recursive-block-v1" validV1Artifact ++ ",\n"
+    ++ artifactCaseJson "wrong-kind-rejected"
+      { validV2Artifact with envelopeKind := ArtifactKind.receiptRoot } ++ ",\n"
+    ++ artifactCaseJson "profile-mismatch-rejected"
+      { validV2Artifact with verifierProfileMatches := false } ++ ",\n"
+    ++ artifactCaseJson "artifact-exact-limit-accepted"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes
+      } ++ ",\n"
+    ++ artifactCaseJson "artifact-too-large-rejected"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes + 1
+      } ++ ",\n"
+    ++ artifactCaseJson "decode-failed-rejected"
+      { validV2Artifact with artifactDecoded := false } ++ ",\n"
+    ++ artifactCaseJson "header-version-mismatch-rejected"
+      { validV2Artifact with headerVersionMatches := false } ++ ",\n"
+    ++ artifactCaseJson "tx-count-mismatch-rejected"
+      { validV2Artifact with txCountMatches := false } ++ ",\n"
+    ++ artifactCaseJson "statement-commitment-mismatch-rejected"
+      { validV2Artifact with statementCommitmentMatches := false } ++ ",\n"
+    ++ artifactCaseJson "public-replay-mismatch-rejected"
+      { validV2Artifact with publicReplayMatches := false } ++ ",\n"
+    ++ artifactCaseJson "kind-precedes-decode-failure"
+      { validV2Artifact with
+        envelopeKind := ArtifactKind.receiptRoot,
+        artifactDecoded := false
+      } ++ ",\n"
+    ++ artifactCaseJson "artifact-too-large-precedes-decode-failure"
+      { validV2Artifact with
+        artifactBytesLen := validV2Artifact.maxArtifactBytes + 1,
+        artifactDecoded := false
+      } ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"direct_verifier_cases\": [\n"
+    ++ directVerifierCaseJson "direct-recursive-block-v1-requires-semantic-replay"
+      ArtifactKind.recursiveBlockV1 ++ ",\n"
+    ++ directVerifierCaseJson "direct-recursive-block-v2-requires-semantic-replay"
+      ArtifactKind.recursiveBlockV2 ++ "\n"
+    ++ "  ]\n"
+    ++ "}\n"
+
+def main : IO Unit :=
+  IO.print vectorJson

@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "name": "hegemon-release-required-checks",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": [
+        "~DEFAULT_BRANCH",
+        "refs/heads/main",
+        "refs/heads/codex/superneo-formal-verification"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          {
+            "context": "dependency-audit"
+          },
+          {
+            "context": "formal-core"
+          },
+          {
+            "context": "security-adversarial"
+          },
+          {
+            "context": "native-backend-security"
+          },
+          {
+            "context": "app-no-ssh-e2e"
+          },
+          {
+            "context": "release-build"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -4,7 +4,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ## Global assumptions
 
-- **Post-quantum only**: Attackers may possess Shor/Grover-class quantum computers. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, 256-bit symmetric primitives, and 48-byte (384-bit) digests for commitments and Merkle roots. Grover/BHT reductions are already accounted for with 384-bit collision targets.
+- **Post-quantum only**: Attackers may possess Shor-class quantum computers capable of collapsing classical public-key systems. We therefore forbid ECC/RSA and rely on ML-DSA/SLH-DSA signatures, ML-KEM encryption, 256-bit symmetric primitives, and 48-byte (384-bit) digests for commitments and Merkle roots. Generic quantum search remains a conservative sizing consideration for the symmetric/hash layer, not the primary protocol threat.
 - **Transparent proving**: There is no trusted setup; proving soundness relies solely on collision resistance of the STARK-friendly hashes described in `DESIGN.md §2`. Compromise of a setup ceremony is out-of-scope because none exists.
 - **Adaptive adversaries**: Attackers can corrupt miners, mining pools, or wallets after observing traffic. Key rotation, nullifier privacy, and block template integrity must hold even with partial compromise.
 - **Proof-of-work fairness**: Hash-rate swings and rented rigs are assumed. Difficulty targeting plus share accounting must resist sudden 51% bursts for at least 10 minutes while alerts propagate to pool maintainers.
@@ -13,7 +13,7 @@ This document explains the attacker capabilities and design assumptions for each
 
 ### `crypto/`
 
-- **Keygen misuse**: Attackers might attempt to bias RNGs. We mitigate this by deriving deterministic seeds from SHA-256 transcripts and exposing APIs that accept explicit seeds for reproducible tests.
+- **Keygen misuse**: Attackers might attempt to bias RNGs or turn public transcripts into predictable key material. Production KEM encapsulation and identity/key generation use OS entropy; explicit deterministic seeds are test-only fixtures and must never be derived from public transcripts.
 - **Serialization downgrade**: Incorrect key lengths lead to acceptance of weak keys. All APIs perform length checks and return errors that bubble up to consensus/wallet callers.
 
 ### `circuits/`
@@ -30,6 +30,7 @@ This document explains the attacker capabilities and design assumptions for each
 ### `consensus/`
 
 - **Network DoS**: Attackers flood PQ-sized signatures and large STARK proofs. The Go net benchmark evaluates miner and pool throughput budgets with inflated payloads, and `METHODS.md` documents required admission-control thresholds for share telemetry.
+- **Native RPC parser DoS**: External JSON-RPC listeners must reject request bodies above 8 MiB and cap concurrent in-flight RPC requests at 8 before JSON parsing can fan out resource use. DA sidecar proof batches are chunkable and must not rely on one large aggregate JSON upload.
 - **Forking via outdated PQ params**: Consensus nodes pin ML-DSA and ML-KEM parameter sets and reject blocks signed with unknown variants so malicious pools cannot replay stale templates.
 - **Miner impersonation**: Share submissions must be signed with approved miner identities; consensus rejects unbound identities even if the PoW difficulty is valid.
 - **Aggregation proof malleability**: Outer proofs must be bound to the exact inner proofs/public inputs; nodes recompute recursion public inputs from transaction proofs and verify aggregation proofs with explicit public values, rejecting missing or mismatched proofs.

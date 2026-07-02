@@ -1,0 +1,32 @@
+[package]
+name = "superneo-bench"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+bincode = "1.3"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+consensus = { path = "../../consensus" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+hex = "0.4"
+native-backend-ref = { path = "../../tools/native-backend-ref" }
+p3-goldilocks = { workspace = true }
+protocol-versioning = { path = "../../protocol/versioning" }
+rayon = "1"
+superneo-backend-lattice = { path = "../superneo-backend-lattice" }
+superneo-ccs = { path = "../superneo-ccs" }
+superneo-core = { path = "../superneo-core" }
+superneo-hegemon = { path = "../superneo-hegemon" }
+superneo-ring = { path = "../superneo-ring" }
+transaction-circuit = { path = "../transaction" }
+
+[dev-dependencies]
+[lints]
+workspace = true

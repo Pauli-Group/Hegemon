@@ -1,0 +1,106 @@
+import Hegemon.Native.BlockIndexReload
+
+open Hegemon.Native.BlockIndexReload
+
+def boolJson (value : Bool) : String :=
+  if value then "true" else "false"
+
+def rejectionJson : Option BlockIndexReloadReject -> String
+  | none => "null"
+  | some BlockIndexReloadReject.chainReconstructionFailed =>
+      "\"chain_reconstruction_failed\""
+  | some BlockIndexReloadReject.chainEmpty => "\"chain_empty\""
+  | some BlockIndexReloadReject.genesisMismatch => "\"genesis_mismatch\""
+  | some BlockIndexReloadReject.bestMetadataMismatch => "\"best_metadata_mismatch\""
+  | some BlockIndexReloadReject.canonicalHeightMismatch =>
+      "\"canonical_height_mismatch\""
+  | some BlockIndexReloadReject.chainIdMismatch => "\"chain_id_mismatch\""
+  | some BlockIndexReloadReject.rulesHashMismatch => "\"rules_hash_mismatch\""
+  | some BlockIndexReloadReject.hashWorkHashMismatch =>
+      "\"hash_work_hash_mismatch\""
+  | some BlockIndexReloadReject.parentHashMismatch => "\"parent_hash_mismatch\""
+  | some BlockIndexReloadReject.malformedHeightKey => "\"malformed_height_key\""
+  | some BlockIndexReloadReject.malformedHeightValue => "\"malformed_height_value\""
+  | some BlockIndexReloadReject.extraHeightIndex => "\"extra_height_index\""
+  | some BlockIndexReloadReject.heightIndexMismatch => "\"height_index_mismatch\""
+  | some BlockIndexReloadReject.heightHashMismatch => "\"height_hash_mismatch\""
+  | some BlockIndexReloadReject.missingHeightIndex => "\"missing_height_index\""
+  | some BlockIndexReloadReject.genesisMarkerInvalidLength =>
+      "\"genesis_marker_invalid_length\""
+  | some BlockIndexReloadReject.genesisMarkerMismatch =>
+      "\"genesis_marker_mismatch\""
+
+def blockIndexReloadCaseJson (name : String) (input : BlockIndexReloadInput) : String :=
+  let result := evaluateBlockIndexReloadRejection input
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"chain_reconstructed\": " ++ boolJson input.chainReconstructed ++ ",\n"
+    ++ "      \"chain_nonempty\": " ++ boolJson input.chainNonempty ++ ",\n"
+    ++ "      \"genesis_matches_expected\": " ++ boolJson input.genesisMatchesExpected ++ ",\n"
+    ++ "      \"best_metadata_matches_chain\": " ++ boolJson input.bestMetadataMatchesChain ++ ",\n"
+    ++ "      \"canonical_heights_contiguous\": " ++ boolJson input.canonicalHeightsContiguous ++ ",\n"
+    ++ "      \"canonical_chain_ids_match\": " ++ boolJson input.canonicalChainIdsMatch ++ ",\n"
+    ++ "      \"canonical_rules_hashes_match\": " ++ boolJson input.canonicalRulesHashesMatch ++ ",\n"
+    ++ "      \"canonical_hashes_match_work_hashes\": " ++ boolJson input.canonicalHashesMatchWorkHashes ++ ",\n"
+    ++ "      \"canonical_parent_hashes_contiguous\": " ++ boolJson input.canonicalParentHashesContiguous ++ ",\n"
+    ++ "      \"height_keys_well_formed\": " ++ boolJson input.heightKeysWellFormed ++ ",\n"
+    ++ "      \"height_values_well_formed\": " ++ boolJson input.heightValuesWellFormed ++ ",\n"
+    ++ "      \"no_extra_height_indexes\": " ++ boolJson input.noExtraHeightIndexes ++ ",\n"
+    ++ "      \"height_index_heights_match_chain\": " ++ boolJson input.heightIndexHeightsMatchChain ++ ",\n"
+    ++ "      \"height_index_hashes_match_chain\": " ++ boolJson input.heightIndexHashesMatchChain ++ ",\n"
+    ++ "      \"all_canonical_heights_indexed\": " ++ boolJson input.allCanonicalHeightsIndexed ++ ",\n"
+    ++ "      \"genesis_marker_present\": " ++ boolJson input.genesisMarkerPresent ++ ",\n"
+    ++ "      \"genesis_marker_length_valid\": " ++ boolJson input.genesisMarkerLengthValid ++ ",\n"
+    ++ "      \"genesis_marker_matches_expected\": " ++ boolJson input.genesisMarkerMatchesExpected ++ ",\n"
+    ++ "      \"expected_valid\": " ++ boolJson (result == none) ++ ",\n"
+    ++ "      \"expected_rejection\": " ++ rejectionJson result ++ ",\n"
+    ++ "      \"expected_repairs_genesis_marker\": " ++ boolJson (blockIndexReloadRepairsGenesisMarker input) ++ "\n"
+    ++ "    }"
+
+def vectorJson : String :=
+  "{\n"
+    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"block_index_reload_cases\": [\n"
+    ++ blockIndexReloadCaseJson "valid-block-index-reload" valid ++ ",\n"
+    ++ blockIndexReloadCaseJson "missing-genesis-marker-accepts-and-repairs"
+      missingGenesisMarker ++ ",\n"
+    ++ blockIndexReloadCaseJson "chain-reconstruction-failed"
+      chainReconstructionFailed ++ ",\n"
+    ++ blockIndexReloadCaseJson "chain-empty-rejected" chainEmpty ++ ",\n"
+    ++ blockIndexReloadCaseJson "genesis-mismatch-rejected" genesisMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "best-metadata-mismatch-rejected"
+      bestMetadataMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "canonical-height-mismatch-rejected"
+      canonicalHeightMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "chain-id-mismatch-rejected" chainIdMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "rules-hash-mismatch-rejected" rulesHashMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "hash-work-hash-mismatch-rejected"
+      hashWorkHashMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "parent-hash-mismatch-rejected"
+      parentHashMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "malformed-height-key-rejected"
+      malformedHeightKey ++ ",\n"
+    ++ blockIndexReloadCaseJson "malformed-height-value-rejected"
+      malformedHeightValue ++ ",\n"
+    ++ blockIndexReloadCaseJson "extra-height-index-rejected" extraHeightIndex ++ ",\n"
+    ++ blockIndexReloadCaseJson "height-index-mismatch-rejected"
+      heightIndexMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "height-hash-mismatch-rejected" heightHashMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "missing-height-index-rejected" missingHeightIndex ++ ",\n"
+    ++ blockIndexReloadCaseJson "genesis-marker-invalid-length-rejected"
+      genesisMarkerInvalidLength ++ ",\n"
+    ++ blockIndexReloadCaseJson "genesis-marker-mismatch-rejected"
+      genesisMarkerMismatch ++ ",\n"
+    ++ blockIndexReloadCaseJson "genesis-precedes-best-mismatch"
+      genesis_precedes_best_mismatch_input ++ ",\n"
+    ++ blockIndexReloadCaseJson "malformed-key-precedes-extra-height"
+      malformed_key_precedes_extra_height_input ++ ",\n"
+    ++ blockIndexReloadCaseJson "malformed-value-precedes-height-hash"
+      malformed_value_precedes_height_hash_input ++ ",\n"
+    ++ blockIndexReloadCaseJson "marker-length-precedes-marker-mismatch"
+      marker_length_precedes_marker_mismatch_input ++ "\n"
+    ++ "  ]\n"
+    ++ "}\n"
+
+def main : IO Unit :=
+  IO.print vectorJson

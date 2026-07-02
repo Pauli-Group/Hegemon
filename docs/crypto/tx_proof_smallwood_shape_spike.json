@@ -1,0 +1,577 @@
+{
+  "smallwood_window": {
+    "min_elements": 64,
+    "max_elements": 65536,
+    "min_log2": 6,
+    "max_log2": 16
+  },
+  "summary": {
+    "credible_next_target": "native_tx_validity_relation",
+    "air_trace_is_too_large": true,
+    "native_tx_validity_fits_window": true,
+    "tx_leaf_public_fits_window": true,
+    "native_tx_validity_padded_elements": 4096,
+    "native_tx_validity_log2_padded": 12,
+    "native_vs_air_base_raw_shrink_factor": 213.47231270358307,
+    "native_vs_air_full_raw_shrink_factor": 299.6822851415685,
+    "recommended_lppc_rows": 512,
+    "recommended_lppc_packing_factor": 8,
+    "recommended_lppc_witness_degree": 9,
+    "official_goldilocks_profiles_require_grinding": true,
+    "recommended_next_step": "Prototype a no-grinding SmallWood LPPC/PACS frontend with a 512x8 witness matrix for NativeTxValidityRelation semantics, not against TransactionAirP3."
+  },
+  "air_surfaces": [
+    {
+      "label": "transaction_air_base_trace",
+      "rows": 8192,
+      "width": 104,
+      "raw_elements": 851968,
+      "padded_elements": 1048576,
+      "log2_padded_elements": 20,
+      "fits_smallwood_window": false,
+      "overflow_factor_vs_window_max": 13.0,
+      "recommendation": "Do not target SmallWood directly at the current AIR witness; it is far outside the intended regime."
+    },
+    {
+      "label": "transaction_air_full_trace",
+      "rows": 8192,
+      "width": 146,
+      "raw_elements": 1196032,
+      "padded_elements": 2097152,
+      "log2_padded_elements": 21,
+      "fits_smallwood_window": false,
+      "overflow_factor_vs_window_max": 18.25,
+      "recommendation": "Do not target SmallWood directly at the current AIR main trace; it is even further outside the intended regime."
+    }
+  ],
+  "relation_surfaces": [
+    {
+      "label": "tx_leaf_public_relation",
+      "relation_id_hex": "ba7f5dba84ccaf5fda90cd92396fb6f80dd0d9fae48553bcc35494cb2a6ef85f",
+      "ccs_rows": 256,
+      "raw_witness_elements": 90,
+      "raw_witness_bits": 4935,
+      "padded_witness_elements": 128,
+      "log2_padded_witness_elements": 7,
+      "fits_smallwood_window": true,
+      "field_contributions": [
+        {
+          "name": "ciphertext_hash_limb",
+          "bit_width": 64,
+          "count": 12,
+          "total_bits": 768
+        },
+        {
+          "name": "commitment_limb",
+          "bit_width": 64,
+          "count": 12,
+          "total_bits": 768
+        },
+        {
+          "name": "nullifier_limb",
+          "bit_width": 64,
+          "count": 12,
+          "total_bits": 768
+        },
+        {
+          "name": "balance_tag_limb",
+          "bit_width": 64,
+          "count": 6,
+          "total_bits": 384
+        },
+        {
+          "name": "merkle_root_limb",
+          "bit_width": 64,
+          "count": 6,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_attestation_commitment_limb",
+          "bit_width": 64,
+          "count": 6,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_oracle_commitment_limb",
+          "bit_width": 64,
+          "count": 6,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_policy_hash_limb",
+          "bit_width": 64,
+          "count": 6,
+          "total_bits": 384
+        },
+        {
+          "name": "balance_slot_asset_id",
+          "bit_width": 64,
+          "count": 4,
+          "total_bits": 256
+        },
+        {
+          "name": "fee",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "stablecoin_asset_id",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "stablecoin_issuance_magnitude",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "value_balance_magnitude",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "circuit_version",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "crypto_suite",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "stablecoin_policy_version",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "balance_slot_asset_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "ciphertext_hash_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "commitment_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "input_flag_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "nullifier_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "output_flag_len",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "input_flag",
+          "bit_width": 1,
+          "count": 2,
+          "total_bits": 2
+        },
+        {
+          "name": "output_flag",
+          "bit_width": 1,
+          "count": 2,
+          "total_bits": 2
+        },
+        {
+          "name": "stablecoin_enabled",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        },
+        {
+          "name": "stablecoin_issuance_sign",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        },
+        {
+          "name": "value_balance_sign",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        }
+      ],
+      "recommendation": "Fits the SmallWood witness window, but it is only a public bridge around an external STARK receipt and is not a tx-proof replacement target."
+    },
+    {
+      "label": "native_tx_validity_relation",
+      "relation_id_hex": "f68e836d89aff85c80884d3e7d2e65da58905020db7ad13ba90633e34f4044d6",
+      "ccs_rows": 512,
+      "raw_witness_elements": 3991,
+      "raw_witness_bits": 32787,
+      "padded_witness_elements": 4096,
+      "log2_padded_witness_elements": 12,
+      "fits_smallwood_window": true,
+      "field_contributions": [
+        {
+          "name": "input_merkle_sibling_byte",
+          "bit_width": 8,
+          "count": 3072,
+          "total_bits": 24576
+        },
+        {
+          "name": "ciphertext_hash_byte",
+          "bit_width": 8,
+          "count": 96,
+          "total_bits": 768
+        },
+        {
+          "name": "input_pk_auth_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "input_pk_recipient_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "input_r_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "input_rho_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "input_rho_seed_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "output_pk_auth_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "output_pk_recipient_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "output_r_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "output_rho_byte",
+          "bit_width": 8,
+          "count": 64,
+          "total_bits": 512
+        },
+        {
+          "name": "merkle_root_byte",
+          "bit_width": 8,
+          "count": 48,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_attestation_commitment_byte",
+          "bit_width": 8,
+          "count": 48,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_oracle_commitment_byte",
+          "bit_width": 8,
+          "count": 48,
+          "total_bits": 384
+        },
+        {
+          "name": "stablecoin_policy_hash_byte",
+          "bit_width": 8,
+          "count": 48,
+          "total_bits": 384
+        },
+        {
+          "name": "sk_spend_byte",
+          "bit_width": 8,
+          "count": 32,
+          "total_bits": 256
+        },
+        {
+          "name": "input_asset_id",
+          "bit_width": 64,
+          "count": 2,
+          "total_bits": 128
+        },
+        {
+          "name": "input_position",
+          "bit_width": 64,
+          "count": 2,
+          "total_bits": 128
+        },
+        {
+          "name": "input_value",
+          "bit_width": 64,
+          "count": 2,
+          "total_bits": 128
+        },
+        {
+          "name": "output_asset_id",
+          "bit_width": 64,
+          "count": 2,
+          "total_bits": 128
+        },
+        {
+          "name": "output_value",
+          "bit_width": 64,
+          "count": 2,
+          "total_bits": 128
+        },
+        {
+          "name": "fee",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "stablecoin_asset_id",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "stablecoin_issuance_magnitude",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "value_balance_magnitude",
+          "bit_width": 64,
+          "count": 1,
+          "total_bits": 64
+        },
+        {
+          "name": "stablecoin_policy_version",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "version_circuit",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "version_crypto",
+          "bit_width": 32,
+          "count": 1,
+          "total_bits": 32
+        },
+        {
+          "name": "ciphertext_hash_count",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "input_count",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "output_count",
+          "bit_width": 16,
+          "count": 1,
+          "total_bits": 16
+        },
+        {
+          "name": "stablecoin_enabled",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        },
+        {
+          "name": "stablecoin_issuance_sign",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        },
+        {
+          "name": "value_balance_sign",
+          "bit_width": 1,
+          "count": 1,
+          "total_bits": 1
+        }
+      ],
+      "recommendation": "Best SmallWood tx-proof spike target: compact enough for the intended regime and directly tied to tx validity witness semantics."
+    }
+  ],
+  "official_goldilocks_profiles": [
+    {
+      "label": "f64_short",
+      "source_variant": 0,
+      "tree_nb_leaves": 16384,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "beta": 3,
+      "opening_pow_bits": 4,
+      "decs_nb_opened_evals": 13,
+      "decs_eta": 8,
+      "decs_pow_bits": 7,
+      "uses_grinding": true,
+      "release_supported_under_hegemon_rule": false
+    },
+    {
+      "label": "f64_default",
+      "source_variant": 1,
+      "tree_nb_leaves": 4096,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "beta": 3,
+      "opening_pow_bits": 4,
+      "decs_nb_opened_evals": 17,
+      "decs_eta": 8,
+      "decs_pow_bits": 6,
+      "uses_grinding": true,
+      "release_supported_under_hegemon_rule": false
+    },
+    {
+      "label": "f64_fast",
+      "source_variant": 2,
+      "tree_nb_leaves": 1024,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "beta": 2,
+      "opening_pow_bits": 8,
+      "decs_nb_opened_evals": 24,
+      "decs_eta": 7,
+      "decs_pow_bits": 8,
+      "uses_grinding": true,
+      "release_supported_under_hegemon_rule": false
+    }
+  ],
+  "native_frontend_candidates": [
+    {
+      "label": "native_tx_validity_1024x4",
+      "packing_factor": 4,
+      "raw_witness_elements": 3991,
+      "minimal_row_count": 998,
+      "recommended_row_count": 1024,
+      "zero_padding_elements": 105,
+      "witness_polynomial_degree": 5,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "opened_eval_payload_floor_bytes": 16516,
+      "degree_points": [
+        {
+          "semantic_constraint_degree": 2,
+          "masked_polynomial_degree": 6,
+          "masked_linear_degree": 8
+        },
+        {
+          "semantic_constraint_degree": 3,
+          "masked_polynomial_degree": 11,
+          "masked_linear_degree": 8
+        },
+        {
+          "semantic_constraint_degree": 5,
+          "masked_polynomial_degree": 21,
+          "masked_linear_degree": 8
+        }
+      ],
+      "recommendation": "Valid but row-heavy: doubles witness rows relative to the 8-column candidate and increases the opened-evaluation payload floor."
+    },
+    {
+      "label": "native_tx_validity_512x8",
+      "packing_factor": 8,
+      "raw_witness_elements": 3991,
+      "minimal_row_count": 499,
+      "recommended_row_count": 512,
+      "zero_padding_elements": 105,
+      "witness_polynomial_degree": 9,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "opened_eval_payload_floor_bytes": 8324,
+      "degree_points": [
+        {
+          "semantic_constraint_degree": 2,
+          "masked_polynomial_degree": 10,
+          "masked_linear_degree": 16
+        },
+        {
+          "semantic_constraint_degree": 3,
+          "masked_polynomial_degree": 19,
+          "masked_linear_degree": 16
+        },
+        {
+          "semantic_constraint_degree": 5,
+          "masked_polynomial_degree": 37,
+          "masked_linear_degree": 16
+        }
+      ],
+      "recommendation": "Recommended first frontend shape: aligns with the current 512-row native relation, keeps witness degree moderate, and stays exactly at padded witness size 4096."
+    },
+    {
+      "label": "native_tx_validity_256x16",
+      "packing_factor": 16,
+      "raw_witness_elements": 3991,
+      "minimal_row_count": 250,
+      "recommended_row_count": 256,
+      "zero_padding_elements": 105,
+      "witness_polynomial_degree": 17,
+      "rho": 2,
+      "nb_opened_evals": 2,
+      "opened_eval_payload_floor_bytes": 4228,
+      "degree_points": [
+        {
+          "semantic_constraint_degree": 2,
+          "masked_polynomial_degree": 18,
+          "masked_linear_degree": 32
+        },
+        {
+          "semantic_constraint_degree": 3,
+          "masked_polynomial_degree": 35,
+          "masked_linear_degree": 32
+        },
+        {
+          "semantic_constraint_degree": 5,
+          "masked_polynomial_degree": 69,
+          "masked_linear_degree": 32
+        }
+      ],
+      "recommendation": "Valid but degree-heavy: halves rows relative to the 8-column candidate, but pushes witness and mask degrees up faster."
+    }
+  ]
+}

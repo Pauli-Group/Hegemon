@@ -2,6 +2,10 @@ target/
 bin/
 !node/src/bin/
 !node/src/bin/*.rs
+!zk/risc0-bridge/methods/guest/src/bin/
+!zk/risc0-bridge/methods/guest/src/bin/*.rs
+!zk/risc0-bridge/prover/src/bin/
+!zk/risc0-bridge/prover/src/bin/*.rs
 wallet-demo-artifacts/
 node.db/
 *.db
@@ -13,6 +17,7 @@ scripts/__pycache__/
 .dashboard-service-venv/
 .venv/
 tmp/
+formal/lean/.lake/
 
 # Testnet deployment artifacts (regenerate with scripts)
 .env.testnet
@@ -33,7 +38,7 @@ balances.json
 report.json
 cert.pem
 api.token
-hegemon
+/hegemon
 wallet.store
 wallet.pass
 key.pem
@@ -41,6 +46,13 @@ key.pem
 
 # Test logs
 test-logs/
+output/proving-redteam/
+.ops-local/
+
+# cargo-fuzz writes minimized corpus discoveries during local/red-team runs.
+# Keep existing tracked seeds, but do not let generated discoveries dirty release worktrees.
+fuzz/corpus/native_tx_leaf_artifact/*
+fuzz/corpus/receipt_root_artifact/*
 
 # Node data directories
 data/
@@ -52,7 +64,7 @@ pq-identity.seed
 out.txt
 
 # Local dev node logs
-hegemon-dev-node*.log
+hegemon-*-node*.log
 
 # Local LaTeX build artifacts (prover architecture doc)
 PROVER_ARCHITECTURE_CONSTRAINTS.pdf

@@ -14,22 +14,66 @@ jobs:
   rust-lints:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
       - name: Lean lint gate
         run: ./scripts/check-core.sh lint
 
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "dependency-audit"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Dependency audit waiver gate
+        run: ./scripts/dependency-audit-gate.sh
+
+  formal-core:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-core"
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          printf '%s  elan-init.sh\n' "$ELAN_INIT_SHA256" | sha256sum -c -
+          sh elan-init.sh -y --default-toolchain none
+      - name: Formal-core release gate
+        run: bash scripts/check_formal_core.sh
+
   core-tests:
     runs-on: ubuntu-latest
     needs: rust-lints
     env:
-      PROPTEST_MAX_CASES: 64
+      PROPTEST_CASES: 64
     steps:
       - name: Free disk space
         run: |
@@ -38,18 +82,27 @@ jobs:
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          printf '%s  elan-init.sh\n' "$ELAN_INIT_SHA256" | sha256sum -c -
+          sh elan-init.sh -y --default-toolchain none
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
       - name: Lean test gate
         run: ./scripts/check-core.sh test
 
-  release-build:
+  native-path-tests:
     runs-on: ubuntu-latest
     needs: rust-lints
     steps:
@@ -60,13 +113,152 @@ jobs:
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "native-path-tests"
+      - name: Native shipped-path integration gate
+        run: |
+          cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads -- --nocapture
+          cargo test -p hegemon-node submit_action_stages_and_imports_shielded_transfer -- --nocapture
+          cargo test -p hegemon-node coinbase_action_mints_shielded_output_and_updates_supply -- --nocapture
+          cargo test -p consensus --test raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
+          cargo test -p consensus --test raw_active_mode receipt_root_ -- --ignored --nocapture
+          cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order -- --nocapture
+          cargo test -p hegemon-node receipt_root -- --nocapture
+
+  app-no-ssh-e2e:
+    runs-on: ubuntu-latest
+    needs:
+      - rust-lints
+      - native-path-tests
+    env:
+      HEGEMON_E2E_MINE_THREADS: "4"
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install app dependencies
+        run: npm ci --prefix hegemon-app
+      - name: App UI guard gate
+        run: npm --prefix hegemon-app run check:ui-guards
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "app-no-ssh-e2e"
+      - name: App no-SSH release workflow
+        run: ./scripts/check-app-no-ssh-e2e.sh
+
+  security-adversarial:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    env:
+      PROPTEST_CASES: 64
+      HEGEMON_REDTEAM_MODE: ci
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "security-adversarial"
+      - name: Proving red-team gate
+        run: bash scripts/run_proving_redteam.sh
+
+  native-backend-security:
+    runs-on: ubuntu-latest
+    needs: rust-lints
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: |
+          rustup show
+          rustup toolchain install nightly-2026-06-23
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "native-backend-security"
+      - name: Native backend review package gate
+        run: |
+          cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
+          cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
+          cargo run -p native-backend-timing --release
+          bash scripts/verify_native_receipt_root_scalability.sh
+          cargo +nightly-2026-06-23 fuzz run native_tx_leaf_artifact -- -max_total_time=30
+          cargo +nightly-2026-06-23 fuzz run receipt_root_artifact -- -max_total_time=30
+          ./scripts/package_native_backend_review.sh
+          ./scripts/verify_native_backend_review_package.sh
+          ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+
+  release-build:
+    runs-on: ubuntu-latest
+    needs:
+      - dependency-audit
+      - formal-core
+      - core-tests
+      - native-path-tests
+      - app-no-ssh-e2e
+      - security-adversarial
+      - native-backend-security
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
-      - name: Release node build
+      - name: Release binary build
         run: ./scripts/check-core.sh build
+
+      - name: Release PQ binary audit
+        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd

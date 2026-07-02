@@ -2,12 +2,8 @@
 //!
 //! Handles version negotiation for PQ-secured connections.
 //!
-//! # Phase 3.5 Implementation
-//!
-//! This module implements Task 3.5.4 of the substrate migration plan:
-//! - PQ protocol version negotiation
-//! - Protocol identification for PQ peers
-//! - Notification protocol configuration
+//! Native Hegemon peers use this module for PQ protocol version negotiation,
+//! protocol identification, and notification-channel configuration.
 //!
 //! # Protocol Versioning
 //!

@@ -15,11 +15,14 @@ use crate::constants::{
     TOTAL_CYCLES, TRACE_LENGTH, TRACE_WIDTH,
 };
 use crate::{DisclosureCircuitError, PaymentDisclosureClaim, PaymentDisclosureWitness};
-use transaction_core::hashing_pq::bytes48_to_felts;
 use transaction_core::p3_config::{
-    config_with_fri, TransactionProofP3, FRI_LOG_BLOWUP, FRI_NUM_QUERIES,
+    config_with_fri, default_build_tx_fri_profile, TransactionProofP3,
 };
 use transaction_core::poseidon2::poseidon2_step;
+use transaction_core::{
+    constants::is_canonical_asset_id,
+    hashing_pq::{bytes48_to_felts, note_commitment_inputs},
+};
 
 pub type Val = Goldilocks;
 pub type DisclosureProofP3 = TransactionProofP3;
@@ -43,6 +46,9 @@ impl DisclosureProverP3 {
         claim: &PaymentDisclosureClaim,
         witness: &PaymentDisclosureWitness,
     ) -> Result<RowMajorMatrix<Val>, DisclosureCircuitError> {
+        if !is_canonical_asset_id(claim.asset_id) {
+            return Err(DisclosureCircuitError::InvalidAssetId);
+        }
         let inputs = commitment_inputs(claim, witness);
         let expected_len = 2 + 4 + 4 + 4 + 4;
         if inputs.len() != expected_len {
@@ -170,8 +176,9 @@ impl DisclosureProverP3 {
             pub_inputs_vec.len(),
             0,
         );
-        let log_blowup = FRI_LOG_BLOWUP.max(log_chunks);
-        let config = config_with_fri(log_blowup, FRI_NUM_QUERIES);
+        let profile = default_build_tx_fri_profile();
+        let log_blowup = profile.log_blowup_usize().max(log_chunks);
+        let config = config_with_fri(log_blowup, profile.num_queries_usize());
         let (prep_prover, _) = setup_preprocessed(&config.config, &air, degree_bits)
             .expect("DisclosureAirP3 preprocessed trace missing");
         prove_with_preprocessed(
@@ -198,14 +205,14 @@ fn commitment_inputs(
     claim: &PaymentDisclosureClaim,
     witness: &PaymentDisclosureWitness,
 ) -> Vec<Val> {
-    let mut inputs = Vec::with_capacity(2 + 4 + 4 + 4 + 4);
-    inputs.push(Val::from_u64(claim.value));
-    inputs.push(Val::from_u64(claim.asset_id));
-    inputs.extend(bytes32_to_felts(&claim.pk_recipient));
-    inputs.extend(bytes32_to_felts(&witness.rho));
-    inputs.extend(bytes32_to_felts(&witness.r));
-    inputs.extend(bytes32_to_felts(&claim.pk_auth));
-    inputs
+    note_commitment_inputs(
+        claim.value,
+        claim.asset_id,
+        &claim.pk_recipient,
+        &witness.rho,
+        &witness.r,
+        &claim.pk_auth,
+    )
 }
 
 fn bytes32_to_felts(bytes: &[u8; 32]) -> [Val; 4] {
@@ -216,4 +223,37 @@ fn bytes32_to_felts(bytes: &[u8; 32]) -> [Val; 4] {
         out[idx] = Val::from_u64(u64::from_be_bytes(buf));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use transaction_core::hashing_pq::note_commitment_inputs;
+
+    #[test]
+    fn disclosure_commitment_inputs_use_shared_core_preimage() {
+        let claim = PaymentDisclosureClaim {
+            value: 42,
+            asset_id: 7,
+            pk_recipient: [1u8; 32],
+            pk_auth: [2u8; 32],
+            commitment: [0u8; 48],
+        };
+        let witness = PaymentDisclosureWitness {
+            rho: [3u8; 32],
+            r: [4u8; 32],
+        };
+
+        assert_eq!(
+            commitment_inputs(&claim, &witness),
+            note_commitment_inputs(
+                claim.value,
+                claim.asset_id,
+                &claim.pk_recipient,
+                &witness.rho,
+                &witness.r,
+                &claim.pk_auth,
+            )
+        );
+    }
 }

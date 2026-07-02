@@ -23,7 +23,7 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
 ## Progress
 
 - [x] (2026-01-05T22:30Z) Documentation cleanup: updated SECURITY.md to reflect commitment-proof architecture, marked legacy runbooks (recursive_proofs_testnet.md, CONSENSUS_ANCHOR_BINDING_EXECPLAN.md) as superseded, added Node RPC endpoints to docs/API_REFERENCE.md.
-- [x] (2026-01-05T21:53Z) Completed Milestone 12: wired commitment proofs into the production/Substrate block path by carrying commitment proof bytes on-chain via an unsigned `ShieldedPool::submit_commitment_proof` extrinsic, attaching it during block building, and enforcing commitment-proof + parallel transaction-proof verification during block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`). Commitment-proof public inputs (tx proof hash commitment, padded+sorted nullifier lists, DA root, commitment-tree roots) are recomputed at import time from block extrinsics + a parent commitment-tree snapshot and stored for mined/network-imported blocks to back `block_getCommitmentProof`. Validated end-to-end with `HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh`: `/tmp/hegemon-dev-node-e2e-tmux.log` shows `Commitment block proof stored for imported block block_number=8 block_hash=5bdc…c352 proof_hash=3934…8ade` and `DA encoding stored ... da_root=c101…6da6`; `block_getCommitmentProof(0x5bdc…c352)` returns non-empty `proof_bytes` + matching `public_inputs`, and `da_getChunk(0xc101…6da6, 0)` returns a chunk + Merkle path.
+- [x] (2026-01-05T21:53Z) Completed Milestone 12: wired commitment proofs into the production/Substrate block path by carrying commitment proof bytes on-chain via an unsigned `ShieldedPool::submit_commitment_proof` extrinsic, attaching it during block building, and enforcing commitment-proof + parallel transaction-proof verification during block import (default `HEGEMON_PARALLEL_PROOF_VERIFICATION=1`). Commitment-proof public inputs (tx proof hash commitment, padded+sorted nullifier lists, DA root, commitment-tree roots) are recomputed at import time from block extrinsics + a parent commitment-tree snapshot and stored for mined/network-imported blocks to back `block_getCommitmentProof`. Validated end-to-end with `HEGEMON_E2E_FORCE=1 ./scripts/commitment_proof_da_e2e_tmux.sh`: `/tmp/native-devnet-host-node-e2e-tmux.log` shows `Commitment block proof stored for imported block block_number=8 block_hash=5bdc…c352 proof_hash=3934…8ade` and `DA encoding stored ... da_root=c101…6da6`; `block_getCommitmentProof(0x5bdc…c352)` returns non-empty `proof_bytes` + matching `public_inputs`, and `da_getChunk(0xc101…6da6, 0)` returns a chunk + Merkle path.
 - [x] (2026-01-06T21:20Z) Completed Milestone 11: removed verifier-as-inner unsound recursion by default (`epoch-circuit` panics unless `unsound-recursion` is enabled), gated legacy recursive block proof code behind `block-circuit/legacy-recursion` + `consensus/legacy-recursion`, removed `recursive_proof_hash` from consensus headers, and removed the `block_getRecursiveProof` RPC/store from the node. Validated with `cargo test -p consensus`, `cargo test -p block-circuit`, and `cargo test -p epoch-circuit` (note: `cargo test -p hegemon-node --no-run` still fails on this machine due to missing `libclang.dylib` for RocksDB build scripts).
 - [x] (2026-01-06T18:40Z) Milestone 10 wiring: added persistent per-node DA sampling secret (`<base_path>/da-secret`) and switched block-import DA sampling to `state_da::sample_indices(node_secret, block_hash, ...)`, logging sampled indices.
 - [x] (2026-01-06T12:45Z) Implemented `ParallelProofVerifier` with tx-proof commitment checks, anchor validation, and new block proof attachments; added `CommitmentBlockProver::commitment_from_proof_hashes` helper and an ignored integration test in `consensus/tests/parallel_verification.rs`.
@@ -164,13 +164,13 @@ Phase 1 (Milestones 1–5) documents the legacy recursive block proof path and i
   Evidence: `librocksdb-sys` build fails unless `LIBCLANG_PATH`/`DYLD_FALLBACK_LIBRARY_PATH` include `/Library/Developer/CommandLineTools/usr/lib`; runtime build warns about `wasm32v1-none` support.
   Implication: Document the libclang environment variables for local builds and consider updating the runtime builder to use `wasm32v1-none` once toolchains are aligned.
 - Observation (2026-01-01T16:20Z): The dev node shuts down during the end-to-end run because the essential `txpool-background` task fails before mining completes.
-  Evidence: `/tmp/hegemon-dev-node-debug.log` shows `ERROR ... Essential task \`txpool-background\` failed. Shutting down service.`
+  Evidence: `/tmp/native-devnet-host-node-debug.log` shows `ERROR ... Essential task \`txpool-background\` failed. Shutting down service.`
   Implication: The txpool background task needs debugging (or demotion from essential) before we can mine blocks and exercise recursive proof/DA chunk RPCs end-to-end.
 - Observation (2026-01-01T17:45Z): Recursive block proof generation failed for shielded transactions because the block circuit required `merkle_root == tree.root()`, but runtime anchor validation accepts historical roots.
-  Evidence: `/tmp/hegemon-dev-node-debug.log` shows `Failed to build recursive block proof ... reported merkle root ... but expected ...` on blocks containing shielded transfers.
+  Evidence: `/tmp/native-devnet-host-node-debug.log` shows `Failed to build recursive block proof ... reported merkle root ... but expected ...` on blocks containing shielded transfers.
   Implication: The block proof must validate anchors against the root history window (not just the current root) to match runtime rules.
 - Observation (2026-01-01T17:45Z): Shielded coinbase inherents failed with `InvalidTransaction::ExhaustsResources` under default block weight/length limits.
-  Evidence: `/tmp/hegemon-dev-node-debug.log` repeatedly logs `Failed to push inherent extrinsic ... ExhaustsResources`.
+  Evidence: `/tmp/native-devnet-host-node-debug.log` repeatedly logs `Failed to push inherent extrinsic ... ExhaustsResources`.
   Implication: Mark coinbase inherents as `DispatchClass::Mandatory` (or adjust `BlockWeights`/`BlockLength`) so block production can include coinbase even with large shielded payloads.
 
 - Observation (2026-01-01T23:40Z): Recursive proof generation panicked because the verifier pre-merkle permutation count included remainder-hash permutations that happen after the merkle segment.
@@ -822,7 +822,7 @@ Expected:
 
 **Evidence (2026-01-05T21:53Z)**:
 
-    /tmp/hegemon-dev-node-e2e-tmux.log:
+    /tmp/native-devnet-host-node-e2e-tmux.log:
       DA encoding stored for imported block block_number=8 da_root=c101ce…6da6 da_chunks=6
       Commitment block proof stored for imported block block_number=8 block_hash=5bdce6…c352 proof_hash=393403…8ade
 

@@ -225,9 +225,11 @@ async fn test_pq_handshake_latency() {
     assert!(conn1.is_ok(), "initiator handshake failed");
     assert!(conn2.is_ok(), "responder handshake failed");
 
-    // Verify handshake completed in under 500ms (target is <100ms, but allow margin for CI)
-    // In practice, typical latency is ~60-80ms on localhost, but CI runners can be slower
-    let max_latency = Duration::from_millis(500);
+    // Verify handshake completed within a bounded single-run budget.
+    // The stronger regression signal is the average-latency test below; this
+    // single-shot check just guards against pathological slowdowns on a loaded
+    // debug-profile runner.
+    let max_latency = Duration::from_millis(750);
     assert!(
         elapsed < max_latency,
         "PQ handshake took {:?}, expected < {:?}",

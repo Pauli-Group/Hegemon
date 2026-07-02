@@ -4,7 +4,7 @@ use aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 
 use crate::error::{PqNoiseError, Result};
-use crate::types::SessionKeys;
+use crate::types::{select_session_key, session_key_slots, SessionKeys};
 
 /// AES-256-GCM cipher wrapper for secure communication
 pub struct NoiseCipher {
@@ -25,11 +25,9 @@ impl NoiseCipher {
     ///
     /// The `is_initiator` flag determines which key is used for sending vs receiving
     pub fn new(keys: &SessionKeys, is_initiator: bool) -> Result<Self> {
-        let (send_key, recv_key) = if is_initiator {
-            (keys.initiator_to_responder, keys.responder_to_initiator)
-        } else {
-            (keys.responder_to_initiator, keys.initiator_to_responder)
-        };
+        let (send_slot, recv_slot) = session_key_slots(is_initiator);
+        let send_key = select_session_key(keys, send_slot);
+        let recv_key = select_session_key(keys, recv_slot);
 
         let send_cipher = Aes256Gcm::new_from_slice(&send_key).map_err(|e| {
             PqNoiseError::Encryption(format!("failed to create send cipher: {}", e))
@@ -49,11 +47,8 @@ impl NoiseCipher {
 
     /// Encrypt a message
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>> {
-        let nonce_bytes = nonce_from_counter(self.send_nonce);
-        self.send_nonce = self
-            .send_nonce
-            .checked_add(1)
-            .ok_or_else(|| PqNoiseError::Encryption("nonce overflow".to_string()))?;
+        let (nonce_bytes, next_nonce) = nonce_step(self.send_nonce)?;
+        self.send_nonce = next_nonce;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload {
@@ -68,11 +63,7 @@ impl NoiseCipher {
 
     /// Decrypt a message
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>> {
-        let nonce_bytes = nonce_from_counter(self.recv_nonce);
-        self.recv_nonce = self
-            .recv_nonce
-            .checked_add(1)
-            .ok_or_else(|| PqNoiseError::Encryption("nonce overflow".to_string()))?;
+        let (nonce_bytes, next_nonce) = nonce_step(self.recv_nonce)?;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload {
@@ -80,9 +71,12 @@ impl NoiseCipher {
             aad: &self.aad,
         };
 
-        self.recv_cipher
+        let plaintext = self
+            .recv_cipher
             .decrypt(nonce, payload)
-            .map_err(|e| PqNoiseError::Encryption(format!("decryption failed: {}", e)))
+            .map_err(|e| PqNoiseError::Encryption(format!("decryption failed: {}", e)))?;
+        self.recv_nonce = next_nonce;
+        Ok(plaintext)
     }
 
     /// Get the current send nonce (for debugging/testing)
@@ -97,11 +91,19 @@ impl NoiseCipher {
 }
 
 /// Convert a u64 counter to a 12-byte nonce for AES-GCM
-fn nonce_from_counter(counter: u64) -> [u8; 12] {
+pub(crate) fn nonce_from_counter(counter: u64) -> [u8; 12] {
     let mut nonce = [0u8; 12];
     // Put counter in the last 8 bytes (big-endian)
     nonce[4..].copy_from_slice(&counter.to_be_bytes());
     nonce
+}
+
+pub(crate) fn nonce_step(counter: u64) -> Result<([u8; 12], u64)> {
+    let nonce = nonce_from_counter(counter);
+    let next_counter = counter
+        .checked_add(1)
+        .ok_or_else(|| PqNoiseError::Encryption("nonce overflow".to_string()))?;
+    Ok((nonce, next_counter))
 }
 
 /// Transcript hash for the handshake
@@ -222,5 +224,99 @@ mod tests {
 
         cipher.encrypt(b"message 2").unwrap();
         assert_eq!(cipher.send_nonce(), 2);
+    }
+
+    #[test]
+    fn decrypt_failure_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [1u8; 32],
+            responder_to_initiator: [2u8; 32],
+            session_aad: [3u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let first_plaintext = receiver.decrypt(&first).expect("first decrypt");
+        assert_eq!(first_plaintext, b"first");
+        assert_eq!(receiver.recv_nonce(), 1);
+
+        let duplicate = receiver.decrypt(&first);
+        assert!(
+            duplicate.is_err(),
+            "duplicate frame must fail authentication"
+        );
+        assert_eq!(
+            receiver.recv_nonce(),
+            1,
+            "failed duplicate must not consume the next receive nonce"
+        );
+
+        let second = sender.encrypt(b"second").expect("second frame");
+        let second_plaintext = receiver
+            .decrypt(&second)
+            .expect("next frame after duplicate rejection");
+        assert_eq!(second_plaintext, b"second");
+        assert_eq!(receiver.recv_nonce(), 2);
+    }
+
+    #[test]
+    fn future_frame_failure_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [7u8; 32],
+            responder_to_initiator: [8u8; 32],
+            session_aad: [9u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let second = sender.encrypt(b"second").expect("second frame");
+
+        let future = receiver.decrypt(&second);
+        assert!(future.is_err(), "future frame must fail authentication");
+        assert_eq!(
+            receiver.recv_nonce(),
+            0,
+            "failed future frame must not advance the receive nonce"
+        );
+
+        let first_plaintext = receiver
+            .decrypt(&first)
+            .expect("current frame after future rejection");
+        assert_eq!(first_plaintext, b"first");
+        assert_eq!(receiver.recv_nonce(), 1);
+    }
+
+    #[test]
+    fn stale_replay_after_multiple_frames_preserves_receive_nonce() {
+        let keys = SessionKeys {
+            initiator_to_responder: [10u8; 32],
+            responder_to_initiator: [11u8; 32],
+            session_aad: [12u8; 32],
+        };
+
+        let mut sender = NoiseCipher::new(&keys, true).expect("sender cipher");
+        let mut receiver = NoiseCipher::new(&keys, false).expect("receiver cipher");
+        let first = sender.encrypt(b"first").expect("first frame");
+        let stale = sender.encrypt(b"second").expect("second frame");
+        let third = sender.encrypt(b"third").expect("third frame");
+
+        assert_eq!(receiver.decrypt(&first).unwrap(), b"first");
+        assert_eq!(receiver.decrypt(&stale).unwrap(), b"second");
+        assert_eq!(receiver.decrypt(&third).unwrap(), b"third");
+        assert_eq!(receiver.recv_nonce(), 3);
+
+        let rejected = receiver.decrypt(&stale);
+        assert!(rejected.is_err(), "stale frame must fail authentication");
+        assert_eq!(
+            receiver.recv_nonce(),
+            3,
+            "failed stale replay must not advance the receive nonce"
+        );
+
+        let current = sender.encrypt(b"fourth").expect("fourth frame");
+        assert_eq!(receiver.decrypt(&current).unwrap(), b"fourth");
+        assert_eq!(receiver.recv_nonce(), 4);
     }
 }

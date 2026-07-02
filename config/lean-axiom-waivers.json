@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "allowed_kernel_axioms": [
+    "Classical.choice",
+    "Quot.sound",
+    "propext"
+  ],
+  "temporary_axiom_families": []
+}

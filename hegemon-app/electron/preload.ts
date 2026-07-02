@@ -51,5 +51,8 @@ contextBridge.exposeInMainWorld('hegemon', {
   },
   dialog: {
     openPath: (options: DialogOpenOptions) => ipcRenderer.invoke('dialog:openPath', options)
+  },
+  clipboard: {
+    writeText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text)
   }
 });

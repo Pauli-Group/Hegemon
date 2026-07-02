@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 pub use transaction_core::BalanceSlot;
 
 use crate::{
-    constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_NOTE_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID},
+    constants::{
+        is_balance_slot_padding_asset_id, is_canonical_asset_id, BALANCE_SLOTS, MAX_INPUTS,
+        MAX_NOTE_VALUE, MAX_OUTPUTS, NATIVE_ASSET_ID,
+    },
     error::TransactionCircuitError,
     hashing_pq::{balance_commitment_bytes, Commitment},
 };
@@ -118,6 +121,7 @@ impl TransactionPublicInputs {
                 "balance slot vector must match BALANCE_SLOTS",
             ));
         }
+        validate_balance_slot_asset_ids(&balance_slots)?;
         if native_fee as u128 > MAX_NOTE_VALUE {
             return Err(TransactionCircuitError::FeeOutOfRange(native_fee as u128));
         }
@@ -157,7 +161,8 @@ impl TransactionPublicInputs {
             ));
         }
         if stablecoin.enabled {
-            if stablecoin.asset_id == NATIVE_ASSET_ID || stablecoin.asset_id == u64::MAX {
+            if stablecoin.asset_id == NATIVE_ASSET_ID || !is_canonical_asset_id(stablecoin.asset_id)
+            {
                 return Err(TransactionCircuitError::ConstraintViolation(
                     "stablecoin asset id invalid",
                 ));
@@ -223,6 +228,47 @@ impl TransactionPublicInputs {
     pub fn version_binding(&self) -> VersionBinding {
         VersionBinding::new(self.circuit_version, self.crypto_suite)
     }
+}
+
+fn validate_balance_slot_asset_ids(
+    balance_slots: &[BalanceSlot],
+) -> Result<(), TransactionCircuitError> {
+    if balance_slots
+        .first()
+        .map(|slot| slot.asset_id != NATIVE_ASSET_ID)
+        .unwrap_or(true)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "slot 0 asset must be native asset",
+        ));
+    }
+
+    let mut saw_padding = false;
+    let mut prev_asset = NATIVE_ASSET_ID;
+    for slot in balance_slots.iter().skip(1) {
+        if is_balance_slot_padding_asset_id(slot.asset_id) {
+            saw_padding = true;
+            if slot.delta != 0 {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "balance slot padding delta must be zero",
+                ));
+            }
+            continue;
+        }
+        if saw_padding {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot padding must be a suffix",
+            ));
+        }
+        if !is_canonical_asset_id(slot.asset_id) || slot.asset_id <= prev_asset {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "balance slot assets must be canonical and strictly increasing",
+            ));
+        }
+        prev_asset = slot.asset_id;
+    }
+
+    Ok(())
 }
 
 pub(crate) mod serde_vec_bytes48 {

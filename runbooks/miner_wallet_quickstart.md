@@ -1,6 +1,6 @@
-# Miner + wallet quickstart (Substrate node)
+# Miner + wallet quickstart (Hegemon node)
 
-Use this runbook to stand up mining nodes and verify they are producing blocks with the Substrate-based `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
+Use this runbook to stand up mining nodes and verify they are producing blocks with the native `hegemon-node` binary. Block rewards are minted directly to the shielded pool for privacy-preserving mining.
 
 For fresh-testnet bring-up, if you are following [config/testnet-initialization.md](/Users/pldd/Projects/Reflexivity/Hegemon/config/testnet-initialization.md), use the laptop-created `hegemon-boot-wallet` address as both `HEGEMON_MINER_ADDRESS` and `HEGEMON_PROVER_REWARD_ADDRESS` on every mining/proving host.
 
@@ -60,17 +60,17 @@ HEGEMON_MINE=1 HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
   --rpc-port 9944
 ```
 
-### 4a. Configure seed peers (recommended for real mining)
+### 4a. Configure seed peers (required for real mining)
 
 To avoid forks caused by low peer counts, configure multiple reachable seeds. Use a comma-separated list in `HEGEMON_SEEDS`:
 
 ```bash
-export HEGEMON_SEEDS="hegemon.pauli.group:30333"
+export HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"
 ```
 
-Ensure TCP/30333 is open on each approved seed and that every miner shares the same seed list. For the first public bootnode after a fresh reset, leave `HEGEMON_SEEDS` unset or exclude the node's own public address until the node is already live.
+Ensure TCP/30333 is open on each approved seed and that every miner shares the same seed list. The node refuses live `HEGEMON_MINE=1` authoring with an empty seed list unless `HEGEMON_BOOTSTRAP_AUTHORING=1` is set for a deliberate first-author bootstrap.
 
-### 4b. Ensure time sync (recommended)
+### 4b. Ensure time sync (required)
 
 PoW blocks reject timestamps more than 90 seconds in the future. Enable NTP/chrony on every miner to prevent timestamp rejection.
 
@@ -80,7 +80,7 @@ The `--dev` flag enables local-development settings and fast iteration. Block re
 
 ```bash
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_miningStatus"}' \
   http://127.0.0.1:9944
 ```
 
@@ -109,11 +109,11 @@ Note: This node doesn't mine (no `HEGEMON_MINE=1`), but syncs blocks from Node A
 
 ```bash
 curl -s -H "Content-Type: application/json" \
-  -d '{"id":1, "jsonrpc":"2.0", "method": "system_health"}' \
+  -d '{"id":1, "jsonrpc":"2.0", "method": "hegemon_consensusStatus"}' \
   http://127.0.0.1:9944
 ```
 
-Optional topology check (PQ transport aware):
+Optional topology check for local unsafe RPC sessions only:
 
 ```bash
 curl -s -H "Content-Type: application/json" \
@@ -121,7 +121,7 @@ curl -s -H "Content-Type: application/json" \
   http://127.0.0.1:9944
 ```
 
-Both nodes should report peers via `system_health` and sync blocks.
+Use `hegemon_consensusStatus` and `hegemon_miningStatus` to confirm `syncing=false`, an advancing height, and an open `mining_sync_gate_open` on miners. Peer topology RPCs are unsafe-only diagnostics; for shared deployments, also confirm P2P connectivity through node logs or host-level TCP checks on port `30333`.
 
 ## 8. Check your shielded balance
 

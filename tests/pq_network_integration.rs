@@ -1,9 +1,6 @@
 //! PQ Network Integration Tests
 //!
-//! Multi-node integration tests for the PQ network backend with
-//! Substrate-compatible transport layer.
-//!
-//! Part of Phase 3.5 (Task 3.5.6) of the Substrate migration plan.
+//! Multi-node integration tests for the native PQ network backend.
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -14,40 +11,40 @@ use network::{
         ProtocolSecurityLevel, PQ_PROTOCOL_V1,
     },
     PqNetworkBackend, PqNetworkBackendConfig, PqPeerIdentity, PqTransportConfig,
-    SubstratePqTransport, SubstratePqTransportConfig,
+    NativePqTransport, NativePqTransportConfig,
 };
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-// ==================== Substrate Transport Tests ====================
+// ==================== Native Transport Tests ====================
 
-/// Test: SubstratePqTransport can be created with different configs
+/// Test: NativePqTransport can be created with different configs
 #[test]
-fn test_substrate_transport_configs() {
-    let dev = SubstratePqTransportConfig::development();
+fn test_native_transport_configs() {
+    let dev = NativePqTransportConfig::development();
     assert!(!dev.require_pq);
     assert!(dev.verbose_logging);
 
-    let prod = SubstratePqTransportConfig::production();
+    let prod = NativePqTransportConfig::production();
     assert!(prod.require_pq);
     assert!(!prod.verbose_logging);
 
-    let testnet = SubstratePqTransportConfig::testnet();
+    let testnet = NativePqTransportConfig::testnet();
     assert!(testnet.require_pq);
 }
 
-/// Test: SubstratePqTransport peer ID is deterministic
+/// Test: NativePqTransport peer ID is deterministic
 #[test]
-fn test_substrate_transport_peer_id_deterministic() {
-    let transport1 = SubstratePqTransport::from_seed(
+fn test_native_transport_peer_id_deterministic() {
+    let transport1 = NativePqTransport::from_seed(
         b"deterministic-test-seed",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
-    let transport2 = SubstratePqTransport::from_seed(
+    let transport2 = NativePqTransport::from_seed(
         b"deterministic-test-seed",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
 
     assert_eq!(
@@ -56,9 +53,9 @@ fn test_substrate_transport_peer_id_deterministic() {
         "Same seed should produce same peer ID"
     );
 
-    let transport3 = SubstratePqTransport::from_seed(
+    let transport3 = NativePqTransport::from_seed(
         b"different-seed",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
     assert_ne!(
         transport1.local_peer_id(),
@@ -67,19 +64,19 @@ fn test_substrate_transport_peer_id_deterministic() {
     );
 }
 
-/// Test: Two SubstratePqTransports can establish a connection
+/// Test: Two NativePqTransports can establish a connection
 #[tokio::test]
-async fn test_substrate_transport_connection() -> TestResult<()> {
+async fn test_native_transport_connection() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
-    let initiator = SubstratePqTransport::from_seed(
+    let initiator = NativePqTransport::from_seed(
         b"transport-conn-initiator",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
-    let responder = SubstratePqTransport::from_seed(
+    let responder = NativePqTransport::from_seed(
         b"transport-conn-responder",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
 
     let responder_handle = tokio::spawn({
@@ -109,19 +106,19 @@ async fn test_substrate_transport_connection() -> TestResult<()> {
     Ok(())
 }
 
-/// Test: SubstratePqTransport supports bidirectional messaging
+/// Test: NativePqTransport supports bidirectional messaging
 #[tokio::test]
-async fn test_substrate_transport_messaging() -> TestResult<()> {
+async fn test_native_transport_messaging() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
-    let initiator = SubstratePqTransport::from_seed(
+    let initiator = NativePqTransport::from_seed(
         b"msg-initiator",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
-    let responder = SubstratePqTransport::from_seed(
+    let responder = NativePqTransport::from_seed(
         b"msg-responder",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
 
     let responder_handle = tokio::spawn({
@@ -324,20 +321,20 @@ async fn test_full_pq_handshake_e2e() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
-    let initiator = SubstratePqTransport::from_seed(
+    let initiator = NativePqTransport::from_seed(
         b"e2e-initiator",
-        SubstratePqTransportConfig {
+        NativePqTransportConfig {
             require_pq: true,
             verbose_logging: true,
-            ..SubstratePqTransportConfig::default()
+            ..NativePqTransportConfig::default()
         },
     );
-    let responder = SubstratePqTransport::from_seed(
+    let responder = NativePqTransport::from_seed(
         b"e2e-responder",
-        SubstratePqTransportConfig {
+        NativePqTransportConfig {
             require_pq: true,
             verbose_logging: true,
-            ..SubstratePqTransportConfig::default()
+            ..NativePqTransportConfig::default()
         },
     );
 
@@ -378,13 +375,13 @@ async fn test_mixed_security_connection() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
-    let initiator = SubstratePqTransport::from_seed(
+    let initiator = NativePqTransport::from_seed(
         b"mixed-initiator",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
-    let responder = SubstratePqTransport::from_seed(
+    let responder = NativePqTransport::from_seed(
         b"mixed-responder",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
 
     let responder_handle = tokio::spawn({
@@ -412,13 +409,13 @@ async fn test_connection_info() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
 
-    let initiator = SubstratePqTransport::from_seed(
+    let initiator = NativePqTransport::from_seed(
         b"info-initiator",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
-    let responder = SubstratePqTransport::from_seed(
+    let responder = NativePqTransport::from_seed(
         b"info-responder",
-        SubstratePqTransportConfig::development(),
+        NativePqTransportConfig::development(),
     );
 
     let responder_handle = tokio::spawn({

@@ -1,0 +1,180 @@
+# mode: ci
+# campaign: receipt-root-tamper
+# started_at_utc: 2026-04-23T20:03:49Z
+# command_script:
+cargo test -p hegemon-node receipt_root -- --nocapture
+cargo test -p consensus --test raw_active_mode receipt_root_ -- --ignored --nocapture
+if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
+  cargo +nightly fuzz run receipt_root_artifact -- -max_total_time=30
+fi
+
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.76s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/debug/deps/hegemon_node-a76d288bd9881a26)
+
+running 18 tests
+test substrate::artifact_market::tests::receipt_root_uses_experimental_verifier_profile ... ok
+test substrate::prover_coordinator::tests::prepared_bundle_rank_prefers_shipped_recursive_block_over_receipt_root ... ok
+test substrate::service::tests::explicit_receipt_root_mode_is_selected_from_env ... ok
+test substrate::service::tests::mining_pause_reason_requires_ready_bundle_for_native_receipt_root_batch ... ok
+test substrate::service::tests::receipt_root_cache_key_binds_tx_artifact_identity ... ok
+test substrate::service::tests::receipt_root_errors_on_native_artifact_validation_failure ... ok
+test substrate::service::tests::receipt_root_errors_on_verifier_profile_mismatch ... ok
+test substrate::service::tests::receipt_root_errors_when_native_artifacts_are_missing ... ok
+test substrate::service::tests::receipt_root_inline_fallback_outcomes_are_not_cacheable ... ok
+test substrate::service::tests::receipt_root_lane_accepts_embedded_proof_bytes ... ok
+test substrate::service::tests::receipt_root_lane_rejects_local_only_sidecar_proof_material ... ok
+test substrate::service::tests::receipt_root_native_outcomes_are_cacheable ... ok
+test substrate::service::tests::receipt_root_prefers_native_lane_when_artifacts_are_native ... ok
+test substrate::service::tests::receipt_root_work_plan_rejects_empty_artifact_set ... ok
+test substrate::service::tests::receipt_root_work_plan_splits_into_mini_roots ... ok
+test substrate::service::tests::require_native_block_proof_accepts_explicit_receipt_root_mode ... ok
+test substrate::service::tests::require_native_block_proof_accepts_explicit_receipt_root_outcome ... ok
+test substrate::service::tests::require_native_block_proof_accepts_explicit_receipt_root_payload ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 245 filtered out; finished in 37.70s
+
+     Running unittests src/bin/substrate_node.rs (target/debug/deps/hegemon_node-b3870b4ef4dcf225)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+warning: variable does not need to be mutable
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:369:9
+    |
+369 |         mut self,
+    |         ----^^^^
+    |         |
+    |         help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_public_expr` is never used
+  --> spikes/recursion/vendor/plonky3-recursion/circuit/src/builder/compiler/expression_lowerer.rs:78:4
+   |
+78 | fn is_public_expr<F: Field>(graph: &ExpressionGraph<F>, expr_id: ExprId) -> bool {
+   |    ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `get_witness` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/circuit/src/tables/runner.rs:323:8
+    |
+ 35 | impl<'a, F: CircuitField> CircuitRunner<'a, F> {
+    | ---------------------------------------------- method in this implementation
+...
+323 |     fn get_witness(&self, widx: WitnessId) -> Result<F, CircuitError> {
+    |        ^^^^^^^^^^^
+
+warning: `p3-circuit` (lib) generated 3 warnings (run `cargo fix --lib -p p3-circuit` to apply 1 suggestion)
+warning: unused variable: `challenges`
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/public_inputs.rs:382:5
+    |
+382 |     challenges: &[EF],
+    |     ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_challenges`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `FoldPhaseInputsTarget` is never constructed
+  --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:20:12
+   |
+20 | pub struct FoldPhaseInputsTarget {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `fold_row_chain` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:564:4
+    |
+564 | fn fold_row_chain<EF: Field>(
+    |    ^^^^^^^^^^^^^^
+
+warning: function `verify_query` is never used
+   --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:651:4
+    |
+651 | fn verify_query<EF: Field>(
+    |    ^^^^^^^^^^^^
+
+warning: function `verify_query_from_index_bits` is never used
+    --> spikes/recursion/vendor/plonky3-recursion/recursion/src/pcs/fri/verifier.rs:1189:4
+     |
+1189 | fn verify_query_from_index_bits<EF: Field>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `p3-recursion` (lib) generated 5 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.61s
+warning: the following packages contain code that will be rejected by a future version of Rust: trie-db v0.30.0
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/raw_active_mode.rs (target/debug/deps/raw_active_mode-ea8652d3858d9085)
+
+running 2 tests
+test receipt_root_block_is_accepted ... ok
+test receipt_root_rejects_receipts_for_the_wrong_statement_set ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 289.47s
+

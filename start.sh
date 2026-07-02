@@ -11,9 +11,13 @@
 #   3. Get your address: ./target/release/wallet status --store ~/.hegemon-wallet --passphrase "YOUR_PASSPHRASE" --no-sync
 #
 # Environment variables:
-#   HEGEMON_SEEDS          - Boot node address (default: your-bootnode.example.com:30333)
+#   HEGEMON_SEEDS          - Boot node address list (default: hegemon.pauli.group:30333)
 #   HEGEMON_MINE           - Enable mining (0 or 1, default: 0)
 #   HEGEMON_MINER_ADDRESS  - Your shielded address for mining rewards
+#
+# All miners on a shared network must use the same approved HEGEMON_SEEDS list
+# to avoid partitions and forks. Keep NTP or chrony enabled because PoW
+# timestamps are rejected if they exceed the future-skew bound.
 
 set -euo pipefail
 
@@ -33,7 +37,6 @@ HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \
 ./target/release/hegemon-node \
   --dev \
   --base-path "$HOME/.hegemon-node" \
-  --chain config/dev-chainspec.json \
   --rpc-port 9944 \
   --rpc-methods safe \
   --name "MyNode"

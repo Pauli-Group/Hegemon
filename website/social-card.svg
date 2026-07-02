@@ -1,0 +1,24 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HEGEMON social preview card</title>
+  <desc id="desc">HEGEMON logo and the headline Post-quantum shielded money.</desc>
+  <defs>
+    <linearGradient id="bg" x1="64" y1="44" x2="1136" y2="586" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1C36"/>
+      <stop offset="1" stop-color="#081224"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" rx="24" fill="url(#bg)"/>
+  <rect x="62" y="46" width="1076" height="538" rx="28" stroke="#1BE7FF" stroke-opacity="0.12"/>
+
+  <g transform="translate(98 84)">
+    <path d="M0 48L24 0L48 48Z" fill="none" stroke="#F5A623" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="24" cy="24" r="14.5" stroke="#F5A623" stroke-width="3"/>
+    <text x="70" y="33" fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="30" font-weight="700" letter-spacing="5">HEGEMON</text>
+  </g>
+
+  <text fill="#F4F7FB" font-family="Space Grotesk, Inter, Helvetica Neue, Arial, sans-serif" font-size="92" font-weight="700" letter-spacing="-2.2">
+    <tspan x="94" y="304">Post-quantum</tspan>
+    <tspan x="94" y="410" fill="#1BE7FF">shielded money</tspan>
+  </text>
+</svg>

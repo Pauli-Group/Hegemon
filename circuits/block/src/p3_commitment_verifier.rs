@@ -3,6 +3,7 @@
 use blake3::Hasher as Blake3Hasher;
 use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
 use p3_uni_stark::{setup_preprocessed, verify_with_preprocessed};
+use std::io::Cursor;
 use transaction_circuit::constants::MAX_INPUTS;
 use transaction_circuit::p3_config::{config_with_fri, TransactionProofP3};
 use transaction_circuit::p3_verifier::infer_transaction_fri_profile_p3;
@@ -10,6 +11,13 @@ use transaction_circuit::p3_verifier::infer_transaction_fri_profile_p3;
 use crate::error::BlockError;
 use crate::p3_commitment_air::{CommitmentBlockAirP3, CommitmentBlockPublicInputsP3, Felt};
 use crate::p3_commitment_prover::CommitmentBlockProofP3;
+
+/// Pre-decode cap for the legacy commitment-block proof wrapper.
+///
+/// This path is a compatibility verifier; the shipped recursive block lanes have
+/// tighter versioned caps. Keep this limit high enough for historical P3 proofs
+/// while rejecting allocation-sized garbage before bincode sees it.
+pub const MAX_COMMITMENT_BLOCK_PROOF_BYTES: usize = 64 * 1024 * 1024;
 
 pub fn verify_block_commitment_p3(proof: &CommitmentBlockProofP3) -> Result<(), BlockError> {
     verify_block_commitment_proof_p3(&proof.proof_bytes, &proof.public_inputs)
@@ -30,8 +38,7 @@ pub fn verify_block_commitment_proof_p3(
         ));
     }
 
-    let proof: TransactionProofP3 = bincode::deserialize(proof_bytes)
-        .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
+    let proof = decode_commitment_block_proof_bytes_exact(proof_bytes)?;
     let tx_count = pub_inputs.tx_count as usize;
     let trace_len = CommitmentBlockAirP3::trace_length(tx_count);
     let degree_bits = trace_len.ilog2() as usize;
@@ -53,6 +60,40 @@ pub fn verify_block_commitment_proof_p3(
         Some(&prep_vk),
     )
     .map_err(|err| BlockError::CommitmentProofVerification(format!("{err:?}")))
+}
+
+fn decode_commitment_block_proof_bytes_exact(
+    proof_bytes: &[u8],
+) -> Result<TransactionProofP3, BlockError> {
+    if proof_bytes.is_empty() {
+        return Err(BlockError::CommitmentProofVerification(
+            "commitment proof bytes are empty".into(),
+        ));
+    }
+    if proof_bytes.len() > MAX_COMMITMENT_BLOCK_PROOF_BYTES {
+        return Err(BlockError::CommitmentProofVerification(format!(
+            "commitment proof bytes exceed cap: actual={} cap={}",
+            proof_bytes.len(),
+            MAX_COMMITMENT_BLOCK_PROOF_BYTES
+        )));
+    }
+
+    let mut cursor = Cursor::new(proof_bytes);
+    let proof: TransactionProofP3 = bincode::deserialize_from(&mut cursor)
+        .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
+    if cursor.position() as usize != proof_bytes.len() {
+        return Err(BlockError::CommitmentProofVerification(
+            "commitment proof bytes have trailing bytes".into(),
+        ));
+    }
+    let canonical = bincode::serialize(&proof)
+        .map_err(|_| BlockError::CommitmentProofVerification("invalid proof format".into()))?;
+    if canonical != proof_bytes {
+        return Err(BlockError::CommitmentProofVerification(
+            "commitment proof bytes must use canonical serialization".into(),
+        ));
+    }
+    Ok(proof)
 }
 
 fn derive_nullifier_challenges_inputs(
@@ -113,4 +154,31 @@ fn limbs_to_bytes(limbs: &[Felt; 6]) -> [u8; 48] {
         out[start..start + 8].copy_from_slice(&limb.as_canonical_u64().to_be_bytes());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_commitment_block_proof_bytes_exact, MAX_COMMITMENT_BLOCK_PROOF_BYTES};
+
+    #[test]
+    fn commitment_block_proof_decode_rejects_empty_before_bincode() {
+        let err = match decode_commitment_block_proof_bytes_exact(&[]) {
+            Ok(_) => panic!("empty commitment proof accepted"),
+            Err(err) => err,
+        };
+        assert!(err.to_string().contains("empty"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn commitment_block_proof_decode_rejects_oversized_before_bincode() {
+        let oversized = vec![0u8; MAX_COMMITMENT_BLOCK_PROOF_BYTES + 1];
+        let err = match decode_commitment_block_proof_bytes_exact(&oversized) {
+            Ok(_) => panic!("oversized commitment proof accepted"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("exceed cap"),
+            "unexpected error: {err}"
+        );
+    }
 }

@@ -32,7 +32,7 @@ use transaction_circuit::{
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, spend_auth_key_bytes, HashFelt},
     keys::generate_keys,
     note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-    p3_config::{DIGEST_ELEMS, FRI_LOG_BLOWUP, FRI_NUM_QUERIES, FRI_POW_BITS},
+    p3_config::{default_build_tx_fri_profile, DIGEST_ELEMS, FRI_POW_BITS},
     p3_prover::prewarm_transaction_prover_cache_p3,
     p3_verifier::{prewarm_transaction_verifier_cache_p3, InferredFriProfileP3},
     proof, StablecoinPolicyBinding, TransactionProverP3, TransactionWitness,
@@ -1316,9 +1316,10 @@ fn run_benchmark(
 
             if !tx_prewarmed {
                 let log_chunks = tx_log_chunks.expect("tx log chunks computed");
+                let profile = default_build_tx_fri_profile();
                 let fri_profile = InferredFriProfileP3 {
-                    log_blowup: FRI_LOG_BLOWUP.max(log_chunks),
-                    num_queries: FRI_NUM_QUERIES,
+                    log_blowup: profile.log_blowup_usize().max(log_chunks),
+                    num_queries: profile.num_queries_usize(),
                 };
                 prewarm_transaction_prover_cache_p3(
                     transaction_circuit::p3_prover::TransactionProofParams::production(),
@@ -1459,8 +1460,12 @@ fn run_benchmark(
     };
 
     let tx_log_num_quotient_chunks = tx_log_chunks.unwrap_or(0);
-    let tx_log_blowup_used = FRI_LOG_BLOWUP.max(tx_log_num_quotient_chunks);
-    let fri_conjectured_soundness_bits = tx_log_blowup_used * FRI_NUM_QUERIES + FRI_POW_BITS;
+    let tx_profile = default_build_tx_fri_profile();
+    let tx_log_blowup_used = tx_profile
+        .log_blowup_usize()
+        .max(tx_log_num_quotient_chunks);
+    let fri_conjectured_soundness_bits =
+        tx_log_blowup_used * tx_profile.num_queries_usize() + FRI_POW_BITS;
     let tx_trace_rows = transaction_circuit::P3_MIN_TRACE_LENGTH;
     let tx_trace_width = TX_TRACE_WIDTH;
     let tx_schedule_width = TX_PREPROCESSED_WIDTH;
@@ -1532,8 +1537,8 @@ fn run_benchmark(
         tx_proof_bytes_max,
         tx_log_num_quotient_chunks,
         tx_log_blowup_used,
-        fri_log_blowup_config: FRI_LOG_BLOWUP,
-        fri_num_queries: FRI_NUM_QUERIES,
+        fri_log_blowup_config: tx_profile.log_blowup_usize(),
+        fri_num_queries: tx_profile.num_queries_usize(),
         fri_query_pow_bits: FRI_POW_BITS,
         fri_conjectured_soundness_bits,
         tx_trace_rows,

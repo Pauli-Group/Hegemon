@@ -163,6 +163,8 @@ mod serde_bytes32 {
 #[cfg(test)]
 mod tests {
     use rand::{rngs::StdRng, SeedableRng};
+    use transaction_circuit::hashing_pq::felts_to_bytes48;
+    use transaction_circuit::note::OutputNoteWitness;
 
     use crate::{keys::RootSecret, notes::MemoPlaintext};
 
@@ -188,6 +190,61 @@ mod tests {
         assert_eq!(
             ovk.pk_recipient(recovered.diversifier_index),
             recovered.address.pk_recipient
+        );
+    }
+
+    #[test]
+    fn full_view_decrypt_binds_plaintext_note_data_commitment_and_witness() {
+        let mut rng = StdRng::seed_from_u64(56);
+        let root = RootSecret::from_rng(&mut rng);
+        let keys = root.derive();
+        let material = keys.address(3).unwrap();
+        let address = material.shielded_address();
+        let note = NotePlaintext::random(
+            42_000,
+            9,
+            MemoPlaintext::new(Vec::from("commitment binding")),
+            &mut rng,
+        );
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+
+        let incoming = IncomingViewingKey::from_keys(&keys)
+            .decrypt_note(&ciphertext)
+            .unwrap();
+        assert_eq!(incoming.note_data.pk_auth, [0u8; 32]);
+
+        let recovered = FullViewingKey::from_keys(&keys)
+            .decrypt_note(&ciphertext)
+            .unwrap();
+        let expected_note_data = note.to_note_data(material.pk_recipient, keys.spend.auth_key());
+        assert_eq!(recovered.note, note);
+        assert_eq!(recovered.note_data.value, expected_note_data.value);
+        assert_eq!(recovered.note_data.asset_id, expected_note_data.asset_id);
+        assert_eq!(
+            recovered.note_data.pk_recipient,
+            expected_note_data.pk_recipient
+        );
+        assert_eq!(recovered.note_data.pk_auth, expected_note_data.pk_auth);
+        assert_eq!(recovered.note_data.rho, expected_note_data.rho);
+        assert_eq!(recovered.note_data.r, expected_note_data.r);
+
+        let recovered_commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        let plaintext_commitment = felts_to_bytes48(&expected_note_data.commitment());
+        assert_eq!(recovered_commitment, plaintext_commitment);
+
+        let input_witness = recovered.to_input_witness(11);
+        assert_eq!(
+            felts_to_bytes48(&input_witness.note.commitment()),
+            plaintext_commitment
+        );
+        assert_eq!(input_witness.rho_seed, note.rho);
+
+        let output_witness = OutputNoteWitness {
+            note: expected_note_data,
+        };
+        assert_eq!(
+            felts_to_bytes48(&output_witness.note.commitment()),
+            plaintext_commitment
         );
     }
 }

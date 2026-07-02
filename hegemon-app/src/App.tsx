@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HashRouter, Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { HashRouter, Link, NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import type {
   Contact,
   DialogOpenOptions,
   NodeConnection,
+  NodeConnectionMode,
   NodeManagedStatus,
   NodeParticipationRole,
   NodeSummary,
@@ -16,18 +17,28 @@ import type {
 } from './types';
 import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
+import { computeNodeDisplayState, legacyContactWarning } from './appGuards';
 
-const defaultStorePath = '~/.hegemon-wallet';
+const defaultStorePath = '~/.hegemon-wallet-native-010';
 const canonicalTestnetP2pPort = 30333;
 const shieldedAddressPrefix = 'shca1';
 const shieldedAddressLength = 2634;
 const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
 const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
-const approvedSeeds = 'hegemon.pauli.group:30333';
+const approvedSeeds = 'devnet.hegemonprotocol.com:30333';
+const hegemonNetworkName = 'Hegemon';
+const hegemonNetworkVersionLabel = 'Hegemon 0.10';
+const defaultDevConnectionLabel = hegemonNetworkName;
+const legacyDefaultConnectionLabels = new Set(['Local node', 'Native 0.10 devnet', hegemonNetworkName]);
+const defaultDevBasePath = '~/.hegemon-node-native-010-dev';
+const legacyDesktopRpcPort = 9944;
 const legacySeedAliases: Record<string, string> = {
-  'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
-  '158.69.222.121:31333': 'hegemon.pauli.group:30333',
-  '158.69.222.121:30333': 'hegemon.pauli.group:30333'
+  'hegemon.pauli.group:31333': approvedSeeds,
+  'hegemon.pauli.group:30333': approvedSeeds,
+  '158.69.222.121:31333': approvedSeeds,
+  '158.69.222.121:30333': approvedSeeds,
+  'devnet.hegemonprotocol.com:30333': approvedSeeds,
+  '51.222.86.107:30333': approvedSeeds
 };
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -36,20 +47,26 @@ const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
 const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
 const minWalletPassphraseLength = 12;
-const defaultRpcPort = 9944;
+const defaultRpcPort = 9955;
 const defaultP2pPort = canonicalTestnetP2pPort;
+const maxDesktopMineThreads = 4;
 const defaultMineThreads = (() => {
   const hardwareConcurrency =
     typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
       ? Number(navigator.hardwareConcurrency)
       : 1;
-  const target = Math.floor(hardwareConcurrency / 2);
-  return Math.max(1, Math.min(16, target || hardwareConcurrency || 1));
+  const target = Math.floor(hardwareConcurrency / 4);
+  return Math.max(1, Math.min(maxDesktopMineThreads, target || 1));
 })();
 
 const participationRoleLabels: Record<NodeParticipationRole, string> = {
   full_node: 'Relay node',
   authoring_pool: 'Mining node'
+};
+
+const connectionModeLabels: Record<NodeConnectionMode, string> = {
+  local: 'Managed local',
+  remote: 'Local RPC endpoint'
 };
 
 const participationRoleMeta: Record<
@@ -115,6 +132,25 @@ const normalizeSeedsValue = (value: string | null | undefined) => {
     normalized.push(seed);
   }
   return normalized.join(',');
+};
+
+const normalizeNetworkDisplayName = (value: string | null | undefined) => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return hegemonNetworkName;
+  }
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === 'hegemon network' ||
+    lower === 'hegemon native' ||
+    lower === 'hegemon native dev' ||
+    lower === 'native 0.10 devnet' ||
+    lower === 'hegemon-dev' ||
+    lower.startsWith('hegemon native ')
+  ) {
+    return hegemonNetworkName;
+  }
+  return trimmed;
 };
 
 const makeId = () => {
@@ -204,8 +240,10 @@ type NodeTransition = {
   startedAt: number;
 };
 
+type UiTone = 'ok' | 'warn' | 'error' | 'neutral';
 type BlockAlertTone = 'self' | 'other';
 type BlockAlertStep = { frequency: number; duration: number; gap?: number };
+type EmptyStateIconName = 'terminal' | 'transactions' | 'contacts' | 'disclosure';
 
 const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
 
@@ -236,6 +274,60 @@ const formatNumber = (value: number | null | undefined) => {
 
 const formatHgm = (value: number) => `${(value / 100_000_000).toFixed(8)} HGM`;
 
+const formatBlockCount = (value: number) => `${formatNumber(value)} ${value === 1 ? 'block' : 'blocks'}`;
+
+const EmptyStateIcon = ({ name }: { name: EmptyStateIconName }) => {
+  const sharedProps = {
+    className: `empty-state-glyph ${name}`,
+    viewBox: '0 0 48 48',
+    fill: 'none',
+    'aria-hidden': true
+  };
+
+  if (name === 'terminal') {
+    return (
+      <svg {...sharedProps}>
+        <path d="M11 14.5h26a3 3 0 0 1 3 3v17a3 3 0 0 1-3 3H11a3 3 0 0 1-3-3v-17a3 3 0 0 1 3-3Z" />
+        <path d="M15 22.5 20 27l-5 4.5" />
+        <path d="M24 31.5h9" />
+      </svg>
+    );
+  }
+
+  if (name === 'contacts') {
+    return (
+      <svg {...sharedProps}>
+        <path d="M13 10.5h18a4 4 0 0 1 4 4v19a4 4 0 0 1-4 4H13a3 3 0 0 1-3-3v-21a3 3 0 0 1 3-3Z" />
+        <path d="M35 17h4M35 24h4M35 31h4" />
+        <path d="M18 22.5a4 4 0 1 0 8 0 4 4 0 0 0-8 0Z" />
+        <path d="M15.5 32.5c1.7-3.1 4.1-4.7 6.5-4.7s4.8 1.6 6.5 4.7" />
+      </svg>
+    );
+  }
+
+  if (name === 'disclosure') {
+    return (
+      <svg {...sharedProps}>
+        <path d="M14 8.5h14l8 8v20a3 3 0 0 1-3 3H14a3 3 0 0 1-3-3v-25a3 3 0 0 1 3-3Z" />
+        <path d="M28 8.5v8h8" />
+        <path d="M16.5 27c2.3-3.1 4.8-4.7 7.5-4.7s5.2 1.6 7.5 4.7c-2.3 3.1-4.8 4.7-7.5 4.7s-5.2-1.6-7.5-4.7Z" />
+        <path d="M22 27a2 2 0 1 0 4 0 2 2 0 0 0-4 0Z" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg {...sharedProps}>
+      <path d="M12 18.5h20" />
+      <path d="m30 13.5 5 5-5 5" />
+      <path d="M36 29.5H16" />
+      <path d="m18 24.5-5 5 5 5" />
+      <path d="M13 11.5h9" opacity="0.55" />
+      <path d="M26 36.5h9" opacity="0.55" />
+    </svg>
+  );
+};
+
 const normalizeShieldedAddressInput = (value: string) =>
   value.replace(shieldedAddressSeparatorPattern, '').trim().toLowerCase();
 
@@ -264,6 +356,45 @@ const formatAddress = (address: string) => {
   }
   const middleStart = Math.max(0, Math.floor(normalized.length / 2) - 4);
   return `${normalized.slice(0, 10)}...${normalized.slice(middleStart, middleStart + 8)}...${normalized.slice(-8)}`;
+};
+
+const formatCompactPath = (value: string | null | undefined) => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return 'N/A';
+  }
+  if (trimmed.length <= 48) {
+    return trimmed;
+  }
+  const normalized = trimmed.replace(/\\/g, '/');
+  const parts = normalized.split('/').filter(Boolean);
+  if (parts.length <= 2) {
+    return `${trimmed.slice(0, 20)}...${trimmed.slice(-20)}`;
+  }
+  const prefix = normalized.startsWith('/') ? '/' : '';
+  return `${prefix}${parts[0]}/.../${parts.slice(-2).join('/')}`;
+};
+
+const formatEndpoint = (value: string | null | undefined) => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return 'N/A';
+  }
+  if (trimmed.length <= 40) {
+    return trimmed;
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+  } catch {
+    return `${trimmed.slice(0, 18)}...${trimmed.slice(-18)}`;
+  }
+};
+
+const formatSeedList = (value: string[] | string | null | undefined) => {
+  const seeds = Array.isArray(value) ? value : (value ?? '').split(',');
+  const normalized = seeds.map((seed) => seed.trim()).filter(Boolean);
+  return normalized.length ? normalized.join(', ') : 'N/A';
 };
 
 const humanizeWalletAddressError = (error: unknown) => {
@@ -356,6 +487,16 @@ const buildBlockAlertPattern = (tone: BlockAlertTone): BlockAlertStep[] => {
     { frequency: 330, duration: 0.22, gap: 0.08 },
     { frequency: 220, duration: 0.26 }
   ];
+};
+
+const ScrollToTop = () => {
+  const location = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [location.pathname]);
+
+  return null;
 };
 
 const parseDisclosureInput = (input: string) => {
@@ -609,12 +750,18 @@ const normalizeLocalConnectionEndpoints = (connection: NodeConnection): NodeConn
   return { ...connection, ...updates };
 };
 
+const isRoutineNetworkRetryLog = (line: string) =>
+  /failed to connect to peer|handshake failed|rate-limited peer address announcement/i.test(line);
+
 const classifyLogLevel = (line: string): LogLevel => {
-  if (/\bERROR\b|\bError\b|\bpanic\b/i.test(line)) {
-    return 'error';
-  }
   if (/\bWARN\b|\bWarning\b/i.test(line)) {
     return 'warn';
+  }
+  if (isRoutineNetworkRetryLog(line)) {
+    return 'warn';
+  }
+  if (/\bERROR\b|\bpanic\b/i.test(line)) {
+    return 'error';
   }
   if (/\bDEBUG\b/i.test(line)) {
     return 'debug';
@@ -645,6 +792,7 @@ const classifyLogCategory = (line: string): LogCategory => {
 };
 
 const highlightLog = (line: string) => {
+  const routineNetworkRetry = isRoutineNetworkRetryLog(line);
   if (/Block mined/i.test(line)) {
     return 'Block mined';
   }
@@ -654,16 +802,29 @@ const highlightLog = (line: string) => {
   if (/sync complete/i.test(line)) {
     return 'Sync complete';
   }
-  if (/error|panic/i.test(line)) {
+  if ((/\bWARN\b|\bWarning\b/i.test(line)) && !routineNetworkRetry) {
+    return 'Warning';
+  }
+  if ((/\bERROR\b|\bpanic\b/i.test(line)) && !routineNetworkRetry) {
     return 'Error';
   }
   return undefined;
 };
 
+const formatLogTimestamp = (value: string) => {
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  }
+  return value;
+};
+
 const parseLogLine = (line: string, index: number): LogEntry => {
-  const timestampMatch = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(.*)$/);
-  const timestamp = timestampMatch ? timestampMatch[1] : null;
-  const message = timestampMatch ? timestampMatch[2] : line;
+  const timestampMatch =
+    line.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(.*)$/) ??
+    line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(.*)$/);
+  const timestamp = timestampMatch ? formatLogTimestamp(timestampMatch[1]) : null;
+  const message = (timestampMatch ? timestampMatch[2] : line).replace(/^(TRACE|DEBUG|INFO|WARN|ERROR)\s+/, '');
   return {
     id: `${index}-${message.slice(0, 12)}`,
     timestamp,
@@ -677,15 +838,14 @@ const parseLogLine = (line: string, index: number): LogEntry => {
 
 const buildDefaultConnection = (): NodeConnection => ({
   id: makeId(),
-  label: 'Local node',
+  label: defaultDevConnectionLabel,
   mode: 'local',
   participationRole: 'full_node',
   wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
   httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
   dev: true,
-  chainSpecPath: 'config/dev-chainspec.json',
   tmp: false,
-  basePath: '~/.hegemon-node',
+  basePath: defaultDevBasePath,
   rpcPort: defaultRpcPort,
   p2pPort: defaultP2pPort,
   mineThreads: defaultMineThreads,
@@ -693,7 +853,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
-  rpcMethods: 'safe',
+  rpcMethods: 'unsafe',
   rpcCorsAll: false,
   seeds: approvedSeeds,
   maxPeers: 50
@@ -716,14 +876,23 @@ const buildTestnetConnection = (): NodeConnection => ({
   ciphertextDaRetentionBlocks: 0,
   proofDaRetentionBlocks: 0,
   daStoreCapacity: 1024,
-  rpcMethods: 'safe',
+  rpcMethods: 'unsafe',
   rpcCorsAll: false,
-  chainSpecPath: 'testnet',
   seeds: approvedSeeds,
   maxPeers: 50
 });
 
 const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
+
+const normalizeRpcControlPlane = (connection: NodeConnection): NodeConnection => {
+  if (connection.mode !== 'local') {
+    return connection.rpcMethods === 'safe' ? connection : { ...connection, rpcMethods: 'safe' };
+  }
+  if (connection.rpcExternal) {
+    return connection.rpcMethods === 'safe' ? connection : { ...connection, rpcMethods: 'safe' };
+  }
+  return connection.rpcMethods === 'unsafe' ? connection : { ...connection, rpcMethods: 'unsafe' };
+};
 
 const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   const {
@@ -740,16 +909,41 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     poolAuthToken?: string;
     poolShareBits?: number;
   };
+  const hasDefaultLocalLabel = legacyDefaultConnectionLabels.has(sanitizedConnection.label);
   const isDefaultLocal =
     sanitizedConnection.mode === 'local' &&
-    sanitizedConnection.label === 'Local node' &&
-    (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node');
+    hasDefaultLocalLabel &&
+    (!sanitizedConnection.basePath ||
+      sanitizedConnection.basePath === '~/.hegemon-node' ||
+      sanitizedConnection.basePath === defaultDevBasePath);
   const isDefaultTestnet =
     sanitizedConnection.mode === 'local' &&
     sanitizedConnection.label === 'Testnet node' &&
     (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node-testnet');
 
   let next = normalizeLocalConnectionEndpoints(sanitizedConnection);
+  if (isDefaultLocal && next.label !== defaultDevConnectionLabel) {
+    next = { ...next, label: defaultDevConnectionLabel };
+  }
+  if (isDefaultLocal && (!next.basePath || next.basePath === '~/.hegemon-node')) {
+    next = { ...next, basePath: defaultDevBasePath };
+  }
+  if ((isDefaultLocal || isDefaultTestnet) && (next.mineThreads ?? defaultMineThreads) > maxDesktopMineThreads) {
+    next = { ...next, mineThreads: maxDesktopMineThreads };
+  }
+  if (
+    isDefaultLocal &&
+    inferRpcPort(next) === legacyDesktopRpcPort &&
+    isLoopbackWsEndpoint(next.wsUrl) &&
+    (!next.httpUrl || isLoopbackHttpEndpoint(next.httpUrl))
+  ) {
+    next = {
+      ...next,
+      rpcPort: defaultRpcPort,
+      wsUrl: rewriteLoopbackWsEndpoint(next.wsUrl, defaultRpcPort),
+      httpUrl: rewriteLoopbackHttpEndpoint(next.httpUrl, defaultRpcPort)
+    };
+  }
   const inferredParticipationRole = inferParticipationRole(next);
   if (next.participationRole !== inferredParticipationRole) {
     next = { ...next, participationRole: inferredParticipationRole };
@@ -757,10 +951,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   if (next.mode === 'remote' && !next.httpUrl?.trim()) {
     next = { ...next, httpUrl: deriveHttpUrl(next.wsUrl) };
   }
-
-  if (isDefaultLocal && sanitizedConnection.dev && !sanitizedConnection.chainSpecPath) {
-    next = { ...next, chainSpecPath: 'config/dev-chainspec.json' };
-  }
+  next = normalizeRpcControlPlane(next);
 
   const currentSeeds = (next.seeds ?? '').trim();
   const normalizedSeeds = normalizeSeedsValue(next.seeds);
@@ -797,6 +988,29 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
   return next;
 };
 
+const shouldAutoStartDefaultProfile = (connection: NodeConnection): boolean => {
+  const normalized = normalizeLocalConnectionEndpoints(connection);
+  const role = inferParticipationRole(normalized);
+  const miningProfileAllowed =
+    role === 'authoring_pool' &&
+    Boolean(normalized.miningIntent) &&
+    !validateShieldedAddressInput(normalized.minerAddress ?? '', 'Miner address');
+  const relayProfileAllowed = role === 'full_node' && !normalized.miningIntent;
+  return (
+    normalized.mode === 'local' &&
+    normalized.label === defaultDevConnectionLabel &&
+    Boolean(normalized.dev) &&
+    !normalized.tmp &&
+    !normalized.rpcExternal &&
+    (relayProfileAllowed || miningProfileAllowed) &&
+    inferRpcPort(normalized) === defaultRpcPort &&
+    normalized.basePath === defaultDevBasePath &&
+    isLoopbackWsEndpoint(normalized.wsUrl) &&
+    (!normalized.httpUrl || isLoopbackHttpEndpoint(normalized.httpUrl)) &&
+    normalizeSeedsValue(normalized.seeds) === approvedSeeds
+  );
+};
+
 export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
@@ -823,6 +1037,8 @@ export default function App() {
   const [walletSyncQueued, setWalletSyncQueued] = useState(false);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
+  const [addressCopyError, setAddressCopyError] = useState<string | null>(null);
+  const [miningPayoutNotice, setMiningPayoutNotice] = useState<string | null>(null);
   const [disclosureCopied, setDisclosureCopied] = useState(false);
   const [disclosureCopyError, setDisclosureCopyError] = useState<string | null>(null);
 
@@ -845,11 +1061,13 @@ export default function App() {
     blocksMined: number | null;
     blocksImported: number | null;
   }>({ connectionId: null, blocksMined: null, blocksImported: null });
+  const autoStartAttemptedRef = useRef<Set<string>>(new Set());
+  const manuallyStoppedRef = useRef<Set<string>>(new Set());
 
   const [recipientAddress, setRecipientAddress] = useState('');
   const [sendAmount, setSendAmount] = useState('');
   const [sendMemo, setSendMemo] = useState('');
-  const [sendFee, setSendFee] = useState('0.01');
+  const [sendFee, setSendFee] = useState('0');
   const [autoConsolidate, setAutoConsolidate] = useState(true);
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -1070,7 +1288,7 @@ export default function App() {
           return conn;
         }
         const patch = typeof update === 'function' ? update(conn) : update;
-        return { ...conn, ...patch };
+        return normalizeConnection({ ...conn, ...patch });
       })
     );
   };
@@ -1083,21 +1301,6 @@ export default function App() {
       return null;
     }
   }, []);
-
-  const handlePickChainSpec = useCallback(async () => {
-    if (!activeConnection) {
-      return;
-    }
-    const selection = await openDialogPath({
-      title: 'Select chain spec',
-      defaultPath: activeConnection.chainSpecPath?.trim() || undefined,
-      properties: ['openFile'],
-      filters: [{ name: 'Chain spec', extensions: ['json'] }]
-    });
-    if (selection) {
-      updateActiveConnection({ chainSpecPath: selection });
-    }
-  }, [activeConnection, openDialogPath, updateActiveConnection]);
 
   const handlePickBasePath = useCallback(async () => {
     if (!activeConnection) {
@@ -1116,8 +1319,9 @@ export default function App() {
   const handlePickWalletStorePath = useCallback(async () => {
     const selection = await openDialogPath({
       title: 'Select wallet store',
+      baseDirectory: 'walletStore',
       defaultPath: storePath.trim() || undefined,
-      properties: ['openDirectory', 'createDirectory']
+      properties: ['openFile', 'showHiddenFiles', 'promptToCreate']
     });
     if (selection) {
       setStorePath(selection);
@@ -1128,24 +1332,14 @@ export default function App() {
   const activeParticipationRole = activeConnection ? inferParticipationRole(activeConnection) : 'full_node';
   const activeParticipationMeta = participationRoleMeta[activeParticipationRole];
   const roleAllowsLocalMining = activeParticipationRole === 'authoring_pool';
-
-  const healthLabel = useMemo(() => {
-    if (!activeSummary) {
-      return 'Unknown';
-    }
-    if (!activeSummary.reachable) {
-      return 'Offline';
-    }
-    return activeSummary.isSyncing ? 'Syncing' : 'Healthy';
-  }, [activeSummary]);
-
-  const healthTone = !activeSummary
-    ? 'neutral'
-    : !activeSummary.reachable
-      ? 'error'
-      : activeSummary.isSyncing
-        ? 'warn'
-        : 'ok';
+  const activeDisplayState = computeNodeDisplayState(activeSummary);
+  const activeSummaryPeerCount = activeDisplayState.peerCount;
+  const activeDisplaySyncTargetHeight = activeDisplayState.syncTargetHeight;
+  const activeDisplayIsSyncing = activeDisplayState.isSyncing;
+  const activeHeightDelta = activeDisplayState.heightDelta;
+  const activeHeightRelation = activeDisplayState.heightRelation;
+  const healthLabel = activeDisplayState.healthLabel;
+  const healthTone = activeDisplayState.healthTone;
 
   const updatedAtLabel = activeSummary?.updatedAt
     ? new Date(activeSummary.updatedAt).toLocaleTimeString()
@@ -1157,6 +1351,17 @@ export default function App() {
     const highlights = logEntries.filter((entry) => entry.highlight);
     return highlights.slice(-6).reverse();
   }, [logEntries]);
+
+  const overviewHighlights = useMemo(
+    () => logHighlights.filter((entry) => entry.level === 'error' || entry.highlight !== 'Warning').slice(0, 4),
+    [logHighlights]
+  );
+  const overviewSuppressesRetryNoise = Boolean(
+    activeSummary?.reachable && !activeDisplayIsSyncing && (activeSummary.peerList?.length ?? 0) > 0
+  );
+  const overviewWarningCount = overviewSuppressesRetryNoise
+    ? 0
+    : logHighlights.filter((entry) => entry.level === 'warn').length;
 
   const logCategoryStats = useMemo(() => {
     return logEntries.reduce<Record<LogCategory, number>>(
@@ -1234,11 +1439,18 @@ export default function App() {
             bestNumber: null,
             genesisHash: null,
             mining: null,
+            minerAddress: null,
             miningThreads: null,
+            miningSyncGateOpen: null,
+            bootstrapAuthoring: null,
             hashRate: null,
             blocksFound: null,
             difficulty: null,
+            nextDifficulty: null,
             blockHeight: null,
+            syncTargetHeight: null,
+            pendingExtrinsics: null,
+            peerList: null,
             supplyDigest: null,
             storage: null,
             telemetry: null,
@@ -1357,7 +1569,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [nodeTransition]);
 
-  const handleNodeStart = async () => {
+  const handleNodeStart = async (options: { automatic?: boolean } = {}) => {
     if (!activeConnection || activeConnection.mode !== 'local') {
       setNodeError('Select a local connection to start a node.');
       return;
@@ -1396,11 +1608,17 @@ export default function App() {
       return;
     }
     if (normalizedConnection.tmp) {
+      if (options.automatic) {
+        return;
+      }
       const confirmed = window.confirm('Temp storage deletes node data on shutdown. Continue?');
       if (!confirmed) {
         return;
       }
     } else if (!normalizedConnection.basePath) {
+      if (options.automatic) {
+        return;
+      }
       const confirmed = window.confirm('No base path set. The node will use its default data directory. Continue?');
       if (!confirmed) {
         return;
@@ -1410,9 +1628,11 @@ export default function App() {
     setNodeBusy(true);
     setNodeError(null);
     try {
+      if (!options.automatic) {
+        manuallyStoppedRef.current.delete(normalizedConnection.id);
+      }
       await window.hegemon.node.start({
         connectionId: normalizedConnection.id,
-        chainSpecPath: normalizedConnection.chainSpecPath || undefined,
         basePath: normalizedConnection.basePath || undefined,
         dev: normalizedConnection.dev,
         tmp: normalizedConnection.tmp,
@@ -1441,6 +1661,26 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    if (!activeConnection || activeSummary?.reachable !== false) {
+      return;
+    }
+    if (!shouldAutoStartDefaultProfile(activeConnection)) {
+      return;
+    }
+    if (nodeBusy || nodeTransition || nodeManagedStatus?.managed) {
+      return;
+    }
+    if (manuallyStoppedRef.current.has(activeConnection.id)) {
+      return;
+    }
+    if (autoStartAttemptedRef.current.has(activeConnection.id)) {
+      return;
+    }
+    autoStartAttemptedRef.current.add(activeConnection.id);
+    void handleNodeStart({ automatic: true });
+  }, [activeConnection, activeSummary?.reachable, nodeBusy, nodeTransition, nodeManagedStatus?.managed]);
+
   const handleNodeStop = async () => {
     if (!activeConnection || activeConnection.mode !== 'local') {
       setNodeError('Select a local connection to stop a node.');
@@ -1458,6 +1698,7 @@ export default function App() {
     setNodeBusy(true);
     try {
       await window.hegemon.node.stop();
+      manuallyStoppedRef.current.add(activeConnection.id);
       await refreshNode();
     } catch (error) {
       setNodeTransition(null);
@@ -1689,15 +1930,17 @@ export default function App() {
   }, [activeUnlockToken, refreshWalletStatus, walletBusy]);
 
   const handleCopyAddress = async () => {
+    setAddressCopyError(null);
     if (!walletStatus?.primaryAddress) {
+      setAddressCopyError('Open or sync a wallet before copying the address.');
       return;
     }
     try {
-      await navigator.clipboard.writeText(walletStatus.primaryAddress);
+      await window.hegemon.clipboard.writeText(walletStatus.primaryAddress);
       setAddressCopied(true);
       window.setTimeout(() => setAddressCopied(false), 2000);
     } catch {
-      setWalletError('Failed to copy address.');
+      setAddressCopyError('Failed to copy address.');
     }
   };
 
@@ -1708,7 +1951,7 @@ export default function App() {
       return;
     }
     try {
-      await navigator.clipboard.writeText(walletDisclosureOutput);
+      await window.hegemon.clipboard.writeText(walletDisclosureOutput);
       setDisclosureCopied(true);
       window.setTimeout(() => setDisclosureCopied(false), 2000);
     } catch {
@@ -1716,39 +1959,46 @@ export default function App() {
     }
   };
 
+  const handleUseWalletAddressForMining = () => {
+    if (!activeConnection || !walletStatus?.primaryAddress) {
+      return;
+    }
+    const payoutAddress = normalizeShieldedAddressInput(walletStatus.primaryAddress);
+    updateActiveConnection((connection) => ({
+      participationRole: 'authoring_pool',
+      minerAddress: payoutAddress,
+      mineThreads: connection.mineThreads || defaultMineThreads,
+      miningIntent: connection.miningIntent || activeSummary?.mining === true
+    }));
+    setMiningPayoutNotice(
+      activeSummary?.reachable
+        ? 'Saved. Restart the node to apply this mining payout address.'
+        : 'Saved for the next node start.'
+    );
+  };
+
   const handleWalletSync = async (forceOverride?: boolean) => {
     setWalletError(null);
     const targetWs = wsUrl.trim();
     if (!targetWs) {
-      setWalletError('WebSocket URL is required.');
+      setWalletError('Wallet RPC URL is required.');
       return;
     }
-    const toHttpUrl = (value: string) => {
-      if (value.startsWith('ws://')) {
-        return `http://${value.slice(5)}`;
-      }
-      if (value.startsWith('wss://')) {
-        return `https://${value.slice(6)}`;
-      }
-      return null;
-    };
-    const httpUrl = toHttpUrl(targetWs);
-    if (httpUrl) {
-      try {
-        const summary = await window.hegemon.node.summary({
-          connectionId: 'wallet-sync',
-          label: 'Wallet sync target',
-          isLocal: false,
-          httpUrl
-        });
-        if (!summary.reachable) {
-          setWalletError('Wallet connection is offline. Check the WebSocket URL.');
-          return;
-        }
-      } catch {
-        setWalletError('Wallet connection is offline. Check the WebSocket URL.');
+    const walletRpcUrl = deriveHttpUrl(targetWs, walletConnection?.httpUrl ?? activeConnection?.httpUrl);
+    try {
+      const summary = await window.hegemon.node.summary({
+        connectionId: 'wallet-sync',
+        label: 'Wallet sync target',
+        isLocal: false,
+        httpUrl: walletRpcUrl
+      });
+      if (!summary.reachable) {
+        setWalletError('Wallet connection is offline. Check the wallet RPC URL.');
         return;
       }
+    } catch {
+      setWalletError('Wallet connection is offline. Check the wallet RPC URL.');
+      return;
     }
     setWalletBusy(true);
     try {
@@ -1761,7 +2011,7 @@ export default function App() {
       const syncPromise = window.hegemon.wallet.sync(
         resolvedStorePath,
         unlockToken,
-        targetWs,
+        walletRpcUrl,
         rescan
       );
       // Full rescans on long-running chains can take minutes; keep the shorter guardrail for normal syncs.
@@ -1778,7 +2028,7 @@ export default function App() {
           const modeLabel = rescan ? 'force-rescan' : 'sync';
           reject(
             new Error(
-              `Wallet ${modeLabel} timed out after ${Math.round(timeoutMs / 1000)}s. Check the WebSocket URL and try again.`
+              `Wallet ${modeLabel} timed out after ${Math.round(timeoutMs / 1000)}s. Check the wallet RPC URL and try again.`
             )
           );
         }, timeoutMs);
@@ -1834,8 +2084,14 @@ export default function App() {
       }
       const amount = toBaseUnits(sendAmount);
       const fee = toBaseUnits(sendFee);
-      if (!amount || !fee) {
-        throw new Error('Amount and fee must be valid numbers.');
+      if (amount === null || fee === null) {
+        throw new Error('Amount and miner tip must be valid numbers.');
+      }
+      if (amount <= 0) {
+        throw new Error('Amount must be greater than 0.');
+      }
+      if (fee < 0) {
+        throw new Error('Miner tip cannot be negative.');
       }
       if (genesisMismatch) {
         throw new Error('Genesis mismatch between wallet and node. Switch nodes or force a rescan before sending.');
@@ -1944,7 +2200,7 @@ export default function App() {
       const request = {
         storePath: resolvedStorePath,
         unlockToken,
-        wsUrl,
+        wsUrl: deriveHttpUrl(wsUrl, activeConnection?.httpUrl),
         recipients,
         fee,
         autoConsolidate: autoConsolidateForSend
@@ -1993,7 +2249,10 @@ export default function App() {
       address: normalizedContactAddress,
       verified: newContactVerified,
       notes: newContactNotes || undefined,
-      lastUsed: undefined
+      lastUsed: undefined,
+      chainSpecId: activeSummary?.config?.chainSpecId,
+      chainSpecName: activeSummary?.config?.chainSpecName,
+      protocolVersion: '0.10'
     };
     const nextContacts = [newEntry, ...contacts];
 
@@ -2053,7 +2312,7 @@ export default function App() {
       const result: WalletDisclosureCreateResult = await window.hegemon.wallet.disclosureCreate(
         resolveStorePath(),
         unlockToken,
-        wsUrl,
+        deriveHttpUrl(wsUrl, activeConnection?.httpUrl),
         disclosureTxId,
         outputIndex
       );
@@ -2076,7 +2335,7 @@ export default function App() {
       const result: WalletDisclosureVerifyResult = await window.hegemon.wallet.disclosureVerify(
         resolveStorePath(),
         unlockToken,
-        wsUrl,
+        deriveHttpUrl(wsUrl, activeConnection?.httpUrl),
         parsed
       );
       setWalletDisclosureVerifyOutput(JSON.stringify(result, null, 2));
@@ -2090,10 +2349,10 @@ export default function App() {
   const handleAddConnection = () => {
     const next: NodeConnection = {
       id: makeId(),
-      label: 'Remote node',
+      label: 'Local RPC endpoint',
       mode: 'remote',
-      wsUrl: 'ws://127.0.0.1:9944',
-      httpUrl: 'http://127.0.0.1:9944',
+      wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
+      httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
       allowRemoteMining: false
     };
     setConnections((prev) => [next, ...prev]);
@@ -2130,14 +2389,135 @@ export default function App() {
   const walletUnlocked = Boolean(activeUnlockToken);
   const walletGenesis = walletStatus?.genesisHash ?? null;
   const walletNodeGenesis = walletSummary?.genesisHash ?? null;
-  const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
+  const activeNodeGenesis = activeSummary?.genesisHash ?? null;
   const nodeIsLocal = activeConnection?.mode === 'local';
   const nodeTransitionAction =
     nodeTransition && activeConnection && nodeTransition.connectionId === activeConnection.id ? nodeTransition.action : null;
+  const defaultProfileLaunchable = activeConnection ? shouldAutoStartDefaultProfile(activeConnection) : false;
+  const nodeStartupPending = Boolean(
+    activeConnection &&
+      defaultProfileLaunchable &&
+      !manuallyStoppedRef.current.has(activeConnection.id) &&
+      (nodeTransitionAction === 'starting' || (!activeSummary && !nodeError) || (activeSummary?.reachable === false && nodeBusy))
+  );
+  const displayedNodeGenesis = activeNodeGenesis ?? walletNodeGenesis;
+  const activeNodeLive = Boolean(activeSummary?.reachable && displayedNodeGenesis);
+  const activeChainSpecLabel = normalizeNetworkDisplayName(activeSummary?.config?.chainSpecName);
+  const walletConnectedNetworkLabel = normalizeNetworkDisplayName(
+    walletSummary?.config?.chainSpecName ?? activeSummary?.config?.chainSpecName
+  );
+  const activeSeedList = activeSummary?.config?.bootstrapNodes?.length
+    ? formatSeedList(activeSummary.config.bootstrapNodes)
+    : formatSeedList(activeConnection?.seeds);
+  const activeHeightDeltaAbsLabel =
+    typeof activeHeightDelta === 'number' ? formatBlockCount(Math.abs(activeHeightDelta)) : null;
+  const syncStateLabel =
+    nodeStartupPending
+      ? 'Starting'
+      : activeHeightRelation === 'syncing'
+        ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
+        : activeHeightRelation === 'aligned'
+          ? 'In sync with peer target'
+          : activeHeightRelation === 'local_ahead'
+            ? 'Local miner ahead'
+            : activeHeightRelation === 'network_ahead'
+              ? 'Catching up to peer target'
+              : 'Unknown';
+  const rpcPolicyLabel = activeSummary?.config
+    ? `${activeSummary.config.rpcMethods} / ${activeSummary.config.rpcExternal ? 'network' : 'loopback'}`
+    : 'N/A';
+  const p2pListenLabel = activeSummary?.config?.p2pListenAddr || 'N/A';
+  const activePeerList = activeSummary?.peerList ?? [];
+  const firstActivePeer = activePeerList[0] ?? null;
+  const activePeerCount = activeSummaryPeerCount;
+  const peerEvidenceLabel =
+    firstActivePeer
+      ? `${formatNumber(activePeerList.length)} ${activePeerList.length === 1 ? 'peer' : 'peers'} listed`
+      : activePeerCount === null
+      ? 'Peer count unavailable'
+      : activePeerCount === 0
+        ? 'No peers reported'
+        : `${formatNumber(activePeerCount)} ${activePeerCount === 1 ? 'peer' : 'peers'} reported`;
+  const peerDetailLabel = firstActivePeer
+    ? `${firstActivePeer.addr} · ${formatHash(firstActivePeer.peerId)}`
+    : activePeerCount && activePeerCount > 0
+      ? `${peerEvidenceLabel}; peer details unavailable from RPC`
+      : peerEvidenceLabel;
+  const activeHeightLabel = formatNumber(activeSummary?.bestNumber);
+  const walletNodeHeightLabel = formatNumber(walletSummary?.bestNumber ?? activeSummary?.bestNumber);
+  const loopbackControlLabel = activeSummary?.config?.rpcExternal ? 'External RPC exposed' : 'Loopback RPC';
+  const noSshStatusLabel = activeSummary?.config?.rpcExternal
+    ? 'External RPC exposed'
+    : 'No SSH needed';
+  const syncAlignmentLabel =
+    nodeStartupPending
+      ? 'Starting'
+      : activeHeightRelation === 'syncing'
+        ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
+        : activeHeightRelation === 'aligned'
+          ? 'In sync'
+          : activeHeightRelation === 'local_ahead'
+            ? `Local tip +${activeHeightDeltaAbsLabel}`
+            : activeHeightRelation === 'network_ahead'
+              ? `Network ahead ${activeHeightDeltaAbsLabel}`
+              : 'No live height';
+  const syncAlignmentTone: 'ok' | 'warn' | 'neutral' =
+    nodeStartupPending || activeHeightRelation === 'syncing' || activeHeightRelation === 'network_ahead'
+      ? 'warn'
+      : activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead'
+        ? 'ok'
+        : 'neutral';
+  const liveEnvironmentLabel = activeChainSpecLabel;
+  const liveHeadline =
+    nodeStartupPending
+      ? 'Starting Hegemon'
+      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
+      ? 'Live on Hegemon'
+      : activeNodeLive
+        ? 'Hegemon node is online'
+        : 'Connect to Hegemon';
+  const liveHeightSummary =
+    activeHeightRelation === 'aligned'
+      ? `Local tip and peer target are ${activeHeightLabel}`
+      : activeHeightRelation === 'local_ahead'
+        ? `Local tip ${activeHeightLabel}; peer target ${formatNumber(activeDisplaySyncTargetHeight)}`
+        : activeHeightRelation === 'network_ahead'
+          ? `Local tip ${activeHeightLabel}; peer target ${formatNumber(activeDisplaySyncTargetHeight)}`
+          : activeHeightRelation === 'syncing'
+            ? `Syncing local tip ${activeHeightLabel} toward ${formatNumber(activeDisplaySyncTargetHeight)}`
+            : `Local tip ${activeHeightLabel}`;
+  const liveSubheadline = activeNodeLive
+    ? `${liveHeightSummary} on ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
+    : nodeStartupPending
+      ? `Opening ${formatEndpoint(activeConnection?.wsUrl)} and joining ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
+      : 'Start the managed local node to join Hegemon with no SSH tunnel.';
+  const liveVerdictTone: 'ok' | 'warn' | 'neutral' =
+    nodeStartupPending ? 'warn' : activeNodeLive && activePeerCount !== null && activePeerCount > 0 ? 'ok' : activeNodeLive ? 'warn' : 'neutral';
+  const liveVerdictLabel =
+    nodeStartupPending
+      ? 'Local node is starting'
+      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
+      ? 'Connected to Hegemon'
+      : activeNodeLive
+        ? 'Node online, waiting for peers'
+        : 'Not connected';
+  const liveVerdictDetail =
+    nodeStartupPending
+      ? 'The app is launching the managed 0.10 node and will switch to live telemetry automatically.'
+      : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeHeightRelation === 'local_ahead'
+      ? `Peer, seed, and genesis match; this miner is ${activeHeightDeltaAbsLabel} ahead of the latest peer target.`
+      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
+      ? 'Peer, seed, and genesis match the Hegemon 0.10 network.'
+      : activeNodeLive
+        ? 'RPC is reachable; waiting for a P2P peer.'
+        : 'Start the local node before syncing the wallet or sending funds.';
+  const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
   const nodeIsRunning = nodeIsLocal && Boolean(activeSummary?.reachable);
   const nodeIsManaged =
     Boolean(nodeManagedStatus?.managed) &&
     (!nodeManagedStatus?.connectionId || nodeManagedStatus.connectionId === activeConnection?.id);
+  const appControlLabel =
+    nodeIsLocal && nodeIsManaged ? 'Managed by app' : nodeIsLocal ? 'Local RPC only' : 'Local endpoint';
   const nodeToggleDisabled = nodeBusy || !nodeIsLocal || nodeTransitionAction !== null || (nodeIsRunning && !nodeIsManaged);
   const nodeToggleClass = nodeIsRunning || nodeTransitionAction === 'stopping' ? 'secondary' : 'primary';
   const nodeToggleLabel = nodeTransitionAction ? (
@@ -2148,7 +2528,7 @@ export default function App() {
       </span>
     </span>
   ) : nodeIsRunning ? (
-    nodeIsManaged ? 'Stop node' : 'Stop unavailable (external node)'
+    nodeIsManaged ? 'Stop node' : 'Stop unavailable (unmanaged node)'
   ) : (
     'Start node'
   );
@@ -2162,25 +2542,148 @@ export default function App() {
     }
     void handleNodeStart();
   };
-  const effectiveMiningActive = Boolean(activeSummary?.mining);
   const effectiveMiningHashRate = activeSummary?.hashRate;
-  const miningHint = activeSummary?.mining
-    ? 'Mining mode is active. To change local mining settings, stop the node, update Mining + retention, then restart.'
-    : activeParticipationRole === 'authoring_pool'
-      ? 'This connection is configured as a mining node. Enable Auto-start mining under Mining + retention and restart the node to mine locally.'
-      : 'This connection is configured as a relay node. It verifies and relays the network without local block production.';
+  const miningGateBlocked = activeDisplayState.miningGateBlocked;
+  const miningStatusLabel =
+    activeSummary?.mining === null || activeSummary?.mining === undefined
+      ? 'N/A'
+      : activeSummary.mining
+        ? miningGateBlocked
+          ? 'Gated'
+          : 'Active'
+        : 'Idle';
+  const miningHashRateLabel =
+    activeSummary?.mining && (!effectiveMiningHashRate || effectiveMiningHashRate <= 0)
+      ? 'Measuring'
+      : formatHashRate(effectiveMiningHashRate);
+  const miningHint = miningGateBlocked
+    ? 'Mining is enabled, but this node is waiting for sync before it is allowed to mine.'
+    : activeSummary?.mining
+      ? 'Mining mode is active. To change local mining settings, stop the node, update Mining + retention, then restart.'
+      : activeParticipationRole === 'authoring_pool'
+        ? 'This connection is configured as a mining node. Enable Auto-start mining under Mining + retention and restart the node to mine locally.'
+        : 'This connection is configured as a relay node. It verifies and relays the network without local block production.';
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
   const walletConnectionLabel =
     walletSummary?.reachable === true ? 'Online' : walletSummary?.reachable === false ? 'Offline' : 'Unknown';
   const walletTone = walletError ? 'error' : walletReady ? 'ok' : 'warn';
   const walletStateLabel = walletError ? 'Error' : walletReady ? 'Ready' : walletUnlocked ? 'Unlocked' : 'Locked';
-  const chainTone = genesisMismatch ? 'error' : walletGenesis && walletNodeGenesis ? 'ok' : 'neutral';
-  const chainLabel = genesisMismatch ? 'Mismatch' : walletGenesis && walletNodeGenesis ? 'Match' : 'Unknown';
+  const chainTone = genesisMismatch
+    ? 'error'
+    : activeNodeLive
+      ? 'ok'
+      : walletGenesis
+        ? 'warn'
+        : 'neutral';
+  const chainLabel = genesisMismatch
+    ? 'Mismatch'
+    : activeNodeLive
+      ? 'Live'
+      : walletGenesis
+        ? 'Wallet set'
+        : 'Unknown';
+  const displayedChainTone = nodeStartupPending ? 'warn' : chainTone;
+  const displayedChainLabel = nodeStartupPending ? 'Starting' : chainLabel;
+  const displayedHealthTone = nodeStartupPending ? 'warn' : healthTone;
+  const displayedHealthLabel = nodeStartupPending ? 'Starting' : healthLabel;
+  const displayedWalletConnectionLabel = nodeStartupPending ? 'Starting' : walletConnectionLabel;
   const hgmBalance = walletStatus?.balances?.find((balance) => balance.assetId === 0) ?? null;
+  const hgmBalanceLabel = hgmBalance ? formatHgm(hgmBalance.total) : 'N/A';
+  const walletSyncLag =
+    typeof walletSummary?.bestNumber === 'number' && typeof walletStatus?.lastSyncedHeight === 'number'
+      ? Math.max(0, walletSummary.bestNumber - walletStatus.lastSyncedHeight)
+      : null;
+  const walletHeroTitle = walletReady
+    ? 'Wallet ready on Hegemon'
+    : activeNodeLive
+      ? 'Node live; unlock wallet'
+      : 'Open wallet for Hegemon';
+  const walletHeroDetail = walletReady
+    ? `${formatCompactPath(storePath)} · synced ${formatNumber(walletStatus?.lastSyncedHeight)} · ${peerEvidenceLabel}`
+    : activeNodeLive
+      ? `${formatCompactPath(storePath)} · ${hegemonNetworkVersionLabel} height ${activeHeightLabel} · ${peerEvidenceLabel}`
+      : `${formatCompactPath(storePath)} · start the local node to join ${hegemonNetworkName}`;
+  const walletBalanceDisplay = walletReady ? hgmBalanceLabel : 'Locked';
+  const walletSyncDisplay = walletReady ? formatNumber(walletStatus?.lastSyncedHeight) : 'Locked';
+  const walletLagDisplay = walletReady ? (walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)) : 'Open wallet';
+  const walletSyncActionLabel = walletBusy ? 'Syncing...' : walletSyncLag && walletSyncLag > 0 ? 'Sync wallet' : 'Sync now';
+  const spendableNotesDisplay = walletReady ? formatNumber(walletStatus?.notes?.spendableCount) : 'Locked';
+  const walletGenesisDisplay = walletGenesis ? formatHash(walletGenesis) : walletReady ? 'N/A' : 'Locked';
+  const maxInputsLine = walletReady
+    ? `Max ${formatNumber(walletStatus?.notes?.maxInputs)} inputs/tx`
+    : 'Open wallet to inspect inputs';
+  const primaryAddress = walletStatus?.primaryAddress ?? '';
+  const primaryAddressLabel = primaryAddress ? formatAddress(primaryAddress) : walletReady ? 'N/A' : 'Locked';
+  const normalizedPrimaryAddress = normalizeShieldedAddressInput(primaryAddress);
+  const runningMinerAddress = normalizeShieldedAddressInput(activeSummary?.minerAddress ?? '');
+  const savedMinerAddress = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '');
+  const effectiveMinerPayoutAddress = runningMinerAddress || savedMinerAddress;
+  const effectiveMinerPayoutLabel = effectiveMinerPayoutAddress
+    ? formatAddress(effectiveMinerPayoutAddress)
+    : activeSummary?.mining
+      ? 'No payout address'
+      : 'Not mining';
+  const savedMinerPayoutLabel = savedMinerAddress ? formatAddress(savedMinerAddress) : 'Not set';
+  const miningPayoutMatchesWallet = Boolean(
+    walletReady &&
+      normalizedPrimaryAddress &&
+      effectiveMinerPayoutAddress &&
+      normalizedPrimaryAddress === effectiveMinerPayoutAddress
+  );
+  const savedMiningPayoutMatchesWallet = Boolean(
+    walletReady && normalizedPrimaryAddress && savedMinerAddress && normalizedPrimaryAddress === savedMinerAddress
+  );
+  const miningPayoutPendingRestart = Boolean(
+    runningMinerAddress && savedMinerAddress && runningMinerAddress !== savedMinerAddress
+  );
+  const miningPayoutMismatch = Boolean(
+    walletReady &&
+      activeSummary?.mining === true &&
+      effectiveMinerPayoutAddress &&
+      !miningPayoutMatchesWallet
+  );
+  const miningPayoutMissing = activeSummary?.mining === true && !effectiveMinerPayoutAddress;
+  const miningPayoutTone: UiTone =
+    miningPayoutMissing || miningPayoutMismatch
+      ? 'error'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'ok'
+        : savedMinerAddress
+          ? 'warn'
+          : 'neutral';
+  const miningPayoutLabel = miningPayoutMissing
+    ? 'No payout'
+    : miningPayoutMismatch
+      ? 'Different address'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'To this wallet'
+        : activeSummary?.mining === true && effectiveMinerPayoutAddress
+          ? 'Payout set'
+        : savedMinerAddress
+          ? 'Configured'
+          : 'Not set';
+  const miningPayoutDetail = miningPayoutMissing
+    ? 'Mining is active, but the app cannot see a payout address.'
+    : miningPayoutMismatch
+      ? 'Local block rewards are not going to the displayed receiving address.'
+      : activeSummary?.mining === true && miningPayoutMatchesWallet
+        ? 'Local block rewards pay the wallet address shown above.'
+        : activeSummary?.mining === true && effectiveMinerPayoutAddress
+          ? 'Mining is active. Unlock the wallet to compare this payout with the receiving address.'
+        : savedMinerAddress
+          ? 'This address will be used when local mining starts.'
+          : 'Set this wallet address before enabling local mining.';
   const recipientAddressError = recipientAddress
     ? validateShieldedAddressInput(recipientAddress, 'Recipient address')
     : null;
+  const normalizedRecipientAddress = normalizeShieldedAddressInput(recipientAddress);
+  const recipientAddressLengthLabel = `${normalizedRecipientAddress.length}/${shieldedAddressLength}`;
+  const recipientAddressTone = recipientAddressError
+    ? 'text-guard'
+    : normalizedRecipientAddress
+      ? 'text-proof'
+      : 'text-surfaceMuted/70';
   const newContactAddressError = newContactAddress
     ? validateShieldedAddressInput(newContactAddress, 'Contact address')
     : null;
@@ -2198,6 +2701,16 @@ export default function App() {
     });
     return errors;
   }, [contacts]);
+  const contactWarnings = useMemo(() => {
+    const warnings = new Map<string, string>();
+    contacts.forEach((contact) => {
+      const warning = legacyContactWarning(contact);
+      if (warning) {
+        warnings.set(contact.id, warning);
+      }
+    });
+    return warnings;
+  }, [contacts]);
   const sendBlockedReason = !walletReady
     ? 'Open or init a wallet to send funds.'
     : walletSummary?.reachable === false
@@ -2211,17 +2724,22 @@ export default function App() {
 
   const normalizedStorePath = storePath.trim();
   const pendingTransactions = walletStatus?.pending ?? [];
+  const recentTransactions = walletStatus?.recent ?? [];
+  const walletActivity = useMemo(
+    () => [...pendingTransactions, ...recentTransactions],
+    [pendingTransactions, recentTransactions]
+  );
   const walletNoteDetails = walletStatus?.noteDetails ?? [];
-  const pendingByTxId = useMemo(() => {
-    const map = new Map<string, typeof pendingTransactions[number]>();
-    pendingTransactions.forEach((entry) => {
+  const activityByTxId = useMemo(() => {
+    const map = new Map<string, typeof walletActivity[number]>();
+    walletActivity.forEach((entry) => {
       const normalized = normalizeTxId(entry.txId);
       if (normalized) {
         map.set(normalized, entry);
       }
     });
     return map;
-  }, [pendingTransactions]);
+  }, [walletActivity]);
 
   const attemptsForStore = useMemo(
     () => sendAttempts.filter((attempt) => attempt.storePath === normalizedStorePath),
@@ -2229,10 +2747,10 @@ export default function App() {
   );
 
   const activityEntries = useMemo(() => {
-    const consolidationEntries = pendingTransactions.filter(
+    const consolidationEntries = walletActivity.filter(
       (entry) => entry.memo?.toLowerCase() === 'consolidation'
     );
-    const pendingEntries: ActivityEntry[] = pendingTransactions.map((entry) => ({
+    const pendingEntries: ActivityEntry[] = walletActivity.map((entry) => ({
       id: entry.txId,
       source: 'wallet',
       createdAt: entry.createdAt,
@@ -2251,7 +2769,7 @@ export default function App() {
     const consolidationTxIds = new Set<string>();
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
-      const pending = attempt.txId ? pendingByTxId.get(attempt.txId) : null;
+      const pending = attempt.txId ? activityByTxId.get(attempt.txId) : null;
       const missingWalletPending =
         attempt.status === 'pending' && !pending && walletUnlocked && !walletError;
       const status = pending
@@ -2333,7 +2851,7 @@ export default function App() {
     ];
     merged.sort((a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt));
     return merged;
-  }, [attemptsForStore, pendingTransactions, pendingByTxId, walletError, walletUnlocked]);
+  }, [attemptsForStore, walletActivity, activityByTxId, walletError, walletUnlocked]);
 
   const sendInFlight = attemptsForStore.some((attempt) => attempt.status === 'processing');
 
@@ -2368,17 +2886,94 @@ export default function App() {
     ) ?? null;
   }, [disclosureRecords, selectedDisclosureKey]);
 
-  const navItems = [
-    { path: '/overview', label: 'Overview', description: 'Command center' },
-    { path: '/node', label: 'Node', description: 'Operate + observe' },
-    { path: '/wallet', label: 'Wallet', description: 'Store + sync' },
-    { path: '/send', label: 'Send', description: 'Shielded transfers' },
-    { path: '/disclosure', label: 'Disclosure', description: 'Audit proofs' },
-    { path: '/console', label: 'Console', description: 'Diagnostics' }
+  const pendingActivityCount = activityEntries.filter(
+    (entry) => entry.status === 'processing' || entry.status === 'pending'
+  ).length;
+  const failedActivityCount = activityEntries.filter((entry) => entry.status === 'failed').length;
+  const sendNavTone: UiTone = failedActivityCount > 0 ? 'error' : pendingActivityCount > 0 ? 'warn' : 'neutral';
+  const sendNavLabel = failedActivityCount > 0 ? 'Failed' : pendingActivityCount > 0 ? `${pendingActivityCount} pending` : 'Idle';
+  const sendNavDescription =
+    pendingActivityCount > 0
+      ? 'Outgoing pending'
+      : walletReady
+        ? 'Ready to send'
+        : 'Open wallet first';
+  const nodeNavLabel =
+    nodeStartupPending
+      ? 'Starting'
+      : activeNodeLive && (activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead')
+        ? 'Synced'
+        : displayedHealthLabel;
+  const nodeNavDescription =
+    nodeStartupPending
+      ? 'Starting local node'
+      : activeNodeLive
+        ? activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead'
+          ? `${activeHeightLabel} synced`
+          : syncAlignmentLabel
+        : 'Start local node';
+  const walletNavDescription = miningPayoutMismatch
+    ? 'Mining payout mismatch'
+    : walletReady
+      ? hgmBalanceLabel
+      : `${displayedWalletConnectionLabel} · loopback`;
+  const walletNavLabel = miningPayoutMismatch ? 'Payout' : walletStateLabel;
+  const walletNavTone = miningPayoutMismatch ? 'error' : walletTone;
+  const consoleErrorCount = logEntries.filter((entry) => entry.level === 'error').length;
+
+  const navItems: Array<{
+    path: string;
+    label: string;
+    description: string;
+    statusLabel?: string;
+    statusTone?: UiTone;
+  }> = [
+    {
+      path: '/overview',
+      label: 'Overview',
+      description: activeNodeLive ? `${activeHeightLabel} · ${peerEvidenceLabel}` : 'Live status',
+      statusLabel: displayedChainLabel,
+      statusTone: displayedChainTone
+    },
+    {
+      path: '/node',
+      label: 'Node',
+      description: nodeNavDescription,
+      statusLabel: nodeNavLabel,
+      statusTone: displayedHealthTone
+    },
+    {
+      path: '/wallet',
+      label: 'Wallet',
+      description: walletNavDescription,
+      statusLabel: walletNavLabel,
+      statusTone: walletNavTone
+    },
+    {
+      path: '/send',
+      label: 'Send',
+      description: sendNavDescription,
+      statusLabel: sendNavLabel,
+      statusTone: sendNavTone
+    },
+    {
+      path: '/disclosure',
+      label: 'Disclosure',
+      description: disclosureRecords.length > 0 ? 'Records saved' : 'Proofs',
+      statusLabel: disclosureRecords.length > 0 ? `${formatNumber(disclosureRecords.length)}` : undefined,
+      statusTone: disclosureRecords.length > 0 ? 'ok' : undefined
+    },
+    {
+      path: '/console',
+      label: 'Console',
+      description: consoleErrorCount > 0 ? `${formatNumber(consoleErrorCount)} errors` : 'Logs',
+      statusLabel: consoleErrorCount > 0 ? `${formatNumber(consoleErrorCount)}` : undefined,
+      statusTone: consoleErrorCount > 0 ? 'error' : undefined
+    }
   ];
 
   const GenesisMismatchBanner = genesisMismatch ? (
-    <div className="rounded-xl border border-amber/40 bg-amber/10 p-4 space-y-2">
+    <div className="rounded-lg border border-amber/40 bg-amber/10 p-4 space-y-2">
       <p className="text-sm text-surface">
         Genesis mismatch between the wallet store and the selected node. Choose the correct node or force a rescan.
       </p>
@@ -2394,221 +2989,205 @@ export default function App() {
   const WalletErrorBanner = walletError ? <p className="text-guard">{walletError}</p> : null;
   const ContactsErrorBanner = contactsError ? <p className="text-guard text-sm">{contactsError}</p> : null;
 
-  const StatusBar = (
-    <div className="status-bar">
-      <div className="status-grid">
-        <div className="status-group">
-          <p className="label">Node</p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-            <span className="text-sm font-medium text-surface">{activeConnection?.label ?? 'No connection'}</span>
-            <span className="badge">{activeConnection?.mode ?? 'n/a'}</span>
-          </div>
-          <p className="text-xs text-surfaceMuted/80 mono break-all mt-1" title={activeConnection?.wsUrl ?? ''}>
-            {activeConnection?.wsUrl ?? 'N/A'}
-          </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">
-            Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
-          </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">
-            Version {activeSummary?.nodeVersion ?? 'N/A'}
-            {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? ' · External RPC (not managed by app)' : ''}
-          </p>
-        </div>
-        <div className="status-group">
-          <p className="label">Wallet</p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-            <span className="text-sm font-medium text-surface">{walletConnection?.label ?? 'No connection'}</span>
-            <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
-          </div>
-          <p className="text-xs text-surfaceMuted/80 mt-1">
-            Store:{' '}
-            <span className="mono break-all" title={storePath}>
-              {storePath}
-            </span>
-          </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">
-            Height {formatNumber(walletSummary?.bestNumber)} · Last synced {formatNumber(walletStatus?.lastSyncedHeight)}
-          </p>
-        </div>
-        <div className="status-group">
-          <p className="label">Chain</p>
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
-            <span className="text-xs text-surfaceMuted/80 mono">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
-          </div>
-          <p className="text-xs text-surfaceMuted/70 mt-1">
-            Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Supply {formatHash(activeSummary?.supplyDigest)}
-          </p>
-          <p className="text-xs text-surfaceMuted/70 mt-0.5">Hash rate {formatHashRate(effectiveMiningHashRate)}</p>
-        </div>
-      </div>
-    </div>
-  );
-
   const OverviewWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Overview</p>
-        <h1 className="text-headline font-semibold tracking-tight">Command Center</h1>
-        <p className="text-surfaceMuted max-w-2xl">
-          Keep the node, wallet, and chain context visible while you decide your next move.
-        </p>
-      </header>
-
+    <div className="overview-shell">
       {GenesisMismatchBanner}
 
-      <div className="grid gap-6 xl:grid-cols-3">
-        <section className="card space-y-4">
-          <div>
-            <p className="label">Node</p>
-            <h2 className="text-title font-semibold">Status</h2>
-            <p className="text-sm text-surfaceMuted/80 mt-1">
-              Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'})
-            </p>
-          </div>
-          <div className="space-y-2 text-sm text-surfaceMuted">
-            <div className="flex items-center gap-2">
-              <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-              <span className="text-surfaceMuted/70">Updated {updatedAtLabel}</span>
+      <section className="overview-dashboard">
+        <div className="overview-command-card">
+          <div className="overview-command-top">
+            <div className="hero-kicker">
+              <span className={`status-pill ${displayedChainTone}`}>{displayedChainLabel}</span>
+              {!nodeStartupPending ? <span className={`status-pill ${syncAlignmentTone}`}>{syncAlignmentLabel}</span> : null}
+              <span className="badge">{appControlLabel}</span>
+              <span className="badge">{noSshStatusLabel}</span>
             </div>
-            <p>Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}</p>
-            <p>
-              Mining {effectiveMiningActive ? 'Active' : 'Idle'} · Hash rate {formatHashRate(effectiveMiningHashRate)}
-            </p>
-            <p className="mono text-xs">Supply digest {formatHash(activeSummary?.supplyDigest)}</p>
+            <span className={`status-pill ${displayedHealthTone}`}>{displayedHealthLabel}</span>
           </div>
-        </section>
 
-        <section className="card space-y-4">
-          <div>
-            <p className="label">Wallet</p>
-            <h2 className="text-title font-semibold">Readiness</h2>
-            <p className="text-sm text-surfaceMuted/80 mono mt-1">{storePath}</p>
-          </div>
-          <div className="space-y-2 text-sm text-surfaceMuted">
-            <div className="flex items-center gap-2">
-              <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-              <span className="text-surfaceMuted/70">{walletConnectionLabel}</span>
+          <div className="overview-command-main">
+            <div>
+              <p className="label">{liveEnvironmentLabel}</p>
+              <h1>{liveHeadline}</h1>
+              <p>{liveSubheadline}</p>
             </div>
-            <p className="font-medium text-surface">
-              Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}
-            </p>
-            <p>Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
-            {walletStatus?.notes?.needsConsolidation ? (
-              <p className="text-amber">
-                Wallet has {walletStatus.notes.spendableCount} notes (max {walletStatus.notes.maxInputs} inputs/tx). Some sends may require consolidation.
+            <div className="overview-actions">
+              {walletReady ? (
+                <button className="primary" onClick={() => handleWalletSync()} disabled={walletBusy}>
+                  {walletSyncActionLabel}
+                </button>
+              ) : (
+                <Link className="action-link primary" to="/wallet">
+                  Open wallet
+                </Link>
+              )}
+              <Link className="action-link secondary" to="/send">
+                Send
+              </Link>
+              <button className={nodeToggleClass} onClick={handleNodeToggle} disabled={nodeToggleDisabled}>
+                {nodeToggleLabel}
+              </button>
+            </div>
+          </div>
+
+          <div className={`overview-verdict ${liveVerdictTone}`}>
+            <span className={`status-dot ${liveVerdictTone}`} />
+            <div>
+              <strong>{liveVerdictLabel}</strong>
+              <span>{liveVerdictDetail}</span>
+            </div>
+          </div>
+
+          <div className="overview-signal-grid">
+            <div className="overview-signal featured">
+              <span>Local height</span>
+              <strong>{formatNumber(activeSummary?.bestNumber)}</strong>
+              <em>{syncStateLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Wallet</span>
+              <strong>{walletBalanceDisplay}</strong>
+              <em>{walletReady ? `${walletLagDisplay} block lag` : displayedWalletConnectionLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Mining</span>
+              <strong>{miningStatusLabel}</strong>
+              <em>{miningHashRateLabel}</em>
+            </div>
+            <div className="overview-signal">
+              <span>Send queue</span>
+              <strong>{failedActivityCount ? `${failedActivityCount} failed` : pendingActivityCount ? `${pendingActivityCount} pending` : 'Clear'}</strong>
+              <em>{sendBlockedReason ?? 'Ready'}</em>
+            </div>
+          </div>
+
+          <details className="connection-evidence">
+            <summary>
+              <span>Connection evidence</span>
+              <strong>{firstActivePeer ? 'Peer, seed, and genesis verified' : 'Seed and genesis configured'}</strong>
+            </summary>
+            <div className="proof-stack" aria-label="Live connection evidence">
+              <div className="proof-row">
+                <span>RPC</span>
+                <strong className="mono" title={activeConnection?.wsUrl ?? ''}>{formatEndpoint(activeConnection?.wsUrl)}</strong>
+                <em>{rpcPolicyLabel}</em>
+              </div>
+              <div className="proof-row">
+                <span>Seed</span>
+                <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
+                <em>approved Hegemon 0.10 seed</em>
+              </div>
+              <div className="proof-row">
+                <span>Peer</span>
+                <strong className="mono" title={peerDetailLabel}>{peerDetailLabel}</strong>
+                <em>{peerEvidenceLabel}</em>
+              </div>
+              <div className="proof-row">
+                <span>Genesis</span>
+                <strong className="mono" title={displayedNodeGenesis ?? ''}>{formatHash(displayedNodeGenesis)}</strong>
+                <em>0.10 chain identity</em>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <aside className="overview-side-card">
+          <div className="overview-side-header">
+            <div>
+              <p className="label">Network</p>
+              <h2>{activeChainSpecLabel}</h2>
+            </div>
+            <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
+          </div>
+          <div className="overview-side-grid">
+            <p><span>Peer target</span><strong>{formatNumber(activeDisplaySyncTargetHeight)}</strong></p>
+            <p><span>Peers</span><strong>{formatNumber(activeSummary?.peers)}</strong></p>
+            <p><span>Payout</span><strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong></p>
+            <p><span>Spendable notes</span><strong>{spendableNotesDisplay}</strong></p>
+          </div>
+          <div className="overview-peer-note">
+            <span className="status-dot ok" />
+            <p title={p2pListenLabel}>{p2pListenLabel}</p>
+          </div>
+          <div className="overview-events-compact">
+            <div className="overview-events-heading">
+              <span>Latest events</span>
+              <strong>{overviewHighlights.length ? `${overviewHighlights.length} signals` : 'Quiet'}</strong>
+            </div>
+            {overviewHighlights.slice(0, 3).map((entry) => (
+              <div key={entry.id} className="overview-event-line">
+                <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                <p>{entry.message}</p>
+              </div>
+            ))}
+            {!overviewHighlights.length ? (
+              <p className="overview-empty-line">
+                {overviewWarningCount
+                  ? `${overviewWarningCount} retry warnings are available in Console.`
+                  : 'Critical chain and wallet events will appear here.'}
               </p>
             ) : null}
           </div>
-        </section>
+        </aside>
+      </section>
 
-        <section className="card space-y-4">
-          <div>
-            <p className="label">Chain</p>
-            <h2 className="text-title font-semibold">Context</h2>
+      {overviewHighlights.length || overviewWarningCount ? (
+        <section className="ops-panel">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="label">Events</p>
+              <h2 className="text-title font-semibold">Recent activity</h2>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              {overviewWarningCount ? <span className="badge level-warn">{overviewWarningCount} retries</span> : null}
+              <span className="badge">{overviewHighlights.length} signals</span>
+            </div>
           </div>
-          <div className="space-y-2 text-sm text-surfaceMuted">
-            <p>
-              Node genesis <span className="mono text-xs">{formatHash(walletNodeGenesis)}</span>
-            </p>
-            <p>
-              Wallet genesis <span className="mono text-xs">{formatHash(walletGenesis)}</span>
-            </p>
-            <p>
-              Chain spec{' '}
-              <span className="mono text-xs">
-                {activeSummary?.config?.chainSpecName
-                  ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
-                  : 'N/A'}
-              </span>
-            </p>
-            <p>Mining {effectiveMiningActive ? 'Active' : 'Idle'}</p>
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="card space-y-4">
-          <div>
-            <p className="label">Actions</p>
-            <h2 className="text-title font-semibold">Quick moves</h2>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button
-              className={nodeToggleClass}
-              onClick={handleNodeToggle}
-              disabled={nodeToggleDisabled}
-            >
-              {nodeToggleLabel}
-            </button>
-            <button className="secondary" onClick={() => handleWalletSync()} disabled={walletBusy || !walletReady}>
-              Sync wallet
-            </button>
-            <Link className="action-link secondary" to="/send">
-              Send transfer
-            </Link>
-            <Link className="action-link secondary" to="/node">
-              Node operations
-            </Link>
-            <Link className="action-link secondary" to="/console">
-              Open console
-            </Link>
-          </div>
-          {sendBlockedReason ? <p className="text-xs text-amber">{sendBlockedReason}</p> : null}
-          {nodeIsLocal && nodeIsRunning && !nodeIsManaged ? (
-            <p className="text-xs text-amber">
-              This “local” connection is pointing at an external node (often a port-forward). Start a fresh 0.9.1 node on a different RPC
-              port (e.g. 9955) and update this connection’s URLs to regain start/stop control.
-            </p>
-          ) : null}
-        </section>
-
-        <section className="card space-y-4">
-          <div>
-            <p className="label">Events</p>
-            <h2 className="text-title font-semibold">Recent activity</h2>
-          </div>
-          {logHighlights.length ? (
-            <div className="space-y-3">
-              {logHighlights.slice(0, 5).map((entry) => (
-                <div key={entry.id} className="flex items-start gap-3 text-sm">
+          {overviewHighlights.length ? (
+            <div className="event-stream">
+              {overviewHighlights.map((entry) => (
+                <div key={entry.id} className="event-row">
                   <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                   <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                  <span className="text-surfaceMuted/80 text-xs truncate">{entry.message}</span>
+                  <span className="event-message">{entry.message}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <div className="empty-state py-8">
-              <div className="empty-state-icon">
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <p className="empty-state-description">No highlight events yet. Start a node to see activity.</p>
+            <div className="quiet-state">
+              <p className="label">No critical events</p>
+              <p>
+                {overviewWarningCount
+                  ? `${overviewWarningCount} network retry warnings are available in Console.`
+                  : 'Mining, sync, and transaction milestones will appear here.'}
+              </p>
             </div>
           )}
         </section>
-      </div>
+      ) : null}
     </div>
   );
 
   const NodeConnectionsSection = (
-    <section className="card space-y-8">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <details className="card diagnostic-details">
+      <summary>
         <div>
-          <p className="label">Node</p>
-          <h2 className="text-title font-semibold">Connections</h2>
+          <p className="label">Configuration</p>
+          <h2 className="text-title font-semibold">Connection profile</h2>
+          <p className="text-sm text-surfaceMuted/80">Profiles, ports, storage, and mining startup options.</p>
         </div>
-        <div className="flex gap-2">
+        <span className="badge">
+          {activeConnection ? `${connectionModeLabels[activeConnection.mode]} · ${participationRoleLabels[activeParticipationRole]}` : 'Configure'}
+        </span>
+      </summary>
+
+      <div className="space-y-8">
+        <div className="flex justify-end gap-2">
           <button className="secondary text-sm" onClick={handleAddConnection}>Add connection</button>
           <button className="danger text-sm" onClick={handleRemoveConnection} disabled={connections.length <= 1}>Remove</button>
         </div>
-      </div>
 
-      <div className="grid gap-6 md:grid-cols-2">
+        <div className="grid gap-6 md:grid-cols-2">
         <label className="space-y-2">
           <span className="label">Active connection</span>
           <select
@@ -2617,7 +3196,7 @@ export default function App() {
           >
             {connections.map((connection) => (
               <option key={connection.id} value={connection.id}>
-                {connection.label} ({connection.mode} · {participationRoleLabels[inferParticipationRole(connection)]})
+                {connection.label} ({connectionModeLabels[connection.mode]} · {participationRoleLabels[inferParticipationRole(connection)]})
               </option>
             ))}
           </select>
@@ -2635,8 +3214,8 @@ export default function App() {
             value={activeConnection?.mode ?? 'local'}
             onChange={(event) => updateActiveConnection({ mode: event.target.value as NodeConnection['mode'] })}
           >
-            <option value="local">Local</option>
-            <option value="remote">Remote</option>
+            <option value="local">Managed local</option>
+            <option value="remote">Local RPC endpoint</option>
           </select>
         </label>
         <label className="space-y-2">
@@ -2667,15 +3246,15 @@ export default function App() {
           <input
             value={activeConnection?.httpUrl ?? ''}
             onChange={(event) => updateActiveConnection({ httpUrl: event.target.value })}
-            placeholder="http://127.0.0.1:9944"
+            placeholder={`http://127.0.0.1:${defaultRpcPort}`}
           />
         </label>
-        {activeConnection?.mode === 'remote' && activeParticipationRole === 'authoring_pool' ? (
+      {activeConnection?.mode === 'remote' && activeParticipationRole === 'authoring_pool' ? (
           <p className="text-xs text-surfaceMuted md:col-span-2">
-            Remote mining profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
+            Local RPC endpoint mining profiles are read-only in the desktop app. Start/stop and mining control stay on the operator host.
           </p>
         ) : null}
-      </div>
+        </div>
       {activeConnection ? (
         <div className="panel space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2693,37 +3272,26 @@ export default function App() {
       ) : null}
       {activeConnection?.mode === 'remote' ? (
         <p className="text-sm text-surfaceMuted">
-          Remote RPC should be restricted and authenticated. Review runbooks/two_person_testnet.md before exposing RPC.
+          Desktop RPC must stay on localhost. Run a local Hegemon P2P relay node for remote network access; direct public RPC is rejected.
         </p>
       ) : null}
 
       {activeConnection?.mode === 'local' && (
-        <div className="space-y-6">
+        <details className="diagnostic-details node-advanced">
+          <summary>
+            <div>
+              <p className="label">Local node settings</p>
+              <p className="text-sm text-surfaceMuted/80">Storage, networking, mining, and retention controls.</p>
+            </div>
+            <span className="badge">Advanced</span>
+          </summary>
+          <div className="space-y-6">
           <div className="panel space-y-4">
             <div>
               <p className="label">Paths</p>
-              <p className="text-sm text-surfaceMuted/80">Chain spec and storage locations.</p>
+              <p className="text-sm text-surfaceMuted/80">Native node storage locations.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="space-y-2 md:col-span-2">
-                <span className="label">Chain spec (path or name)</span>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs text-surfaceMuted/70">
-                    JSON file or built-in name (e.g. <span className="mono">testnet</span>).
-                  </span>
-                  <button className="secondary text-xs px-3" type="button" onClick={handlePickChainSpec}>
-                    Browse
-                  </button>
-                </div>
-                <input
-                  className="mono"
-                  value={activeConnection.chainSpecPath ?? ''}
-                  onChange={(event) => updateActiveConnection({ chainSpecPath: event.target.value })}
-                  placeholder="config/dev-chainspec.json"
-                  spellCheck={false}
-                  title={activeConnection.chainSpecPath ?? ''}
-                />
-              </label>
               <label className="space-y-2 md:col-span-2">
                 <span className="label">Base path</span>
                 <div className="flex items-center justify-between gap-3">
@@ -2960,7 +3528,7 @@ export default function App() {
                       updateActiveConnection({ rpcMethods: event.target.checked ? 'unsafe' : 'safe' })
                     }
                   />
-                  Enable unsafe RPC methods
+                  Enable local control RPC
                 </label>
                 <label className="flex items-center gap-2 text-sm text-surfaceMuted">
                   <input
@@ -2978,11 +3546,6 @@ export default function App() {
           </div>
 
           <div className="space-y-2">
-            {activeConnection.dev && !activeConnection.chainSpecPath ? (
-              <p className="text-sm text-surfaceMuted">
-                Multi-machine networks require a shared chainspec. See runbooks/two_person_testnet.md for details.
-              </p>
-            ) : null}
             {activeConnection.listenAddr ? (
               <p className="text-sm text-surfaceMuted">
                 Listen address overrides the P2P port setting.
@@ -2990,7 +3553,7 @@ export default function App() {
             ) : null}
             {activeConnection.rpcExternal || activeConnection.rpcMethods === 'unsafe' ? (
               <p className="text-sm text-guard">
-                External RPC and unsafe methods expose control surfaces. Restrict with firewalls and only use on trusted networks.
+                Unsafe controls stay local-only. If RPC is exposed externally, the managed node forces safe methods.
               </p>
             ) : null}
             {activeConnection.tmp ? (
@@ -2999,41 +3562,41 @@ export default function App() {
               </p>
             ) : null}
           </div>
-        </div>
+          </div>
+        </details>
       )}
-    </section>
+      </div>
+    </details>
   );
 
   const NodeOperationsSection = (
-    <section className="card space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <section className="node-control-card">
+      <div className="node-control-header">
         <div>
-          <p className="label">Node</p>
-          <h2 className="text-title font-semibold">Operations</h2>
+          <p className="label">Active profile</p>
+          <h2 className="text-title font-semibold">{activeConnection?.label ?? 'Current node'}</h2>
           <p className="text-sm text-surfaceMuted/80 mt-1">
-            Active: {activeConnection?.label ?? 'No connection'} ({activeConnection?.mode ?? 'n/a'}) | Updated {updatedAtLabel}
+            {syncStateLabel} · {peerEvidenceLabel} · Updated {updatedAtLabel}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-          <span className="text-xs text-surfaceMuted/70">
-            Height {formatNumber(activeSummary?.bestNumber)} · Peers {formatNumber(activeSummary?.peers)}
-          </span>
+        <div className="node-control-actions">
+          <div className="flex items-center gap-2">
+            <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
+            <span className="badge">{loopbackControlLabel}</span>
+          </div>
+          <button
+            className={nodeToggleClass}
+            onClick={handleNodeToggle}
+            disabled={nodeToggleDisabled}
+          >
+            {nodeToggleLabel}
+          </button>
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <button
-          className={nodeToggleClass}
-          onClick={handleNodeToggle}
-          disabled={nodeToggleDisabled}
-        >
-          {nodeToggleLabel}
-        </button>
-      </div>
-      <p className="text-sm text-surfaceMuted">{miningHint}</p>
+      <p className="node-hint">{miningHint}</p>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="node-metric-grid">
         <div className="panel">
           <p className="label">Role</p>
           <p className="text-lg font-medium">{participationRoleLabels[activeParticipationRole]}</p>
@@ -3052,6 +3615,7 @@ export default function App() {
         <div className="panel">
           <p className="label">Height</p>
           <p className="text-lg font-medium">{formatNumber(activeSummary?.bestNumber)}</p>
+          <p className="text-xs text-surfaceMuted">{syncAlignmentLabel}</p>
           <p className="text-xs text-surfaceMuted mono truncate" title={activeSummary?.bestBlock ?? ''}>
             {activeSummary?.bestBlock ?? 'N/A'}
           </p>
@@ -3060,23 +3624,26 @@ export default function App() {
           <p className="label">Peers</p>
           <p className="text-lg font-medium">{formatNumber(activeSummary?.peers)}</p>
           <p className="text-xs text-surfaceMuted">
-            Syncing: {activeSummary?.isSyncing === null || activeSummary?.isSyncing === undefined
+            Syncing: {activeDisplayIsSyncing === null || activeDisplayIsSyncing === undefined
               ? 'N/A'
-              : activeSummary.isSyncing
+              : activeDisplayIsSyncing
                 ? 'Yes'
                 : 'No'}
           </p>
+          <p className="text-xs text-surfaceMuted">Peer target: {formatNumber(activeDisplaySyncTargetHeight)}</p>
+          {firstActivePeer ? (
+            <p className="text-xs text-surfaceMuted mono truncate" title={`${firstActivePeer.addr} ${firstActivePeer.peerId}`}>
+              {firstActivePeer.addr}
+            </p>
+          ) : null}
         </div>
         <div className="panel">
           <p className="label">Mining</p>
-          <p className="text-lg font-medium">
-            {activeSummary?.mining === null || activeSummary?.mining === undefined
-              ? 'N/A'
-              : activeSummary.mining
-                ? 'Active'
-                : 'Idle'}
+          <p className="text-lg font-medium">{miningStatusLabel}</p>
+          <p className="text-xs text-surfaceMuted">Hash rate: {miningHashRateLabel}</p>
+          <p className="text-xs text-surfaceMuted mono truncate" title={effectiveMinerPayoutAddress}>
+            {effectiveMinerPayoutLabel}
           </p>
-          <p className="text-xs text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
         </div>
         <div className="panel">
           <p className="label">Storage</p>
@@ -3085,14 +3652,32 @@ export default function App() {
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <details className="diagnostic-details node-advanced">
+        <summary>
+          <div>
+            <p className="label">Node internals</p>
+            <p className="text-sm text-surfaceMuted/80">Mining counters, storage, consensus, telemetry, and runtime config.</p>
+          </div>
+          <span className="badge">Details</span>
+        </summary>
+        <div className="grid gap-3 md:grid-cols-2">
         <div className="panel">
           <p className="label">Mining details</p>
           <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
-          <p className="text-sm text-surfaceMuted">Hash rate: {formatHashRate(effectiveMiningHashRate)}</p>
+          <p className="text-sm text-surfaceMuted">
+            Sync gate:{' '}
+            {activeSummary?.miningSyncGateOpen === null || activeSummary?.miningSyncGateOpen === undefined
+              ? 'N/A'
+              : activeSummary.miningSyncGateOpen
+                ? 'Open'
+                : 'Closed'}
+          </p>
+          <p className="text-sm text-surfaceMuted">Hash rate: {miningHashRateLabel}</p>
           <p className="text-sm text-surfaceMuted">Blocks found: {formatNumber(activeSummary?.blocksFound)}</p>
           <p className="text-sm text-surfaceMuted">Difficulty: {formatNumber(activeSummary?.difficulty)}</p>
+          <p className="text-sm text-surfaceMuted">Next difficulty: {formatNumber(activeSummary?.nextDifficulty)}</p>
           <p className="text-sm text-surfaceMuted">Block height: {formatNumber(activeSummary?.blockHeight)}</p>
+          <p className="text-sm text-surfaceMuted">Pending pool: {formatNumber(activeSummary?.pendingExtrinsics)}</p>
         </div>
         <div className="panel">
           <p className="label">Storage breakdown</p>
@@ -3127,7 +3712,7 @@ export default function App() {
           <p className="text-sm text-surfaceMuted">
             Chain:{' '}
             {activeSummary?.config?.chainSpecName
-              ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
+              ? `${normalizeNetworkDisplayName(activeSummary.config.chainSpecName)} (${activeSummary.config.chainSpecId})`
               : 'N/A'}
           </p>
           <p className="text-sm text-surfaceMuted">Chain type: {activeSummary?.config?.chainType || 'N/A'}</p>
@@ -3170,6 +3755,7 @@ export default function App() {
           </p>
         </div>
       </div>
+      </details>
 
       {nodeError && <p className="text-guard">{nodeError}</p>}
     </section>
@@ -3210,8 +3796,8 @@ export default function App() {
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="label">Console</p>
-          <h2 className="text-title font-semibold">Node Console</h2>
+          <p className="label">Logs</p>
+          <h2 className="text-title font-semibold">Diagnostics timeline</h2>
           <p className="text-sm text-surfaceMuted/80 mt-1">
             Structured logs and milestone events for the active connection.
           </p>
@@ -3243,10 +3829,12 @@ export default function App() {
           ) : logHighlights.length ? (
             <div className="space-y-2">
               {logHighlights.map((entry) => (
-                <div key={entry.id} className="flex items-start gap-3 text-sm px-2 py-1 rounded-lg hover:bg-surfaceMuted/5 transition-colors">
-                  <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
-                  <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                  <span className="text-surfaceMuted/80 text-xs truncate">{entry.message}</span>
+                <div key={entry.id} className="key-event-row">
+                  <div className="key-event-meta">
+                    <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
+                    <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
+                  </div>
+                  <span className="key-event-message">{entry.message}</span>
                 </div>
               ))}
             </div>
@@ -3296,9 +3884,7 @@ export default function App() {
         {activeConnection?.mode !== 'local' && (
           <div className="empty-state py-10">
             <div className="empty-state-icon">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
-              </svg>
+              <EmptyStateIcon name="terminal" />
             </div>
             <p className="empty-state-description">Logs are only available for local nodes started from this app.</p>
           </div>
@@ -3311,11 +3897,11 @@ export default function App() {
               </div>
             )}
             {displayedLogEntries.map((entry) => (
-              <div key={entry.id} className="flex flex-wrap gap-3 text-sm log-row px-2 py-1.5 rounded-lg">
+              <div key={entry.id} className="console-log-row">
                 <span className="mono text-surfaceMuted/50 text-xs">{entry.timestamp ?? '--:--:--'}</span>
                 <span className={`badge level-${entry.level}`}>{entry.level}</span>
                 <span className="badge badge-category">{logCategoryLabels[entry.category]}</span>
-                <span className="mono flex-1 text-surfaceMuted/90 text-xs">{entry.message}</span>
+                <span className="log-message mono">{entry.message}</span>
                 {entry.highlight ? (
                   <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
                 ) : null}
@@ -3328,17 +3914,26 @@ export default function App() {
   );
 
   const WalletStoreSection = (
-    <section className="card space-y-8">
-      <div>
-        <p className="label">Wallet</p>
-        <h2 className="text-title font-semibold">Shielded Store</h2>
-      </div>
+    <section className={`card wallet-main-card ${walletReady ? 'wallet-ready' : 'wallet-locked'}`}>
+      <details className="wallet-access-details" open={!walletReady}>
+        <summary>
+          <div>
+            <p className="label">{walletReady ? 'Controls' : 'Wallet access'}</p>
+            <h2 className="text-title font-semibold">{walletReady ? 'Store/session controls' : 'Open wallet'}</h2>
+            <p className="text-sm text-surfaceMuted/80">
+              {walletReady
+                ? 'Store path, sync target, and lock settings.'
+                : 'Open or create a local wallet store before sending.'}
+            </p>
+          </div>
+          <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+        </summary>
 
-      <div className="grid gap-6">
+        <div className="grid gap-6">
         <label className="space-y-2">
           <span className="label">Store path</span>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-surfaceMuted/70">Select a folder for the wallet store.</span>
+            <span className="text-xs text-surfaceMuted/70">Select a wallet file in the Hegemon wallet store.</span>
             <button className="secondary text-xs px-3" type="button" onClick={handlePickWalletStorePath}>
               Browse
             </button>
@@ -3419,7 +4014,7 @@ export default function App() {
             </select>
           </label>
           <label className="space-y-2">
-            <span className="label">WebSocket URL</span>
+            <span className="label">Wallet RPC URL</span>
             <input value={wsUrl} onChange={(event) => setWsUrl(event.target.value)} />
           </label>
         </div>
@@ -3489,33 +4084,142 @@ export default function App() {
           </div>
           <p className="text-xs text-surfaceMuted">Auto-lock stops walletd and clears the unlock token.</p>
         </div>
-      </div>
-      {!walletReady && (
-        <p className="text-sm text-surfaceMuted">
-          Open or init a wallet to enable sync and transfers.
-        </p>
-      )}
-
+        </div>
+      </details>
       {GenesisMismatchBanner}
 
-      <div className="rounded-xl bg-midnight/40 border border-surfaceMuted/10 p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="label">Primary address</p>
-          <button
-            className="secondary px-3 py-1 text-xs"
-            onClick={handleCopyAddress}
-            disabled={!walletStatus?.primaryAddress}
-          >
-            {addressCopied ? 'Copied' : 'Copy'}
-          </button>
+      <div className="wallet-surface">
+        <div className="wallet-identity">
+          <div className="wallet-identity-header">
+            <div className="min-w-0">
+              <p className="label">Receiving address</p>
+              <p className="text-xs text-surfaceMuted/70">Shielded HGM address for this wallet store.</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+              <button
+                className="secondary px-3 py-1 text-xs"
+                onClick={handleCopyAddress}
+                disabled={!primaryAddress}
+              >
+                {addressCopied ? 'Copied' : 'Copy address'}
+              </button>
+            </div>
+          </div>
+          <div className="wallet-address-row">
+            <p className="address-display" title={primaryAddress}>
+              {primaryAddressLabel}
+            </p>
+          </div>
+          {primaryAddress ? (
+            <details className="wallet-details">
+              <summary>
+                <span>Full address</span>
+                <span>{normalizedStorePath ? formatCompactPath(normalizedStorePath) : 'Wallet store'}</span>
+              </summary>
+              <div className="address-full">{primaryAddress}</div>
+            </details>
+          ) : null}
+          {addressCopyError ? <p className="wallet-inline-error">{addressCopyError}</p> : null}
         </div>
-        <p className="mono break-all">{walletStatus?.primaryAddress ?? 'N/A'}</p>
-        <div>
-          <p className="label">Balances</p>
-          <div className="space-y-1">
+
+        <div className={`mining-payout-panel ${miningPayoutTone}`}>
+          <div className="mining-payout-header">
+            <div>
+              <p className="label">Mining rewards</p>
+              <h3>{miningPayoutLabel}</h3>
+              <p>{miningPayoutDetail}</p>
+            </div>
+            <span className={`status-pill ${miningPayoutTone}`}>{miningPayoutLabel}</span>
+          </div>
+          <div className="mining-payout-grid">
+            <div>
+              <span>Running payout</span>
+              <strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong>
+            </div>
+            <div>
+              <span>Wallet address</span>
+              <strong title={primaryAddress}>{primaryAddressLabel}</strong>
+            </div>
+            {miningPayoutPendingRestart ? (
+              <div>
+                <span>Saved next start</span>
+                <strong title={savedMinerAddress}>{savedMinerPayoutLabel}</strong>
+              </div>
+            ) : null}
+          </div>
+          <div className="mining-payout-actions">
+            <button
+              className="secondary"
+              type="button"
+              onClick={handleUseWalletAddressForMining}
+              disabled={!primaryAddress || savedMiningPayoutMatchesWallet}
+            >
+              Use wallet address
+            </button>
+            <span>
+              {miningPayoutPendingRestart
+                ? 'Restart the node to apply the saved address.'
+                : activeSummary?.reachable
+                  ? 'Payout changes apply when the node restarts.'
+                  : 'Saved payout is used on node start.'}
+            </span>
+          </div>
+          {miningPayoutNotice ? <p className="mining-payout-notice">{miningPayoutNotice}</p> : null}
+        </div>
+
+        <div className="kpi-grid">
+          <div className="kpi-tile">
+            <p className="label">HGM balance</p>
+            <p className="mt-2 text-xl font-semibold">{walletBalanceDisplay}</p>
+          </div>
+          <div className="kpi-tile kpi-action-tile">
+            <div className="kpi-action-header">
+              <p className="label">Wallet sync</p>
+              <button
+                className="secondary kpi-action-button"
+                type="button"
+                onClick={() => handleWalletSync()}
+                disabled={walletBusy || !walletReady}
+              >
+                {walletSyncActionLabel}
+              </button>
+            </div>
+            <p className="mt-2 text-xl font-semibold">{walletSyncDisplay}</p>
+            <div className="kpi-action-footer">
+              <p className="text-xs text-surfaceMuted">
+                {walletReady ? `Lag ${walletLagDisplay} blocks` : 'Open wallet to sync notes'}
+              </p>
+              {walletBusy && walletReady ? (
+                <button className="text-link text-xs" type="button" onClick={handleWalletCancel}>
+                  Cancel
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="kpi-tile">
+            <p className="label">Spendable notes</p>
+            <p className="mt-2 text-xl font-semibold">{spendableNotesDisplay}</p>
+            <p className="text-xs text-surfaceMuted">{maxInputsLine}</p>
+          </div>
+          <div className="kpi-tile">
+            <p className="label">Connected node</p>
+            <p className="mt-2 text-sm font-semibold truncate" title={walletConnectedNetworkLabel}>
+              {walletConnectedNetworkLabel}
+            </p>
+            <p className="text-xs text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
+          </div>
+        </div>
+
+        <div className="section-divider">
+          <div className="flex items-center justify-between gap-3">
+            <p className="label">Balances</p>
+            <span className="text-xs text-surfaceMuted">{walletStatus?.balances?.length ?? 0} assets</span>
+          </div>
+          <div className="mt-3 detail-grid">
             {walletStatus?.balances?.length ? (
               walletStatus.balances.map((balance) => (
-                <div key={balance.assetId} className="flex justify-between text-sm">
+                <div key={balance.assetId} className="detail-row">
                   <span>{balance.label}</span>
                   <span className="mono">
                     {balance.assetId === 0 ? formatHgm(balance.total) : balance.total.toLocaleString()}
@@ -3523,75 +4227,89 @@ export default function App() {
                 </div>
               ))
             ) : (
-              <p className="text-sm text-surfaceMuted">No balances yet.</p>
+              <p className="p-3 text-sm text-surfaceMuted">
+                {walletReady ? 'No balances yet.' : 'Open wallet to load balances.'}
+              </p>
             )}
           </div>
         </div>
-        <div>
+
+        <div className="section-divider">
           <p className="label">Notes</p>
           {walletStatus?.notes ? (
-            <p className="text-sm text-surfaceMuted">
+            <p className="mt-2 text-sm text-surfaceMuted">
               {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
               {walletStatus.notes.needsConsolidation ? (
                 <span className="text-amber"> Some sends may require consolidation.</span>
               ) : null}
             </p>
           ) : (
-            <p className="text-sm text-surfaceMuted">No note summary.</p>
+            <p className="text-sm text-surfaceMuted">
+              {walletReady ? 'No note summary.' : 'Open wallet to load note summary.'}
+            </p>
           )}
         </div>
-        <div>
-          <details className="rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
-            <summary className="flex cursor-pointer items-center justify-between gap-2 text-sm text-surfaceMuted">
+        <div className="wallet-notes-panel">
+          <details className="wallet-notes-details rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm text-surfaceMuted">
               <span className="label">All notes</span>
               <span className="text-xs text-surfaceMuted/80">{walletNoteDetails.length} total</span>
             </summary>
             <div className="mt-3 space-y-3">
-              {walletNoteDetails.length ? (
+            {walletNoteDetails.length ? (
                 walletNoteDetails.map((note) => (
-                  <div key={note.commitment} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium">Note {formatNumber(note.position)}</p>
-                      <span className="text-xs text-surfaceMuted">{note.status}</span>
+                  <div key={note.commitment} className="note-card">
+                    <div className="note-card-header">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium">Note {formatNumber(note.position)}</p>
+                        <p className="mono technical-value" title={note.commitment}>
+                          {formatHash(note.commitment)}
+                        </p>
+                      </div>
+                      <span className={`badge ${note.status === 'spendable' ? 'level-info' : 'level-debug'}`}>
+                        {note.status}
+                      </span>
                     </div>
-                    <div className="grid gap-1 text-sm text-surfaceMuted">
-                      <div className="flex justify-between">
+                    <div className="detail-grid">
+                      <div className="detail-row">
                         <span>Balance</span>
                         <span className="mono">
                           {note.assetId === 0 ? formatHgm(note.value) : note.value.toLocaleString()}
                         </span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Asset</span>
                         <span className="mono">{note.assetId}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Address</span>
-                        <span className="mono break-all">{note.address}</span>
+                        <span className="mono technical-value" title={note.address}>{formatAddress(note.address)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Memo</span>
-                        <span className="mono break-all">{note.memo ?? '—'}</span>
+                        <span className="mono technical-value" title={note.memo ?? ''}>{note.memo ?? '—'}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Diversifier</span>
                         <span className="mono">{note.diversifierIndex}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Position</span>
                         <span className="mono">{formatNumber(note.position)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Ciphertext index</span>
                         <span className="mono">{formatNumber(note.ciphertextIndex)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Commitment</span>
-                        <span className="mono break-all">{note.commitment}</span>
+                        <span className="mono technical-value" title={note.commitment}>{formatHash(note.commitment)}</span>
                       </div>
-                      <div className="flex justify-between">
+                      <div className="detail-row">
                         <span>Nullifier</span>
-                        <span className="mono break-all">{note.nullifier ?? '—'}</span>
+                        <span className="mono technical-value" title={note.nullifier ?? ''}>
+                          {note.nullifier ? formatHash(note.nullifier) : '—'}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -3602,12 +4320,6 @@ export default function App() {
             </div>
           </details>
         </div>
-        <div>
-          <p className="label">Connected to</p>
-          <p className="text-sm text-surfaceMuted">
-            {walletConnection?.label ?? 'N/A'} (height {formatNumber(walletSummary?.bestNumber)})
-          </p>
-        </div>
       </div>
 
       {WalletErrorBanner}
@@ -3615,36 +4327,103 @@ export default function App() {
   );
 
   const WalletOutputSection = (
-    <section className="card space-y-6">
-      <div>
-        <p className="label">Operations</p>
-        <h2 className="text-title font-semibold">Wallet Output</h2>
-      </div>
+    <details className="card diagnostic-details">
+      <summary>
+        <div>
+          <p className="label">Operations</p>
+          <h2 className="text-title font-semibold">Diagnostics</h2>
+        </div>
+        <span className="badge">walletd JSON</span>
+      </summary>
       <div className="grid gap-3">
         <div>
           <p className="label">Sync</p>
-          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+          <pre className="diagnostic-output">
             {walletSyncOutput || 'N/A'}
           </pre>
         </div>
         <div>
           <p className="label">Send</p>
-          <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+          <pre className="diagnostic-output">
             {walletSendOutput || 'N/A'}
           </pre>
         </div>
+      </div>
+    </details>
+  );
+
+  const WalletLiveSummarySection = (
+    <section className="wallet-command">
+      <div className="wallet-command-main">
+        <div className="hero-kicker">
+          <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+          <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
+          <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
+          <span className="badge">{loopbackControlLabel}</span>
+        </div>
+        <div className="space-y-2">
+          <p className="label">Wallet control plane</p>
+          <h2>{walletHeroTitle}</h2>
+          <p className="wallet-command-detail" title={storePath}>
+            {walletHeroDetail}
+          </p>
+        </div>
+        <div className="wallet-network-strip">
+          <p>
+            <span>Network</span>
+            <strong>{activeChainSpecLabel}</strong>
+          </p>
+          <p>
+            <span>Peer</span>
+            <strong title={peerDetailLabel}>{peerDetailLabel}</strong>
+          </p>
+          <p>
+            <span>Seed</span>
+            <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
+          </p>
+          <p>
+            <span>Wallet RPC</span>
+            <strong className="mono" title={walletConnection?.wsUrl ?? activeConnection?.wsUrl ?? ''}>
+              {formatEndpoint(walletConnection?.wsUrl ?? activeConnection?.wsUrl)}
+            </strong>
+          </p>
+        </div>
+      </div>
+      <div className="wallet-command-grid">
+        <p>
+          <span>Balance</span>
+          <strong>{walletBalanceDisplay}</strong>
+        </p>
+        <p>
+          <span>Wallet sync</span>
+          <strong>{walletSyncDisplay}</strong>
+        </p>
+        <p>
+          <span>Sync lag</span>
+          <strong>{walletLagDisplay}</strong>
+        </p>
+        <p>
+          <span>Node</span>
+          <strong>{walletNodeHeightLabel}</strong>
+        </p>
       </div>
     </section>
   );
 
   const SendPreflightSection = (
-    <section className="card space-y-4">
-      <div>
-        <p className="label">Send</p>
-        <h2 className="text-title font-semibold">Preflight check</h2>
-        <p className="text-sm text-surfaceMuted/80 mt-1">Confirm wallet + chain context before sending.</p>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
+    <details className="card diagnostic-details">
+      <summary>
+        <div>
+          <p className="label">Checks</p>
+          <h2 className="text-title font-semibold">Readiness</h2>
+          <p className="text-sm text-surfaceMuted/80">Wallet, chain, and note context.</p>
+        </div>
+        <span className={`status-pill ${sendBlockedReason ? 'error' : 'ok'}`}>
+          {sendBlockedReason ? 'Blocked' : 'Ready'}
+        </span>
+      </summary>
+      <div className="space-y-4">
+        <div className="grid gap-3 md:grid-cols-2">
         <div className="panel space-y-2">
           <p className="label">Wallet</p>
           <div className="flex items-center gap-2">
@@ -3652,7 +4431,9 @@ export default function App() {
             <span className="text-sm text-surfaceMuted">{walletConnectionLabel}</span>
           </div>
           <p className="text-sm text-surfaceMuted">Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
-          <p className="text-sm text-surfaceMuted">Balance {hgmBalance ? formatHgm(hgmBalance.total) : 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted">Node height {formatNumber(walletSummary?.bestNumber)}</p>
+          <p className="text-sm text-surfaceMuted">Sync lag {walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)} blocks</p>
+          <p className="text-sm text-surfaceMuted">Balance {hgmBalanceLabel}</p>
         </div>
         <div className="panel space-y-2">
           <p className="label">Chain</p>
@@ -3660,10 +4441,13 @@ export default function App() {
             <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
             <span className="text-xs text-surfaceMuted">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
           </div>
-          <p className="text-sm text-surfaceMuted">RPC {walletConnection?.wsUrl ?? 'N/A'}</p>
+          <p className="text-sm text-surfaceMuted" title={walletConnection?.wsUrl ?? ''}>
+            RPC {formatEndpoint(walletConnection?.wsUrl)}
+          </p>
           <p className="text-sm text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
+          <p className="text-sm text-surfaceMuted">Pending pool {formatNumber(walletSummary?.pendingExtrinsics)}</p>
         </div>
-      </div>
+        </div>
       {walletStatus?.notes ? (
         <p className="text-sm text-surfaceMuted">
           Notes: {walletStatus.notes.spendableCount} spendable · max {walletStatus.notes.maxInputs} inputs/tx.
@@ -3677,23 +4461,57 @@ export default function App() {
       ) : (
         <p className="text-sm text-proof">Ready to send.</p>
       )}
-    </section>
+      </div>
+    </details>
   );
 
   const SendSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Send</p>
-        <h2 className="text-title font-semibold">Shielded Transfer</h2>
+        <p className="label">Transfer</p>
+        <h2 className="text-title font-semibold">New shielded transaction</h2>
+      </div>
+      <div className="send-context-strip">
+        <p>
+          <span>Wallet</span>
+          <strong>{walletStateLabel}</strong>
+          <em>{hgmBalanceLabel}</em>
+        </p>
+        <p>
+          <span>Sync</span>
+          <strong>{walletSyncLag === null ? 'N/A' : `${formatNumber(walletSyncLag)} blocks`}</strong>
+          <em>node {formatNumber(walletSummary?.bestNumber)}</em>
+        </p>
+        <p>
+          <span>Notes</span>
+          <strong>{walletStatus?.notes ? formatNumber(walletStatus.notes.spendableCount) : 'N/A'}</strong>
+          <em>max {formatNumber(walletStatus?.notes?.maxInputs)} inputs</em>
+        </p>
+        <p>
+          <span>Pending</span>
+          <strong>{formatNumber(walletSummary?.pendingExtrinsics)}</strong>
+          <em>{chainLabel}</em>
+        </p>
       </div>
       <div className="grid gap-4">
         <label className="space-y-2">
-          <span className="label">Recipient address</span>
+          <span className="flex items-center justify-between gap-3">
+            <span className="label">Recipient address</span>
+            <span className={`text-xs ${recipientAddressTone}`}>
+              {normalizedRecipientAddress
+                ? recipientAddressError
+                  ? `Invalid ${recipientAddressLengthLabel}`
+                  : `Valid ${recipientAddressLengthLabel}`
+                : `0/${shieldedAddressLength}`}
+            </span>
+          </span>
           <textarea
-            rows={3}
+            className="mono min-h-32 text-xs"
+            rows={5}
             value={recipientAddress}
             onChange={(event) => setRecipientAddress(event.target.value)}
             placeholder="shca1..."
+            spellCheck={false}
           />
           {recipientAddressError ? <p className="text-xs text-guard">{recipientAddressError}</p> : null}
         </label>
@@ -3712,10 +4530,11 @@ export default function App() {
               <option value="">Select a contact</option>
               {contacts.map((contact) => {
                 const contactAddressError = contactAddressErrors.get(contact.id);
+                const contactWarning = contactWarnings.get(contact.id);
                 return (
-                  <option key={contact.id} value={contact.id} disabled={Boolean(contactAddressError)}>
+                  <option key={contact.id} value={contact.id} disabled={Boolean(contactAddressError || contactWarning)}>
                     {contact.name} - {formatAddress(contact.address)}
-                    {contactAddressError ? ' (invalid)' : ''}
+                    {contactAddressError ? ' (invalid)' : contactWarning ? ' (legacy; recreate for 0.10)' : ''}
                   </option>
                 );
               })}
@@ -3728,10 +4547,13 @@ export default function App() {
             <input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} placeholder="0.50" />
           </label>
           <label className="space-y-2">
-            <span className="label">Fee (HGM)</span>
-            <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0.01" />
+            <span className="label">Miner tip (optional, HGM)</span>
+            <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0" />
           </label>
         </div>
+        <p className="text-xs text-surfaceMuted">
+          Optional shielded miner tip. Leave at 0 if you do not want to add one.
+        </p>
         <label className="space-y-2">
           <span className="label">Memo</span>
           <textarea rows={2} value={sendMemo} onChange={(event) => setSendMemo(event.target.value)} />
@@ -3797,16 +4619,14 @@ export default function App() {
       {activityEntries.length === 0 ? (
         <div className="empty-state py-8">
           <div className="empty-state-icon">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6 4a10 10 0 11-20 0 10 10 0 0120 0z" />
-            </svg>
+            <EmptyStateIcon name="transactions" />
           </div>
           <p className="empty-state-description">No outgoing transactions yet.</p>
         </div>
       ) : (
         <div className="space-y-3">
           {activityEntries.map((entry) => (
-            <div key={entry.id} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
+            <div key={entry.id} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
               <div className="flex items-start gap-3">
                 <div
                   className={`flex h-10 w-10 items-center justify-center rounded-full border text-[11px] font-semibold ${activityStatusClasses[entry.status]} ${entry.status === 'processing' ? 'animate-pulse-slow' : ''}`}
@@ -3820,7 +4640,7 @@ export default function App() {
                         Sent {formatHgm(entry.amount)} to {formatAddress(entry.recipient || 'Unknown')}
                       </p>
                       <p className="text-xs text-surfaceMuted">
-                        Fee {formatHgm(entry.fee)}
+                        Miner tip {formatHgm(entry.fee)}
                         {entry.memo ? ` · Memo: ${entry.memo}` : ''}
                       </p>
                     </div>
@@ -3840,7 +4660,7 @@ export default function App() {
                   {entry.error ? <p className="text-xs text-guard">{entry.error}</p> : null}
                   {entry.consolidationExpected || entry.consolidationSubmitted ? (
                     <div className="mt-3 space-y-2 border-l border-surfaceMuted/15 pl-4">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-surfaceMuted/70">
+                      <p className="text-[10px] uppercase tracking-normal text-surfaceMuted/70">
                         Note consolidation
                       </p>
                       {entry.notesNeeded !== undefined &&
@@ -3894,11 +4714,15 @@ export default function App() {
   );
 
   const ContactsSection = (
-    <section className="card space-y-6">
-      <div>
-        <p className="label">Address book</p>
-        <h2 className="text-title font-semibold">Contacts</h2>
-      </div>
+    <details className="card diagnostic-details">
+      <summary>
+        <div>
+          <p className="label">Recipients</p>
+          <h2 className="text-title font-semibold">Address book</h2>
+        </div>
+        <span className="badge">{contacts.length} saved</span>
+      </summary>
+      <div className="space-y-6">
       <div className="grid gap-3">
         <label className="space-y-2">
           <span className="label">Name</span>
@@ -3920,7 +4744,13 @@ export default function App() {
         <button
           className="secondary"
           onClick={handleAddContact}
-          disabled={!contactsLoaded || contactsSaving || Boolean(newContactAddressError)}
+          disabled={
+            !contactsLoaded ||
+            contactsSaving ||
+            !newContactName.trim() ||
+            !newContactAddress.trim() ||
+            Boolean(newContactAddressError)
+          }
         >
           {!contactsLoaded ? 'Loading…' : contactsSaving ? 'Saving…' : 'Add contact'}
         </button>
@@ -3930,42 +4760,60 @@ export default function App() {
         {contacts.length === 0 && (
           <div className="empty-state py-8">
             <div className="empty-state-icon">
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-              </svg>
+              <EmptyStateIcon name="contacts" />
             </div>
             <p className="empty-state-description">No contacts saved yet. Add your first recipient above.</p>
           </div>
         )}
-        {contacts.map((contact) => (
-          <div key={contact.id} className="border border-surfaceMuted/10 rounded-xl p-4 bg-midnight/50 hover:bg-midnight/60 transition-colors">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-lg font-medium">{contact.name}</p>
-                <p className="mono text-sm text-surfaceMuted">{formatAddress(contact.address)}</p>
+        {contacts.map((contact) => {
+          const contactAddressError = contactAddressErrors.get(contact.id);
+          const contactWarning = contactWarnings.get(contact.id);
+          return (
+            <div
+              key={contact.id}
+              className={`rounded-lg border p-4 transition-colors ${
+                contactWarning
+                  ? 'border-amber/30 bg-amber/10'
+                  : 'border-surfaceMuted/10 bg-midnight/50 hover:bg-midnight/60'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-lg font-medium">{contact.name}</p>
+                    {contact.protocolVersion ? <span className="badge">v{contact.protocolVersion}</span> : null}
+                    {contact.chainSpecName ? <span className="badge">{normalizeNetworkDisplayName(contact.chainSpecName)}</span> : null}
+                    {contactWarning ? <span className="badge level-warn">Legacy</span> : null}
+                  </div>
+                  <p className="mono text-sm text-surfaceMuted truncate" title={contact.address}>
+                    {formatAddress(contact.address)}
+                  </p>
+                </div>
+                <button className="danger" onClick={() => handleRemoveContact(contact.id)} disabled={contactsSaving}>
+                  Remove
+                </button>
               </div>
-              <button className="danger" onClick={() => handleRemoveContact(contact.id)} disabled={contactsSaving}>
-                Remove
-              </button>
+              {contactWarning ? <p className="mt-3 text-sm text-amber">{contactWarning}</p> : null}
+              {contactAddressError ? <p className="mt-3 text-sm text-guard">{contactAddressError}</p> : null}
+              <p className="mt-2 text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
+              {contact.notes ? <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p> : null}
+              {contact.lastUsed ? (
+                <p className="text-sm text-surfaceMuted">Last used: {new Date(contact.lastUsed).toLocaleString()}</p>
+              ) : null}
             </div>
-            {contactAddressErrors.get(contact.id) ? (
-              <p className="text-sm text-guard">{contactAddressErrors.get(contact.id)}</p>
-            ) : null}
-            <p className="text-sm text-surfaceMuted">Verified: {contact.verified ? 'Yes' : 'No'}</p>
-            {contact.notes && <p className="text-sm text-surfaceMuted">Notes: {contact.notes}</p>}
-            {contact.lastUsed && <p className="text-sm text-surfaceMuted">Last used: {new Date(contact.lastUsed).toLocaleString()}</p>}
-          </div>
-        ))}
+          );
+        })}
       </div>
       {ContactsErrorBanner}
-    </section>
+      </div>
+    </details>
   );
 
   const DisclosureRecordsSection = (
-    <section className="card flex flex-col gap-4 min-h-0 h-full">
+    <section className="card flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="label">Disclosure</p>
+          <p className="label">Records</p>
           <h2 className="text-title font-semibold">Outgoing outputs</h2>
           <p className="text-sm text-surfaceMuted/80">
             Select a transaction output to generate a disclosure package.
@@ -3982,16 +4830,14 @@ export default function App() {
       {disclosureGroups.length === 0 ? (
         <div className="empty-state py-8 flex-1 flex flex-col items-center justify-center">
           <div className="empty-state-icon">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2m6 4a10 10 0 11-20 0 10 10 0 0120 0z" />
-            </svg>
+            <EmptyStateIcon name="disclosure" />
           </div>
           <p className="empty-state-description">No outgoing disclosure records yet.</p>
         </div>
       ) : (
         <div className="space-y-3 flex-1 min-h-0 overflow-y-auto pr-1">
           {disclosureGroups.map((group) => (
-            <div key={group.txId} className="rounded-xl border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
+            <div key={group.txId} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium">Tx {formatHash(group.txId)}</p>
@@ -4044,12 +4890,12 @@ export default function App() {
   const DisclosureGenerateSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Disclosure</p>
-        <h2 className="text-title font-semibold">Generate proof</h2>
+        <p className="label">Create</p>
+        <h2 className="text-title font-semibold">Disclosure package</h2>
       </div>
       <div className="grid gap-4">
         {selectedDisclosure ? (
-          <div className="rounded-xl border border-ionosphere/20 bg-ionosphere/10 p-3 text-sm">
+          <div className="rounded-lg border border-ionosphere/20 bg-ionosphere/10 p-3 text-sm">
             <p className="font-medium text-surface">Selected output</p>
             <p className="text-xs text-surfaceMuted">
               Tx {formatHash(selectedDisclosure.txId)} · Output {selectedDisclosure.outputIndex}
@@ -4094,7 +4940,7 @@ export default function App() {
           {disclosureCopied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4 min-h-48 max-h-[40vh] overflow-y-auto">
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-lg p-4 min-h-48 max-h-[40vh] overflow-y-auto">
         {walletDisclosureOutput || 'N/A'}
       </pre>
       {disclosureCopyError ? <p className="text-guard text-sm">{disclosureCopyError}</p> : null}
@@ -4105,7 +4951,7 @@ export default function App() {
   const DisclosureVerifySection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Disclosure</p>
+        <p className="label">Verify</p>
         <h2 className="text-title font-semibold">Verify proof</h2>
       </div>
       <label className="space-y-2">
@@ -4115,7 +4961,7 @@ export default function App() {
       <button className="secondary" onClick={handleDisclosureVerify} disabled={walletBusy || !walletReady}>
         Verify disclosure package
       </button>
-      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-xl p-4">
+      <pre className="mono whitespace-pre-wrap bg-midnight/40 border border-surfaceMuted/10 rounded-lg p-4">
         {walletDisclosureVerifyOutput || 'N/A'}
       </pre>
       {WalletErrorBanner}
@@ -4123,66 +4969,37 @@ export default function App() {
   );
 
   const NodeWorkspace = (
-    <div className="mx-auto w-full max-w-7xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Node</p>
-        <h1 className="text-headline font-semibold tracking-tight">Operate + Observe</h1>
-        <p className="text-surfaceMuted max-w-2xl">
-          Run relay or mining nodes and monitor telemetry.
-        </p>
-      </header>
-      <div className="grid gap-6 2xl:grid-cols-[minmax(480px,1fr)_minmax(0,2fr)]">
-        <div className="space-y-6">
-          {NodeConnectionsSection}
-          {ConnectionHealthSection}
-        </div>
-        <div className="space-y-6">
-          {NodeOperationsSection}
-        </div>
-      </div>
+    <div className="workspace-view max-w-7xl">
+      {NodeOperationsSection}
+      {NodeConnectionsSection}
     </div>
   );
 
   const WalletWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Wallet</p>
-        <h1 className="text-headline font-semibold tracking-tight">Shielded Store</h1>
-        <p className="text-surfaceMuted max-w-2xl">Initialize, unlock, and sync your shielded wallet store.</p>
-      </header>
+    <div className="workspace-view max-w-7xl">
       {WalletStoreSection}
       {WalletOutputSection}
     </div>
   );
 
   const SendWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Send</p>
-        <h1 className="text-headline font-semibold tracking-tight">Shielded Transfer</h1>
-        <p className="text-surfaceMuted max-w-2xl">Prepare, validate, and send a shielded transaction.</p>
-      </header>
-      {SendPreflightSection}
-      <div className="grid gap-6 xl:grid-cols-2">
+    <div className="workspace-view max-w-7xl">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)]">
         {SendSection}
-        <div className="space-y-6">
-          {TransactionActivitySection}
-          {ContactsSection}
-        </div>
+        {TransactionActivitySection}
+      </div>
+      <div className="grid gap-5 xl:grid-cols-2">
+        {SendPreflightSection}
+        {ContactsSection}
       </div>
     </div>
   );
 
   const DisclosureWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Disclosure</p>
-        <h1 className="text-headline font-semibold tracking-tight">Audit Packages</h1>
-        <p className="text-surfaceMuted max-w-2xl">Generate and verify disclosure proofs without leaving the desktop app.</p>
-      </header>
-      <div className="grid gap-6 xl:grid-cols-2 items-stretch">
+    <div className="workspace-view max-w-7xl">
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)] items-start">
         {DisclosureRecordsSection}
-        <div className="space-y-6">
+        <div className="space-y-5">
           {DisclosureGenerateSection}
           {DisclosureVerifySection}
         </div>
@@ -4191,18 +5008,14 @@ export default function App() {
   );
 
   const ConsoleWorkspace = (
-    <div className="mx-auto w-full max-w-6xl space-y-8">
-      <header className="space-y-3">
-        <p className="label">Console</p>
-        <h1 className="text-headline font-semibold tracking-tight">Diagnostics Timeline</h1>
-        <p className="text-surfaceMuted max-w-2xl">Track events, search logs, and investigate anomalies.</p>
-      </header>
+    <div className="workspace-view max-w-7xl">
       {NodeConsoleSection}
     </div>
   );
 
   return (
     <HashRouter>
+      <ScrollToTop />
       <div className="app-shell">
         <aside className="app-sidebar relative">
           <div className="flex items-center gap-3">
@@ -4215,8 +5028,8 @@ export default function App() {
               <line x1="70" y1="130" x2="130" y2="70" stroke="#F5A623" strokeWidth="2" opacity="0.4"/>
             </svg>
             <div>
-              <h1 className="text-lg font-semibold tracking-tight">Hegemon</h1>
-              <p className="text-[10px] text-surfaceMuted/70 uppercase tracking-[0.15em]">Core Console</p>
+              <h1 className="text-lg font-semibold tracking-normal">Hegemon</h1>
+              <p className="text-[10px] text-surfaceMuted/70 uppercase tracking-normal">Desktop node</p>
             </div>
           </div>
           <nav className="space-y-1 pt-4">
@@ -4226,16 +5039,18 @@ export default function App() {
                 to={item.path}
                 className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
               >
-                <div className="pl-2">
-                  <p className="text-sm font-medium text-surface">{item.label}</p>
-                  <p className="text-[11px] text-surfaceMuted/70">{item.description}</p>
+                <div className="nav-link-copy">
+                  <p className="nav-link-label">{item.label}</p>
+                  <p className="nav-link-description">{item.description}</p>
                 </div>
+                {item.statusLabel && item.statusTone ? (
+                  <span className={`nav-status ${item.statusTone}`}>{item.statusLabel}</span>
+                ) : null}
               </NavLink>
             ))}
           </nav>
         </aside>
         <div className="app-body">
-          {StatusBar}
           <main className="app-main">
             <Routes>
               <Route path="/" element={<Navigate to="/overview" replace />} />

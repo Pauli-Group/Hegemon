@@ -1,23 +1,17 @@
 //! PQ-secure transport layer
 
+use crate::codec::{self, HANDSHAKE_MAX_FRAME_LEN};
 use crate::config::PqNoiseConfig;
 use crate::error::{HandshakeError, PqNoiseError, Result};
 use crate::handshake::PqHandshake;
 use crate::session::SecureSession;
 use crate::types::{HandshakeMessage, PeerId};
-use bincode::Options;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::timeout;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-const HANDSHAKE_MAX_FRAME_LEN: usize = 64 * 1024;
-
-fn handshake_bincode() -> impl Options {
-    bincode::DefaultOptions::new().with_limit(HANDSHAKE_MAX_FRAME_LEN as u64)
-}
 
 fn handshake_codec() -> LengthDelimitedCodec {
     let mut codec = LengthDelimitedCodec::new();
@@ -76,7 +70,7 @@ impl PqTransport {
 
         // Step 1: Send InitHello
         let init_hello = handshake.initiator_hello()?;
-        let init_bytes = handshake_bincode().serialize(&init_hello)?;
+        let init_bytes = codec::encode_handshake(&init_hello)?;
         framed.send(Bytes::from(init_bytes)).await?;
 
         if self.config.verbose_logging {
@@ -88,7 +82,7 @@ impl PqTransport {
             .next()
             .await
             .ok_or(HandshakeError::ConnectionClosed)??;
-        let resp_hello: HandshakeMessage = handshake_bincode().deserialize(&resp_frame)?;
+        let resp_hello: HandshakeMessage = codec::decode_handshake(&resp_frame)?;
         let resp_hello_msg = match resp_hello {
             HandshakeMessage::RespHello(msg) => msg,
             other => {
@@ -106,7 +100,7 @@ impl PqTransport {
 
         // Step 3: Process RespHello and send Finish
         let finish = handshake.initiator_process_resp_hello(resp_hello_msg)?;
-        let finish_bytes = handshake_bincode().serialize(&finish)?;
+        let finish_bytes = codec::encode_handshake(&finish)?;
         framed.send(Bytes::from(finish_bytes)).await?;
 
         if self.config.verbose_logging {
@@ -147,7 +141,7 @@ impl PqTransport {
             .next()
             .await
             .ok_or(HandshakeError::ConnectionClosed)??;
-        let init_hello: HandshakeMessage = handshake_bincode().deserialize(&init_frame)?;
+        let init_hello: HandshakeMessage = codec::decode_handshake(&init_frame)?;
         let init_hello_msg = match init_hello {
             HandshakeMessage::InitHello(msg) => msg,
             other => {
@@ -165,7 +159,7 @@ impl PqTransport {
 
         // Step 2: Process InitHello and send RespHello
         let resp_hello = handshake.responder_process_init_hello(init_hello_msg)?;
-        let resp_bytes = handshake_bincode().serialize(&resp_hello)?;
+        let resp_bytes = codec::encode_handshake(&resp_hello)?;
         framed.send(Bytes::from(resp_bytes)).await?;
 
         if self.config.verbose_logging {
@@ -177,7 +171,7 @@ impl PqTransport {
             .next()
             .await
             .ok_or(HandshakeError::ConnectionClosed)??;
-        let finish: HandshakeMessage = handshake_bincode().deserialize(&finish_frame)?;
+        let finish: HandshakeMessage = codec::decode_handshake(&finish_frame)?;
         let finish_msg = match finish {
             HandshakeMessage::Finish(msg) => msg,
             other => {

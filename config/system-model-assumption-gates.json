@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "generated_for_branch": "codex/superneo-formal-verification",
+  "gates": [
+    {
+      "id": "system.da-retention",
+      "category": "da-retention",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "DA sidecar retention and hot/cold availability evidence",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 24,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "formal/lean/Hegemon/Native/MaterializedSidecarDaBlobPublication.lean",
+        "formal/lean/Hegemon/Consensus/DaRoot.lean"
+      ]
+    },
+    {
+      "id": "system.storage-durability",
+      "category": "storage-durability",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "critical native storage durability barrier evidence",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 24,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "formal/lean/Hegemon/Native/StorageDurabilityAdmission.lean",
+        "scripts/check_formal_core.sh"
+      ]
+    },
+    {
+      "id": "system.global-privacy-boundary",
+      "category": "global-privacy-boundary",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "public metadata, batch timing, and topology leakage boundary evidence",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 24,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "formal/lean/Hegemon/Privacy/Observer.lean",
+        "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean",
+        "formal/lean/Hegemon/Privacy/PqTransportPrivacyBoundary.lean"
+      ]
+    },
+    {
+      "id": "system.release-infrastructure",
+      "category": "release-infrastructure",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "CI release gate and branch-protection evidence freshness",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 24,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "formal/lean/Hegemon/Release/CiReleaseGate.lean",
+        "scripts/check_ci_release_gate_policy.py"
+      ]
+    },
+    {
+      "id": "system.dependency-scanner-completeness",
+      "category": "dependency-scanner-completeness",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "cargo-audit and forbidden primitive scanner freshness",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 24,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean",
+        "scripts/dependency-audit.sh",
+        "scripts/security-audit.sh"
+      ]
+    },
+    {
+      "id": "system.performance-budget",
+      "category": "performance-budget",
+      "assumption_class": "system_model",
+      "fail_closed": true,
+      "release_blocking": true,
+      "monitor": "formal gate and transaction proving performance budget evidence",
+      "enforcement_gate": "bash scripts/check_formal_core.sh",
+      "freshness_sla_hours": 168,
+      "alert_route": "release-owner",
+      "evidence_paths": [
+        "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
+        "scripts/compare-transaction-bench.sh",
+        "docs/CONTRIBUTING.md"
+      ]
+    }
+  ]
+}

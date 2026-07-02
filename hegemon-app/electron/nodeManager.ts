@@ -1,22 +1,25 @@
-import { app } from 'electron';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, isAbsolute, join, resolve } from 'node:path';
-import type { NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
+import { join } from 'node:path';
+import type { NodePeerSnapshot, NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
 import { resolveBinaryPath } from './binPaths';
+import { applyEnvDefaults, copyParentEnv, createBaseChildEnv, setEnvValue } from './childProcessEnv';
 
-const DEFAULT_RPC_PORT = 9944;
+const DEFAULT_RPC_PORT = 9955;
 const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
-const APPROVED_SEEDS = 'hegemon.pauli.group:30333';
+const APPROVED_SEEDS = 'devnet.hegemonprotocol.com:30333';
 const LEGACY_SEED_ALIASES: Record<string, string> = {
-  'hegemon.pauli.group:31333': 'hegemon.pauli.group:30333',
-  '158.69.222.121:31333': 'hegemon.pauli.group:30333',
-  '158.69.222.121:30333': 'hegemon.pauli.group:30333'
+  'hegemon.pauli.group:31333': APPROVED_SEEDS,
+  'hegemon.pauli.group:30333': APPROVED_SEEDS,
+  '158.69.222.121:31333': APPROVED_SEEDS,
+  '158.69.222.121:30333': APPROVED_SEEDS,
+  'devnet.hegemonprotocol.com:30333': APPROVED_SEEDS,
+  '51.222.86.107:30333': APPROVED_SEEDS
 };
 const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
+const DEFAULT_DEV_010_BASE_PATH = '~/.hegemon-node-native-010-dev';
 const DEFAULT_TESTNET_BASE_PATH = '~/.hegemon-node-testnet';
 const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
   // Desktop operators prioritize confirmation liveness over throughput.
@@ -28,6 +31,11 @@ const DESKTOP_LIVENESS_ENV_DEFAULTS: Record<string, string> = {
   HEGEMON_PENDING_PROVEN_BATCH_WAIT_MS: '900000',
   HEGEMON_PROVER_WORK_PACKAGE_TTL_MS: '900000'
 };
+const NODE_ENV_PASSTHROUGH = [
+  'HEGEMON_BOOTSTRAP_AUTHORING',
+  'HEGEMON_PQ_VERBOSE',
+  'HEGEMON_PQ_STRICT_COMPATIBILITY'
+] as const;
 
 type RpcRequest = {
   jsonrpc: '2.0';
@@ -66,25 +74,31 @@ const normalizeListenAddr = (listenAddr?: string) => {
 const normalizeManagedStartOptions = (options: NodeStartOptions): NodeStartOptions => {
   const isDefaultLocal =
     options.dev &&
-    (!options.basePath || options.basePath === DEFAULT_LOCAL_BASE_PATH);
+    (!options.basePath ||
+      options.basePath === DEFAULT_LOCAL_BASE_PATH ||
+      options.basePath === DEFAULT_DEV_010_BASE_PATH);
   const isDefaultTestnet =
     !options.dev &&
     (!options.basePath || options.basePath === DEFAULT_TESTNET_BASE_PATH);
 
-  if (!isDefaultLocal && !isDefaultTestnet) {
-    return options;
+  const next: NodeStartOptions = { ...options };
+  const currentSeeds = next.seeds?.trim();
+  const normalizedSeeds = normalizeSeedList(next.seeds);
+
+  if (currentSeeds && normalizedSeeds !== currentSeeds.toLowerCase()) {
+    next.seeds = normalizedSeeds;
   }
 
-  const next: NodeStartOptions = { ...options };
-
-  if (normalizeSeedList(next.seeds) !== APPROVED_SEEDS) {
+  if ((isDefaultLocal || isDefaultTestnet) && normalizedSeeds !== APPROVED_SEEDS) {
     next.seeds = APPROVED_SEEDS;
   }
 
-  if (!next.listenAddr && (!next.p2pPort || next.p2pPort === LEGACY_TESTNET_P2P_PORT)) {
-    next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
-  } else if (next.p2pPort === LEGACY_TESTNET_P2P_PORT) {
-    next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
+  if (isDefaultLocal || isDefaultTestnet) {
+    if (!next.listenAddr && (!next.p2pPort || next.p2pPort === LEGACY_TESTNET_P2P_PORT)) {
+      next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
+    } else if (next.p2pPort === LEGACY_TESTNET_P2P_PORT) {
+      next.p2pPort = CANONICAL_TESTNET_P2P_PORT;
+    }
   }
 
   const normalizedListenAddr = normalizeListenAddr(next.listenAddr);
@@ -95,12 +109,51 @@ const normalizeManagedStartOptions = (options: NodeStartOptions): NodeStartOptio
   return next;
 };
 
+const normalizePeerList = (value: unknown): NodeSummary['peerList'] => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return value
+    .map((entry): NodePeerSnapshot | null => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+      const row = entry as Record<string, unknown>;
+      const peerId = typeof row.peer_id === 'string' ? row.peer_id : typeof row.peerId === 'string' ? row.peerId : '';
+      const addr = typeof row.addr === 'string' ? row.addr : typeof row.endpoint === 'string' ? row.endpoint : '';
+      if (!peerId || !addr) {
+        return null;
+      }
+      const protocols = Array.isArray(row.protocols)
+        ? row.protocols
+            .map((protocol) => Number(protocol))
+            .filter((protocol) => Number.isFinite(protocol))
+        : undefined;
+      return {
+        peerId,
+        addr,
+        connected: row.connected === undefined ? true : Boolean(row.connected),
+        protocols
+      };
+    })
+    .filter((entry): entry is NodePeerSnapshot => entry !== null);
+};
+
+const finiteNumberOrNull = (value: unknown): number | null => {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+};
+
 export class NodeManager extends EventEmitter {
   private process: ChildProcessWithoutNullStreams | null = null;
   private rpcPort = DEFAULT_RPC_PORT;
   private logs: string[] = [];
   private requestId = 0;
   private managedConnectionId: string | null = null;
+  private managedMinerAddress: string | null = null;
   private stopping = false;
 
   getLogs(): string[] {
@@ -116,6 +169,10 @@ export class NodeManager extends EventEmitter {
     };
   }
 
+  private managedRpcEndpoint(): string {
+    return `http://127.0.0.1:${this.rpcPort}`;
+  }
+
   async startNode(options: NodeStartOptions): Promise<void> {
     if (this.process) {
       return;
@@ -124,12 +181,8 @@ export class NodeManager extends EventEmitter {
     const normalizedOptions = normalizeManagedStartOptions(options);
     const nodePath = resolveBinaryPath('hegemon-node');
     const args: string[] = [];
-    const chainSpecPath = resolveChainSpecPath(normalizedOptions.chainSpecPath);
     const basePath = expandHomePath(normalizedOptions.basePath);
 
-    if (chainSpecPath) {
-      args.push('--chain', chainSpecPath);
-    }
     if (normalizedOptions.dev) {
       args.push('--dev');
     }
@@ -152,7 +205,7 @@ export class NodeManager extends EventEmitter {
     // Guard rail: if something is already answering JSON-RPC on this port, starting a node will
     // either fail to bind (and the UI will misleadingly keep showing the existing node), or worse,
     // connect to a forwarded/remote node that the app cannot stop.
-    const preflightUrl = `http://127.0.0.1:${this.rpcPort}`;
+    const preflightUrl = this.managedRpcEndpoint();
     const alreadyServing = await this.ping(preflightUrl);
     if (alreadyServing) {
       const version = await this.safeRpcCall('system_version', [], preflightUrl);
@@ -181,11 +234,11 @@ export class NodeManager extends EventEmitter {
       args.push('--rpc-external');
     }
 
-    const rpcMethods =
-      normalizedOptions.rpcMethods ?? (normalizedOptions.rpcExternal ? 'safe' : undefined);
-    if (rpcMethods) {
-      args.push('--rpc-methods', rpcMethods);
+    if (normalizedOptions.rpcExternal && normalizedOptions.rpcMethods === 'unsafe') {
+      throw new Error('Unsafe RPC methods are only allowed on the managed loopback control plane.');
     }
+    const rpcMethods = normalizedOptions.rpcExternal ? 'safe' : 'unsafe';
+    args.push('--rpc-methods', rpcMethods);
 
     if (normalizedOptions.rpcCorsAll) {
       args.push('--rpc-cors=all');
@@ -196,40 +249,48 @@ export class NodeManager extends EventEmitter {
     }
 
     const mineFlag = normalizedOptions.mineOnStart ? '1' : '0';
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
-      HEGEMON_MINER_ADDRESS: normalizedOptions.minerAddress ?? process.env.HEGEMON_MINER_ADDRESS,
-      HEGEMON_SEEDS: normalizedOptions.seeds ?? process.env.HEGEMON_SEEDS,
-      HEGEMON_MAX_PEERS:
-        normalizedOptions.maxPeers !== undefined
-          ? String(normalizedOptions.maxPeers)
-          : process.env.HEGEMON_MAX_PEERS,
-      HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS:
-        normalizedOptions.ciphertextDaRetentionBlocks !== undefined
-          ? String(normalizedOptions.ciphertextDaRetentionBlocks)
-          : process.env.HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS,
-      HEGEMON_PROOF_DA_RETENTION_BLOCKS:
-        normalizedOptions.proofDaRetentionBlocks !== undefined
-          ? String(normalizedOptions.proofDaRetentionBlocks)
-          : process.env.HEGEMON_PROOF_DA_RETENTION_BLOCKS,
-      HEGEMON_DA_STORE_CAPACITY:
-        normalizedOptions.daStoreCapacity !== undefined
-          ? String(normalizedOptions.daStoreCapacity)
-          : process.env.HEGEMON_DA_STORE_CAPACITY,
-      HEGEMON_MINE: mineFlag,
-      HEGEMON_MINE_THREADS: normalizedOptions.mineThreads
-        ? String(normalizedOptions.mineThreads)
-        : process.env.HEGEMON_MINE_THREADS
-    };
-    for (const [key, value] of Object.entries(DESKTOP_LIVENESS_ENV_DEFAULTS)) {
-      const current = env[key];
-      if (current === undefined || current.trim() === '') {
-        env[key] = value;
-      }
-    }
+    const env = createBaseChildEnv();
+    copyParentEnv(env, NODE_ENV_PASSTHROUGH);
+    const effectiveMinerAddress = normalizedOptions.minerAddress ?? null;
+    setEnvValue(env, 'HEGEMON_MINER_ADDRESS', effectiveMinerAddress);
+    setEnvValue(env, 'HEGEMON_SEEDS', normalizedOptions.seeds ?? process.env.HEGEMON_SEEDS);
+    setEnvValue(
+      env,
+      'HEGEMON_MAX_PEERS',
+      normalizedOptions.maxPeers !== undefined ? normalizedOptions.maxPeers : process.env.HEGEMON_MAX_PEERS
+    );
+    setEnvValue(
+      env,
+      'HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS',
+      normalizedOptions.ciphertextDaRetentionBlocks !== undefined
+        ? normalizedOptions.ciphertextDaRetentionBlocks
+        : process.env.HEGEMON_CIPHERTEXT_DA_RETENTION_BLOCKS
+    );
+    setEnvValue(
+      env,
+      'HEGEMON_PROOF_DA_RETENTION_BLOCKS',
+      normalizedOptions.proofDaRetentionBlocks !== undefined
+        ? normalizedOptions.proofDaRetentionBlocks
+        : process.env.HEGEMON_PROOF_DA_RETENTION_BLOCKS
+    );
+    setEnvValue(
+      env,
+      'HEGEMON_DA_STORE_CAPACITY',
+      normalizedOptions.daStoreCapacity !== undefined
+        ? normalizedOptions.daStoreCapacity
+        : process.env.HEGEMON_DA_STORE_CAPACITY
+    );
+    setEnvValue(env, 'HEGEMON_MINE', mineFlag);
+    setEnvValue(
+      env,
+      'HEGEMON_MINE_THREADS',
+      normalizedOptions.mineThreads ? normalizedOptions.mineThreads : process.env.HEGEMON_MINE_THREADS
+    );
+    applyEnvDefaults(env, DESKTOP_LIVENESS_ENV_DEFAULTS);
 
     this.process = spawn(nodePath, args, { env });
     this.managedConnectionId = normalizedOptions.connectionId ?? null;
+    this.managedMinerAddress = effectiveMinerAddress;
 
     this.process.stdout.on('data', (data) => this.appendLogs(data.toString()));
     this.process.stderr.on('data', (data) => this.appendLogs(data.toString()));
@@ -241,11 +302,13 @@ export class NodeManager extends EventEmitter {
       this.appendLogs(message);
       this.process = null;
       this.managedConnectionId = null;
+      this.managedMinerAddress = null;
     });
     this.process.on('exit', (code) => {
       this.appendLogs(`Node exited with code ${code ?? 'unknown'}`);
       this.process = null;
       this.managedConnectionId = null;
+      this.managedMinerAddress = null;
     });
   }
 
@@ -297,7 +360,43 @@ export class NodeManager extends EventEmitter {
 
   async getSummary(request: NodeSummaryRequest): Promise<NodeSummary> {
     const isLocal = request.isLocal;
-    const reachable = await this.ping(request.httpUrl);
+    let httpUrl: string;
+    try {
+      httpUrl = normalizeRendererRpcEndpoint(request.httpUrl);
+    } catch (error) {
+      return {
+        connectionId: request.connectionId,
+        label: request.label,
+        reachable: false,
+        isLocal,
+        nodeVersion: null,
+        peers: null,
+        isSyncing: null,
+        bestBlock: null,
+        bestNumber: null,
+        genesisHash: null,
+        mining: null,
+        minerAddress: null,
+        miningThreads: null,
+        miningSyncGateOpen: null,
+        bootstrapAuthoring: null,
+        hashRate: null,
+        blocksFound: null,
+        difficulty: null,
+        nextDifficulty: null,
+        blockHeight: null,
+        syncTargetHeight: null,
+        pendingExtrinsics: null,
+        peerList: null,
+        supplyDigest: null,
+        storage: null,
+        telemetry: null,
+        config: null,
+        updatedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : 'RPC endpoint rejected'
+      };
+    }
+    const reachable = await this.ping(httpUrl);
 
     if (!reachable) {
       return {
@@ -312,11 +411,18 @@ export class NodeManager extends EventEmitter {
         bestNumber: null,
         genesisHash: null,
         mining: null,
+        minerAddress: null,
         miningThreads: null,
+        miningSyncGateOpen: null,
+        bootstrapAuthoring: null,
         hashRate: null,
         blocksFound: null,
         difficulty: null,
+        nextDifficulty: null,
         blockHeight: null,
+        syncTargetHeight: null,
+        pendingExtrinsics: null,
+        peerList: null,
         supplyDigest: null,
         storage: null,
         telemetry: null,
@@ -326,14 +432,39 @@ export class NodeManager extends EventEmitter {
       };
     }
 
-    const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], request.httpUrl);
-    const mining = await this.safeRpcCall('hegemon_miningStatus', [], request.httpUrl);
-    const health = await this.safeRpcCall('system_health', [], request.httpUrl);
-    const nodeVersion = await this.safeRpcCall('system_version', [], request.httpUrl);
-    const storage = await this.safeRpcCall('hegemon_storageFootprint', [], request.httpUrl);
-    const telemetry = await this.safeRpcCall('hegemon_telemetry', [], request.httpUrl);
-    const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], request.httpUrl);
-    const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], request.httpUrl);
+    const consensus = await this.safeRpcCall('hegemon_consensusStatus', [], httpUrl);
+    const mining = await this.safeRpcCall('hegemon_miningStatus', [], httpUrl);
+    const health = await this.safeRpcCall('system_health', [], httpUrl);
+    const nodeVersion = await this.safeRpcCall('system_version', [], httpUrl);
+    const storage = await this.safeRpcCall('hegemon_storageFootprint', [], httpUrl);
+    const telemetry = await this.safeRpcCall('hegemon_telemetry', [], httpUrl);
+    const nodeConfig = await this.safeRpcCall('hegemon_nodeConfig', [], httpUrl);
+    const genesisHash = await this.safeRpcCall('chain_getBlockHash', [0], httpUrl);
+    const pendingExtrinsics = await this.safeRpcCall('author_pendingExtrinsics', [], httpUrl);
+    const peerList = await this.safeRpcCall('hegemon_peerList', [], httpUrl);
+    const bestNumber = finiteNumberOrNull(consensus?.height);
+    const consensusSyncTarget = finiteNumberOrNull(consensus?.sync_target_height ?? consensus?.syncTargetHeight);
+    const miningSyncTarget = finiteNumberOrNull(mining?.sync_target_height ?? mining?.syncTargetHeight);
+    const syncTargetHeight =
+      miningSyncTarget !== null && miningSyncTarget > 0
+        ? miningSyncTarget
+        : consensusSyncTarget !== null && consensusSyncTarget > 0
+          ? consensusSyncTarget
+          : miningSyncTarget ?? consensusSyncTarget;
+    const isSyncing = Boolean(consensus?.syncing ?? health?.isSyncing ?? false);
+    const rawMiningSyncGateOpen = mining?.mining_sync_gate_open ?? mining?.miningSyncGateOpen;
+    let miningSyncGateOpen =
+      rawMiningSyncGateOpen === undefined ? null : Boolean(rawMiningSyncGateOpen);
+    if (
+      miningSyncGateOpen === false &&
+      !isSyncing &&
+      bestNumber !== null &&
+      syncTargetHeight !== null &&
+      syncTargetHeight > 0 &&
+      bestNumber >= syncTargetHeight
+    ) {
+      miningSyncGateOpen = true;
+    }
 
     return {
       connectionId: request.connectionId,
@@ -342,16 +473,24 @@ export class NodeManager extends EventEmitter {
       isLocal,
       nodeVersion: nodeVersion ? String(nodeVersion) : null,
       peers: Math.max(Number(consensus?.peers ?? 0), Number(health?.peers ?? 0)),
-      isSyncing: Boolean(consensus?.syncing ?? health?.isSyncing ?? false),
+      isSyncing,
       bestBlock: consensus?.best_hash ?? null,
-      bestNumber: consensus?.height ?? null,
+      bestNumber,
       genesisHash: genesisHash ?? null,
       mining: mining ? Boolean(mining.is_mining) : null,
+      minerAddress: this.managedConnectionId === request.connectionId ? this.managedMinerAddress : null,
       miningThreads: mining?.threads ?? null,
+      miningSyncGateOpen,
+      bootstrapAuthoring:
+        mining?.bootstrap_authoring === undefined ? null : Boolean(mining.bootstrap_authoring),
       hashRate: mining?.hash_rate ?? null,
       blocksFound: mining?.blocks_found ?? null,
       difficulty: mining?.difficulty ?? null,
+      nextDifficulty: mining?.next_difficulty ?? null,
       blockHeight: mining?.block_height ?? null,
+      syncTargetHeight,
+      pendingExtrinsics: Array.isArray(pendingExtrinsics) ? pendingExtrinsics.length : null,
+      peerList: normalizePeerList(peerList),
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
       storage: storage
         ? {
@@ -395,16 +534,31 @@ export class NodeManager extends EventEmitter {
 
   async setMiningEnabled(enabled: boolean, threads: number | undefined, httpUrl?: string): Promise<void> {
     const authToken = process.env.HEGEMON_MINING_RPC_TOKEN?.trim();
+    const endpoint = this.resolveMiningRpcEndpoint(httpUrl, Boolean(authToken));
     if (enabled) {
       const params: Record<string, unknown> = threads ? { threads } : {};
       if (authToken) {
         params.auth_token = authToken;
       }
-      await this.rpcCall('hegemon_startMining', [params], httpUrl);
+      await this.rpcCall('hegemon_startMining', [params], endpoint);
     } else {
       const params = authToken ? [{ auth_token: authToken }] : [];
-      await this.rpcCall('hegemon_stopMining', params, httpUrl);
+      await this.rpcCall('hegemon_stopMining', params, endpoint);
     }
+  }
+
+  private resolveMiningRpcEndpoint(httpUrl: string | undefined, hasAuthToken: boolean): string | undefined {
+    if (!hasAuthToken) {
+      return httpUrl ? normalizeRendererRpcEndpoint(httpUrl) : undefined;
+    }
+    if (!this.process) {
+      throw new Error('Mining RPC token can only be used with the managed local node.');
+    }
+    const trustedEndpoint = this.managedRpcEndpoint();
+    if (httpUrl && normalizeRpcEndpoint(httpUrl) !== normalizeRpcEndpoint(trustedEndpoint)) {
+      throw new Error('Refusing to send mining RPC token to a renderer-selected RPC URL.');
+    }
+    return trustedEndpoint;
   }
 
   private async safeRpcCall(method: string, params: unknown[], httpUrl: string): Promise<any | null> {
@@ -476,33 +630,30 @@ const expandHomePath = (value?: string) => {
   return value;
 };
 
-const resolveChainSpecPath = (value?: string) => {
-  const expanded = expandHomePath(value);
-  if (!expanded) {
-    return undefined;
+const normalizeRpcEndpoint = (value: string) => {
+  const parsed = new URL(value);
+  const hostname = parsed.hostname === 'localhost' ? '127.0.0.1' : parsed.hostname;
+  const port =
+    parsed.port ||
+    (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return `${parsed.protocol}//${hostname}${port ? `:${port}` : ''}`;
+};
+
+const normalizeRendererRpcEndpoint = (value: string) => {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('RPC endpoint must use HTTP or HTTPS.');
   }
-  if (isAbsolute(expanded)) {
-    return expanded;
+  if (parsed.username || parsed.password || parsed.hash) {
+    throw new Error('RPC endpoint must not include credentials or fragments.');
   }
-
-  const candidates = [
-    resolve(process.cwd(), expanded),
-    resolve(process.cwd(), '..', expanded),
-    resolve(process.cwd(), '..', '..', expanded),
-    resolve(app.getAppPath(), expanded),
-    resolve(app.getAppPath(), '..', expanded),
-    resolve(app.getAppPath(), '..', '..', expanded),
-    resolve(process.resourcesPath, expanded)
-  ];
-
-  const leafName = basename(expanded);
-  candidates.push(resolve(process.resourcesPath, 'config', leafName), resolve(process.resourcesPath, leafName));
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) {
-      return candidate;
-    }
+  const rawHostname = parsed.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
+  const hostname = rawHostname === 'localhost' ? '127.0.0.1' : rawHostname;
+  if (hostname !== '127.0.0.1' && hostname !== '::1') {
+    throw new Error('Desktop RPC endpoints must be loopback-only. Run a local Hegemon P2P relay node for remote network access.');
   }
-
-  return expanded;
+  const port =
+    parsed.port ||
+    (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '');
+  return `${parsed.protocol}//${hostname === '::1' ? '[::1]' : hostname}${port ? `:${port}` : ''}`;
 };

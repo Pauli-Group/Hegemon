@@ -47,7 +47,7 @@ The immediate goal is to debug and complete a shielded-to-shielded transfer (Ali
 - [x] (2025-12-02 23:05Z) Confirmed the pallet now uses Poseidon sponge in `merkle.rs` matching the circuit's `hashing.rs`.
 - [x] (2025-12-02 23:10Z) Verified wallet uses `state_merkle::CommitmentTree` which calls `transaction_circuit::hashing::merkle_node`.
 - [x] (2025-12-02 23:15Z) Alice's wallet exists at `/tmp/alice-wallet` and Bob's recipient address is in `recipients_windows.json`.
-- [x] (2025-12-02 23:30Z) Wiped chain state at `/tmp/hegemon-dev-node` and wallets.
+- [x] (2025-12-02 23:30Z) Wiped chain state at `/tmp/native-devnet-host-node` and wallets.
 - [x] (2025-12-02 23:35Z) Created fresh Alice wallet, captured new address.
 - [x] (2025-12-02 23:40Z) Started node with Alice as miner. Mined blocks 1-5 with coinbase rewards.
 - [x] (2025-12-02 23:45Z) Created Bob's wallet at `/tmp/bob-wallet`.
@@ -1244,7 +1244,7 @@ All commands run from the repository root.
 
 ### Step 2: Wipe chain state
 
-    rm -rf /tmp/hegemon-dev-node
+    rm -rf /tmp/native-devnet-host-node
 
 ### Step 3: Get Alice's shielded address
 
@@ -1254,11 +1254,11 @@ Look for the line "Shielded Address: shca1...". Store this in the environment va
 
 ### Step 4: Start the node with Alice as miner
 
-    mkdir -p /tmp/hegemon-dev-node
+    mkdir -p /tmp/native-devnet-host-node
     HEGEMON_MINE=1 \
     HEGEMON_MINER_ADDRESS="$ALICE_ADDR" \
     ./target/release/hegemon-node \
-      --base-path /tmp/hegemon-dev-node \
+      --base-path /tmp/native-devnet-host-node \
       --chain dev \
       --rpc-port 9944 \
       --rpc-cors all \
@@ -1360,7 +1360,7 @@ If any step fails with "Custom error: 3" (InvalidAnchor), the Merkle hash mismat
 - The node can be restarted safely with the same base-path if it crashes.
 - Wallets sync idempotently - running sync multiple times is safe.
 - If a transaction fails, the wallet marks the spent notes as "not pending" so they can be retried.
-- To start completely fresh: wipe `/tmp/hegemon-dev-node`, `/tmp/alice-wallet`, and `/tmp/bob-wallet`.
+- To start completely fresh: wipe `/tmp/native-devnet-host-node`, `/tmp/alice-wallet`, and `/tmp/bob-wallet`.
 
 
 ## Artifacts and Notes
