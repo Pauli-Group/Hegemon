@@ -22148,7 +22148,8 @@ mod tests {
         assert_eq!(safe_snapshot.get("redacted"), Some(&json!(true)));
         assert_eq!(safe_snapshot.get("chainSpecName"), Some(&json!("Hegemon")));
         assert_eq!(
-            dispatch_rpc_method(&node, "system_chain", Value::Array(Vec::new())).expect("system chain"),
+            dispatch_rpc_method(&node, "system_chain", Value::Array(Vec::new()))
+                .expect("system chain"),
             json!("Hegemon")
         );
         for sensitive_key in [
@@ -22175,7 +22176,10 @@ mod tests {
             dispatch_rpc_method(&unsafe_node, "hegemon_nodeConfig", Value::Array(Vec::new()))
                 .expect("unsafe config snapshot");
         assert_eq!(unsafe_snapshot.get("redacted"), Some(&json!(false)));
-        assert_eq!(unsafe_snapshot.get("chainSpecName"), Some(&json!("Hegemon")));
+        assert_eq!(
+            unsafe_snapshot.get("chainSpecName"),
+            Some(&json!("Hegemon"))
+        );
         assert!(unsafe_snapshot.get("basePath").is_some());
         assert!(unsafe_snapshot.get("p2pListenAddr").is_some());
     }
