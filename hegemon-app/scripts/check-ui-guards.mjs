@@ -48,7 +48,7 @@ const currentContact = {
   name: 'Current test wallet',
   address: 'shca1...',
   verified: true,
-  notes: 'Verified on 0.10 devnet',
+  notes: 'Verified on Hegemon 0.10',
   protocolVersion: '0.10'
 };
 

@@ -5186,7 +5186,7 @@ impl NativeNode {
         if policy != RpcMethodPolicy::Unsafe {
             return json!({
                 "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
-                "chainSpecName": if self.config.dev { "Hegemon Native Dev" } else { "Hegemon Native" },
+                "chainSpecName": "Hegemon",
                 "chainType": if self.config.dev { "dev" } else { "live" },
                 "rpcMethods": self.config.rpc_methods,
                 "redacted": true,
@@ -5196,7 +5196,7 @@ impl NativeNode {
         json!({
             "nodeName": self.config.node_name,
             "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
-            "chainSpecName": if self.config.dev { "Hegemon Native Dev" } else { "Hegemon Native" },
+            "chainSpecName": "Hegemon",
             "chainType": if self.config.dev { "dev" } else { "live" },
             "basePath": self.config.base_path.display().to_string(),
             "p2pListenAddr": self.config.p2p_listen_addr,
@@ -6554,11 +6554,7 @@ fn dispatch_rpc_method(node: &Arc<NativeNode>, method: &str, params: Value) -> R
             env!("CARGO_PKG_VERSION")
         ))),
         "system_name" => Ok(json!("Hegemon Native Node")),
-        "system_chain" => Ok(json!(if node.config.dev {
-            "Hegemon Native Dev"
-        } else {
-            "Hegemon Native"
-        })),
+        "system_chain" => Ok(json!("Hegemon")),
         "chain_getHeader" => chain_get_header(node, params),
         "chain_getBlockHash" => chain_get_block_hash(node, params),
         "chain_getBlock" => chain_get_block(node, params),
@@ -22150,6 +22146,11 @@ mod tests {
             dispatch_rpc_method(&node, "hegemon_nodeConfig", Value::Array(Vec::new()))
                 .expect("safe config snapshot");
         assert_eq!(safe_snapshot.get("redacted"), Some(&json!(true)));
+        assert_eq!(safe_snapshot.get("chainSpecName"), Some(&json!("Hegemon")));
+        assert_eq!(
+            dispatch_rpc_method(&node, "system_chain", Value::Array(Vec::new())).expect("system chain"),
+            json!("Hegemon")
+        );
         for sensitive_key in [
             "nodeName",
             "basePath",
@@ -22174,6 +22175,7 @@ mod tests {
             dispatch_rpc_method(&unsafe_node, "hegemon_nodeConfig", Value::Array(Vec::new()))
                 .expect("unsafe config snapshot");
         assert_eq!(unsafe_snapshot.get("redacted"), Some(&json!(false)));
+        assert_eq!(unsafe_snapshot.get("chainSpecName"), Some(&json!("Hegemon")));
         assert!(unsafe_snapshot.get("basePath").is_some());
         assert!(unsafe_snapshot.get("p2pListenAddr").is_some());
     }

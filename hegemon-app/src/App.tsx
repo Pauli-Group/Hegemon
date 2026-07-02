@@ -26,7 +26,10 @@ const shieldedAddressLength = 2634;
 const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
 const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
 const approvedSeeds = 'devnet.hegemonprotocol.com:30333';
-const defaultDevConnectionLabel = 'Native 0.10 devnet';
+const hegemonNetworkName = 'Hegemon';
+const hegemonNetworkVersionLabel = 'Hegemon 0.10';
+const defaultDevConnectionLabel = hegemonNetworkName;
+const legacyDefaultConnectionLabels = new Set(['Local node', 'Native 0.10 devnet', hegemonNetworkName]);
 const defaultDevBasePath = '~/.hegemon-node-native-010-dev';
 const legacyDesktopRpcPort = 9944;
 const legacySeedAliases: Record<string, string> = {
@@ -129,6 +132,25 @@ const normalizeSeedsValue = (value: string | null | undefined) => {
     normalized.push(seed);
   }
   return normalized.join(',');
+};
+
+const normalizeNetworkDisplayName = (value: string | null | undefined) => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return hegemonNetworkName;
+  }
+  const lower = trimmed.toLowerCase();
+  if (
+    lower === 'hegemon network' ||
+    lower === 'hegemon native' ||
+    lower === 'hegemon native dev' ||
+    lower === 'native 0.10 devnet' ||
+    lower === 'hegemon-dev' ||
+    lower.startsWith('hegemon native ')
+  ) {
+    return hegemonNetworkName;
+  }
+  return trimmed;
 };
 
 const makeId = () => {
@@ -887,8 +909,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     poolAuthToken?: string;
     poolShareBits?: number;
   };
-  const hasDefaultLocalLabel =
-    sanitizedConnection.label === 'Local node' || sanitizedConnection.label === defaultDevConnectionLabel;
+  const hasDefaultLocalLabel = legacyDefaultConnectionLabels.has(sanitizedConnection.label);
   const isDefaultLocal =
     sanitizedConnection.mode === 'local' &&
     hasDefaultLocalLabel &&
@@ -901,7 +922,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node-testnet');
 
   let next = normalizeLocalConnectionEndpoints(sanitizedConnection);
-  if (isDefaultLocal && next.label === 'Local node') {
+  if (isDefaultLocal && next.label !== defaultDevConnectionLabel) {
     next = { ...next, label: defaultDevConnectionLabel };
   }
   if (isDefaultLocal && (!next.basePath || next.basePath === '~/.hegemon-node')) {
@@ -2381,9 +2402,10 @@ export default function App() {
   );
   const displayedNodeGenesis = activeNodeGenesis ?? walletNodeGenesis;
   const activeNodeLive = Boolean(activeSummary?.reachable && displayedNodeGenesis);
-  const activeChainSpecLabel =
-    activeSummary?.config?.chainSpecName ||
-    (activeConnection?.dev ? defaultDevConnectionLabel : 'Hegemon network');
+  const activeChainSpecLabel = normalizeNetworkDisplayName(activeSummary?.config?.chainSpecName);
+  const walletConnectedNetworkLabel = normalizeNetworkDisplayName(
+    walletSummary?.config?.chainSpecName ?? activeSummary?.config?.chainSpecName
+  );
   const activeSeedList = activeSummary?.config?.bootstrapNodes?.length
     ? formatSeedList(activeSummary.config.bootstrapNodes)
     : formatSeedList(activeConnection?.seeds);
@@ -2445,15 +2467,15 @@ export default function App() {
       : activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead'
         ? 'ok'
         : 'neutral';
-  const liveEnvironmentLabel = activeSummary?.config?.chainSpecName || defaultDevConnectionLabel;
+  const liveEnvironmentLabel = activeChainSpecLabel;
   const liveHeadline =
     nodeStartupPending
-      ? 'Starting 0.10 devnet'
+      ? 'Starting Hegemon'
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Live on 0.10 devnet'
+      ? 'Live on Hegemon'
       : activeNodeLive
-        ? '0.10 devnet node is online'
-        : 'Connect to 0.10 devnet';
+        ? 'Hegemon node is online'
+        : 'Connect to Hegemon';
   const liveHeightSummary =
     activeHeightRelation === 'aligned'
       ? `Local tip and peer target are ${activeHeightLabel}`
@@ -2468,14 +2490,14 @@ export default function App() {
     ? `${liveHeightSummary} on ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
     : nodeStartupPending
       ? `Opening ${formatEndpoint(activeConnection?.wsUrl)} and joining ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
-      : 'Start the managed local node to join the 0.10 devnet with no SSH tunnel.';
+      : 'Start the managed local node to join Hegemon with no SSH tunnel.';
   const liveVerdictTone: 'ok' | 'warn' | 'neutral' =
     nodeStartupPending ? 'warn' : activeNodeLive && activePeerCount !== null && activePeerCount > 0 ? 'ok' : activeNodeLive ? 'warn' : 'neutral';
   const liveVerdictLabel =
     nodeStartupPending
       ? 'Local node is starting'
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Connected to 0.10 devnet'
+      ? 'Connected to Hegemon'
       : activeNodeLive
         ? 'Node online, waiting for peers'
         : 'Not connected';
@@ -2485,7 +2507,7 @@ export default function App() {
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeHeightRelation === 'local_ahead'
       ? `Peer, seed, and genesis match; this miner is ${activeHeightDeltaAbsLabel} ahead of the latest peer target.`
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Peer, seed, and genesis match the 0.10 dev profile.'
+      ? 'Peer, seed, and genesis match the Hegemon 0.10 network.'
       : activeNodeLive
         ? 'RPC is reachable; waiting for a P2P peer.'
         : 'Start the local node before syncing the wallet or sending funds.';
@@ -2573,15 +2595,15 @@ export default function App() {
       ? Math.max(0, walletSummary.bestNumber - walletStatus.lastSyncedHeight)
       : null;
   const walletHeroTitle = walletReady
-    ? 'Wallet ready on 0.10 devnet'
+    ? 'Wallet ready on Hegemon'
     : activeNodeLive
       ? 'Node live; unlock wallet'
-      : 'Open wallet for 0.10 devnet';
+      : 'Open wallet for Hegemon';
   const walletHeroDetail = walletReady
     ? `${formatCompactPath(storePath)} · synced ${formatNumber(walletStatus?.lastSyncedHeight)} · ${peerEvidenceLabel}`
     : activeNodeLive
-      ? `${formatCompactPath(storePath)} · 0.10 devnet height ${activeHeightLabel} · ${peerEvidenceLabel}`
-      : `${formatCompactPath(storePath)} · start the local node to join the 0.10 devnet`;
+      ? `${formatCompactPath(storePath)} · ${hegemonNetworkVersionLabel} height ${activeHeightLabel} · ${peerEvidenceLabel}`
+      : `${formatCompactPath(storePath)} · start the local node to join ${hegemonNetworkName}`;
   const walletBalanceDisplay = walletReady ? hgmBalanceLabel : 'Locked';
   const walletSyncDisplay = walletReady ? formatNumber(walletStatus?.lastSyncedHeight) : 'Locked';
   const walletLagDisplay = walletReady ? (walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)) : 'Open wallet';
@@ -3053,7 +3075,7 @@ export default function App() {
               <div className="proof-row">
                 <span>Seed</span>
                 <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
-                <em>approved 0.10 devnet seed</em>
+                <em>approved Hegemon 0.10 seed</em>
               </div>
               <div className="proof-row">
                 <span>Peer</span>
@@ -3690,7 +3712,7 @@ export default function App() {
           <p className="text-sm text-surfaceMuted">
             Chain:{' '}
             {activeSummary?.config?.chainSpecName
-              ? `${activeSummary.config.chainSpecName} (${activeSummary.config.chainSpecId})`
+              ? `${normalizeNetworkDisplayName(activeSummary.config.chainSpecName)} (${activeSummary.config.chainSpecId})`
               : 'N/A'}
           </p>
           <p className="text-sm text-surfaceMuted">Chain type: {activeSummary?.config?.chainType || 'N/A'}</p>
@@ -4182,8 +4204,8 @@ export default function App() {
           </div>
           <div className="kpi-tile">
             <p className="label">Connected node</p>
-            <p className="mt-2 text-sm font-semibold truncate" title={walletConnection?.label ?? ''}>
-              {walletConnection?.label ?? 'N/A'}
+            <p className="mt-2 text-sm font-semibold truncate" title={walletConnectedNetworkLabel}>
+              {walletConnectedNetworkLabel}
             </p>
             <p className="text-xs text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
           </div>
@@ -4760,7 +4782,7 @@ export default function App() {
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-lg font-medium">{contact.name}</p>
                     {contact.protocolVersion ? <span className="badge">v{contact.protocolVersion}</span> : null}
-                    {contact.chainSpecName ? <span className="badge">{contact.chainSpecName}</span> : null}
+                    {contact.chainSpecName ? <span className="badge">{normalizeNetworkDisplayName(contact.chainSpecName)}</span> : null}
                     {contactWarning ? <span className="badge level-warn">Legacy</span> : null}
                   </div>
                   <p className="mono text-sm text-surfaceMuted truncate" title={contact.address}>
