@@ -2,6 +2,11 @@
 
 The product must be made real, not a mock up. DON'T BE A SYCOPHANT CLAUDE.
 
+## Operator runbook updates
+
+- When documenting mining setup, always include guidance to set `HEGEMON_SEEDS` with the currently approved seed list and note that miners must share the same seeds to avoid forks.
+- Remind operators to enable time sync (NTP/chrony) because PoW timestamps are rejected if they exceed the future-skew bound.
+
 # ExecPlans
 
 When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
@@ -9,6 +14,8 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 # First-Run Setup
 
 Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the native `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a native dev node with mining enabled.
+
+For shared mining environments, document and use `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"` unless the approved seed list has been deliberately rotated. All miners on the same network must share the same seed list to avoid partitions and forks, and mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
 
 # Design and Methods Docs
 
