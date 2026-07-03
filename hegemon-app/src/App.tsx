@@ -30,6 +30,13 @@ const hegemonNetworkName = 'Hegemon';
 const hegemonNetworkVersionLabel = 'Hegemon 0.10';
 const defaultDevConnectionLabel = hegemonNetworkName;
 const legacyDefaultConnectionLabels = new Set(['Local node', 'Native 0.10 devnet', hegemonNetworkName]);
+const legacyHegemonConnectionLabels = new Set([
+  'hegemon-dev',
+  'hegemon-dev P2P 0.10',
+  'Hegemon Native Dev',
+  'Hegemon Native Devnet',
+  'Native 0.10 devnet'
+]);
 const defaultDevBasePath = '~/.hegemon-node-native-010-dev';
 const legacyDesktopRpcPort = 9944;
 const legacySeedAliases: Record<string, string> = {
@@ -910,6 +917,7 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     poolShareBits?: number;
   };
   const hasDefaultLocalLabel = legacyDefaultConnectionLabels.has(sanitizedConnection.label);
+  const hasLegacyHegemonLabel = legacyHegemonConnectionLabels.has(sanitizedConnection.label?.trim());
   const isDefaultLocal =
     sanitizedConnection.mode === 'local' &&
     hasDefaultLocalLabel &&
@@ -922,7 +930,14 @@ const normalizeConnection = (connection: NodeConnection): NodeConnection => {
     (!sanitizedConnection.basePath || sanitizedConnection.basePath === '~/.hegemon-node-testnet');
 
   let next = normalizeLocalConnectionEndpoints(sanitizedConnection);
-  if (isDefaultLocal && next.label !== defaultDevConnectionLabel) {
+  const isLegacyHegemonLocalProfile =
+    sanitizedConnection.mode === 'local' &&
+    hasLegacyHegemonLabel &&
+    Boolean(sanitizedConnection.dev) &&
+    inferRpcPort(next) === defaultRpcPort &&
+    isLoopbackWsEndpoint(next.wsUrl) &&
+    (!next.httpUrl || isLoopbackHttpEndpoint(next.httpUrl));
+  if ((isDefaultLocal || isLegacyHegemonLocalProfile) && next.label !== defaultDevConnectionLabel) {
     next = { ...next, label: defaultDevConnectionLabel };
   }
   if (isDefaultLocal && (!next.basePath || next.basePath === '~/.hegemon-node')) {
