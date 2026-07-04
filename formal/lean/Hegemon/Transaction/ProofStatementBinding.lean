@@ -35,6 +35,13 @@ def digestBytes (seed : Nat) : List Byte :=
 def zeroDigestBytes : List Byte :=
   List.replicate digestWidth 0
 
+def ltPow2 (bits value : Nat) : Bool :=
+  value < 2 ^ bits
+
+def isU32 (value : Nat) : Bool := ltPow2 32 value
+def isU64 (value : Nat) : Bool := ltPow2 64 value
+def isI128 (value : Int) : Bool := Int.natAbs value < 2 ^ 127
+
 def digestSeedsBytes : List Nat -> List Byte
   | [] => []
   | seed :: rest => digestBytes seed ++ digestSeedsBytes rest
@@ -54,8 +61,24 @@ def assetBytes : List Nat -> List Byte
   | [] => []
   | asset :: rest => u64le asset ++ assetBytes rest
 
+def allU64 : List Nat -> Bool
+  | [] => true
+  | value :: rest => isU64 value && allU64 rest
+
+def bindingFieldsCanonical (fields : BindingFields) : Bool :=
+  isU32 fields.nullifierSeeds.length
+    && isU32 fields.commitmentSeeds.length
+    && isU32 fields.ciphertextHashSeeds.length
+    && isU64 fields.fee
+    && isI128 fields.valueBalance
+    && allU64 fields.balanceSlotAssets
+    && isU64 fields.stablecoinAsset
+    && isI128 fields.stablecoinIssuanceDelta
+    && isU32 fields.stablecoinPolicyVersion
+
 def bindingMessage (fields : BindingFields) : Option (List Byte) :=
-  if fields.balanceSlotAssets.length = balanceSlotCount then
+  if fields.balanceSlotAssets.length = balanceSlotCount
+      && bindingFieldsCanonical fields then
     some <|
       digestBytes fields.anchorSeed
         ++ u32le fields.nullifierSeeds.length
@@ -115,6 +138,9 @@ def stablecoinFields : BindingFields :=
     stablecoinIssuanceDelta := -13
     stablecoinPolicyVersion := 4 }
 
+def overwidthPolicyVersionFields : BindingFields :=
+  { stablecoinFields with stablecoinPolicyVersion := 2 ^ 32 }
+
 def fieldPaddingCollisionFields : BindingFields :=
   { validFields with
     balanceSlotAssets := [0, 4294967294, paddingAsset, paddingAsset] }
@@ -150,6 +176,10 @@ theorem bindingMessage_accepts_stablecoin :
 
 theorem bindingMessage_rejects_bad_balance_slot_count :
     bindingMessage { validFields with balanceSlotAssets := [0, 7, paddingAsset] } = none := by
+  decide
+
+theorem bindingMessage_rejects_overwidth_policy_version :
+    bindingMessage overwidthPolicyVersionFields = none := by
   decide
 
 theorem bindingMessage_distinguishes_field_padding_collision_from_padding :

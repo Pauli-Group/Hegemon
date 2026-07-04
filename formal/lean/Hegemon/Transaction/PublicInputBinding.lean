@@ -85,7 +85,9 @@ def balanceSlotAssetsMatch (pubFields : PublicFields) (assets : List Nat) : Bool
   pubFields.balanceSlotAssets = assets
 
 def stablecoinBindingMatches (pubFields : PublicFields) (serialized : SerializedFields) : Bool :=
-  pubFields.stablecoinEnabled = serialized.stablecoinEnabled
+  isBoolFlag pubFields.stablecoinEnabled
+    && isBoolFlag serialized.stablecoinEnabled
+    && pubFields.stablecoinEnabled = serialized.stablecoinEnabled
     && pubFields.stablecoinAsset = serialized.stablecoinAsset
     && pubFields.stablecoinPolicyVersion = serialized.stablecoinPolicyVersion
     && signedMagnitudeMatches pubFields.stablecoinIssuanceDelta
@@ -115,8 +117,9 @@ theorem stablecoinBindingMatches_true_fields
   unfold stablecoinBindingMatches at h
   simp at h
   rcases h with
-    ⟨⟨⟨⟨⟨⟨hEnabled, hAsset⟩, hPolicyVersion⟩, hIssuance⟩,
-      hPolicyHash⟩, hOracle⟩, hAttestation⟩
+    ⟨⟨⟨⟨⟨⟨⟨⟨_publicEnabledBool, _serializedEnabledBool⟩,
+      hEnabled⟩, hAsset⟩, hPolicyVersion⟩, hIssuance⟩, hPolicyHash⟩,
+      hOracle⟩, hAttestation⟩
   exact
     ⟨hEnabled,
       hAsset,
@@ -125,6 +128,17 @@ theorem stablecoinBindingMatches_true_fields
       hPolicyHash,
       hOracle,
       hAttestation⟩
+
+theorem stablecoinBindingMatches_true_enabled_flags
+    {pubFields : PublicFields}
+    {serialized : SerializedFields}
+    (h : stablecoinBindingMatches pubFields serialized = true) :
+    isBoolFlag pubFields.stablecoinEnabled = true
+      ∧ isBoolFlag serialized.stablecoinEnabled = true := by
+  unfold stablecoinBindingMatches at h
+  simp at h
+  exact ⟨h.left.left.left.left.left.left.left.left,
+    h.left.left.left.left.left.left.left.right⟩
 
 def bindPublicInputs (pubFields : PublicFields) (serialized : SerializedFields) :
     Option BoundPublicInputs :=

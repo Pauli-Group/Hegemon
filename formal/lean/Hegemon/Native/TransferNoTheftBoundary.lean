@@ -977,7 +977,11 @@ theorem validated_transfer_payload_active_input_no_theft_full_binding_from_spend
           payloadFee,
           spendFacts.wrapperPreconditions,
           spendFacts.wrapperSurface,
-          spendFacts.publicBindingValid,
+          (by
+            simp [
+              Hegemon.Transaction.PublicInputBinding.validBinding,
+              spendFacts.publicBindingExact
+            ]),
           spendFacts.statementPreimage,
           spendFacts.bindingMessage,
           statementRoot,
@@ -1105,7 +1109,11 @@ theorem validated_transfer_payload_input_slot_authorization_full_binding_from_sp
           payloadFee,
           spendFacts.wrapperPreconditions,
           spendFacts.wrapperSurface,
-          spendFacts.publicBindingValid,
+          (by
+            simp [
+              Hegemon.Transaction.PublicInputBinding.validBinding,
+              spendFacts.publicBindingExact
+            ]),
           spendFacts.statementPreimage,
           spendFacts.bindingMessage,
           statementRoot,

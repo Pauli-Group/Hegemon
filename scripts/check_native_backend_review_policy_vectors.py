@@ -75,6 +75,9 @@ def evaluate_case(case: dict) -> tuple[bool, str | None]:
         >= int(case.get("claimed_security_bits", -1))
         and int(case.get("commitment_binding_bits", -1))
         >= int(case.get("claimed_security_bits", -1))
+        and int(case.get("claimed_security_bits", -1))
+        + int(case.get("composition_loss_bits", -1))
+        <= int(case.get("soundness_floor_bits", -1))
         and int(case.get("composition_loss_bits", -1))
         <= int(case.get("soundness_floor_bits", -1))
     ):

@@ -154,10 +154,19 @@ struct SecurityClaim {
     production_eligible: bool,
     #[serde(default)]
     lean_theorems: Vec<String>,
+    #[serde(default)]
+    lean_theorem_shapes: Vec<LeanTheoremShape>,
     assumptions: Vec<String>,
     evidence_paths: Vec<String>,
     gates: Vec<String>,
     residual_risks: Vec<ResidualRisk>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanTheoremShape {
+    theorem: String,
+    contains: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1275,19 +1284,26 @@ fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<
             "{} lean_theorems is only valid for lean_theorem claims",
             claim.id
         );
+        ensure!(
+            claim.lean_theorem_shapes.is_empty(),
+            "{} lean_theorem_shapes is only valid for lean_theorem claims",
+            claim.id
+        );
         return Ok(BTreeSet::new());
     }
 
     let mut checked_lean_sources = Vec::new();
     let mut declared_theorem_names = BTreeSet::new();
+    let mut declared_theorem_shapes = BTreeMap::new();
     for evidence in &claim.evidence_paths {
         if !is_non_generator_lean_evidence(evidence) {
             continue;
         }
         checked_lean_sources.push(evidence.as_str());
         let path = root.join(evidence);
-        for theorem in lean_theorem_names(&path)? {
-            declared_theorem_names.insert(theorem);
+        for (theorem, declaration) in lean_theorem_declarations(&path)? {
+            declared_theorem_names.insert(theorem.clone());
+            declared_theorem_shapes.insert(theorem, declaration);
         }
     }
 
@@ -1323,6 +1339,61 @@ fn validate_lean_theorem_evidence(root: &Path, claim: &SecurityClaim) -> Result<
             theorem
         );
     }
+    if claim.production_eligible
+        && claim.status == "enforced"
+        && claim.proof_model.contains("top_level_certificate")
+    {
+        ensure!(
+            !claim.lean_theorem_shapes.is_empty(),
+            "{} production top-level Lean certificate must list lean_theorem_shapes",
+            claim.id
+        );
+    }
+    let mut shaped_theorem_names = BTreeSet::new();
+    for shape in &claim.lean_theorem_shapes {
+        validate_lean_theorem_name(&claim.id, &shape.theorem)?;
+        ensure!(
+            listed_theorem_names.contains(&shape.theorem),
+            "{} shape constraint references Lean theorem {} outside lean_theorems",
+            claim.id,
+            shape.theorem
+        );
+        ensure!(
+            shaped_theorem_names.insert(shape.theorem.clone()),
+            "{} lists duplicate Lean theorem shape constraint for {}",
+            claim.id,
+            shape.theorem
+        );
+        ensure!(
+            !shape.contains.is_empty(),
+            "{} Lean theorem shape for {} must list required fragments",
+            claim.id,
+            shape.theorem
+        );
+        let declaration = declared_theorem_shapes.get(&shape.theorem).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} shape constraint references Lean theorem {} that is not declared by non-generator evidence",
+                claim.id,
+                shape.theorem
+            )
+        })?;
+        for fragment in &shape.contains {
+            let normalized = normalize_whitespace(fragment);
+            ensure!(
+                !normalized.is_empty(),
+                "{} Lean theorem shape for {} contains an empty fragment",
+                claim.id,
+                shape.theorem
+            );
+            ensure!(
+                declaration.contains(&normalized),
+                "{} Lean theorem {} declaration is missing required shape fragment {:?}",
+                claim.id,
+                shape.theorem,
+                fragment
+            );
+        }
+    }
     Ok(listed_theorem_names)
 }
 
@@ -1336,28 +1407,34 @@ fn is_non_generator_lean_evidence(raw: &str) -> bool {
     !file_name.starts_with("Generate")
 }
 
-fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
+fn lean_theorem_declarations(path: &Path) -> Result<BTreeMap<String, String>> {
     let source = fs::read_to_string(path)
         .with_context(|| format!("read Lean theorem evidence {}", path.display()))?;
     let source = strip_lean_comments(&source);
-    let mut names = BTreeSet::new();
+    let lines: Vec<&str> = source.lines().collect();
+    let mut declarations = BTreeMap::new();
     let mut namespaces: Vec<String> = Vec::new();
-    for line in source.lines() {
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line = lines[index];
         let trimmed = line.trim();
         let tokens: Vec<&str> = trimmed.split_whitespace().collect();
         let Some(first) = tokens.first().copied() else {
+            index += 1;
             continue;
         };
         if first == "namespace" {
             if let Some(namespace) = tokens.get(1).copied() {
                 namespaces.push(namespace.trim_end_matches(',').to_owned());
             }
+            index += 1;
             continue;
         }
         if first == "end" {
             if !namespaces.is_empty() {
                 namespaces.pop();
             }
+            index += 1;
             continue;
         }
         let name = if first == "theorem" {
@@ -1368,20 +1445,37 @@ fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
             None
         };
         let Some(raw_name) = name else {
+            index += 1;
             continue;
         };
         let theorem = raw_name.trim_end_matches(':');
         if !theorem.is_empty() {
-            names.insert(theorem.to_owned());
+            let mut declaration_lines = vec![trimmed.to_owned()];
+            while !declaration_lines.iter().any(|line| line.contains(":="))
+                && index + 1 < lines.len()
+            {
+                index += 1;
+                let next_line = lines[index].trim();
+                if !next_line.is_empty() {
+                    declaration_lines.push(next_line.to_owned());
+                }
+            }
+            let declaration = normalize_whitespace(&declaration_lines.join(" "));
+            declarations.insert(theorem.to_owned(), declaration.clone());
             if !theorem.contains('.') {
                 let namespace = namespaces.join(".");
                 if !namespace.is_empty() {
-                    names.insert(format!("{namespace}.{theorem}"));
+                    declarations.insert(format!("{namespace}.{theorem}"), declaration);
                 }
             }
         }
+        index += 1;
     }
-    Ok(names.into_iter().collect())
+    Ok(declarations)
+}
+
+fn normalize_whitespace(input: &str) -> String {
+    input.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn strip_lean_comments(source: &str) -> String {
@@ -1415,7 +1509,7 @@ fn strip_lean_comments(source: &str) -> String {
         }
 
         if in_string {
-            stripped.push(current);
+            stripped.push(if current == '\n' { '\n' } else { ' ' });
             if escaped {
                 escaped = false;
             } else if current == '\\' {
@@ -1429,7 +1523,7 @@ fn strip_lean_comments(source: &str) -> String {
 
         if current == '"' {
             in_string = true;
-            stripped.push(current);
+            stripped.push(' ');
             index += 1;
             continue;
         }
@@ -2050,7 +2144,11 @@ fn validate_rust_implementation_binding(
         for function in non_test_callers {
             let body = &sanitized[function.body_start..function.body_end];
             ensure!(
-                !rust_body_has_local_shadow_of_callee(body, &binding.callee),
+                !rust_function_signature_has_parameter_shadow(
+                    &sanitized,
+                    function,
+                    &binding.callee
+                ) && !rust_body_has_local_shadow_of_callee(body, &binding.callee),
                 "{} implementation binding caller {} in {} locally shadows bound callee {}",
                 claim_id,
                 caller,
@@ -2159,7 +2257,14 @@ fn validate_rust_implementation_order(
         for successor in &constraint.callee_must_precede {
             let successor_selector =
                 parse_rust_call_selector(successor).expect("successor selector validated");
-            let successor_calls = rust_call_sites_for_selector(body, &successor_selector);
+            let successor_calls = rust_successor_call_sites_for_selector(
+                body,
+                &successor_selector,
+                function,
+                source,
+                test_module_spans,
+                functions,
+            );
             if successor_calls.is_empty() {
                 return Err(anyhow!(
                     "{} implementation binding order caller {} in {} does not call required successor {}",
@@ -2301,7 +2406,7 @@ impl RustFunctionSpan {
         test_module_spans
             .iter()
             .any(|(start, end)| *start <= self.start && self.end <= *end)
-            || preceding_rust_attrs_contain_non_production_cfg(source, self.start)
+            || preceding_rust_attrs_mark_non_production(source, self.start)
     }
 }
 
@@ -2345,6 +2450,51 @@ fn rust_body_has_local_shadow_of_callee(source: &str, callee: &str) -> bool {
         || rust_body_has_nested_fn_shadow(source, callee)
         || rust_body_has_use_shadow(source, callee)
         || rust_body_has_closure_parameter_shadow(source, callee)
+}
+
+fn rust_function_signature_has_parameter_shadow(
+    source: &str,
+    function: &RustFunctionSpan,
+    callee: &str,
+) -> bool {
+    let Some(open_relative) = source[function.start..function.body_start].find('(') else {
+        return false;
+    };
+    let open = function.start + open_relative;
+    let Ok(close) = match_rust_paren(source, open) else {
+        return false;
+    };
+    if close > function.body_start {
+        return false;
+    }
+    rust_parameter_list_binds_identifier(&source[open + 1..close], callee)
+}
+
+fn rust_parameter_list_binds_identifier(params: &str, ident: &str) -> bool {
+    let mut param_start = 0usize;
+    loop {
+        let param_end =
+            find_top_level_byte(params, param_start, params.len(), b',').unwrap_or(params.len());
+        let param = params[param_start..param_end].trim();
+        if !param.is_empty() && rust_parameter_binds_identifier(param, ident) {
+            return true;
+        }
+        if param_end == params.len() {
+            return false;
+        }
+        param_start = param_end + 1;
+    }
+}
+
+fn rust_parameter_binds_identifier(param: &str, ident: &str) -> bool {
+    let Some(pattern_end) = find_top_level_byte(param, 0, param.len(), b':') else {
+        return false;
+    };
+    let pattern = param[..pattern_end].trim();
+    if pattern == "self" || pattern == "&self" || pattern == "&mut self" || pattern.is_empty() {
+        return false;
+    }
+    rust_pattern_binds_identifier(pattern, ident)
 }
 
 fn rust_body_has_let_shadow(source: &str, callee: &str) -> bool {
@@ -2816,6 +2966,10 @@ fn match_rust_brace(source: &str, open: usize) -> Result<usize> {
 }
 
 fn preceding_rust_attrs_contain_non_production_cfg(source: &str, item_start: usize) -> bool {
+    preceding_rust_attrs_mark_non_production(source, item_start)
+}
+
+fn preceding_rust_attrs_mark_non_production(source: &str, item_start: usize) -> bool {
     let prefix = &source[..item_start];
     let mut saw_attr = false;
     for line in prefix.lines().rev() {
@@ -2828,7 +2982,10 @@ fn preceding_rust_attrs_contain_non_production_cfg(source: &str, item_start: usi
         }
         if trimmed.starts_with("#[") {
             saw_attr = true;
-            if trimmed.contains("cfg(") || trimmed.contains("cfg_attr(") {
+            if trimmed.contains("cfg(")
+                || trimmed.contains("cfg_attr(")
+                || rust_attr_is_harness_only(trimmed)
+            {
                 return true;
             }
             continue;
@@ -2836,6 +2993,18 @@ fn preceding_rust_attrs_contain_non_production_cfg(source: &str, item_start: usi
         break;
     }
     false
+}
+
+fn rust_attr_is_harness_only(attr: &str) -> bool {
+    let normalized: String = attr.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+    normalized == "#[test]"
+        || normalized == "#[bench]"
+        || normalized == "#[tokio::test]"
+        || normalized == "#[async_std::test]"
+        || normalized == "#[wasm_bindgen_test]"
+        || normalized.starts_with("#[tokio::test(")
+        || normalized.starts_with("#[async_std::test(")
+        || normalized.starts_with("#[wasm_bindgen_test(")
 }
 
 #[derive(Debug, Clone)]
@@ -2935,6 +3104,42 @@ fn rust_bound_callee_call_sites(
     test_module_spans: &[(usize, usize)],
     functions: &[RustFunctionSpan],
 ) -> Vec<RustCallSite> {
+    let mut calls = rust_unqualified_call_sites(body, ident);
+    if caller.impl_type.as_ref().is_some_and(|impl_type| {
+        rust_same_impl_method_exists(full_source, test_module_spans, functions, impl_type, ident)
+    }) {
+        calls.extend(rust_qualified_call_sites(
+            body,
+            &RustCallSelector {
+                segments: vec!["self".to_owned(), ident.to_owned()],
+                separators: vec![RustCallSelectorSeparator::Member],
+            },
+        ));
+        calls.extend(rust_qualified_call_sites(
+            body,
+            &RustCallSelector {
+                segments: vec!["Self".to_owned(), ident.to_owned()],
+                separators: vec![RustCallSelectorSeparator::Path],
+            },
+        ));
+    }
+    calls.sort_by_key(|call| (call.start, call.close_paren));
+    calls.dedup_by_key(|call| (call.start, call.close_paren));
+    calls
+}
+
+fn rust_successor_call_sites_for_selector(
+    body: &str,
+    selector: &RustCallSelector,
+    caller: &RustFunctionSpan,
+    full_source: &str,
+    test_module_spans: &[(usize, usize)],
+    functions: &[RustFunctionSpan],
+) -> Vec<RustCallSite> {
+    if !selector.is_bare() {
+        return rust_call_sites_for_selector(body, selector);
+    }
+    let ident = selector.last_segment();
     let mut calls = rust_unqualified_call_sites(body, ident);
     if caller.impl_type.as_ref().is_some_and(|impl_type| {
         rust_same_impl_method_exists(full_source, test_module_spans, functions, impl_type, ident)
@@ -3370,8 +3575,14 @@ fn call_result_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
 
 fn call_result_if_let_err_branch_return(source: &str, call: &RustCallSite) -> bool {
     let context = rust_statement_context(source, call.start);
-    let prefix = &source[context.current_statement_start()..call.start];
-    if !prefix.contains("if let Err") {
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if !prefix.starts_with("if let Err") {
+        return false;
+    }
+    let Some((lhs, rhs)) = prefix.rsplit_once('=') else {
+        return false;
+    };
+    if !lhs.trim_start().starts_with("if let Err") || !rhs.trim().is_empty() {
         return false;
     }
     fail_closed_branch_after(source, call.close_paren + 1)
@@ -4163,7 +4374,7 @@ fn call_result_match_err_branch_return(source: &str, call: &RustCallSite) -> boo
     let Ok(branch_end) = match_rust_brace(source, branch_start) else {
         return false;
     };
-    match_body_has_err_return_arm(source, branch_start + 1, branch_end)
+    match_body_has_only_returning_err_arms(source, branch_start + 1, branch_end)
 }
 
 fn call_result_bound_is_err_branch_return(source: &str, call: &RustCallSite) -> bool {
@@ -4283,27 +4494,6 @@ fn statement_is_result_match_err_return(
         return false;
     };
     match_body_has_only_returning_err_arms(source, branch_start + 1, branch_end)
-}
-
-fn match_body_has_err_return_arm(source: &str, body_start: usize, body_end: usize) -> bool {
-    let mut cursor = body_start;
-    while cursor < body_end {
-        cursor = skip_match_arm_separator(source, cursor, body_end);
-        if cursor >= body_end {
-            return false;
-        }
-        let Some(arrow) = find_top_level_fat_arrow(source, cursor, body_end) else {
-            return false;
-        };
-        let pattern = source[cursor..arrow].trim();
-        let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
-        let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
-        if match_pattern_is_plain_err(pattern) {
-            return match_arm_body_returns(source, arm_body_start, arm_body_end);
-        }
-        cursor = arm_body_end.saturating_add(1);
-    }
-    false
 }
 
 fn match_body_has_only_returning_err_arms(
@@ -5962,6 +6152,40 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("locally shadows bound callee expected_supply_after_transition"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_function_parameter_shadow_for_bound_callee() {
+        let root = test_root("function-parameter-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block(verified_helper: impl FnOnce() -> Result<(), ()>) {\n\
+                 verified_helper()?;\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("function parameter shadow must not satisfy binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee verified_helper"),
             "{err:#}"
         );
     }
@@ -8343,6 +8567,80 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_match_wildcard_before_err_branch() {
+        let root = test_root("match-wildcard-before-err-branch");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn verify_artifacts() {\n\
+                 match verified_helper() {\n\
+                     _ => (),\n\
+                     Err(rejection) => return Err(rejection),\n\
+                 }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["verify_artifacts"],
+                "verify_artifacts",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
+    fn blueprint_rejects_wrapped_if_let_err_fail_closed_check() {
+        let root = test_root("wrapped-if-let-err-fail-closed-check");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn wrapper<T>(_: T) -> Result<(), ()> { Ok(()) }\n\
+             fn verify_artifacts() {\n\
+                 if let Err(rejection) = wrapper(verified_helper()) { return Err(rejection); }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["verify_artifacts"],
+                "verify_artifacts",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call verified_helper with fail-closed result handling"));
+    }
+
+    #[test]
     fn blueprint_rejects_bound_result_checked_after_mutation() {
         let root = test_root("bound-result-checked-after-mutation");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8517,6 +8815,71 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_constraints, 1);
         assert_eq!(report.implementation_order_edges, 2);
+    }
+
+    #[test]
+    fn blueprint_accepts_bare_same_impl_successor_selector() {
+        let root = test_root("bare-same-impl-successor-selector");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct NativeNode;\n\
+             impl NativeNode {\n\
+                 fn verified_helper(&self) {}\n\
+                 fn import_mined_block(&self) { self.verified_helper(); self.persist_block(); }\n\
+                 fn persist_block(&self) {}\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["NativeNode::import_mined_block"],
+                "NativeNode::import_mined_block",
+                &["persist_block"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("same-impl bare successor selector");
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_bare_successor_satisfied_only_by_receiver_decoy() {
+        let root = test_root("bare-successor-receiver-decoy");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "struct Other;\n\
+             impl Other { fn persist_block(&self) {} }\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block(other: Other) { verified_helper(); other.persist_block(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["persist_block"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("does not call required successor persist_block"));
     }
 
     #[test]
@@ -9001,6 +9364,32 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_bare_test_attribute_implementation_callee() {
+        let root = test_root("bare-test-attribute-implementation-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "#[test]\n\
+             fn verified_helper() {}\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("callee verified_helper is missing from non-test Rust code"));
+    }
+
+    #[test]
     fn blueprint_rejects_cfg_feature_implementation_callee() {
         let root = test_root("cfg-feature-implementation-callee");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -9055,6 +9444,32 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_bare_test_attribute_implementation_caller() {
+        let root = test_root("bare-test-attribute-implementation-caller");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             #[test]\n\
+             fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("caller import_mined_block is missing from non-test Rust code"));
+    }
+
+    #[test]
     fn claims_accept_named_lean_theorem_evidence() {
         let root = test_root("lean-theorem-claim");
         write_repo_file(
@@ -9078,6 +9493,57 @@ mod tests {
         assert_eq!(report.claims, 1);
         assert_eq!(report.lean_theorem_claims, 1);
         assert_eq!(report.named_lean_theorems, 1);
+    }
+
+    #[test]
+    fn claims_reject_weakened_lean_theorem_shape() {
+        let root = test_root("lean-theorem-shape-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             theorem balance_rule_accepts : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        let mut claims = lean_claims_fixture(
+            &["formal/lean/Hegemon/Transaction/Balance.lean"],
+            &["Hegemon.Transaction.balance_rule_accepts"],
+        );
+        claims["claims"][0]["lean_theorem_shapes"] = json!([
+            {
+                "theorem": "Hegemon.Transaction.balance_rule_accepts",
+                "contains": ["BalanceInvariant"]
+            }
+        ]);
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("missing required shape fragment"));
+    }
+
+    #[test]
+    fn claims_require_shapes_for_top_level_lean_certificates() {
+        let root = test_root("lean-top-level-shape-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Release/Completion.lean",
+            "namespace Hegemon.Release\n\
+             theorem completion_certificate : True := by\n\
+               trivial\n\
+             end Hegemon.Release\n",
+        );
+        let claims_path = root.join("claims.json");
+        let mut claims = lean_claims_fixture(
+            &["formal/lean/Hegemon/Release/Completion.lean"],
+            &["Hegemon.Release.completion_certificate"],
+        );
+        claims["claims"][0]["proof_model"] = json!("lean4_theorem_no_sorry_top_level_certificate");
+        write_json(&claims_path, claims);
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("must list lean_theorem_shapes"));
     }
 
     #[test]
@@ -9173,6 +9639,34 @@ mod tests {
             lean_claims_fixture(
                 &["formal/lean/Hegemon/Transaction/Balance.lean"],
                 &["Hegemon.Transaction.nested_spoofed_rule"],
+            ),
+        );
+
+        let err = check_claims_file(&claims_path).unwrap_err();
+        assert!(err.to_string().contains("is not declared"));
+    }
+
+    #[test]
+    fn claims_reject_theorem_name_in_string_literal() {
+        let root = test_root("lean-string-theorem-claim");
+        write_repo_file(
+            &root,
+            "formal/lean/Hegemon/Transaction/Balance.lean",
+            "namespace Hegemon.Transaction\n\
+             def theoremText : String := \"\n\
+             theorem spoofed_rule : True := by\n\
+               trivial\n\
+             \"\n\
+             theorem real_rule : True := by\n\
+               trivial\n\
+             end Hegemon.Transaction\n",
+        );
+        let claims_path = root.join("claims.json");
+        write_json(
+            &claims_path,
+            lean_claims_fixture(
+                &["formal/lean/Hegemon/Transaction/Balance.lean"],
+                &["Hegemon.Transaction.spoofed_rule"],
             ),
         );
 

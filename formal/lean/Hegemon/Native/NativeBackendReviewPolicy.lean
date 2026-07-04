@@ -48,6 +48,8 @@ def securityClaimMeetsPolicy (input : NativeBackendReviewInput) : Bool :=
   128 <= input.claimedSecurityBits
     && input.claimedSecurityBits <= input.soundnessFloorBits
     && input.claimedSecurityBits <= input.commitmentBindingBits
+    && input.claimedSecurityBits + input.compositionLossBits <=
+      input.soundnessFloorBits
     && input.compositionLossBits <= input.soundnessFloorBits
 
 def caseKindSupported : ReviewCaseKind -> Bool
@@ -270,6 +272,14 @@ def wrongReviewPostureInput : NativeBackendReviewInput :=
 def insufficientSecurityFloorInput : NativeBackendReviewInput :=
   { completeReviewInput with soundnessFloorBits := 127 }
 
+def excessiveCompositionLossInput : NativeBackendReviewInput :=
+  {
+    completeReviewInput with
+    soundnessFloorBits := 128,
+    commitmentBindingBits := 128,
+    compositionLossBits := 128
+  }
+
 def duplicateCaseNameInput : NativeBackendReviewInput :=
   {
     completeReviewInput with
@@ -329,6 +339,11 @@ theorem wrong_review_posture_rejects :
 
 theorem insufficient_security_floor_rejects :
     evaluateNativeBackendReview insufficientSecurityFloorInput =
+      Except.error NativeBackendReviewReject.insufficientSecurityClaim := by
+  rfl
+
+theorem excessive_composition_loss_rejects :
+    evaluateNativeBackendReview excessiveCompositionLossInput =
       Except.error NativeBackendReviewReject.insufficientSecurityClaim := by
   rfl
 

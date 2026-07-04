@@ -28,6 +28,7 @@ structure AccumulatorNote where
   intentDigest : Digest
   approvalCount : Nat
   approvalNullifiers : List Digest
+  approvalSignerTags : List Digest
   approvalLeaves : List Digest
   stateDigest : Digest
 deriving DecidableEq, Repr
@@ -60,6 +61,7 @@ structure FinalSpend where
   intent : SpendIntent
   valueNote : ValueNote
   accumulator : AccumulatorNote
+  approvalTrace : List ApprovalStep
   outputCommitment : Digest
   outputCiphertextHash : Digest
   balanceTag : Digest
@@ -155,7 +157,8 @@ def accumulatorStateDigest (accumulator : AccumulatorNote) : Digest :=
     + accumulator.intentDigest * 107
     + accumulator.approvalCount * 109
     + accumulator.approvalNullifiers.length * 113
-    + accumulator.approvalLeaves.length * 127
+    + accumulator.approvalSignerTags.length * 127
+    + accumulator.approvalLeaves.length * 139
     + 13) % digestMod
 
 def nextAccumulatorForApproval
@@ -172,6 +175,8 @@ def nextAccumulatorForApproval
       approvalCount := prior.approvalCount + 1,
       approvalNullifiers :=
         capability.signerNullifier :: prior.approvalNullifiers,
+      approvalSignerTags :=
+        capability.signerTag :: prior.approvalSignerTags,
       approvalLeaves :=
         approvalLeafDigest intent capability :: prior.approvalLeaves,
       stateDigest := 0 }
@@ -195,6 +200,9 @@ def approvalStepExactIntentAndOneShot (step : ApprovalStep) : Bool :=
     && !digestIn
       step.signerCapability.signerNullifier
       step.priorAccumulator.approvalNullifiers
+    && !digestIn
+      step.signerCapability.signerTag
+      step.priorAccumulator.approvalSignerTags
     && natEq step.priorAccumulator.stateDigest
       (accumulatorStateDigest step.priorAccumulator)
     && accumulatorEq step.nextAccumulator (nextAccumulatorForApproval
@@ -203,6 +211,9 @@ def approvalStepExactIntentAndOneShot (step : ApprovalStep) : Bool :=
     && digestIn
       step.signerCapability.signerNullifier
       step.nextAccumulator.approvalNullifiers
+    && digestIn
+      step.signerCapability.signerTag
+      step.nextAccumulator.approvalSignerTags
 
 def approvalStepAccepted (step : ApprovalStep) : Bool :=
   policyWellFormed step.policy
@@ -212,6 +223,48 @@ def approvalStepAccepted (step : ApprovalStep) : Bool :=
     && natEq step.signerCapability.signerTag step.spendDerivedSignerTag
     && signerInPolicy step.signerCapability step.policy
 
+def initialAccumulatorForIntent (intent : SpendIntent) : AccumulatorNote :=
+  let accumulator : AccumulatorNote :=
+    { accountDigest := intent.accountDigest,
+      policyRoot := intent.policyRoot,
+      intentDigest := intent.intentDigest,
+      approvalCount := 0,
+      approvalNullifiers := [],
+      approvalSignerTags := [],
+      approvalLeaves := [],
+      stateDigest := 0 }
+  { accumulator with stateDigest := accumulatorStateDigest accumulator }
+
+def approvalStepMatchesFinal
+    (policy : PolicyWitness)
+    (intent : SpendIntent)
+    (step : ApprovalStep) : Bool :=
+  if step.policy = policy then
+    if step.intent = intent then
+      true
+    else
+      false
+  else
+    false
+
+def approvalTraceAcceptedFrom
+    (policy : PolicyWitness)
+    (intent : SpendIntent)
+    (current : AccumulatorNote) :
+    List ApprovalStep -> AccumulatorNote -> Bool
+  | [], finalAccumulator =>
+      accumulatorEq current finalAccumulator
+  | step :: rest, finalAccumulator =>
+      approvalStepMatchesFinal policy intent step
+        && accumulatorEq step.priorAccumulator current
+        && approvalStepAccepted step
+        && approvalTraceAcceptedFrom
+          policy
+          intent
+          step.nextAccumulator
+          rest
+          finalAccumulator
+
 def finalSpendAccepted (spend : FinalSpend) : Bool :=
   policyWellFormed spend.policy
     && natEq spend.valueNote.accountDigest spend.intent.accountDigest
@@ -220,6 +273,12 @@ def finalSpendAccepted (spend : FinalSpend) : Bool :=
     && accumulatorMatchesIntent spend.accumulator spend.intent
     && natEq spend.accumulator.stateDigest
       (accumulatorStateDigest spend.accumulator)
+    && approvalTraceAcceptedFrom
+      spend.policy
+      spend.intent
+      (initialAccumulatorForIntent spend.intent)
+      spend.approvalTrace
+      spend.accumulator
     && (spend.policy.threshold <= spend.accumulator.approvalCount)
 
 def publicShapeFromFinalSpend
@@ -277,15 +336,7 @@ def signerSetRootDriftPolicy : PolicyWitness :=
   { basePolicy with signerSetRoot := baseSignerSetRoot + 1 }
 
 def emptyAccumulator : AccumulatorNote :=
-  let acc : AccumulatorNote :=
-    { accountDigest := baseIntent.accountDigest,
-      policyRoot := baseIntent.policyRoot,
-      intentDigest := baseIntent.intentDigest,
-      approvalCount := 0,
-      approvalNullifiers := [],
-      approvalLeaves := [],
-      stateDigest := 0 }
-  { acc with stateDigest := accumulatorStateDigest acc }
+  initialAccumulatorForIntent baseIntent
 
 def signerCapabilityA : SignerCapabilityNote :=
   { policyRoot := basePolicy.policyRoot,
@@ -299,6 +350,12 @@ def signerCapabilityB : SignerCapabilityNote :=
     signerNullifier := 602,
     capabilitySecretCommitment := 702 }
 
+def signerCapabilityAFreshNullifier : SignerCapabilityNote :=
+  { policyRoot := basePolicy.policyRoot,
+    signerTag := 501,
+    signerNullifier := 603,
+    capabilitySecretCommitment := 703 }
+
 def signerCapabilityOutsidePolicy : SignerCapabilityNote :=
   { policyRoot := basePolicy.policyRoot,
     signerTag := 777,
@@ -310,6 +367,14 @@ def oneApprovalAccumulator : AccumulatorNote :=
 
 def twoApprovalAccumulator : AccumulatorNote :=
   nextAccumulatorForApproval oneApprovalAccumulator signerCapabilityB
+
+def firstApprovalStep : ApprovalStep :=
+  { policy := basePolicy,
+    intent := baseIntent,
+    priorAccumulator := emptyAccumulator,
+    signerCapability := signerCapabilityA,
+    spendDerivedSignerTag := signerCapabilityA.signerTag,
+    nextAccumulator := oneApprovalAccumulator }
 
 def validApprovalStep : ApprovalStep :=
   { policy := basePolicy,
@@ -324,6 +389,15 @@ def duplicateSignerStep : ApprovalStep :=
     signerCapability := signerCapabilityA,
     nextAccumulator :=
       nextAccumulatorForApproval oneApprovalAccumulator signerCapabilityA }
+
+def sameSignerFreshNullifierStep : ApprovalStep :=
+  { validApprovalStep with
+    signerCapability := signerCapabilityAFreshNullifier,
+    spendDerivedSignerTag := signerCapabilityAFreshNullifier.signerTag,
+    nextAccumulator :=
+      nextAccumulatorForApproval
+        oneApprovalAccumulator
+        signerCapabilityAFreshNullifier }
 
 def wrongIntentStep : ApprovalStep :=
   { validApprovalStep with intent := otherIntent }
@@ -368,32 +442,67 @@ def wrongValueLockNote : ValueNote :=
 def finalSpendWith
     (policy : PolicyWitness)
     (intent : SpendIntent)
-    (accumulator : AccumulatorNote) : FinalSpend :=
+    (accumulator : AccumulatorNote)
+    (approvalTrace : List ApprovalStep) : FinalSpend :=
   { policy := policy,
     intent := intent,
     valueNote := baseValueNote,
     accumulator := accumulator,
+    approvalTrace := approvalTrace,
     outputCommitment := 1001,
     outputCiphertextHash := 1002,
     balanceTag := 1003 }
 
+def oneApprovalTrace : List ApprovalStep :=
+  [firstApprovalStep]
+
+def twoApprovalTrace : List ApprovalStep :=
+  [firstApprovalStep, validApprovalStep]
+
+def sameSignerFreshNullifierTrace : List ApprovalStep :=
+  [firstApprovalStep, sameSignerFreshNullifierStep]
+
 def belowThresholdFinalSpend : FinalSpend :=
-  finalSpendWith basePolicy baseIntent oneApprovalAccumulator
+  finalSpendWith basePolicy baseIntent oneApprovalAccumulator oneApprovalTrace
 
 def exactThresholdFinalSpend : FinalSpend :=
-  finalSpendWith basePolicy baseIntent twoApprovalAccumulator
+  finalSpendWith basePolicy baseIntent twoApprovalAccumulator twoApprovalTrace
+
+def sameSignerFreshNullifierAccumulator : AccumulatorNote :=
+  nextAccumulatorForApproval
+    oneApprovalAccumulator
+    signerCapabilityAFreshNullifier
+
+def sameSignerFreshNullifierFinalSpend : FinalSpend :=
+  finalSpendWith
+    basePolicy
+    baseIntent
+    sameSignerFreshNullifierAccumulator
+    sameSignerFreshNullifierTrace
 
 def finalIntentMismatchSpend : FinalSpend :=
-  finalSpendWith basePolicy otherIntent twoApprovalAccumulator
+  finalSpendWith basePolicy otherIntent twoApprovalAccumulator twoApprovalTrace
 
 def finalValueLockMismatchSpend : FinalSpend :=
   { exactThresholdFinalSpend with valueNote := wrongValueLockNote }
 
 def zeroThresholdFinalSpend : FinalSpend :=
-  finalSpendWith zeroThresholdPolicy baseIntent twoApprovalAccumulator
+  finalSpendWith zeroThresholdPolicy baseIntent twoApprovalAccumulator twoApprovalTrace
 
 def duplicateSignerPolicyFinalSpend : FinalSpend :=
-  finalSpendWith duplicateSignerPolicy baseIntent twoApprovalAccumulator
+  finalSpendWith duplicateSignerPolicy baseIntent twoApprovalAccumulator twoApprovalTrace
+
+def forgedThresholdAccumulator : AccumulatorNote :=
+  let forged : AccumulatorNote :=
+    { twoApprovalAccumulator with
+      approvalNullifiers := [611, 612],
+      approvalSignerTags := [501, 502],
+      approvalLeaves := [613, 614],
+      stateDigest := 0 }
+  { forged with stateDigest := accumulatorStateDigest forged }
+
+def forgedThresholdFinalSpend : FinalSpend :=
+  finalSpendWith basePolicy baseIntent forgedThresholdAccumulator []
 
 theorem base_policy_well_formed :
     policyWellFormed basePolicy = true := by
@@ -401,6 +510,10 @@ theorem base_policy_well_formed :
 
 theorem valid_approval_step_accepts :
     approvalStepAccepted validApprovalStep = true := by
+  decide
+
+theorem first_approval_step_accepts :
+    approvalStepAccepted firstApprovalStep = true := by
   decide
 
 theorem accepted_approval_step_implies_exact_intent_and_one_shot
@@ -428,6 +541,10 @@ theorem valid_approval_step_exact_intent_and_one_shot :
 
 theorem duplicate_signer_rejected :
     approvalStepAccepted duplicateSignerStep = false := by
+  decide
+
+theorem same_signer_fresh_nullifier_rejected :
+    approvalStepAccepted sameSignerFreshNullifierStep = false := by
   decide
 
 theorem wrong_intent_rejected :
@@ -470,6 +587,14 @@ theorem exact_threshold_final_accepted :
     finalSpendAccepted exactThresholdFinalSpend = true := by
   decide
 
+theorem same_signer_fresh_nullifier_final_rejected :
+    finalSpendAccepted sameSignerFreshNullifierFinalSpend = false := by
+  decide
+
+theorem forged_threshold_final_without_approval_trace_rejected :
+    finalSpendAccepted forgedThresholdFinalSpend = false := by
+  decide
+
 theorem final_intent_mismatch_rejected :
     finalSpendAccepted finalIntentMismatchSpend = false := by
   decide
@@ -508,6 +633,7 @@ theorem public_shape_hides_policy_and_accumulator_private_fields :
             { twoApprovalAccumulator with
               approvalCount := 9,
               approvalNullifiers := [1, 2, 3],
+              approvalSignerTags := [11, 12, 13],
               approvalLeaves := [4, 5, 6],
               policyRoot := 9999 } } := by
   decide

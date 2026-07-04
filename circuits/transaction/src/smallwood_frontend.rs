@@ -932,6 +932,7 @@ fn uses_inline_merkle_auxiliary(arithmetization: SmallwoodArithmetization) -> bo
     matches!(
         arithmetization,
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+            | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
     )
 }
 
@@ -5011,6 +5012,7 @@ fn smallwood_transcript_binding_from_serialized_statement(
         version,
         arithmetization,
     ));
+    bytes.extend_from_slice(&(statement_bytes.len() as u64).to_le_bytes());
     bytes.extend_from_slice(statement_bytes);
     while bytes.len() % 8 != 0 {
         bytes.push(0);
@@ -5267,6 +5269,8 @@ mod tests {
         field_modulus: u64,
         smallwood_spend_authorization_cases: Vec<LeanSmallwoodSpendAuthorizationCase>,
         #[serde(default)]
+        smallwood_auth_input_link_cases: Vec<LeanSmallwoodAuthInputLinkCase>,
+        #[serde(default)]
         smallwood_spend_boundary_cases: Vec<LeanSmallwoodSpendBoundaryCase>,
         #[serde(default)]
         smallwood_output_binding_cases: Vec<LeanSmallwoodOutputBindingCase>,
@@ -5279,6 +5283,14 @@ mod tests {
         previous_commitment_state_limbs: [u64; 4],
         spend_derived_auth_limbs: [u64; 4],
         commitment_auth_limbs: [u64; 4],
+        expected_valid: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodAuthInputLinkCase {
+        name: String,
+        auth_active: bool,
+        input_active_flag: u64,
         expected_valid: bool,
     }
 
@@ -5407,6 +5419,10 @@ mod tests {
                 Felt::from_u64(commitment_auth_limb)
                     == Felt::from_u64(previous_limb) + Felt::from_u64(derived_limb)
             })
+    }
+
+    fn smallwood_auth_input_link_case_accepts(case: &LeanSmallwoodAuthInputLinkCase) -> bool {
+        case.input_active_flag != 1 || case.auth_active
     }
 
     fn smallwood_spend_boundary_case_accepts(case: &LeanSmallwoodSpendBoundaryCase) -> bool {
@@ -6118,6 +6134,18 @@ mod tests {
                 smallwood_active_auth_link_case_accepts(case),
                 case.expected_valid,
                 "Lean SmallWood auth vector case {} disagreed with Rust Goldilocks auth-link check",
+                case.name
+            );
+        }
+        assert!(
+            !vectors.smallwood_auth_input_link_cases.is_empty(),
+            "Lean SmallWood auth/input link vector bundle must contain at least one case"
+        );
+        for case in &vectors.smallwood_auth_input_link_cases {
+            assert_eq!(
+                smallwood_auth_input_link_case_accepts(case),
+                case.expected_valid,
+                "Lean SmallWood auth/input link vector case {} disagreed with Rust selector-link check",
                 case.name
             );
         }
@@ -6848,6 +6876,7 @@ mod tests {
 
         let mut active_binding = None;
         let mut statement_mutation_binding = None;
+        let mut trailing_zero_extension_binding = None;
         let mut version_mutation_profile = None;
         let mut legacy_arith_profile = None;
         let mut covered_arithmetization_tags = std::collections::BTreeSet::new();
@@ -6865,6 +6894,7 @@ mod tests {
             let unpadded = [
                 SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN,
                 profile_material.as_slice(),
+                &(statement_bytes.len() as u64).to_le_bytes(),
                 statement_bytes.as_slice(),
             ]
             .concat();
@@ -6916,6 +6946,9 @@ mod tests {
                 "statement-byte-mutation-changes-binding" => {
                     statement_mutation_binding = Some(transcript)
                 }
+                "trailing-zero-extension-changes-binding" => {
+                    trailing_zero_extension_binding = Some(transcript)
+                }
                 "version-mutation-changes-profile-material" => {
                     version_mutation_profile = Some(profile_material)
                 }
@@ -6949,6 +6982,12 @@ mod tests {
             active_binding,
             statement_mutation_binding.expect("statement mutation transcript vector missing"),
             "statement byte mutation must alter the transcript binding"
+        );
+        assert_ne!(
+            active_binding,
+            trailing_zero_extension_binding
+                .expect("trailing-zero extension transcript vector missing"),
+            "trailing zero extension must alter the transcript binding"
         );
         let active_profile = smallwood_candidate_verifier_profile_material(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,

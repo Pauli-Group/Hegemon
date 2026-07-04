@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use bincode::Options;
 use clap::Parser;
 use codec::{Decode, Encode};
+use consensus::proof_interface::ProofVerifier;
 use consensus::{
     CommitmentTreeState, DaParams, ProofEnvelope, Transaction, TxValidityArtifact,
     COMMITMENT_TREE_DEPTH,
@@ -3791,30 +3792,31 @@ impl NativeNode {
         let expected_header_history = self.header_hashes_to_hash(state.best.hash)?;
         let supply_digest =
             advance_native_supply_digest(state.best.supply_digest, &actions, work.height)?;
-        match evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
-            tx_count_matches: preview_tx_count == work.tx_count,
-            state_root_matches: preview_state_root == work.state_root,
-            kernel_root_matches: preview_kernel_root == work.kernel_root,
-            nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
-            extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
-            message_root_matches: preview_message_root == work.message_root,
-            message_count_matches: preview_message_count == work.message_count,
-            header_mmr_root_matches: work.header_mmr_root
-                == header_mmr_root_from_hashes(&expected_header_history),
-            header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
-            supply_digest_matches: supply_digest == work.supply_digest,
-        }) {
-            Ok(()) => {}
-            Err(
-                rejection @ (NativeBlockCommitmentAdmissionRejection::HeaderMmrRoot
-                | NativeBlockCommitmentAdmissionRejection::HeaderMmrLen),
-            ) => {
-                return Err(native_block_commitment_admission_error(
-                    "native mined block commitment mismatch",
-                    rejection,
-                ));
-            }
-            Err(_) => return Ok(None),
+        let block_commitment_admission =
+            evaluate_native_block_commitment_admission(NativeBlockCommitmentAdmissionInput {
+                tx_count_matches: preview_tx_count == work.tx_count,
+                state_root_matches: preview_state_root == work.state_root,
+                kernel_root_matches: preview_kernel_root == work.kernel_root,
+                nullifier_root_matches: preview_nullifier_root == work.nullifier_root,
+                extrinsics_root_matches: preview_extrinsics_root == work.extrinsics_root,
+                message_root_matches: preview_message_root == work.message_root,
+                message_count_matches: preview_message_count == work.message_count,
+                header_mmr_root_matches: work.header_mmr_root
+                    == header_mmr_root_from_hashes(&expected_header_history),
+                header_mmr_len_matches: work.header_mmr_len == expected_header_history.len() as u64,
+                supply_digest_matches: supply_digest == work.supply_digest,
+            });
+        if let Err(rejection) = block_commitment_admission {
+            return match rejection {
+                NativeBlockCommitmentAdmissionRejection::HeaderMmrRoot
+                | NativeBlockCommitmentAdmissionRejection::HeaderMmrLen => {
+                    Err(native_block_commitment_admission_error(
+                        "native mined block commitment mismatch",
+                        rejection,
+                    ))
+                }
+                _ => Ok(None),
+            };
         }
         let (fee_total, has_coinbase) = native_block_replay_supply_parts(&actions, work.height)?;
         evaluate_native_block_replay_refinement_for_actions(
@@ -4648,7 +4650,7 @@ impl NativeNode {
             ciphertext_archive_entries,
         } = canonical_index_plan;
 
-        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+        let reorg_commit_trees = (
             &self.meta_tree,
             &self.height_tree,
             &self.block_tree,
@@ -4659,8 +4661,9 @@ impl NativeNode {
             &self.ciphertext_archive_tree,
             &self.da_ciphertext_tree,
             &self.action_tree,
-        )
-            .transaction(
+        );
+        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+            reorg_commit_trees.transaction(
                 |(
                     meta_tree,
                     height_tree,
@@ -4761,14 +4764,15 @@ impl NativeNode {
             ciphertext_archive_entries,
         } = canonical_index_plan;
 
-        let repair_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+        let canonical_index_repair_trees = (
             &self.commitment_tree,
             &self.nullifier_tree,
             &self.bridge_inbound_tree,
             &self.ciphertext_index_tree,
             &self.ciphertext_archive_tree,
-        )
-            .transaction(
+        );
+        let repair_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+            canonical_index_repair_trees.transaction(
                 |(
                     commitment_tree,
                     nullifier_tree,
@@ -4902,7 +4906,7 @@ impl NativeNode {
         let block_record = bincode::serialize(meta)?;
         let best_record = block_record.clone();
         let height_key = height_key(meta.height);
-        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+        let mined_block_commit_trees = (
             &self.meta_tree,
             &self.height_tree,
             &self.block_tree,
@@ -4913,8 +4917,9 @@ impl NativeNode {
             &self.ciphertext_archive_tree,
             &self.da_ciphertext_tree,
             &self.action_tree,
-        )
-            .transaction(
+        );
+        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
+            mined_block_commit_trees.transaction(
                 |(
                     meta_tree,
                     height_tree,
@@ -5597,19 +5602,18 @@ impl NativeNode {
             } else {
                 Vec::new()
             };
+            let action_and_proof_trees = (&self.action_tree, &self.da_proof_tree);
             let stage_result: sled::transaction::TransactionResult<(), std::convert::Infallible> =
-                (&self.action_tree, &self.da_proof_tree).transaction(
-                    |(action_tree, da_proof_tree)| {
-                        for hash in &dropped_candidates {
-                            action_tree.remove(hash.as_slice())?;
-                        }
-                        action_tree.insert(pending.tx_hash.as_slice(), pending_encoded.clone())?;
-                        if let Some((binding_hash, _)) = &consumed_staged_proof {
-                            da_proof_tree.remove(binding_hash.to_vec())?;
-                        }
-                        Ok(())
-                    },
-                );
+                action_and_proof_trees.transaction(|(action_tree, da_proof_tree)| {
+                    for hash in &dropped_candidates {
+                        action_tree.remove(hash.as_slice())?;
+                    }
+                    action_tree.insert(pending.tx_hash.as_slice(), pending_encoded.clone())?;
+                    if let Some((binding_hash, _)) = &consumed_staged_proof {
+                        da_proof_tree.remove(binding_hash.to_vec())?;
+                    }
+                    Ok(())
+                });
             stage_result
                 .map_err(|err| anyhow!("atomic native pending action stage failed: {err}"))?;
             self.flush_native_durability_barrier(
@@ -14660,13 +14664,8 @@ fn verify_native_block_artifacts_locked(
     let backend_inputs =
         consensus::proof_interface::BlockBackendInputs::from_tx_validity_artifacts(artifacts);
     let verifier = consensus::proof::ParallelProofVerifier::new();
-    let verified_tree =
-        <consensus::proof::ParallelProofVerifier as consensus::proof_interface::ProofVerifier>::verify_block_with_backend(
-            &verifier,
-            &block,
-            Some(&backend_inputs),
-            &state.commitment_tree,
-        )
+    let verified_tree = verifier
+        .verify_block_with_backend(&block, Some(&backend_inputs), &state.commitment_tree)
         .map_err(|err| anyhow!("native recursive block verification failed: {err}"))?;
     if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
         NativeCandidateArtifactBindingAdmissionInput {
@@ -25372,7 +25371,9 @@ mod tests {
 
     fn verify_lean_sync_codec_case(case: &LeanSyncCodecCase) {
         assert_eq!(
-            case.bounded_wire_decode_accepts && case.consumed_all_bytes,
+            case.bounded_wire_decode_accepts
+                && case.consumed_all_bytes
+                && !case.legacy_bincode_payload,
             case.expected_valid,
             "{} Lean sync codec predicate fields disagree with expected validity",
             case.name
@@ -25405,6 +25406,8 @@ mod tests {
         let actual = decode_sync_message(&payload);
         let actual_rejection = if actual.is_ok() {
             None
+        } else if case.legacy_bincode_payload {
+            Some("legacy_bincode_payload".to_owned())
         } else if case.fixture == "valid_request_trailing" {
             Some("trailing_bytes".to_owned())
         } else {

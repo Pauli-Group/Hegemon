@@ -3407,8 +3407,8 @@ mod tests {
         value_balance_sign: u8,
         value_balance_magnitude: u64,
         balance_tag_seed: u64,
-        circuit_version: u16,
-        crypto_suite: u16,
+        circuit_version: u64,
+        crypto_suite: u64,
         stablecoin_enabled: u8,
         stablecoin_asset: u64,
         stablecoin_policy_hash_seed: u64,
@@ -3416,7 +3416,7 @@ mod tests {
         stablecoin_attestation_commitment_seed: u64,
         stablecoin_issuance_sign: u8,
         stablecoin_issuance_magnitude: u64,
-        stablecoin_policy_version: u32,
+        stablecoin_policy_version: u64,
         expected_preimage_hex: String,
         expected_valid: bool,
     }
@@ -3458,8 +3458,10 @@ mod tests {
         )
     }
 
-    fn statement_hash_tx_from_case(case: &LeanStatementHashCase) -> crate::types::Transaction {
-        crate::types::Transaction::new_with_hashes(
+    fn statement_hash_tx_from_case(
+        case: &LeanStatementHashCase,
+    ) -> Result<crate::types::Transaction, String> {
+        Ok(crate::types::Transaction::new_with_hashes(
             case.nullifier_seeds
                 .iter()
                 .copied()
@@ -3471,19 +3473,26 @@ mod tests {
                 .map(patterned_bytes48)
                 .collect(),
             patterned_bytes48(case.balance_tag_seed),
-            VersionBinding::new(case.circuit_version, case.crypto_suite),
+            VersionBinding::new(
+                case.circuit_version
+                    .try_into()
+                    .map_err(|_| "circuit version overflow".to_owned())?,
+                case.crypto_suite
+                    .try_into()
+                    .map_err(|_| "crypto suite overflow".to_owned())?,
+            ),
             case.ciphertext_hash_seeds
                 .iter()
                 .copied()
                 .map(patterned_bytes48)
                 .collect(),
-        )
+        ))
     }
 
     fn statement_hash_stark_inputs_from_case(
         case: &LeanStatementHashCase,
-    ) -> SerializedStarkInputs {
-        SerializedStarkInputs {
+    ) -> Result<SerializedStarkInputs, String> {
+        Ok(SerializedStarkInputs {
             input_flags: vec![1, 0],
             output_flags: vec![1, 0],
             fee: case.fee,
@@ -3493,7 +3502,10 @@ mod tests {
             balance_slot_asset_ids: vec![0, 7, u64::MAX, u64::MAX],
             stablecoin_enabled: case.stablecoin_enabled,
             stablecoin_asset_id: case.stablecoin_asset,
-            stablecoin_policy_version: case.stablecoin_policy_version,
+            stablecoin_policy_version: case
+                .stablecoin_policy_version
+                .try_into()
+                .map_err(|_| "stablecoin policy version overflow".to_owned())?,
             stablecoin_issuance_sign: case.stablecoin_issuance_sign,
             stablecoin_issuance_magnitude: case.stablecoin_issuance_magnitude,
             stablecoin_policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
@@ -3501,7 +3513,7 @@ mod tests {
             stablecoin_attestation_commitment: patterned_bytes48(
                 case.stablecoin_attestation_commitment_seed,
             ),
-        }
+        })
     }
 
     fn patterned_bytes48(seed: u64) -> [u8; 48] {
@@ -4275,7 +4287,11 @@ mod tests {
     fn verify_lean_statement_hash_case(case: &LeanStatementHashCase) {
         let tx = statement_hash_tx_from_case(case);
         let stark_inputs = statement_hash_stark_inputs_from_case(case);
-        let actual_hash = statement_hash_from_tx_and_stark_inputs(&tx, &stark_inputs);
+        let actual_hash = match (&tx, &stark_inputs) {
+            (Ok(tx), Ok(stark_inputs)) => statement_hash_from_tx_and_stark_inputs(tx, stark_inputs)
+                .map_err(|err| format!("{err:?}")),
+            (Err(err), _) | (_, Err(err)) => Err(err.clone()),
+        };
         assert_eq!(
             actual_hash.is_ok(),
             case.expected_valid,
@@ -4283,18 +4299,18 @@ mod tests {
             case.name
         );
 
-        let value_balance = decode_signed_magnitude(
-            stark_inputs.value_balance_sign,
-            stark_inputs.value_balance_magnitude,
-            "value_balance",
-        );
-        let stablecoin_issuance = decode_signed_magnitude(
-            stark_inputs.stablecoin_issuance_sign,
-            stark_inputs.stablecoin_issuance_magnitude,
-            "stablecoin_issuance",
-        );
-        let actual_preimage = match (value_balance, stablecoin_issuance) {
-            (Ok(value_balance), Ok(stablecoin_issuance)) => {
+        let actual_preimage = match (&tx, &stark_inputs) {
+            (Ok(tx), Ok(stark_inputs)) => (|| {
+                let value_balance = decode_signed_magnitude(
+                    stark_inputs.value_balance_sign,
+                    stark_inputs.value_balance_magnitude,
+                    "value_balance",
+                )?;
+                let stablecoin_issuance = decode_signed_magnitude(
+                    stark_inputs.stablecoin_issuance_sign,
+                    stark_inputs.stablecoin_issuance_magnitude,
+                    "stablecoin_issuance",
+                )?;
                 crate::backend_interface::transaction_statement_preimage_from_parts(
                     &stark_inputs.merkle_root,
                     &tx.nullifiers,
@@ -4313,10 +4329,9 @@ mod tests {
                     stablecoin_issuance,
                     stark_inputs.stablecoin_policy_version,
                 )
-            }
-            (Err(message), _) | (_, Err(message)) => {
-                Err(transaction_circuit::TransactionCircuitError::ConstraintViolationOwned(message))
-            }
+                .map_err(|err| format!("{err:?}"))
+            })(),
+            (Err(err), _) | (_, Err(err)) => Err(err.clone()),
         };
         assert_eq!(
             actual_preimage.is_ok(),

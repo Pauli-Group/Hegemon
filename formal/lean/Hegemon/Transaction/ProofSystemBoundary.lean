@@ -43,8 +43,9 @@ structure CanonicalDeployedVerifierBoundaryFacts
       balanceWitness
       slots
   wrapperPreconditions : proofWrapperPreconditions wrapper = true
-  publicBindingValid :
-    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicBindingExact :
+    PublicInputBinding.bindPublicInputs publicFields serializedFields =
+      some bound
   publicShapeValid : validPublicInputShape shape = true
   statementLength :
     statementBytes.length = StatementHash.expectedPreimageLength
@@ -123,8 +124,9 @@ structure CanonicalDeployedVerifierSpendBoundaryFacts
       ∧ shape.inputFlags.length = spendWitnesses.length
   wrapperPreconditions : proofWrapperPreconditions wrapper = true
   wrapperSurface : acceptedProofWrapperSurface wrapper
-  publicBindingValid :
-    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicBindingExact :
+    PublicInputBinding.bindPublicInputs publicFields serializedFields =
+      some bound
   publicShapeValid : validPublicInputShape shape = true
   statementLength :
     statementBytes.length = StatementHash.expectedPreimageLength
@@ -174,8 +176,9 @@ structure CanonicalDeployedVerifierBalancePublicBoundaryFacts
         publicAuthorizedAssetDeltaValue publicFields assetId
   wrapperPreconditions : proofWrapperPreconditions wrapper = true
   wrapperSurface : acceptedProofWrapperSurface wrapper
-  publicBindingValid :
-    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicBindingExact :
+    PublicInputBinding.bindPublicInputs publicFields serializedFields =
+      some bound
   publicShapeValid : validPublicInputShape shape = true
   statementLength :
     statementBytes.length = StatementHash.expectedPreimageLength
@@ -495,8 +498,9 @@ structure CanonicalProofArtifactAdmissionStatementCertificate
   metadataProjectionSurface :
     acceptedProofWrapperMetadataProjectionSurface
       (metadataProjectionFromAdmissionInput wrapper)
-  publicBindingValid :
-    PublicInputBinding.validBinding publicFields serializedFields = true
+  publicBindingExact :
+    PublicInputBinding.bindPublicInputs publicFields serializedFields =
+      some bound
   publicShapeValid : validPublicInputShape shape = true
   statementLength :
     statementBytes.length = StatementHash.expectedPreimageLength
@@ -576,8 +580,7 @@ theorem accepted_canonical_statement_surface_with_balance_soundness_implies_proo
       metadataProjectionSurface :=
         proofWrapperAccepts_implies_no_metadata_projection_or_row_extension
           surface.accepted,
-      publicBindingValid :=
-        canonical_statement_surface_public_binding_valid surface,
+      publicBindingExact := surface.publicBinding,
       publicShapeValid :=
         canonical_statement_surface_public_shape_valid surface,
       statementLength :=
@@ -658,8 +661,7 @@ theorem deployed_soundness_canonical_surface_implies_boundary_facts
       sound
   wrapperPreconditions :=
     canonical_statement_surface_wrapper_preconditions surface
-  publicBindingValid :=
-    canonical_statement_surface_public_binding_valid surface
+  publicBindingExact := surface.publicBinding
   publicShapeValid :=
     canonical_statement_surface_public_shape_valid surface
   statementLength :=
@@ -741,8 +743,7 @@ theorem spend_soundness_canonical_surface_implies_spend_boundary_facts
         canonical_statement_surface_wrapper_preconditions surface,
       wrapperSurface :=
         canonical_statement_surface_statement_surface surface,
-      publicBindingValid :=
-        canonical_statement_surface_public_binding_valid surface,
+      publicBindingExact := surface.publicBinding,
       publicShapeValid :=
         canonical_statement_surface_public_shape_valid surface,
       statementLength :=
@@ -825,8 +826,7 @@ theorem balance_public_soundness_canonical_surface_implies_balance_public_bounda
         canonical_statement_surface_wrapper_preconditions surface,
       wrapperSurface :=
         canonical_statement_surface_statement_surface surface,
-      publicBindingValid :=
-        canonical_statement_surface_public_binding_valid surface,
+      publicBindingExact := surface.publicBinding,
       publicShapeValid :=
         canonical_statement_surface_public_shape_valid surface,
       statementLength :=
@@ -925,7 +925,7 @@ theorem canonical_split_boundary_facts_imply_full_boundary_facts
           spendFacts.publicShapeValid,
           spendFacts.inputSlotsAuthorized⟩,
       wrapperPreconditions := spendFacts.wrapperPreconditions,
-      publicBindingValid := spendFacts.publicBindingValid,
+      publicBindingExact := spendFacts.publicBindingExact,
       publicShapeValid := spendFacts.publicShapeValid,
       statementLength := spendFacts.statementLength,
       statementPreimage := spendFacts.statementPreimage,

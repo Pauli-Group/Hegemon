@@ -155,6 +155,32 @@ structure ActiveInputSpendBoundarySurface where
   merklePathAccepted : Bool
 deriving DecidableEq, Repr
 
+def activeAuthLinkedToInputSpend
+    (authSurface : ActiveAuthLinkSurface)
+    (inputSpendSurface : ActiveInputSpendBoundarySurface) : Bool :=
+  if inputSpendSurface.activeFlag = 1 then authSurface.active else true
+
+theorem active_auth_linked_to_input_spend_implies_auth_active
+    {authSurface : ActiveAuthLinkSurface}
+    {inputSpendSurface : ActiveInputSpendBoundarySurface}
+    (linked :
+      activeAuthLinkedToInputSpend authSurface inputSpendSurface = true)
+    (activeInput : inputSpendSurface.activeFlag = 1) :
+    authSurface.active = true := by
+  unfold activeAuthLinkedToInputSpend at linked
+  rw [activeInput] at linked
+  exact linked
+
+theorem active_auth_linked_to_active_input_rejects_inactive_auth
+    {authSurface : ActiveAuthLinkSurface}
+    {inputSpendSurface : ActiveInputSpendBoundarySurface}
+    (activeInput : inputSpendSurface.activeFlag = 1)
+    (inactiveAuth : authSurface.active = false) :
+    activeAuthLinkedToInputSpend authSurface inputSpendSurface = false := by
+  unfold activeAuthLinkedToInputSpend
+  rw [activeInput, inactiveAuth]
+  rfl
+
 def activeInputSpendBoundaryAccepted
     (surface : ActiveInputSpendBoundarySurface) : Bool :=
   if surface.activeFlag = 1 then

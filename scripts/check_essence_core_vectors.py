@@ -21,6 +21,7 @@ REQUIRED_THEOREMS = [
     "Hegemon.Essence.Core.transition_bridge_safety",
     "Hegemon.Essence.Core.transition_privacy_projection",
     "Hegemon.Essence.Core.transition_encoding_no_truncation",
+    "Hegemon.Essence.Core.transition_asset_balance_invariants",
     "Hegemon.Essence.Core.transition_nullifiers_unique_derived",
     "Hegemon.Essence.Core.transition_bridge_replay_keys_unique_derived",
     "Hegemon.Essence.Core.action_chain_supply_integrity",

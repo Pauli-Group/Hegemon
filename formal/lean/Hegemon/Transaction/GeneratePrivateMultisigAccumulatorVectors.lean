@@ -34,6 +34,8 @@ def accumulatorJson (accumulator : AccumulatorNote) : String :=
     ++ "\"approval_count\": " ++ toString accumulator.approvalCount ++ ", "
     ++ "\"approval_nullifiers\": "
     ++ natListJson accumulator.approvalNullifiers ++ ", "
+    ++ "\"approval_signer_tags\": "
+    ++ natListJson accumulator.approvalSignerTags ++ ", "
     ++ "\"approval_leaves\": "
     ++ natListJson accumulator.approvalLeaves ++ ", "
     ++ "\"state_digest\": " ++ toString accumulator.stateDigest
@@ -74,6 +76,23 @@ def approvalCaseJson (name : String) (step : ApprovalStep) : String :=
     ++ boolJson (approvalStepAccepted step) ++ "\n"
     ++ "    }"
 
+def approvalStepJson (step : ApprovalStep) : String :=
+  "{"
+    ++ "\"policy\": " ++ policyJson step.policy ++ ", "
+    ++ "\"intent\": " ++ intentJson step.intent ++ ", "
+    ++ "\"prior_accumulator\": "
+    ++ accumulatorJson step.priorAccumulator ++ ", "
+    ++ "\"signer_capability\": "
+    ++ capabilityJson step.signerCapability ++ ", "
+    ++ "\"spend_derived_signer_tag\": "
+    ++ toString step.spendDerivedSignerTag ++ ", "
+    ++ "\"next_accumulator\": "
+    ++ accumulatorJson step.nextAccumulator
+    ++ "}"
+
+def approvalTraceJson (trace : List ApprovalStep) : String :=
+  "[" ++ String.intercalate ", " (trace.map approvalStepJson) ++ "]"
+
 def finalCaseJson (name : String) (spend : FinalSpend) : String :=
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
@@ -83,6 +102,8 @@ def finalCaseJson (name : String) (spend : FinalSpend) : String :=
     ++ "      \"value_note\": " ++ valueNoteJson spend.valueNote ++ ",\n"
     ++ "      \"accumulator\": "
     ++ accumulatorJson spend.accumulator ++ ",\n"
+    ++ "      \"approval_trace\": "
+    ++ approvalTraceJson spend.approvalTrace ++ ",\n"
     ++ "      \"output_commitment\": "
     ++ toString spend.outputCommitment ++ ",\n"
     ++ "      \"output_ciphertext_hash\": "
@@ -102,7 +123,7 @@ def vectorJson : String :=
     ++ "  \"private_fields\": ["
     ++ "\"signer_set_root\", \"threshold\", \"approval_count\", "
     ++ "\"approval_leaves\", \"policy_root\", \"approval_nullifiers\", "
-    ++ "\"signer_tags\", \"spend_derived_signer_tag\", "
+    ++ "\"approval_signer_tags\", \"signer_tags\", \"spend_derived_signer_tag\", "
     ++ "\"value_lock_digest\""
     ++ "],\n"
     ++ "  \"public_shape_fields\": ["
@@ -113,6 +134,8 @@ def vectorJson : String :=
     ++ approvalCaseJson "valid-approval-step" validApprovalStep ++ ",\n"
     ++ approvalCaseJson "duplicate-signer-rejected" duplicateSignerStep
     ++ ",\n"
+    ++ approvalCaseJson "same-signer-fresh-nullifier-rejected"
+      sameSignerFreshNullifierStep ++ ",\n"
     ++ approvalCaseJson "wrong-intent-rejected" wrongIntentStep ++ ",\n"
     ++ approvalCaseJson "wrong-policy-rejected" wrongPolicyStep ++ ",\n"
     ++ approvalCaseJson "outside-policy-signer-rejected"
@@ -134,6 +157,12 @@ def vectorJson : String :=
     ++ finalCaseJson
       "exact-threshold-final-accepted"
       exactThresholdFinalSpend ++ ",\n"
+    ++ finalCaseJson
+      "same-signer-fresh-nullifier-final-rejected"
+      sameSignerFreshNullifierFinalSpend ++ ",\n"
+    ++ finalCaseJson
+      "forged-threshold-final-without-approval-trace-rejected"
+      forgedThresholdFinalSpend ++ ",\n"
     ++ finalCaseJson
       "final-intent-mismatch-rejected"
       finalIntentMismatchSpend ++ ",\n"

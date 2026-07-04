@@ -37,6 +37,15 @@ def digestBytes (seed : Nat) : List Byte :=
 def zeroDigestBytes : List Byte :=
   List.replicate digestWidth 0
 
+def ltPow2 (bits value : Nat) : Bool :=
+  value < 2 ^ bits
+
+def isU8 (value : Nat) : Bool := ltPow2 8 value
+def isU16 (value : Nat) : Bool := ltPow2 16 value
+def isU32 (value : Nat) : Bool := ltPow2 32 value
+def isU64 (value : Nat) : Bool := ltPow2 64 value
+def isI128Magnitude (value : Nat) : Bool := value < 2 ^ 127
+
 def digestSeedsBytes : List Nat -> List Byte
   | [] => []
   | seed :: rest => digestBytes seed ++ digestSeedsBytes rest
@@ -67,33 +76,46 @@ def i128le (value : Int) : List Byte :=
       Int.toNat value
   u128le encoded
 
+def statementFieldsCanonical (fields : StatementFields) : Bool :=
+  isU64 fields.fee
+    && isI128Magnitude fields.valueBalanceMagnitude
+    && isU16 fields.circuitVersion
+    && isU16 fields.cryptoSuite
+    && isU8 fields.stablecoinEnabled
+    && isU64 fields.stablecoinAsset
+    && isI128Magnitude fields.stablecoinIssuanceMagnitude
+    && isU32 fields.stablecoinPolicyVersion
+
 def statementPreimage (fields : StatementFields) : Option (List Byte) :=
-  match paddedDigests maxInputs fields.nullifierSeeds,
-      paddedDigests maxOutputs fields.commitmentSeeds,
-      paddedDigests maxOutputs fields.ciphertextHashSeeds,
-      decodeSignedMagnitude fields.valueBalanceSign fields.valueBalanceMagnitude,
-      decodeSignedMagnitude fields.stablecoinIssuanceSign fields.stablecoinIssuanceMagnitude with
-  | some nullifiers, some commitments, some ciphertextHashes, some valueBalance,
-      some stablecoinIssuance =>
-      some <|
-        statementHashDomain
-          ++ digestBytes fields.merkleRootSeed
-          ++ nullifiers
-          ++ commitments
-          ++ ciphertextHashes
-          ++ u64le fields.fee
-          ++ i128le valueBalance
-          ++ digestBytes fields.balanceTagSeed
-          ++ u16le fields.circuitVersion
-          ++ u16le fields.cryptoSuite
-          ++ [byte fields.stablecoinEnabled]
-          ++ u64le fields.stablecoinAsset
-          ++ digestBytes fields.stablecoinPolicyHashSeed
-          ++ digestBytes fields.stablecoinOracleCommitmentSeed
-          ++ digestBytes fields.stablecoinAttestationCommitmentSeed
-          ++ i128le stablecoinIssuance
-          ++ u32le fields.stablecoinPolicyVersion
-  | _, _, _, _, _ => none
+  if statementFieldsCanonical fields then
+    match paddedDigests maxInputs fields.nullifierSeeds,
+        paddedDigests maxOutputs fields.commitmentSeeds,
+        paddedDigests maxOutputs fields.ciphertextHashSeeds,
+        decodeSignedMagnitude fields.valueBalanceSign fields.valueBalanceMagnitude,
+        decodeSignedMagnitude fields.stablecoinIssuanceSign fields.stablecoinIssuanceMagnitude with
+    | some nullifiers, some commitments, some ciphertextHashes, some valueBalance,
+        some stablecoinIssuance =>
+        some <|
+          statementHashDomain
+            ++ digestBytes fields.merkleRootSeed
+            ++ nullifiers
+            ++ commitments
+            ++ ciphertextHashes
+            ++ u64le fields.fee
+            ++ i128le valueBalance
+            ++ digestBytes fields.balanceTagSeed
+            ++ u16le fields.circuitVersion
+            ++ u16le fields.cryptoSuite
+            ++ [byte fields.stablecoinEnabled]
+            ++ u64le fields.stablecoinAsset
+            ++ digestBytes fields.stablecoinPolicyHashSeed
+            ++ digestBytes fields.stablecoinOracleCommitmentSeed
+            ++ digestBytes fields.stablecoinAttestationCommitmentSeed
+            ++ i128le stablecoinIssuance
+            ++ u32le fields.stablecoinPolicyVersion
+    | _, _, _, _, _ => none
+  else
+    none
 
 def publicInputsDigestDomain : List Byte := asciiBytes "tx-public-inputs-digest-v1"
 
@@ -205,6 +227,15 @@ def stablecoinFields : StatementFields :=
     stablecoinIssuanceSign := 1
     stablecoinIssuanceMagnitude := 13
     stablecoinPolicyVersion := 4 }
+
+def overwidthFeeFields : StatementFields :=
+  { validFields with fee := 2 ^ 64 }
+
+def overwidthCircuitVersionFields : StatementFields :=
+  { validFields with circuitVersion := 2 ^ 16 }
+
+def overwidthStablecoinPolicyVersionFields : StatementFields :=
+  { stablecoinFields with stablecoinPolicyVersion := 2 ^ 32 }
 
 def validSerializedPublicInputs : SerializedPublicInputsFields :=
   { inputFlags := [1, 0]
@@ -320,33 +351,36 @@ theorem statementPreimage_length_of_some {fields : StatementFields} {bytes : Lis
     (h : statementPreimage fields = some bytes) :
     bytes.length = expectedPreimageLength := by
   unfold statementPreimage at h
-  cases hn : paddedDigests PublicInputs.maxInputs fields.nullifierSeeds with
-  | none => simp [hn] at h
-  | some nullifiers =>
-      cases hc : paddedDigests PublicInputs.maxOutputs fields.commitmentSeeds with
-      | none => simp [hn, hc] at h
-      | some commitments =>
-          cases hct : paddedDigests PublicInputs.maxOutputs fields.ciphertextHashSeeds with
-          | none => simp [hn, hc, hct] at h
-          | some ciphertextHashes =>
-              cases hv : decodeSignedMagnitude fields.valueBalanceSign fields.valueBalanceMagnitude with
-              | none => simp [hn, hc, hct, hv] at h
-              | some valueBalance =>
-                  cases hs :
-                      decodeSignedMagnitude
-                        fields.stablecoinIssuanceSign
-                        fields.stablecoinIssuanceMagnitude with
-                  | none => simp [hn, hc, hct, hv, hs] at h
-                  | some stablecoinIssuance =>
-                      simp [hn, hc, hct, hv, hs] at h
-                      rw [← h]
-                      have hnLen := paddedDigests_length hn
-                      have hcLen := paddedDigests_length hc
-                      have hctLen := paddedDigests_length hct
-                      simp only [List.length_append, List.length_cons,
-                        statementHashDomain_length, digestBytes_length, hnLen, hcLen,
-                        hctLen, u16le_length, u32le_length, u64le_length, i128le_length]
-                      decide
+  cases hf : statementFieldsCanonical fields
+  · simp [hf] at h
+  · simp [hf] at h
+    cases hn : paddedDigests PublicInputs.maxInputs fields.nullifierSeeds with
+    | none => simp [hn] at h
+    | some nullifiers =>
+        cases hc : paddedDigests PublicInputs.maxOutputs fields.commitmentSeeds with
+        | none => simp [hn, hc] at h
+        | some commitments =>
+            cases hct : paddedDigests PublicInputs.maxOutputs fields.ciphertextHashSeeds with
+            | none => simp [hn, hc, hct] at h
+            | some ciphertextHashes =>
+                cases hv : decodeSignedMagnitude fields.valueBalanceSign fields.valueBalanceMagnitude with
+                | none => simp [hn, hc, hct, hv] at h
+                | some valueBalance =>
+                    cases hs :
+                        decodeSignedMagnitude
+                          fields.stablecoinIssuanceSign
+                          fields.stablecoinIssuanceMagnitude with
+                    | none => simp [hn, hc, hct, hv, hs] at h
+                    | some stablecoinIssuance =>
+                        simp [hn, hc, hct, hv, hs] at h
+                        rw [← h]
+                        have hnLen := paddedDigests_length hn
+                        have hcLen := paddedDigests_length hc
+                        have hctLen := paddedDigests_length hct
+                        simp only [List.length_append, List.length_cons,
+                          statementHashDomain_length, digestBytes_length, hnLen, hcLen,
+                          hctLen, u16le_length, u32le_length, u64le_length, i128le_length]
+                        decide
 
 theorem statementPreimage_accepts_valid :
     (statementPreimage validFields).isSome = true := by
@@ -399,6 +433,18 @@ theorem statementPreimage_rejects_bad_value_balance_sign :
 
 theorem statementPreimage_rejects_bad_stablecoin_issuance_sign :
     statementPreimage { stablecoinFields with stablecoinIssuanceSign := 2 } = none := by
+  decide
+
+theorem statementPreimage_rejects_overwidth_fee :
+    statementPreimage overwidthFeeFields = none := by
+  decide
+
+theorem statementPreimage_rejects_overwidth_circuit_version :
+    statementPreimage overwidthCircuitVersionFields = none := by
+  decide
+
+theorem statementPreimage_rejects_overwidth_stablecoin_policy_version :
+    statementPreimage overwidthStablecoinPolicyVersionFields = none := by
   decide
 
 end StatementHash

@@ -4,6 +4,7 @@ namespace CodecAdmission
 
 inductive SyncDecodeReject where
   | wireDecodeRejected
+  | legacyBincodePayload
   | trailingBytes
 deriving DecidableEq, Repr
 
@@ -16,6 +17,8 @@ deriving DecidableEq, Repr
 def evaluateSyncDecodeRejection (input : SyncDecodeInput) : Option SyncDecodeReject :=
   if input.boundedWireDecodeAccepts = false then
     some SyncDecodeReject.wireDecodeRejected
+  else if input.legacyBincodePayload = true then
+    some SyncDecodeReject.legacyBincodePayload
   else if input.consumedAllBytes = false then
     some SyncDecodeReject.trailingBytes
   else
@@ -25,7 +28,9 @@ def syncDecodeAccepts (input : SyncDecodeInput) : Bool :=
   evaluateSyncDecodeRejection input = none
 
 def syncDecodePreconditions (input : SyncDecodeInput) : Bool :=
-  input.boundedWireDecodeAccepts && input.consumedAllBytes
+  input.boundedWireDecodeAccepts
+    && input.consumedAllBytes
+    && !input.legacyBincodePayload
 
 theorem sync_accepts_iff_preconditions
     {input : SyncDecodeInput} :
@@ -52,17 +57,41 @@ theorem sync_rejects_wire_decode_failure
 theorem sync_rejects_trailing_bytes
     {input : SyncDecodeInput}
     (wireAccepted : input.boundedWireDecodeAccepts = true)
+    (notLegacy : input.legacyBincodePayload = false)
     (hasTrailing : input.consumedAllBytes = false) :
     evaluateSyncDecodeRejection input =
       some SyncDecodeReject.trailingBytes := by
   unfold evaluateSyncDecodeRejection
-  simp [wireAccepted, hasTrailing]
+  simp [wireAccepted, notLegacy, hasTrailing]
+
+theorem sync_rejects_legacy_bincode_payload
+    {input : SyncDecodeInput}
+    (wireAccepted : input.boundedWireDecodeAccepts = true)
+    (legacy : input.legacyBincodePayload = true) :
+    evaluateSyncDecodeRejection input =
+      some SyncDecodeReject.legacyBincodePayload := by
+  unfold evaluateSyncDecodeRejection
+  simp [wireAccepted, legacy]
 
 theorem sync_decode_acceptance_excludes_malleability
     {input : SyncDecodeInput}
     (accepted : syncDecodeAccepts input = true) :
     input.boundedWireDecodeAccepts = true ∧
       input.consumedAllBytes = true := by
+  cases input with
+  | mk boundedWireDecodeAccepts consumedAllBytes legacyBincodePayload =>
+      cases boundedWireDecodeAccepts <;>
+        cases consumedAllBytes <;>
+        cases legacyBincodePayload <;>
+        simp [
+          syncDecodeAccepts,
+          evaluateSyncDecodeRejection
+        ] at accepted ⊢
+
+theorem sync_decode_acceptance_excludes_legacy_bincode
+    {input : SyncDecodeInput}
+    (accepted : syncDecodeAccepts input = true) :
+    input.legacyBincodePayload = false := by
   cases input with
   | mk boundedWireDecodeAccepts consumedAllBytes legacyBincodePayload =>
       cases boundedWireDecodeAccepts <;>
@@ -510,9 +539,15 @@ structure CanonicalDecodeNonMalleabilityFacts
         some SyncDecodeReject.wireDecodeRejected
   syncTrailingRejects :
     syncInput.boundedWireDecodeAccepts = true ->
+      syncInput.legacyBincodePayload = false ->
       syncInput.consumedAllBytes = false ->
         evaluateSyncDecodeRejection syncInput =
           some SyncDecodeReject.trailingBytes
+  syncLegacyBincodeRejects :
+    syncInput.boundedWireDecodeAccepts = true ->
+      syncInput.legacyBincodePayload = true ->
+        evaluateSyncDecodeRejection syncInput =
+          some SyncDecodeReject.legacyBincodePayload
   actionCountMismatchRejects :
     actionCountMatches actionInput = false ->
       evaluateBlockActionDecodeRejection actionInput =
@@ -560,8 +595,11 @@ theorem canonical_decode_non_malleability_facts
       fun wireRejected =>
         sync_rejects_wire_decode_failure wireRejected
     syncTrailingRejects :=
-      fun wireAccepted hasTrailing =>
-        sync_rejects_trailing_bytes wireAccepted hasTrailing
+      fun wireAccepted notLegacy hasTrailing =>
+        sync_rejects_trailing_bytes wireAccepted notLegacy hasTrailing
+    syncLegacyBincodeRejects :=
+      fun wireAccepted legacy =>
+        sync_rejects_legacy_bincode_payload wireAccepted legacy
     actionCountMismatchRejects :=
       fun countMismatch =>
         block_action_decode_rejects_count_mismatch countMismatch
@@ -647,9 +685,8 @@ theorem valid_sync_accepts :
 theorem legacy_bincode_sync_rejects :
     evaluateSyncDecodeRejection
       { validSync with
-        boundedWireDecodeAccepts := false,
         legacyBincodePayload := true } =
-      some SyncDecodeReject.wireDecodeRejected := by
+      some SyncDecodeReject.legacyBincodePayload := by
   rfl
 
 theorem trailing_sync_rejects :

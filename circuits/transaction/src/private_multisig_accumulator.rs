@@ -34,6 +34,7 @@ pub struct AccumulatorNote {
     pub intent_digest: Digest,
     pub approval_count: u64,
     pub approval_nullifiers: Vec<Digest>,
+    pub approval_signer_tags: Vec<Digest>,
     pub approval_leaves: Vec<Digest>,
     pub state_digest: Digest,
 }
@@ -70,6 +71,7 @@ pub struct FinalSpend {
     pub intent: SpendIntent,
     pub value_note: ValueNote,
     pub accumulator: AccumulatorNote,
+    pub approval_trace: Vec<ApprovalStep>,
     pub output_commitment: Digest,
     pub output_ciphertext_hash: Digest,
     pub balance_tag: Digest,
@@ -99,7 +101,8 @@ pub fn accumulator_state_digest(accumulator: &AccumulatorNote) -> Digest {
         + accumulator.intent_digest * 107
         + accumulator.approval_count * 109
         + accumulator.approval_nullifiers.len() as u64 * 113
-        + accumulator.approval_leaves.len() as u64 * 127
+        + accumulator.approval_signer_tags.len() as u64 * 127
+        + accumulator.approval_leaves.len() as u64 * 139
         + 13)
         % DIGEST_MODULUS
 }
@@ -122,6 +125,12 @@ pub fn next_accumulator_for_approval(
             let mut values = Vec::with_capacity(prior.approval_nullifiers.len() + 1);
             values.push(capability.signer_nullifier);
             values.extend_from_slice(&prior.approval_nullifiers);
+            values
+        },
+        approval_signer_tags: {
+            let mut values = Vec::with_capacity(prior.approval_signer_tags.len() + 1);
+            values.push(capability.signer_tag);
+            values.extend_from_slice(&prior.approval_signer_tags);
             values
         },
         approval_leaves: {
@@ -203,6 +212,10 @@ pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
             .prior_accumulator
             .approval_nullifiers
             .contains(&step.signer_capability.signer_nullifier)
+        && !step
+            .prior_accumulator
+            .approval_signer_tags
+            .contains(&step.signer_capability.signer_tag)
         && step.prior_accumulator.state_digest == accumulator_state_digest(&step.prior_accumulator)
         && step.next_accumulator
             == next_accumulator_for_approval(&step.prior_accumulator, &step.signer_capability)
@@ -210,6 +223,10 @@ pub fn approval_step_exact_intent_and_one_shot(step: &ApprovalStep) -> bool {
             .next_accumulator
             .approval_nullifiers
             .contains(&step.signer_capability.signer_nullifier)
+        && step
+            .next_accumulator
+            .approval_signer_tags
+            .contains(&step.signer_capability.signer_tag)
 }
 
 pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
@@ -221,6 +238,44 @@ pub fn approval_step_accepted(step: &ApprovalStep) -> bool {
         && signer_in_policy(&step.signer_capability, &step.policy)
 }
 
+pub fn initial_accumulator_for_intent(intent: &SpendIntent) -> AccumulatorNote {
+    let mut accumulator = AccumulatorNote {
+        account_digest: intent.account_digest,
+        policy_root: intent.policy_root,
+        intent_digest: intent.intent_digest,
+        approval_count: 0,
+        approval_nullifiers: Vec::new(),
+        approval_signer_tags: Vec::new(),
+        approval_leaves: Vec::new(),
+        state_digest: 0,
+    };
+    accumulator.state_digest = accumulator_state_digest(&accumulator);
+    accumulator
+}
+
+pub fn approval_trace_accepted_from(
+    policy: &PolicyWitness,
+    intent: &SpendIntent,
+    current: &AccumulatorNote,
+    trace: &[ApprovalStep],
+    final_accumulator: &AccumulatorNote,
+) -> bool {
+    let Some((step, rest)) = trace.split_first() else {
+        return current == final_accumulator;
+    };
+    step.policy == *policy
+        && step.intent == *intent
+        && step.prior_accumulator == *current
+        && approval_step_accepted(step)
+        && approval_trace_accepted_from(
+            policy,
+            intent,
+            &step.next_accumulator,
+            rest,
+            final_accumulator,
+        )
+}
+
 pub fn final_spend_accepted(spend: &FinalSpend) -> bool {
     policy_well_formed(&spend.policy)
         && spend.value_note.account_digest == spend.intent.account_digest
@@ -228,6 +283,13 @@ pub fn final_spend_accepted(spend: &FinalSpend) -> bool {
         && accumulator_matches_policy(&spend.accumulator, &spend.policy)
         && accumulator_matches_intent(&spend.accumulator, &spend.intent)
         && spend.accumulator.state_digest == accumulator_state_digest(&spend.accumulator)
+        && approval_trace_accepted_from(
+            &spend.policy,
+            &spend.intent,
+            &initial_accumulator_for_intent(&spend.intent),
+            &spend.approval_trace,
+            &spend.accumulator,
+        )
         && spend.accumulator.approval_count >= spend.policy.threshold
 }
 
@@ -280,6 +342,8 @@ mod tests {
         value_note: Option<ValueNote>,
         #[serde(default)]
         accumulator: Option<AccumulatorNote>,
+        #[serde(default)]
+        approval_trace: Vec<ApprovalStep>,
         #[serde(default)]
         output_commitment: Option<Digest>,
         #[serde(default)]
@@ -357,6 +421,7 @@ mod tests {
                 .accumulator
                 .clone()
                 .unwrap_or_else(|| panic!("{} missing accumulator", case.name)),
+            approval_trace: case.approval_trace.clone(),
             output_commitment: case
                 .output_commitment
                 .unwrap_or_else(|| panic!("{} missing output_commitment", case.name)),
@@ -394,6 +459,7 @@ mod tests {
             "approval_leaves",
             "policy_root",
             "approval_nullifiers",
+            "approval_signer_tags",
             "signer_tags",
             "spend_derived_signer_tag",
             "value_lock_digest",
@@ -407,6 +473,7 @@ mod tests {
         let expected_names = [
             "valid-approval-step",
             "duplicate-signer-rejected",
+            "same-signer-fresh-nullifier-rejected",
             "wrong-intent-rejected",
             "wrong-policy-rejected",
             "outside-policy-signer-rejected",
@@ -417,6 +484,8 @@ mod tests {
             "signer-set-root-drift-policy-approval-rejected",
             "below-threshold-final-rejected",
             "exact-threshold-final-accepted",
+            "same-signer-fresh-nullifier-final-rejected",
+            "forged-threshold-final-without-approval-trace-rejected",
             "final-intent-mismatch-rejected",
             "final-value-lock-mismatch-rejected",
             "zero-threshold-final-rejected",

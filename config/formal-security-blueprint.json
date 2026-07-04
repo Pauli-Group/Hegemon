@@ -2854,7 +2854,7 @@
                 "tx_validity_claims_from_tx_artifacts",
                 "verify_commitment_proof_payload",
                 "validate_proven_batch_binding",
-                "verify_block_artifact",
+                "receipt_root_verifier.verify_block_artifact",
                 "verify_recursive_block_artifact_against_verified_records",
                 "verify_and_apply_tree_transition_without_anchors"
               ],
@@ -3143,7 +3143,7 @@
             {
               "caller": "ParallelProofVerifier::verify_block_with_backend",
               "callee_must_precede": [
-                "verify_block_artifact",
+                "receipt_root_verifier.verify_block_artifact",
                 "verify_recursive_block_artifact_against_verified_records",
                 "verify_and_apply_tree_transition_without_anchors"
               ],
@@ -3621,7 +3621,7 @@
               "caller": "ParallelProofVerifier::verify_block_with_backend",
               "callee_must_precede": [
                 "recursive_block_semantic_inputs_from_block",
-                "verify_block_artifact",
+                "receipt_root_verifier.verify_block_artifact",
                 "verify_recursive_block_artifact_against_verified_records",
                 "verify_and_apply_tree_transition_without_anchors"
               ],
@@ -3759,7 +3759,7 @@
             {
               "caller": "ParallelProofVerifier::verify_block_with_backend",
               "callee_must_precede": [
-                "verify_block_artifact"
+                "receipt_root_verifier.verify_block_artifact"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -4013,7 +4013,7 @@
             {
               "caller": "prepare_work",
               "callee_must_precede": [
-                "kernel_root_from_shielded_root",
+                "consensus::types::kernel_root_from_shielded_root",
                 "bridge_messages_from_actions",
                 "native_pow_header_from_parts"
               ],
@@ -4710,7 +4710,7 @@
             {
               "caller": "NativeNode::validate_and_stage_action",
               "callee_must_precede": [
-                "transaction",
+                "action_and_proof_trees.transaction",
                 "self.flush_native_durability_barrier",
                 "state.pending_actions.insert"
               ],
@@ -6856,7 +6856,7 @@
             {
               "caller": "commit_reorg_state_atomically",
               "callee_must_precede": [
-                "transaction"
+                "reorg_commit_trees.transaction"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -6890,7 +6890,7 @@
             {
               "caller": "commit_canonical_index_repair_atomically",
               "callee_must_precede": [
-                "transaction"
+                "canonical_index_repair_trees.transaction"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -6924,7 +6924,7 @@
             {
               "caller": "commit_mined_block_atomically",
               "callee_must_precede": [
-                "transaction"
+                "mined_block_commit_trees.transaction"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -7275,7 +7275,7 @@
               "callee_must_precede": [
                 "consensus_block_artifact_from_candidate",
                 "consensus_proven_batch_from_candidate",
-                "verify_block_with_backend"
+                "verifier.verify_block_with_backend"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -8522,7 +8522,7 @@
               "callee_must_precede": [
                 "evaluate_native_candidate_artifact_binding_admission",
                 "consensus_tx_and_artifact_from_action",
-                "verify_block_with_backend"
+                "verifier.verify_block_with_backend"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -9295,7 +9295,7 @@
               "caller": "verify_native_block_artifacts_locked",
               "callee_must_precede": [
                 "consensus_tx_and_artifact_from_action",
-                "verify_block_with_backend"
+                "verifier.verify_block_with_backend"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -11041,7 +11041,7 @@
               "callee_must_precede": [
                 "admit_native_action_request_projection",
                 "self.validate_action_state",
-                "transaction",
+                "action_and_proof_trees.transaction",
                 "state.pending_actions.insert"
               ],
               "must_dominate_successors": true,
@@ -11076,7 +11076,7 @@
               "caller": "NativeNode::validate_and_stage_action",
               "callee_must_precede": [
                 "self.validate_action_state",
-                "transaction",
+                "action_and_proof_trees.transaction",
                 "state.pending_actions.insert"
               ],
               "must_dominate_successors": true,
@@ -11216,7 +11216,7 @@
               "caller": "evaluate_native_block_action_validation_step",
               "callee_must_precede": [
                 "native_block_action_validation_payload_rejection",
-                "import_one",
+                "state.bridge_replay_state.import_one",
                 "transfer_key_extends_canonical_order",
                 "evaluate_native_transfer_state_admission"
               ],
@@ -11544,7 +11544,7 @@
               "caller": "NativeNode::validate_and_stage_action",
               "callee_must_precede": [
                 "pending_action_hash",
-                "transaction",
+                "action_and_proof_trees.transaction",
                 "self.flush_native_durability_barrier",
                 "state.pending_actions.insert"
               ],
@@ -15499,8 +15499,8 @@
       "id": "formal.essence-core",
       "claim_id": "formal.essence-core",
       "kind": "target_claim",
-      "formal_statement": "Hegemon.Essence.Core defines the small semantic core and proves the derived ledger, authorization-witness, per-asset conservation, receipt-bound bridge, local privacy-projection, exact-byte production-refinement, fail-closed failure-path, assumption-boundary, and canonical-term theorems listed in the claims ledger.",
-      "informal_argument": "The essence core concentrates Hegemon validity in a small Transition relation. Theorems project no counterfeiting, derived nullifier uniqueness/no double spend, no theft from authorization witnesses, per-asset conservation and isolation, bridge receipt replay safety, local privacy projection, block/chain lifting, exact parser/admission/replay/storage/publication refinement, fail-closed rejected paths, and canonical-term roundtrip/injectivity/non-malleability. Generated vectors make the required type set, theorem set, stage order, named assumptions, canonical term source, and progress percentage checkable.",
+      "formal_statement": "Hegemon.Essence.Core defines the small semantic core and proves the derived ledger, authorization-witness, per-asset conservation, asset-balance uniqueness, native-balance/supply coupling, receipt-bound bridge, local privacy-projection, exact-byte production-refinement, fail-closed failure-path, assumption-boundary, and canonical-term theorems listed in the claims ledger.",
+      "informal_argument": "The essence core concentrates Hegemon validity in a small Transition relation. Theorems project no counterfeiting, derived nullifier uniqueness/no double spend, no theft from authorization witnesses, per-asset conservation and isolation, unique asset-balance keys, native balance equality to supply, bridge receipt replay safety, local privacy projection, block/chain lifting, exact parser/admission/replay/storage/publication refinement, fail-closed rejected paths, and canonical-term roundtrip/injectivity/non-malleability. Generated vectors make the required type set, theorem set, stage order, named assumptions, canonical term source, and progress percentage checkable.",
       "depends_on": [
         "formal.highest-standard-completion-certificate",
         "native.block-replay-refinement",
@@ -15541,6 +15541,11 @@
         {
           "id": "essence-assumption-boundary-drift",
           "description": "Dropping a named cryptographic, proof-system, DA, storage, local-ZK, timing, topology, miner-ordering, or global-privacy assumption from the generated boundary must fail the essence checker.",
+          "gate": "python3 scripts/check_essence_core_vectors.py <generated-json> config/formal-essence-progress.json"
+        },
+        {
+          "id": "essence-asset-balance-invariant-drift",
+          "description": "Dropping the asset-balance uniqueness or native-balance/supply theorem from the generated theorem set must fail the essence checker.",
           "gate": "python3 scripts/check_essence_core_vectors.py <generated-json> config/formal-essence-progress.json"
         }
       ],

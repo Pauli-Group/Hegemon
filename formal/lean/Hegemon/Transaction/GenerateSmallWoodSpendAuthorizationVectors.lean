@@ -78,6 +78,20 @@ def spendBoundaryCaseJson
     ++ boolJson (activeInputSpendBoundaryAccepted surface) ++ "\n"
     ++ "    }"
 
+def authInputLinkCaseJson
+    (name : String)
+    (authSurface : ActiveAuthLinkSurface)
+    (inputSpendSurface : ActiveInputSpendBoundarySurface) : String :=
+  "    {\n"
+    ++ "      \"name\": \"" ++ name ++ "\",\n"
+    ++ "      \"auth_active\": " ++ boolJson authSurface.active ++ ",\n"
+    ++ "      \"input_active_flag\": "
+    ++ toString inputSpendSurface.activeFlag ++ ",\n"
+    ++ "      \"expected_valid\": "
+    ++ boolJson (activeAuthLinkedToInputSpend authSurface inputSpendSurface)
+    ++ "\n"
+    ++ "    }"
+
 def txLeafInputProjectionCaseJson
     (name : String)
     (surface : TxLeafInputProjectionSurface) : String :=
@@ -254,6 +268,20 @@ def vectorJson : String :=
     ++ caseJson "active-mismatched-limb-2-rejected" mismatchLimb2 ++ ",\n"
     ++ caseJson "active-mismatched-limb-3-rejected" mismatchLimb3 ++ ",\n"
     ++ caseJson "inactive-mismatched-limbs-accepted" inactiveMismatched ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"smallwood_auth_input_link_cases\": [\n"
+    ++ authInputLinkCaseJson
+      "active-auth-active-input-valid"
+      validNoWrap
+      activeBoundaryValid ++ ",\n"
+    ++ authInputLinkCaseJson
+      "inactive-auth-inactive-input-valid"
+      inactiveMismatched
+      inactiveBoundaryValid ++ ",\n"
+    ++ authInputLinkCaseJson
+      "inactive-auth-active-input-rejected"
+      inactiveMismatched
+      activeBoundaryValid ++ "\n"
     ++ "  ],\n"
     ++ "  \"smallwood_spend_boundary_cases\": [\n"
     ++ spendBoundaryCaseJson "active-boundary-valid" activeBoundaryValid ++ ",\n"

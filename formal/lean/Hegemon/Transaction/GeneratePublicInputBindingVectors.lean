@@ -74,7 +74,10 @@ def vectorJson : String :=
     ++ publicInputBindingCaseJson "balance-slot-asset-count-rejected"
         validPublicFields { validSerializedFields with balanceSlotAssets := [0, 7, 8] } ++ ",\n"
     ++ publicInputBindingCaseJson "stablecoin-enabled-mismatch-rejected"
-        stablecoinPublicFields { stablecoinSerializedFields with stablecoinEnabled := 0 } ++ ",\n"
+      stablecoinPublicFields { stablecoinSerializedFields with stablecoinEnabled := 0 } ++ ",\n"
+    ++ publicInputBindingCaseJson "stablecoin-enabled-noncanonical-rejected"
+      { stablecoinPublicFields with stablecoinEnabled := 2 }
+      { stablecoinSerializedFields with stablecoinEnabled := 2 } ++ ",\n"
     ++ publicInputBindingCaseJson "stablecoin-asset-mismatch-rejected"
         stablecoinPublicFields { stablecoinSerializedFields with stablecoinAsset := 8 } ++ ",\n"
     ++ publicInputBindingCaseJson "stablecoin-policy-version-mismatch-rejected"

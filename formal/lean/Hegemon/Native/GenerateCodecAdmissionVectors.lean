@@ -8,6 +8,7 @@ def boolJson (value : Bool) : String :=
 def syncRejectionJson : Option SyncDecodeReject -> String
   | none => "null"
   | some SyncDecodeReject.wireDecodeRejected => "\"wire_decode_rejected\""
+  | some SyncDecodeReject.legacyBincodePayload => "\"legacy_bincode_payload\""
   | some SyncDecodeReject.trailingBytes => "\"trailing_bytes\""
 
 def exactRejectionJson : Option ExactDecodeReject -> String
@@ -142,7 +143,7 @@ def vectorJson : String :=
     ++ "  \"sync_codec_cases\": [\n"
     ++ syncCaseJson "sync-valid-bounded-wire" "valid_request" validSync ++ ",\n"
     ++ syncCaseJson "sync-legacy-bincode-rejected" "legacy_bincode_request"
-      { validSync with boundedWireDecodeAccepts := false, legacyBincodePayload := true } ++ ",\n"
+      { validSync with legacyBincodePayload := true } ++ ",\n"
     ++ syncCaseJson "sync-trailing-byte-rejected" "valid_request_trailing"
       { validSync with consumedAllBytes := false } ++ "\n"
     ++ "  ],\n"

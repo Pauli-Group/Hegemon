@@ -60,7 +60,9 @@ def vectorJson : String :=
     ++ bindingCaseJson "field-padding-asset-id-is-not-u64-max-padding"
         fieldPaddingCollisionFields ++ ",\n"
     ++ bindingCaseJson "bad-balance-slot-count-rejected"
-        { validFields with balanceSlotAssets := [0, 7, paddingAsset] } ++ "\n"
+        { validFields with balanceSlotAssets := [0, 7, paddingAsset] } ++ ",\n"
+    ++ bindingCaseJson "overwidth-stablecoin-policy-version-rejected"
+        overwidthPolicyVersionFields ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

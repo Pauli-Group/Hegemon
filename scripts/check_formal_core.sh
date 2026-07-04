@@ -10,6 +10,107 @@ if [ -d "${HOME:-}/.elan/bin" ]; then
   export PATH="${HOME}/.elan/bin:$PATH"
 fi
 
+cargo_test_has_name_filter() {
+  local args=("$@")
+  local index=0
+  local skip_next=0
+  local arg
+
+  while [ "$index" -lt "${#args[@]}" ]; do
+    arg="${args[$index]}"
+    if [ "$arg" = "--" ]; then
+      cargo_test_harness_has_name_filter "${args[@]:$((index + 1))}"
+      return
+    fi
+    if [ "$skip_next" -eq 1 ]; then
+      skip_next=0
+      index=$((index + 1))
+      continue
+    fi
+    case "$arg" in
+      -p|--package|--manifest-path|--test|--bench|--bin|--example|--features|--target|--target-dir|--config|--profile|--jobs|-j|--message-format)
+        skip_next=1
+        ;;
+      --package=*|--manifest-path=*|--test=*|--bench=*|--bin=*|--example=*|--features=*|--target=*|--target-dir=*|--config=*|--profile=*|--jobs=*|-j*|--message-format=*)
+        ;;
+      --lib|--bins|--examples|--tests|--benches|--all-targets|--workspace|--all|--locked|--quiet|--release|--no-default-features|--all-features|--doc|--no-run|--no-fail-fast|--offline|--frozen|--ignore-rust-version)
+        ;;
+      -*)
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+    index=$((index + 1))
+  done
+
+  return 1
+}
+
+cargo_test_harness_has_name_filter() {
+  local args=("$@")
+  local index=0
+  local skip_next=0
+  local arg
+
+  while [ "$index" -lt "${#args[@]}" ]; do
+    arg="${args[$index]}"
+    if [ "$skip_next" -eq 1 ]; then
+      skip_next=0
+      index=$((index + 1))
+      continue
+    fi
+    case "$arg" in
+      --skip|--format|--test-threads|--color|-Z)
+        skip_next=1
+        ;;
+      --skip=*|--format=*|--test-threads=*|--color=*|-Z*)
+        ;;
+      --exact|--ignored|--include-ignored|--nocapture|--show-output|--list)
+        ;;
+      -*)
+        ;;
+      *)
+        return 0
+        ;;
+    esac
+    index=$((index + 1))
+  done
+
+  return 1
+}
+
+cargo() {
+  if [ "${1:-}" != "test" ]; then
+    command cargo "$@"
+    return
+  fi
+
+  local require_nonzero=0
+  if cargo_test_has_name_filter "${@:2}"; then
+    require_nonzero=1
+  fi
+
+  local log_file
+  log_file="$(mktemp)"
+  set +e
+  command cargo "$@" 2>&1 | tee "$log_file"
+  local status=${PIPESTATUS[0]}
+  set -e
+  if [ "$status" -ne 0 ]; then
+    rm -f "$log_file"
+    return "$status"
+  fi
+  if [ "$require_nonzero" -eq 1 ]; then
+    if ! awk '/^running [0-9]+ tests?$/ { total += $2 } END { exit total > 0 ? 0 : 1 }' "$log_file"; then
+      printf 'formal-core gate matched zero tests: cargo %s\n' "$*" >&2
+      rm -f "$log_file"
+      return 2
+    fi
+  fi
+  rm -f "$log_file"
+}
+
 run_formal_core() {
   cargo run --quiet --manifest-path "$FORMAL_MANIFEST" -- "$@"
 }
@@ -53,6 +154,16 @@ require_pinned_model_checker() {
 }
 
 printf '=== Hegemon formal-core gate ===\n'
+
+if [ "${HEGEMON_FORMAL_CORE_SELF_TEST_ZERO_FILTER:-0}" = "1" ]; then
+  cargo test --quiet --manifest-path "$FORMAL_MANIFEST" __hegemon_formal_core_zero_filter_self_test__
+  exit 0
+fi
+
+if [ "${HEGEMON_FORMAL_CORE_SELF_TEST_HARNESS_ZERO_FILTER:-0}" = "1" ]; then
+  cargo test --quiet --manifest-path "$FORMAL_MANIFEST" -- --exact __hegemon_formal_core_zero_filter_self_test__
+  exit 0
+fi
 
 printf '\n[1/14] Checking formal-core checker formatting\n'
 cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
@@ -474,6 +585,7 @@ python3 "$ROOT/scripts/check_native_backend_release_posture_policy_vectors.py" \
   --package "$ROOT/audits/native-backend-128b/native-backend-128b-review-package.tar.gz"
 python3 "$ROOT/scripts/check_release_pq_binary_policy_vectors.py" \
   "$LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS"
+python3 "$ROOT/scripts/check_ci_release_gate_policy.py" --self-test
 python3 "$ROOT/scripts/check_ci_release_gate_policy.py" \
   "$LEAN_CI_RELEASE_GATE_VECTORS" \
   --ci-workflow "$ROOT/.github/workflows/ci.yml" \

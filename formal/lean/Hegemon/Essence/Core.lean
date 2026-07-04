@@ -262,6 +262,15 @@ def balanceOf (assetId : AssetId) : List AssetBalance -> Nat
       else
         balanceOf assetId rest
 
+def assetBalanceIds (balances : List AssetBalance) : List AssetId :=
+  balances.map fun balance => balance.assetId
+
+def assetBalancesUnique (balances : List AssetBalance) : Prop :=
+  (assetBalanceIds balances).Nodup
+
+def nativeBalanceMatchesSupply (state : LedgerState) : Prop :=
+  balanceOf nativeAsset state.assetBalances = state.supply
+
 def assetDeltaFor (assetId : AssetId) : List AssetDelta -> Int
   | [] => 0
   | delta :: rest =>
@@ -545,6 +554,14 @@ structure Transition
     actionEncodingBounded action
   afterEncodingBounded :
     ledgerStateEncodingBounded after
+  beforeAssetBalancesUnique :
+    assetBalancesUnique before.assetBalances
+  afterAssetBalancesUnique :
+    assetBalancesUnique after.assetBalances
+  beforeNativeBalanceMatchesSupply :
+    nativeBalanceMatchesSupply before
+  afterNativeBalanceMatchesSupply :
+    nativeBalanceMatchesSupply after
 
 theorem transition_nullifiers_unique_derived
     {before after : LedgerState}
@@ -695,6 +712,20 @@ theorem transition_encoding_no_truncation
     ⟨transition.beforeEncodingBounded,
       transition.actionEncodingBounded,
       transition.afterEncodingBounded⟩
+
+theorem transition_asset_balance_invariants
+    {before after : LedgerState}
+    {action : Action}
+    (transition : Transition before action after) :
+    assetBalancesUnique before.assetBalances
+      /\ assetBalancesUnique after.assetBalances
+      /\ nativeBalanceMatchesSupply before
+      /\ nativeBalanceMatchesSupply after := by
+  exact
+    ⟨transition.beforeAssetBalancesUnique,
+      transition.afterAssetBalancesUnique,
+      transition.beforeNativeBalanceMatchesSupply,
+      transition.afterNativeBalanceMatchesSupply⟩
 
 theorem action_chain_supply_integrity
     {before after : LedgerState}

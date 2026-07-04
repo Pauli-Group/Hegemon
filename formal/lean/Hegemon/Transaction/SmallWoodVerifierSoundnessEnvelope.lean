@@ -125,6 +125,8 @@ structure SmallWoodVerifierEnvelopeFacts
   activeAuthFacts :
     authSurface.active = true ->
       SmallWoodSpendAuthorization.ActiveAuthLinkFacts authSurface
+  activeAuthSelectedByActiveInputSpend :
+    inputSpendSurface.activeFlag = 1 -> authSurface.active = true
   inputSpendFacts :
     SmallWoodSpendAuthorization.ActiveInputSpendBoundaryFacts
       inputSpendSurface
@@ -1126,6 +1128,10 @@ theorem accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope
     (inputAccepted :
       SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
         inputSpendSurface = true)
+    (activeAuthInputLinked :
+      SmallWoodSpendAuthorization.activeAuthLinkedToInputSpend
+        authSurface
+        inputSpendSurface = true)
     (outputAccepted :
       SmallWoodSpendAuthorization.activeOutputBindingAccepted
         outputSurface = true)
@@ -1190,6 +1196,9 @@ theorem accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope
           SmallWoodSpendAuthorization.active_auth_link_constraints_imply_goldilocks_auth_link
             authAccepted
             active,
+      activeAuthSelectedByActiveInputSpend :=
+        SmallWoodSpendAuthorization.active_auth_linked_to_input_spend_implies_auth_active
+          activeAuthInputLinked,
       inputSpendFacts :=
         SmallWoodSpendAuthorization.accepted_smallwood_spend_constraints_imply_active_input_spend_boundary
           inputAccepted,
@@ -1359,6 +1368,10 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_
     (inputAccepted :
       SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
         inputSpendSurface = true)
+    (activeAuthInputLinked :
+      SmallWoodSpendAuthorization.activeAuthLinkedToInputSpend
+        authSurface
+        inputSpendSurface = true)
     (outputAccepted :
       SmallWoodSpendAuthorization.activeOutputBindingAccepted
         outputSurface = true)
@@ -1420,6 +1433,7 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_
         publicStatementAccepted)
       authAccepted
       inputAccepted
+      activeAuthInputLinked
       outputAccepted
       smallwoodBalanceAccepted
       airBalanceAccepted
@@ -1522,6 +1536,10 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_review
     (inputAccepted :
       SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
         inputSpendSurface = true)
+    (activeAuthInputLinked :
+      SmallWoodSpendAuthorization.activeAuthLinkedToInputSpend
+        authSurface
+        inputSpendSurface = true)
     (outputAccepted :
       SmallWoodSpendAuthorization.activeOutputBindingAccepted
         outputSurface = true)
@@ -1583,6 +1601,7 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_review
       publicStatementBytesMatch
       authAccepted
       inputAccepted
+      activeAuthInputLinked
       outputAccepted
       smallwoodBalanceAccepted
       airBalanceAccepted
@@ -1683,6 +1702,10 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_re
     (inputAccepted :
       SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
         inputSpendSurface = true)
+    (activeAuthInputLinked :
+      SmallWoodSpendAuthorization.activeAuthLinkedToInputSpend
+        authSurface
+        inputSpendSurface = true)
     (outputAccepted :
       SmallWoodSpendAuthorization.activeOutputBindingAccepted
         outputSurface = true)
@@ -1757,6 +1780,7 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_re
       publicStatementBytesMatch
       authAccepted
       inputAccepted
+      activeAuthInputLinked
       outputAccepted
       smallwoodBalanceAccepted
       airBalanceAccepted
@@ -1893,6 +1917,10 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_re
     (inputAccepted :
       SmallWoodSpendAuthorization.activeInputSpendBoundaryAccepted
         inputSpendSurface = true)
+    (activeAuthInputLinked :
+      SmallWoodSpendAuthorization.activeAuthLinkedToInputSpend
+        authSurface
+        inputSpendSurface = true)
     (outputAccepted :
       SmallWoodSpendAuthorization.activeOutputBindingAccepted
         outputSurface = true)
@@ -1977,6 +2005,7 @@ theorem accepted_smallwood_public_statement_surfaces_with_split_soundness_and_re
       publicStatementBytesMatch
       authAccepted
       inputAccepted
+      activeAuthInputLinked
       outputAccepted
       smallwoodBalanceAccepted
       airBalanceAccepted
@@ -2148,7 +2177,8 @@ theorem smallwood_production_review_certificate_projects_compact_residual_certif
       publicInputBinding :=
         reviewCertificate.proofArtifactStatementCertificate.canonicalSurface.publicBinding,
       publicInputBindingValid :=
-        reviewCertificate.proofArtifactStatementCertificate.publicBindingValid,
+        canonical_statement_surface_public_binding_valid
+          reviewCertificate.proofArtifactStatementCertificate.canonicalSurface,
       proofWrapperAccepted :=
         reviewCertificate.proofArtifactStatementCertificate.canonicalSurface.accepted,
       proofWrapperPreconditions :=

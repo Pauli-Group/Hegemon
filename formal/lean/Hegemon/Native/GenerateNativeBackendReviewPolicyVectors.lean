@@ -77,6 +77,8 @@ def vectorJson : String :=
       wrongReviewPostureInput ++ ",\n"
     ++ nativeBackendReviewPolicyCaseJson "insufficient-security-floor-rejects"
       insufficientSecurityFloorInput ++ ",\n"
+    ++ nativeBackendReviewPolicyCaseJson "excessive-composition-loss-rejects"
+      excessiveCompositionLossInput ++ ",\n"
     ++ nativeBackendReviewPolicyCaseJson "duplicate-case-name-rejects"
       duplicateCaseNameInput ++ ",\n"
     ++ nativeBackendReviewPolicyCaseJson "unsupported-case-kind-rejects"

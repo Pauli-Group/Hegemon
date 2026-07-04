@@ -321,7 +321,7 @@ mod tests {
         stablecoin_oracle_commitment_seed: u8,
         stablecoin_attestation_commitment_seed: u8,
         stablecoin_issuance_delta: i128,
-        stablecoin_policy_version: u32,
+        stablecoin_policy_version: u64,
         expected_binding_message_hex: String,
         expected_binding_hash_chunk0_preimage_hex: String,
         expected_binding_hash_chunk1_preimage_hex: String,
@@ -494,14 +494,24 @@ mod tests {
                     transaction_core::constants::BALANCE_SLOTS
                 )
             })?;
-        let stablecoin = case.stablecoin_enabled.then(|| StablecoinPolicyBinding {
-            asset_id: case.stablecoin_asset,
-            policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
-            oracle_commitment: patterned_bytes48(case.stablecoin_oracle_commitment_seed),
-            attestation_commitment: patterned_bytes48(case.stablecoin_attestation_commitment_seed),
-            issuance_delta: case.stablecoin_issuance_delta,
-            policy_version: case.stablecoin_policy_version,
-        });
+        let stablecoin = case
+            .stablecoin_enabled
+            .then(|| {
+                Ok::<_, String>(StablecoinPolicyBinding {
+                    asset_id: case.stablecoin_asset,
+                    policy_hash: patterned_bytes48(case.stablecoin_policy_hash_seed),
+                    oracle_commitment: patterned_bytes48(case.stablecoin_oracle_commitment_seed),
+                    attestation_commitment: patterned_bytes48(
+                        case.stablecoin_attestation_commitment_seed,
+                    ),
+                    issuance_delta: case.stablecoin_issuance_delta,
+                    policy_version: case
+                        .stablecoin_policy_version
+                        .try_into()
+                        .map_err(|_| "stablecoin policy version overflow".to_owned())?,
+                })
+            })
+            .transpose()?;
         Ok(ShieldedTransferInputs {
             anchor: patterned_bytes48(case.anchor_seed),
             nullifiers: case

@@ -924,7 +924,11 @@ theorem native_tx_leaf_accepted_artifact_statement_boundary_facts
   exact
     { canonicalBoundaryFacts := canonicalFacts
       wrapperPreconditions := canonicalFacts.wrapperPreconditions
-      publicBindingValid := canonicalFacts.publicBindingValid
+      publicBindingValid := by
+        simp [
+          Hegemon.Transaction.PublicInputBinding.validBinding,
+          canonicalFacts.publicBindingExact
+        ]
       publicShapeValid := canonicalFacts.publicShapeValid
       statementLength := canonicalFacts.statementLength
       statementPreimage := canonicalFacts.statementPreimage
@@ -1634,7 +1638,11 @@ theorem native_tx_leaf_canonical_artifact_boundary_active_input_no_theft
     ⟨spendFacts,
       facts.canonicalBoundaryFacts.wrapperPreconditions,
       facts.wrapperSurface,
-      facts.canonicalBoundaryFacts.publicBindingValid,
+      (by
+        simp [
+          Hegemon.Transaction.PublicInputBinding.validBinding,
+          facts.canonicalBoundaryFacts.publicBindingExact
+        ]),
       facts.canonicalBoundaryFacts.statementPreimage,
       facts.canonicalBoundaryFacts.bindingMessage,
       slotFacts.right.left,
@@ -1990,7 +1998,11 @@ theorem proof_keyed_transfer_payload_input_slot_authorization_full_binding
       payloadFee,
       facts.nativeArtifactBoundary.canonicalBoundaryFacts.wrapperPreconditions,
       facts.nativeArtifactBoundary.wrapperSurface,
-      facts.nativeArtifactBoundary.canonicalBoundaryFacts.publicBindingValid,
+      (by
+        simp [
+          Hegemon.Transaction.PublicInputBinding.validBinding,
+          facts.nativeArtifactBoundary.canonicalBoundaryFacts.publicBindingExact
+        ]),
       facts.nativeArtifactBoundary.canonicalBoundaryFacts.statementPreimage,
       facts.nativeArtifactBoundary.canonicalBoundaryFacts.bindingMessage,
       statementRoot,
