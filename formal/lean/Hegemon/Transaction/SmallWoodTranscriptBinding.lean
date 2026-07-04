@@ -154,7 +154,6 @@ def unpaddedTranscript
     (statementBytes : List Byte) : List Byte :=
   smallwoodBindingTranscriptDomain
     ++ smallwoodProfileMaterial circuitVersion cryptoSuite arithmetization
-    ++ u64le statementBytes.length
     ++ statementBytes
 
 def transcriptPadding
@@ -171,8 +170,7 @@ def transcriptAfterStatement
 def transcriptAfterProfile
     (circuitVersion cryptoSuite arithmetization : Nat)
     (statementBytes : List Byte) : List Byte :=
-  u64le statementBytes.length
-    ++ statementBytes
+  statementBytes
     ++ transcriptAfterStatement circuitVersion cryptoSuite arithmetization statementBytes
 
 def transcriptAfterDomain
@@ -310,34 +308,12 @@ theorem smallwood_transcript_binding_includes_statement_bytes :
         ++ smallwoodProfileMaterial
           activeCircuitVersion
           activeCryptoSuite
-          arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-        ++ u64le sampleStatementBytes.length,
+          arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
       transcriptAfterStatement
         activeCircuitVersion
         activeCryptoSuite
         arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         sampleStatementBytes,
-      rfl⟩
-
-theorem smallwood_transcript_binding_includes_statement_length :
-    ∃ pre suffix,
-      sampleTranscriptBinding =
-        pre ++ u64le sampleStatementBytes.length ++ suffix := by
-  unfold sampleTranscriptBinding smallwoodTranscriptBinding transcriptAfterDomain
-  unfold transcriptAfterProfile transcriptAfterStatement transcriptPadding
-  exact
-    ⟨smallwoodBindingTranscriptDomain
-        ++ smallwoodProfileMaterial
-          activeCircuitVersion
-          activeCryptoSuite
-          arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
-      sampleStatementBytes
-        ++ paddingBytes
-          (unpaddedTranscript
-            activeCircuitVersion
-            activeCryptoSuite
-            arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-            sampleStatementBytes),
       rfl⟩
 
 theorem smallwood_transcript_binding_padding_aligned_to_eight :

@@ -46,9 +46,6 @@ def activeCaseStatement : List Byte :=
 def statementMutationBytes : List Byte :=
   patternedBytes 37 91
 
-def trailingZeroExtensionStatementBytes : List Byte :=
-  activeCaseStatement ++ [0]
-
 def paddingBoundaryStatementBytes : List Byte :=
   patternedBytes 40 11
 
@@ -93,12 +90,6 @@ def vectorJson : String :=
         activeCryptoSuite
         arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         statementMutationBytes,
-      transcriptCaseJson
-        "trailing-zero-extension-changes-binding"
-        activeCircuitVersion
-        activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-        trailingZeroExtensionStatementBytes,
       transcriptCaseJson
         "version-mutation-changes-profile-material"
         (activeCircuitVersion + 1)

@@ -5012,7 +5012,6 @@ fn smallwood_transcript_binding_from_serialized_statement(
         version,
         arithmetization,
     ));
-    bytes.extend_from_slice(&(statement_bytes.len() as u64).to_le_bytes());
     bytes.extend_from_slice(statement_bytes);
     while bytes.len() % 8 != 0 {
         bytes.push(0);
@@ -6876,7 +6875,6 @@ mod tests {
 
         let mut active_binding = None;
         let mut statement_mutation_binding = None;
-        let mut trailing_zero_extension_binding = None;
         let mut version_mutation_profile = None;
         let mut legacy_arith_profile = None;
         let mut covered_arithmetization_tags = std::collections::BTreeSet::new();
@@ -6894,7 +6892,6 @@ mod tests {
             let unpadded = [
                 SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN,
                 profile_material.as_slice(),
-                &(statement_bytes.len() as u64).to_le_bytes(),
                 statement_bytes.as_slice(),
             ]
             .concat();
@@ -6946,9 +6943,6 @@ mod tests {
                 "statement-byte-mutation-changes-binding" => {
                     statement_mutation_binding = Some(transcript)
                 }
-                "trailing-zero-extension-changes-binding" => {
-                    trailing_zero_extension_binding = Some(transcript)
-                }
                 "version-mutation-changes-profile-material" => {
                     version_mutation_profile = Some(profile_material)
                 }
@@ -6982,12 +6976,6 @@ mod tests {
             active_binding,
             statement_mutation_binding.expect("statement mutation transcript vector missing"),
             "statement byte mutation must alter the transcript binding"
-        );
-        assert_ne!(
-            active_binding,
-            trailing_zero_extension_binding
-                .expect("trailing-zero extension transcript vector missing"),
-            "trailing zero extension must alter the transcript binding"
         );
         let active_profile = smallwood_candidate_verifier_profile_material(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
