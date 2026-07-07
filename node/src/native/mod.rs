@@ -6826,13 +6826,18 @@ async fn request_missing_blocks(
         return;
     }
     let best = node.best_meta();
-    let Some(range) = native_sync_observed_tip_request_range(
-        best.height,
-        best.hash,
+    let missing_request_input = NativeSyncMissingRequestInput {
+        best_height: best.height,
         announced_height,
+        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+    };
+    let admitted_missing_range = native_sync_missing_request_range(missing_request_input);
+    let Some(range) = native_sync_observed_tip_request_range_from_admitted_missing(
+        missing_request_input,
+        best.hash,
         announced_hash,
-        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        admitted_missing_range,
     ) else {
         return;
     };
@@ -11107,9 +11112,26 @@ fn native_sync_observed_tip_request_range(
         announced_height,
         max_blocks,
     };
-    if let Some(admitted_range) = native_sync_missing_request_range(input) {
-        let gap = announced_height.saturating_sub(best_height);
-        if gap > max_blocks {
+    let admitted_missing_range = native_sync_missing_request_range(input);
+    native_sync_observed_tip_request_range_from_admitted_missing(
+        input,
+        best_hash,
+        announced_hash,
+        backfill_blocks,
+        admitted_missing_range,
+    )
+}
+
+fn native_sync_observed_tip_request_range_from_admitted_missing(
+    input: NativeSyncMissingRequestInput,
+    best_hash: [u8; 32],
+    announced_hash: Option<[u8; 32]>,
+    backfill_blocks: u64,
+    admitted_missing_range: Option<NativeSyncRange>,
+) -> Option<NativeSyncRange> {
+    if let Some(admitted_range) = admitted_missing_range {
+        let gap = input.announced_height.saturating_sub(input.best_height);
+        if gap > input.max_blocks {
             return Some(admitted_range);
         }
         return Some(native_sync_missing_request_range_apply_reorg_backfill(
@@ -11119,20 +11141,23 @@ fn native_sync_observed_tip_request_range(
         ));
     }
 
-    if announced_height == 0
-        || announced_height != best_height
+    if input.announced_height == 0
+        || input.announced_height != input.best_height
         || announced_hash.is_none_or(|hash| hash == best_hash)
-        || max_blocks == 0
+        || input.max_blocks == 0
     {
         return None;
     }
 
-    let from_height = announced_height
+    let from_height = input
+        .announced_height
         .saturating_sub(backfill_blocks)
         .saturating_add(1);
     Some(NativeSyncRange {
         from_height,
-        to_height: announced_height.min(from_height.saturating_add(max_blocks - 1)),
+        to_height: input
+            .announced_height
+            .min(from_height.saturating_add(input.max_blocks - 1)),
     })
 }
 
