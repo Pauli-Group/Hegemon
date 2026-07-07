@@ -85,6 +85,16 @@ export type NodePeerSnapshot = {
   protocols?: number[];
 };
 
+export type CanonicalCheckpointStatus = {
+  network: string;
+  seed: string;
+  status: 'verified' | 'pending' | 'mismatch' | 'unavailable';
+  height: number | null;
+  expectedHash: string | null;
+  actualHash: string | null;
+  detail: string;
+};
+
 export type NodeSummary = {
   connectionId: string;
   label: string;
@@ -109,6 +119,7 @@ export type NodeSummary = {
   syncTargetHeight: number | null;
   pendingExtrinsics: number | null;
   peerList: NodePeerSnapshot[] | null;
+  canonicalCheckpoint: CanonicalCheckpointStatus | null;
   supplyDigest: string | null;
   storage: NodeStorageFootprint | null;
   telemetry: NodeTelemetry | null;

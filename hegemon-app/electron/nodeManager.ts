@@ -2,21 +2,36 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { NodePeerSnapshot, NodeStartOptions, NodeSummary, NodeSummaryRequest } from '../src/types';
+import type {
+  CanonicalCheckpointStatus,
+  NodePeerSnapshot,
+  NodeStartOptions,
+  NodeSummary,
+  NodeSummaryRequest
+} from '../src/types';
 import { resolveBinaryPath } from './binPaths';
 import { applyEnvDefaults, copyParentEnv, createBaseChildEnv, setEnvValue } from './childProcessEnv';
 
 const DEFAULT_RPC_PORT = 9955;
 const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
-const APPROVED_SEEDS = 'devnet.hegemonprotocol.com:30333';
+const APPROVED_SEEDS = 'hegemon.pauli.group:30333';
+const PUBLIC_TESTNET_NAME = 'Hegemon';
+const CANONICAL_TESTNET_CHECKPOINTS = [
+  {
+    height: 2048,
+    hash: '0x00000000e930672262cba74a26750c0540a1e2aa54e7ad27ffc1e6fbd055bc4e'
+  },
+  {
+    height: 4096,
+    hash: '0x0000001891cd8a0b45add76b6b0ebe6bc50f6f1dc60879f9f000a71cf22ad5de'
+  }
+] as const;
 const LEGACY_SEED_ALIASES: Record<string, string> = {
   'hegemon.pauli.group:31333': APPROVED_SEEDS,
   'hegemon.pauli.group:30333': APPROVED_SEEDS,
   '158.69.222.121:31333': APPROVED_SEEDS,
-  '158.69.222.121:30333': APPROVED_SEEDS,
-  'devnet.hegemonprotocol.com:30333': APPROVED_SEEDS,
-  '51.222.86.107:30333': APPROVED_SEEDS
+  '158.69.222.121:30333': APPROVED_SEEDS
 };
 const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
 const DEFAULT_DEV_010_BASE_PATH = '~/.hegemon-node-native-010-dev';
@@ -388,6 +403,7 @@ export class NodeManager extends EventEmitter {
         syncTargetHeight: null,
         pendingExtrinsics: null,
         peerList: null,
+        canonicalCheckpoint: null,
         supplyDigest: null,
         storage: null,
         telemetry: null,
@@ -423,6 +439,7 @@ export class NodeManager extends EventEmitter {
         syncTargetHeight: null,
         pendingExtrinsics: null,
         peerList: null,
+        canonicalCheckpoint: null,
         supplyDigest: null,
         storage: null,
         telemetry: null,
@@ -443,6 +460,7 @@ export class NodeManager extends EventEmitter {
     const pendingExtrinsics = await this.safeRpcCall('author_pendingExtrinsics', [], httpUrl);
     const peerList = await this.safeRpcCall('hegemon_peerList', [], httpUrl);
     const bestNumber = finiteNumberOrNull(consensus?.height);
+    const canonicalCheckpoint = await this.readCanonicalCheckpoint(httpUrl, bestNumber);
     const consensusSyncTarget = finiteNumberOrNull(consensus?.sync_target_height ?? consensus?.syncTargetHeight);
     const miningSyncTarget = finiteNumberOrNull(mining?.sync_target_height ?? mining?.syncTargetHeight);
     const syncTargetHeight =
@@ -491,6 +509,7 @@ export class NodeManager extends EventEmitter {
       syncTargetHeight,
       pendingExtrinsics: Array.isArray(pendingExtrinsics) ? pendingExtrinsics.length : null,
       peerList: normalizePeerList(peerList),
+      canonicalCheckpoint,
       supplyDigest: consensus?.supply_digest ? String(consensus.supply_digest) : null,
       storage: storage
         ? {
@@ -529,6 +548,75 @@ export class NodeManager extends EventEmitter {
           }
         : null,
       updatedAt: new Date().toISOString()
+    };
+  }
+
+  private async readCanonicalCheckpoint(
+    httpUrl: string,
+    bestNumber: number | null
+  ): Promise<CanonicalCheckpointStatus> {
+    if (bestNumber === null) {
+      return {
+        network: PUBLIC_TESTNET_NAME,
+        seed: APPROVED_SEEDS,
+        status: 'unavailable',
+        height: null,
+        expectedHash: null,
+        actualHash: null,
+        detail: 'No local height is available yet.'
+      };
+    }
+
+    const checkpoint = [...CANONICAL_TESTNET_CHECKPOINTS]
+      .reverse()
+      .find((candidate) => bestNumber >= candidate.height);
+    if (!checkpoint) {
+      return {
+        network: PUBLIC_TESTNET_NAME,
+        seed: APPROVED_SEEDS,
+        status: 'pending',
+        height: CANONICAL_TESTNET_CHECKPOINTS[0].height,
+        expectedHash: CANONICAL_TESTNET_CHECKPOINTS[0].hash,
+        actualHash: null,
+        detail: `Waiting to reach checkpoint height ${CANONICAL_TESTNET_CHECKPOINTS[0].height}.`
+      };
+    }
+
+    const actualHash = await this.safeRpcCall('chain_getBlockHash', [checkpoint.height], httpUrl);
+    const actualHashString = typeof actualHash === 'string' ? actualHash.toLowerCase() : null;
+    const expectedHashString = checkpoint.hash.toLowerCase();
+    if (!actualHashString) {
+      return {
+        network: PUBLIC_TESTNET_NAME,
+        seed: APPROVED_SEEDS,
+        status: 'unavailable',
+        height: checkpoint.height,
+        expectedHash: checkpoint.hash,
+        actualHash: null,
+        detail: `Could not read block hash at checkpoint height ${checkpoint.height}.`
+      };
+    }
+
+    if (actualHashString !== expectedHashString) {
+      return {
+        network: PUBLIC_TESTNET_NAME,
+        seed: APPROVED_SEEDS,
+        status: 'mismatch',
+        height: checkpoint.height,
+        expectedHash: checkpoint.hash,
+        actualHash: String(actualHash),
+        detail: `Local chain does not match the Hegemon testnet checkpoint at height ${checkpoint.height}.`
+      };
+    }
+
+    return {
+      network: PUBLIC_TESTNET_NAME,
+      seed: APPROVED_SEEDS,
+      status: 'verified',
+      height: checkpoint.height,
+      expectedHash: checkpoint.hash,
+      actualHash: String(actualHash),
+      detail: `Matched the Hegemon testnet checkpoint at height ${checkpoint.height}.`
     };
   }
 

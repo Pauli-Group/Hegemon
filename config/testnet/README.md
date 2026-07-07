@@ -125,7 +125,7 @@ The soak test monitors:
 To connect an external node to the testnet:
 
 ```bash
-HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333" \
+HEGEMON_SEEDS="hegemon.pauli.group:30333" \
 hegemon-node \
     --dev \
     --base-path=/data/hegemon \
@@ -133,6 +133,10 @@ hegemon-node \
     --rpc-port=9944 \
     --name=my-node
 ```
+
+The public Hegemon 0.10 testnet seed is `hegemon.pauli.group:30333`. Do not use
+the dev host as the public join target unless the approved seed list has been
+deliberately rotated.
 
 ## Connecting Wallet
 

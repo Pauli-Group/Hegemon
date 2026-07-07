@@ -39,7 +39,7 @@ const legacyContact = {
 };
 const ovhContact = {
   id: 'legacy-ovh',
-  name: 'old hegemon-ovh wallet',
+  name: 'hegemon-ovh wallet',
   address: 'shca1...',
   verified: true
 };
@@ -53,7 +53,7 @@ const currentContact = {
 };
 
 assert.match(legacyContactWarning(legacyContact), /Legacy contact/);
-assert.match(legacyContactWarning(ovhContact), /Legacy contact/);
+assert.equal(legacyContactWarning(ovhContact), null);
 assert.equal(legacyContactWarning(currentContact), null);
 
 const startupRace = computeNodeDisplayState({
@@ -63,7 +63,8 @@ const startupRace = computeNodeDisplayState({
   bestNumber: 1370,
   syncTargetHeight: 0,
   mining: true,
-  miningSyncGateOpen: false
+  miningSyncGateOpen: false,
+  canonicalCheckpoint: { status: 'verified' }
 });
 assert.equal(startupRace.startupSummarySettling, true);
 assert.equal(startupRace.syncTargetHeight, 1370);
@@ -81,7 +82,8 @@ const genuineMiningGate = computeNodeDisplayState({
   bestNumber: 1360,
   syncTargetHeight: 1370,
   mining: true,
-  miningSyncGateOpen: false
+  miningSyncGateOpen: false,
+  canonicalCheckpoint: { status: 'verified' }
 });
 assert.equal(genuineMiningGate.startupSummarySettling, false);
 assert.equal(genuineMiningGate.syncTargetHeight, 1370);
@@ -99,13 +101,28 @@ const localMinerAhead = computeNodeDisplayState({
   bestNumber: 1488,
   syncTargetHeight: 1487,
   mining: true,
-  miningSyncGateOpen: true
+  miningSyncGateOpen: true,
+  canonicalCheckpoint: { status: 'verified' }
 });
 assert.equal(localMinerAhead.heightDelta, 1);
 assert.equal(localMinerAhead.heightRelation, 'local_ahead');
 assert.equal(localMinerAhead.miningGateBlocked, false);
 assert.equal(localMinerAhead.healthLabel, 'Healthy');
 assert.equal(localMinerAhead.healthTone, 'ok');
+
+const forkedSameHeight = computeNodeDisplayState({
+  reachable: true,
+  peers: 2,
+  isSyncing: false,
+  bestNumber: 4802,
+  syncTargetHeight: 4802,
+  mining: false,
+  miningSyncGateOpen: null,
+  canonicalCheckpoint: { status: 'mismatch' }
+});
+assert.equal(forkedSameHeight.heightRelation, 'aligned');
+assert.equal(forkedSameHeight.healthLabel, 'Forked');
+assert.equal(forkedSameHeight.healthTone, 'error');
 
 const offline = computeNodeDisplayState({
   reachable: false,
@@ -143,6 +160,21 @@ assert.equal(
   nodeManagerSource.includes('process.env.HEGEMON_MINER_ADDRESS'),
   false,
   'Managed desktop mining must not inherit a hidden parent HEGEMON_MINER_ADDRESS.'
+);
+assert.match(
+  appSource,
+  /const buildDefaultConnections = \(\) => \[buildDefaultConnection\(\)\];/,
+  'The app must expose one default launch path: managed local Hegemon testnet.'
+);
+assert.match(
+  appSource,
+  /findDefaultManagedConnection/,
+  'Unreachable stale profiles must fall back to the canonical managed local Hegemon profile.'
+);
+assert.equal(
+  appSource.includes('devnet.hegemonprotocol.com'),
+  false,
+  'The public desktop default must not reference the retired devnet seed.'
 );
 
 console.log('app UI guard checks passed');

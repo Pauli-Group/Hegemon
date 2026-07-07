@@ -10,13 +10,14 @@ export type NodeDisplayState = {
   heightDelta: number | null;
   heightRelation: 'unknown' | 'syncing' | 'aligned' | 'local_ahead' | 'network_ahead';
   miningGateBlocked: boolean;
-  healthLabel: 'Unknown' | 'Offline' | 'Mining gated' | 'Syncing' | 'Healthy';
+  canonicalStatus: 'verified' | 'pending' | 'mismatch' | 'unavailable';
+  healthLabel: 'Unknown' | 'Offline' | 'Forked' | 'Mining gated' | 'Syncing' | 'Checking' | 'Healthy';
   healthTone: StatusTone;
 };
 
 export const legacyContactWarning = (contact: Contact) => {
   const descriptor = `${contact.name} ${contact.notes ?? ''} ${contact.protocolVersion ?? ''}`.toLowerCase();
-  if (/\b0\.9(?:\.1)?\b|hegemon-ovh|legacy/.test(descriptor)) {
+  if (/\b0\.9(?:\.1)?\b|legacy/.test(descriptor)) {
     return 'Legacy contact. Recreate or verify this recipient on Hegemon 0.10 before sending.';
   }
   return null;
@@ -46,6 +47,7 @@ export const computeNodeDisplayState = (summary: NodeSummary | null | undefined)
   const miningGateBlocked = Boolean(
     summary?.mining && summary.miningSyncGateOpen === false && !startupSummarySettling
   );
+  const canonicalStatus = summary?.canonicalCheckpoint?.status ?? 'unavailable';
   const heightDelta =
     typeof summary?.bestNumber === 'number' && typeof syncTargetHeight === 'number'
       ? summary.bestNumber - syncTargetHeight
@@ -65,17 +67,23 @@ export const computeNodeDisplayState = (summary: NodeSummary | null | undefined)
       ? 'Unknown'
       : !summary.reachable
         ? 'Offline'
-        : miningGateBlocked
+        : canonicalStatus === 'mismatch'
+          ? 'Forked'
+          : miningGateBlocked
           ? 'Mining gated'
           : isSyncing
             ? 'Syncing'
-            : 'Healthy';
+            : canonicalStatus === 'pending' || canonicalStatus === 'unavailable'
+              ? 'Checking'
+              : 'Healthy';
   const healthTone: StatusTone =
     !summary
       ? 'neutral'
       : !summary.reachable
         ? 'error'
-        : miningGateBlocked || isSyncing
+        : canonicalStatus === 'mismatch'
+          ? 'error'
+        : miningGateBlocked || isSyncing || canonicalStatus === 'pending' || canonicalStatus === 'unavailable'
           ? 'warn'
           : 'ok';
 
@@ -87,6 +95,7 @@ export const computeNodeDisplayState = (summary: NodeSummary | null | undefined)
     heightDelta,
     heightRelation,
     miningGateBlocked,
+    canonicalStatus,
     healthLabel,
     healthTone
   };

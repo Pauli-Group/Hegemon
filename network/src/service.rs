@@ -254,6 +254,12 @@ enum P2PCommand {
     InboundHandshakeFailed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PeerRunOutcome {
+    AdmissionRejected,
+    Disconnected,
+}
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
@@ -270,7 +276,7 @@ const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
-const PROTOCOL_CHANNEL_CAPACITY: usize = 128;
+const PROTOCOL_CHANNEL_CAPACITY: usize = 1024;
 const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_PROTOCOL_INBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_P2P_COMMAND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
@@ -543,6 +549,15 @@ impl P2PService {
                                 pending_inbound_handshakes =
                                     pending_inbound_handshakes.saturating_sub(1);
                             }
+                            if peer_id == self.identity.peer_id() {
+                                warn!(
+                                    %addr,
+                                    session_id,
+                                    "rejecting self peer connection"
+                                );
+                                let _ = admit.send(false);
+                                continue;
+                            }
                             info!("peer connected: {} ({:?})", addr, peer_id);
                             let admission = self.peer_manager.try_add_peer(
                                 peer_id,
@@ -555,14 +570,15 @@ impl P2PService {
                                 AddPeerResult::Accepted => {
                                     let _ = admit.send(true);
                                 }
-                                AddPeerResult::Replaced(old_session) => {
+                                AddPeerResult::Duplicate(active_session) => {
                                     warn!(
                                         ?peer_id,
-                                        old_session,
-                                        new_session = session_id,
-                                        "replaced existing peer session"
+                                        active_session,
+                                        rejected_session = session_id,
+                                        "rejecting duplicate peer session"
                                     );
-                                    let _ = admit.send(true);
+                                    let _ = admit.send(false);
+                                    continue;
                                 }
                                 AddPeerResult::RejectedAtCapacity => {
                                     warn!(
@@ -778,8 +794,12 @@ impl P2PService {
                             .await
                         {
                             Ok(Ok(peer_id)) => {
+                                if peer_id == identity.peer_id() {
+                                    warn!(%addr, "rejecting persistent self dial");
+                                    break;
+                                }
                                 let session_id = next_peer_session_id();
-                                Self::run_peer_loop(
+                                let outcome = Self::run_peer_loop(
                                     connection,
                                     addr,
                                     peer_id,
@@ -789,7 +809,10 @@ impl P2PService {
                                     inbound_message_budget.clone(),
                                 )
                                 .await;
-                                backoff = RECONNECT_BASE;
+                                backoff = match outcome {
+                                    PeerRunOutcome::Disconnected => RECONNECT_BASE,
+                                    PeerRunOutcome::AdmissionRejected => RECONNECT_MAX,
+                                };
                             }
                             Ok(Err(e)) => {
                                 warn!("handshake failed with {}: {}", addr, e);
@@ -824,7 +847,7 @@ impl P2PService {
                 Ok(Ok(peer_id)) => {
                     drop(permit);
                     let session_id = next_peer_session_id();
-                    Self::run_peer_loop(
+                    let _ = Self::run_peer_loop(
                         connection,
                         addr,
                         peer_id,
@@ -857,7 +880,7 @@ impl P2PService {
         cmd_tx: mpsc::Sender<P2PCommand>,
         inbound: bool,
         inbound_message_budget: ByteBudget,
-    ) {
+    ) -> PeerRunOutcome {
         let (tx, mut rx) = mpsc::channel::<QueuedWireMessage>(100);
         let (admit, admitted) = oneshot::channel();
         if cmd_tx
@@ -872,11 +895,11 @@ impl P2PService {
             .await
             .is_err()
         {
-            return;
+            return PeerRunOutcome::AdmissionRejected;
         }
 
         if !matches!(admitted.await, Ok(true)) {
-            return;
+            return PeerRunOutcome::AdmissionRejected;
         }
 
         loop {
@@ -933,6 +956,7 @@ impl P2PService {
                 inbound,
             })
             .await;
+        PeerRunOutcome::Disconnected
     }
 
     fn inbound_handshake_backlog_limit(&self) -> usize {
@@ -1544,8 +1568,12 @@ impl P2PService {
                         .await
                     {
                         Ok(Ok(peer_id)) => {
+                            if peer_id == identity.peer_id() {
+                                warn!(%addr, "rejecting opportunistic self dial");
+                                return;
+                            }
                             let session_id = next_peer_session_id();
-                            Self::run_peer_loop(
+                            let _ = Self::run_peer_loop(
                                 connection,
                                 addr,
                                 peer_id,

@@ -5853,7 +5853,7 @@
             {
               "caller": "native_sync_loop",
               "callee_must_precede": [
-                "node.block_range"
+                "range_node.block_range"
               ],
               "must_dominate_successors": true,
               "lean_theorems": [
@@ -10003,7 +10003,7 @@
               "caller": "native_sync_loop",
               "callee_must_precede": [
                 "node.import_announced_block",
-                "node.block_range",
+                "range_node.block_range",
                 "admit_and_sort_native_sync_response_blocks"
               ],
               "must_dominate_successors": true,

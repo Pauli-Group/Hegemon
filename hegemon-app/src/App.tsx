@@ -25,7 +25,7 @@ const shieldedAddressPrefix = 'shca1';
 const shieldedAddressLength = 2634;
 const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
 const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
-const approvedSeeds = 'devnet.hegemonprotocol.com:30333';
+const approvedSeeds = 'hegemon.pauli.group:30333';
 const hegemonNetworkName = 'Hegemon';
 const hegemonNetworkVersionLabel = 'Hegemon 0.10';
 const defaultDevConnectionLabel = hegemonNetworkName;
@@ -43,9 +43,7 @@ const legacySeedAliases: Record<string, string> = {
   'hegemon.pauli.group:31333': approvedSeeds,
   'hegemon.pauli.group:30333': approvedSeeds,
   '158.69.222.121:31333': approvedSeeds,
-  '158.69.222.121:30333': approvedSeeds,
-  'devnet.hegemonprotocol.com:30333': approvedSeeds,
-  '51.222.86.107:30333': approvedSeeds
+  '158.69.222.121:30333': approvedSeeds
 };
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
@@ -866,30 +864,7 @@ const buildDefaultConnection = (): NodeConnection => ({
   maxPeers: 50
 });
 
-const buildTestnetConnection = (): NodeConnection => ({
-  id: makeId(),
-  label: 'Testnet node',
-  mode: 'local',
-  participationRole: 'full_node',
-  wsUrl: `ws://127.0.0.1:${defaultRpcPort}`,
-  httpUrl: `http://127.0.0.1:${defaultRpcPort}`,
-  dev: false,
-  tmp: false,
-  basePath: '~/.hegemon-node-testnet',
-  rpcPort: defaultRpcPort,
-  p2pPort: defaultP2pPort,
-  mineThreads: defaultMineThreads,
-  miningIntent: false,
-  ciphertextDaRetentionBlocks: 0,
-  proofDaRetentionBlocks: 0,
-  daStoreCapacity: 1024,
-  rpcMethods: 'unsafe',
-  rpcCorsAll: false,
-  seeds: approvedSeeds,
-  maxPeers: 50
-});
-
-const buildDefaultConnections = () => [buildDefaultConnection(), buildTestnetConnection()];
+const buildDefaultConnections = () => [buildDefaultConnection()];
 
 const normalizeRpcControlPlane = (connection: NodeConnection): NodeConnection => {
   if (connection.mode !== 'local') {
@@ -1026,6 +1001,9 @@ const shouldAutoStartDefaultProfile = (connection: NodeConnection): boolean => {
   );
 };
 
+const findDefaultManagedConnection = (connections: NodeConnection[]) =>
+  connections.find((connection) => shouldAutoStartDefaultProfile(connection)) ?? null;
+
 export default function App() {
   const [connections, setConnections] = useState<NodeConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
@@ -1109,7 +1087,10 @@ export default function App() {
       try {
         const parsed = JSON.parse(storedConnections) as NodeConnection[];
         if (parsed.length) {
-          const normalized = parsed.map(normalizeConnection);
+          const normalizedStored = parsed.map(normalizeConnection);
+          const normalized = findDefaultManagedConnection(normalizedStored)
+            ? normalizedStored
+            : [buildDefaultConnection(), ...normalizedStored];
           setConnections(normalized);
           const storedActive = window.localStorage.getItem(activeConnectionKey);
           const storedWallet = window.localStorage.getItem(walletConnectionKey);
@@ -1353,6 +1334,7 @@ export default function App() {
   const activeDisplayIsSyncing = activeDisplayState.isSyncing;
   const activeHeightDelta = activeDisplayState.heightDelta;
   const activeHeightRelation = activeDisplayState.heightRelation;
+  const activeCanonicalStatus = activeDisplayState.canonicalStatus;
   const healthLabel = activeDisplayState.healthLabel;
   const healthTone = activeDisplayState.healthTone;
 
@@ -1466,6 +1448,7 @@ export default function App() {
             syncTargetHeight: null,
             pendingExtrinsics: null,
             peerList: null,
+            canonicalCheckpoint: null,
             supplyDigest: null,
             storage: null,
             telemetry: null,
@@ -1695,6 +1678,43 @@ export default function App() {
     autoStartAttemptedRef.current.add(activeConnection.id);
     void handleNodeStart({ automatic: true });
   }, [activeConnection, activeSummary?.reachable, nodeBusy, nodeTransition, nodeManagedStatus?.managed]);
+
+  useEffect(() => {
+    if (!activeConnection || activeSummary?.reachable !== false) {
+      return;
+    }
+    if (shouldAutoStartDefaultProfile(activeConnection)) {
+      return;
+    }
+    if (nodeBusy || nodeTransition || nodeManagedStatus?.managed) {
+      return;
+    }
+
+    const defaultManagedConnection = findDefaultManagedConnection(connections);
+    if (defaultManagedConnection) {
+      setActiveConnectionId(defaultManagedConnection.id);
+      if (!walletConnection || walletConnection.id === activeConnection.id) {
+        setWalletConnectionId(defaultManagedConnection.id);
+      }
+      return;
+    }
+
+    const fallback = buildDefaultConnection();
+    setConnections((prev) => [fallback, ...prev]);
+    setActiveConnectionId(fallback.id);
+    if (!walletConnectionId || walletConnectionId === activeConnection.id) {
+      setWalletConnectionId(fallback.id);
+    }
+  }, [
+    activeConnection,
+    activeSummary?.reachable,
+    connections,
+    nodeBusy,
+    nodeTransition,
+    nodeManagedStatus?.managed,
+    walletConnection,
+    walletConnectionId
+  ]);
 
   const handleNodeStop = async () => {
     if (!activeConnection || activeConnection.mode !== 'local') {
@@ -2429,10 +2449,16 @@ export default function App() {
   const syncStateLabel =
     nodeStartupPending
       ? 'Starting'
+      : activeCanonicalStatus === 'mismatch'
+        ? 'Forked from Hegemon testnet'
+        : activeCanonicalStatus === 'pending'
+          ? 'Checkpoint pending'
+          : activeCanonicalStatus === 'unavailable'
+            ? 'Checkpoint unavailable'
       : activeHeightRelation === 'syncing'
         ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
         : activeHeightRelation === 'aligned'
-          ? 'In sync with peer target'
+          ? 'In sync with Hegemon testnet'
           : activeHeightRelation === 'local_ahead'
             ? 'Local miner ahead'
             : activeHeightRelation === 'network_ahead'
@@ -2467,6 +2493,12 @@ export default function App() {
   const syncAlignmentLabel =
     nodeStartupPending
       ? 'Starting'
+      : activeCanonicalStatus === 'mismatch'
+        ? 'Fork mismatch'
+        : activeCanonicalStatus === 'pending'
+          ? 'Checkpoint pending'
+          : activeCanonicalStatus === 'unavailable'
+            ? 'Checkpoint unknown'
       : activeHeightRelation === 'syncing'
         ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
         : activeHeightRelation === 'aligned'
@@ -2476,10 +2508,17 @@ export default function App() {
             : activeHeightRelation === 'network_ahead'
               ? `Network ahead ${activeHeightDeltaAbsLabel}`
               : 'No live height';
-  const syncAlignmentTone: 'ok' | 'warn' | 'neutral' =
-    nodeStartupPending || activeHeightRelation === 'syncing' || activeHeightRelation === 'network_ahead'
+  const syncAlignmentTone: 'ok' | 'warn' | 'neutral' | 'error' =
+    activeCanonicalStatus === 'mismatch'
+      ? 'error'
+      : nodeStartupPending ||
+          activeCanonicalStatus === 'pending' ||
+          activeCanonicalStatus === 'unavailable' ||
+          activeHeightRelation === 'syncing' ||
+          activeHeightRelation === 'network_ahead'
       ? 'warn'
-      : activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead'
+      : activeCanonicalStatus === 'verified' &&
+          (activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead')
         ? 'ok'
         : 'neutral';
   const liveEnvironmentLabel = activeChainSpecLabel;
@@ -2506,23 +2545,39 @@ export default function App() {
     : nodeStartupPending
       ? `Opening ${formatEndpoint(activeConnection?.wsUrl)} and joining ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
       : 'Start the managed local node to join Hegemon with no SSH tunnel.';
-  const liveVerdictTone: 'ok' | 'warn' | 'neutral' =
-    nodeStartupPending ? 'warn' : activeNodeLive && activePeerCount !== null && activePeerCount > 0 ? 'ok' : activeNodeLive ? 'warn' : 'neutral';
+  const liveVerdictTone: 'ok' | 'warn' | 'neutral' | 'error' =
+    nodeStartupPending
+      ? 'warn'
+      : activeCanonicalStatus === 'mismatch'
+        ? 'error'
+        : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeCanonicalStatus === 'verified'
+          ? 'ok'
+          : activeNodeLive
+            ? 'warn'
+            : 'neutral';
   const liveVerdictLabel =
     nodeStartupPending
       ? 'Local node is starting'
-      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Connected to Hegemon'
+      : activeCanonicalStatus === 'mismatch'
+      ? 'Wrong chain'
+      : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeCanonicalStatus === 'verified'
+      ? 'Verified on Hegemon'
       : activeNodeLive
-        ? 'Node online, waiting for peers'
+        ? 'Node online, checking testnet'
         : 'Not connected';
   const liveVerdictDetail =
     nodeStartupPending
       ? 'The app is launching the managed 0.10 node and will switch to live telemetry automatically.'
+      : activeCanonicalStatus === 'mismatch'
+      ? activeSummary?.canonicalCheckpoint?.detail ?? 'This node is not on the canonical Hegemon testnet branch.'
+      : activeCanonicalStatus === 'pending'
+      ? activeSummary?.canonicalCheckpoint?.detail ?? 'The node has not reached the first Hegemon testnet checkpoint yet.'
+      : activeCanonicalStatus === 'unavailable'
+      ? activeSummary?.canonicalCheckpoint?.detail ?? 'Checkpoint status is not available from the selected node.'
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeHeightRelation === 'local_ahead'
-      ? `Peer, seed, and genesis match; this miner is ${activeHeightDeltaAbsLabel} ahead of the latest peer target.`
+      ? `Canonical checkpoint verified; this miner is ${activeHeightDeltaAbsLabel} ahead of the latest peer target.`
       : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Peer, seed, and genesis match the Hegemon 0.10 network.'
+      ? 'Canonical checkpoint, seed, and peer connection match the Hegemon testnet.'
       : activeNodeLive
         ? 'RPC is reachable; waiting for a P2P peer.'
         : 'Start the local node before syncing the wallet or sending funds.';
@@ -3079,7 +3134,15 @@ export default function App() {
           <details className="connection-evidence">
             <summary>
               <span>Connection evidence</span>
-              <strong>{firstActivePeer ? 'Peer, seed, and genesis verified' : 'Seed and genesis configured'}</strong>
+              <strong>
+                {activeCanonicalStatus === 'verified'
+                  ? 'Canonical checkpoint verified'
+                  : activeCanonicalStatus === 'mismatch'
+                    ? 'Fork mismatch'
+                    : firstActivePeer
+                      ? 'Peer connected; checkpoint pending'
+                      : 'Seed configured; no checkpoint yet'}
+              </strong>
             </summary>
             <div className="proof-stack" aria-label="Live connection evidence">
               <div className="proof-row">
@@ -3090,7 +3153,16 @@ export default function App() {
               <div className="proof-row">
                 <span>Seed</span>
                 <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
-                <em>approved Hegemon 0.10 seed</em>
+                <em>approved Hegemon testnet seed</em>
+              </div>
+              <div className="proof-row">
+                <span>Checkpoint</span>
+                <strong className="mono" title={activeSummary?.canonicalCheckpoint?.actualHash ?? ''}>
+                  {activeSummary?.canonicalCheckpoint?.height
+                    ? `${formatNumber(activeSummary.canonicalCheckpoint.height)} · ${activeCanonicalStatus}`
+                    : activeCanonicalStatus}
+                </strong>
+                <em>{activeSummary?.canonicalCheckpoint?.detail ?? 'No checkpoint data yet'}</em>
               </div>
               <div className="proof-row">
                 <span>Peer</span>
