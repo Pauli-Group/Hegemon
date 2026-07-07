@@ -2104,10 +2104,14 @@ mod tests {
 
     #[test]
     fn protocol_queue_budgets_hold_multiple_full_proof_frames() {
-        let minimum = wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS;
-        assert!(MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES >= minimum);
-        assert!(MAX_PROTOCOL_INBOUND_QUEUE_BYTES >= minimum);
-        assert!(MAX_P2P_COMMAND_QUEUE_BYTES >= minimum);
+        let minimum =
+            std::hint::black_box(wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS);
+        let outbound = std::hint::black_box(MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES);
+        let inbound = std::hint::black_box(MAX_PROTOCOL_INBOUND_QUEUE_BYTES);
+        let command = std::hint::black_box(MAX_P2P_COMMAND_QUEUE_BYTES);
+        assert!(outbound >= minimum);
+        assert!(inbound >= minimum);
+        assert!(command >= minimum);
     }
 
     #[test]

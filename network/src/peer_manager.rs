@@ -445,10 +445,10 @@ mod tests {
 
     #[test]
     fn peer_outbound_queue_budget_holds_multiple_full_proof_frames() {
-        assert!(
-            MAX_PEER_OUTBOUND_QUEUE_BYTES
-                >= wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS
-        );
+        let configured = std::hint::black_box(MAX_PEER_OUTBOUND_QUEUE_BYTES);
+        let required =
+            std::hint::black_box(wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS);
+        assert!(configured >= required);
     }
 
     #[tokio::test]
