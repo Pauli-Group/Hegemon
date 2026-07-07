@@ -19,7 +19,7 @@ pub type PeerSessionId = u64;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AddPeerResult {
     Accepted,
-    Replaced(PeerSessionId),
+    Duplicate(PeerSessionId),
     RejectedAtCapacity,
 }
 
@@ -79,17 +79,9 @@ impl PeerManager {
         if dialable_addr {
             self.record_addresses(peer_id, [addr]);
         }
-        if let std::collections::hash_map::Entry::Occupied(mut entry) = self.peers.entry(peer_id) {
-            let old_session = entry.get().session_id;
-            entry.insert(PeerEntry {
-                peer_id,
-                tx,
-                addr,
-                session_id,
-                last_seen: Instant::now(),
-                score: 0,
-            });
-            return AddPeerResult::Replaced(old_session);
+        if let Some(entry) = self.peers.get_mut(&peer_id) {
+            entry.last_seen = Instant::now();
+            return AddPeerResult::Duplicate(entry.session_id);
         }
 
         if self.max_peers > 0 && self.peers.len() >= self.max_peers {
@@ -496,7 +488,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replacing_same_peer_closes_old_session_and_ignores_stale_remove() {
+    async fn duplicate_same_peer_keeps_existing_session_and_rejects_new_session() {
         let mut manager = PeerManager::new(2);
         let peer: PeerId = [8u8; 32];
         let old_addr: SocketAddr = "127.0.0.1:9501".parse().unwrap();
@@ -510,20 +502,19 @@ mod tests {
         );
         assert_eq!(
             manager.try_add_peer(peer, new_addr, new_tx, 202, true),
-            AddPeerResult::Replaced(101)
+            AddPeerResult::Duplicate(101)
         );
-        assert!(old_rx.recv().await.is_none());
-        assert!(!manager.is_active_session(&peer, 101));
-        assert!(manager.is_active_session(&peer, 202));
-        assert_eq!(manager.remove_peer_session(&peer, 101), None);
-        assert!(manager.is_active_session(&peer, 202));
+        assert!(manager.is_active_session(&peer, 101));
+        assert!(!manager.is_active_session(&peer, 202));
+        assert!(new_rx.recv().await.is_none());
 
         manager.send_to(&peer, WireMessage::Pong).await;
         assert!(matches!(
-            new_rx.recv().await.map(|queued| queued.msg),
+            old_rx.recv().await.map(|queued| queued.msg),
             Some(WireMessage::Pong)
         ));
-        assert_eq!(manager.remove_peer_session(&peer, 202), Some(new_addr));
+        assert_eq!(manager.remove_peer_session(&peer, 202), None);
+        assert_eq!(manager.remove_peer_session(&peer, 101), Some(old_addr));
         assert_eq!(manager.peer_count(), 0);
     }
 }

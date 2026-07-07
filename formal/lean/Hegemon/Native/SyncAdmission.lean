@@ -126,10 +126,10 @@ def miningSyncObservedPeerHeight
   if input.stoppedOnError then
     none
   else if input.verifiedNewProgress then
-    some input.localBestHeight
+    some input.peerBestHeight
   else if input.verifiedKnownAtOrBelowLocalBest
       && input.peerBestHeight ≤ input.localBestHeight then
-    some input.peerBestHeight
+    some input.localBestHeight
   else
     none
 
@@ -362,23 +362,45 @@ theorem mining_sync_observation_none_on_error
   unfold miningSyncObservedPeerHeight
   simp [stopped]
 
-theorem mining_sync_observation_imported_progress_uses_local_best
+theorem mining_sync_observation_imported_progress_uses_peer_best
     {input : MiningSyncEvidenceInput}
     (notStopped : input.stoppedOnError = false)
     (newProgress : input.verifiedNewProgress = true) :
-    miningSyncObservedPeerHeight input = some input.localBestHeight := by
+    miningSyncObservedPeerHeight input = some input.peerBestHeight := by
   unfold miningSyncObservedPeerHeight
   simp [notStopped, newProgress]
 
-theorem mining_sync_observation_known_peer_uses_peer_height
+theorem mining_sync_observation_known_peer_at_or_below_local_best
     {input : MiningSyncEvidenceInput}
     (notStopped : input.stoppedOnError = false)
     (noNewProgress : input.verifiedNewProgress = false)
     (known : input.verifiedKnownAtOrBelowLocalBest = true)
-    (within : input.peerBestHeight ≤ input.localBestHeight) :
-    miningSyncObservedPeerHeight input = some input.peerBestHeight := by
+    (notAhead : input.peerBestHeight ≤ input.localBestHeight) :
+    miningSyncObservedPeerHeight input = some input.localBestHeight := by
   unfold miningSyncObservedPeerHeight
-  simp [notStopped, noNewProgress, known, within]
+  simp [notStopped, noNewProgress, known, notAhead]
+
+theorem mining_sync_observation_unknown_or_ahead_peer_rejected
+    {input : MiningSyncEvidenceInput}
+    (notStopped : input.stoppedOnError = false)
+    (noNewProgress : input.verifiedNewProgress = false)
+    (unknownOrAhead :
+      input.verifiedKnownAtOrBelowLocalBest = false
+        ∨ ¬ input.peerBestHeight ≤ input.localBestHeight) :
+    miningSyncObservedPeerHeight input = none := by
+  unfold miningSyncObservedPeerHeight
+  cases unknownOrAhead with
+  | inl unknown =>
+      simp [notStopped, noNewProgress, unknown]
+  | inr ahead =>
+      by_cases known : input.verifiedKnownAtOrBelowLocalBest = true
+      · simp [notStopped, noNewProgress, known, ahead]
+      · have unknown : input.verifiedKnownAtOrBelowLocalBest = false := by
+          cases h : input.verifiedKnownAtOrBelowLocalBest
+          · rfl
+          · exfalso
+            exact known h
+        simp [notStopped, noNewProgress, unknown]
 
 theorem mining_gate_seeded_follows_observed_gate
     {input : MiningGateInput}
@@ -752,8 +774,12 @@ theorem mining_gate_seeded_open_allows :
     miningGateAllowsWork miningGateSeededOpen = true := by
   decide
 
-theorem mining_evidence_known_equal_tip_observes_peer_height :
+theorem mining_evidence_known_equal_tip_observes_local_tip :
     miningSyncObservedPeerHeight miningEvidenceKnownEqualTip = some 12 := by
+  decide
+
+theorem mining_evidence_known_below_tip_observes_local_tip :
+    miningSyncObservedPeerHeight miningEvidenceKnownBelowTip = some 12 := by
   decide
 
 theorem mining_evidence_known_ahead_rejects :

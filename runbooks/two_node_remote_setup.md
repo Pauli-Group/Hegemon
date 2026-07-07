@@ -193,7 +193,7 @@ HEGEMON_SEEDS="<YOUR_PUBLIC_IP>:30333" \
   --name "FriendNode"
 ```
 
-Use the same agreed `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks. If you are joining the shared public fresh testnet instead of bootstrapping your own two-node network, the current approved public join seed is `devnet.hegemonprotocol.com:30333`.
+Use the same agreed `HEGEMON_SEEDS` list on every miner. Diverging seed lists can partition peers and cause forks. If you are joining the shared public fresh testnet instead of bootstrapping your own two-node network, the current approved public join seed is `hegemon.pauli.group:30333`.
 
 ---
 
@@ -268,7 +268,7 @@ This ensures both nodes can reconnect if either restarts.
 
 Use the Hegemon desktop app (`hegemon-app/`) from your local machine:
 
-1. Run a local relay node that connects over P2P to the remote miner. For ad hoc two-node tests, set `HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333"`; for the shared testnet, use the approved seed list instead: `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"`.
+1. Run a local relay node that connects over P2P to the remote miner. For ad hoc two-node tests, set `HEGEMON_SEEDS="<FRIEND_PUBLIC_IP>:30333"`; for the shared testnet, use the approved seed list instead: `HEGEMON_SEEDS="hegemon.pauli.group:30333"`.
 2. Point the desktop app at the local relay RPC endpoint, for example `ws://127.0.0.1:9944`.
 3. Create or open a wallet store.
 4. Sync the wallet and send funds to your friend's address.

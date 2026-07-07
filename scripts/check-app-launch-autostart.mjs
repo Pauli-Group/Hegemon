@@ -10,7 +10,7 @@ const APP_PATH =
   process.env.HEGEMON_APP_BUNDLE ?? path.join(ROOT_DIR, 'hegemon-app/dist/mac-arm64/Hegemon.app');
 const BUNDLE_ID = process.env.HEGEMON_APP_BUNDLE_ID ?? 'com.hegemon.desktop';
 const RPC_URL = process.env.HEGEMON_APP_AUTOSTART_RPC_URL ?? 'http://127.0.0.1:9955';
-const APPROVED_SEED = process.env.HEGEMON_APP_EXPECTED_SEED ?? 'devnet.hegemonprotocol.com:30333';
+const APPROVED_SEED = process.env.HEGEMON_APP_EXPECTED_SEED ?? 'hegemon.pauli.group:30333';
 const RPC_DOWN_TIMEOUT_MS = Number.parseInt(
   process.env.HEGEMON_APP_AUTOSTART_RPC_DOWN_TIMEOUT_MS ?? '45000',
   10
@@ -286,7 +286,7 @@ async function main() {
     return await rpcReachable();
   });
 
-  const liveSnapshot = await waitFor('packaged app to reach live 0.10 devnet P2P state', LIVE_TIMEOUT_MS, async () => {
+  const liveSnapshot = await waitFor('packaged app to reach live Hegemon testnet P2P state', LIVE_TIMEOUT_MS, async () => {
     const snapshot = await readSnapshot();
     const lag = Math.max(0, snapshot.target - snapshot.height);
     const healthy =
@@ -300,7 +300,7 @@ async function main() {
   });
 
   const summary = summarizeSnapshot(liveSnapshot);
-  log('PASS packaged app autostarted a local loopback node and reached live 0.10 devnet P2P');
+  log('PASS packaged app autostarted a local loopback node and reached live Hegemon testnet P2P');
   console.log(JSON.stringify(summary, null, 2));
 }
 

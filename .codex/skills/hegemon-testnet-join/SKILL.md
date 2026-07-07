@@ -1,7 +1,7 @@
 ---
 name: hegemon-testnet-join
 description: Join the Hegemon testnet using the native 0.10 launch profile, verify genesis, sync to the tip, and choose relay or mining mode on the shipped recursive-block path.
-compatibility: Requires ./target/release/hegemon-node, network access to devnet.hegemonprotocol.com:30333, synchronized host time for mining, and ./target/release/walletd only when opening a wallet or exporting a mining address.
+compatibility: Requires ./target/release/hegemon-node, network access to hegemon.pauli.group:30333, synchronized host time for mining, and ./target/release/walletd only when opening a wallet or exporting a mining address.
 metadata:
   repo: Reflexivity/Hegemon
   version: "1.6"
@@ -12,7 +12,7 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
 
 # Defaults
 - Network name: `Hegemon`.
-- Approved public join seed list: `devnet.hegemonprotocol.com:30333`.
+- Approved public join seed list: `hegemon.pauli.group:30333`.
 - Native profile: `--dev` on the 0.10 release binary. Do not use removed 0.9 JSON chainspec files, `config/dev-chainspec.json`, or `--chain`.
 - Default role: relay node / full node. Use mining mode only for an authoring host with a deliberate shielded payout address.
 - RPC port: `9944` for CLI examples.
@@ -28,7 +28,7 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
    - macOS: `sudo systemsetup -getusingnetworktime`
    - Linux: `timedatectl status` or `chronyc tracking`
 3. Start a relay node first. This is the normal no-SSH join path for laptops and wallet users:
-   - `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333" \`
+   - `HEGEMON_SEEDS="hegemon.pauli.group:30333" \`
    - `HEGEMON_PQ_STRICT_COMPATIBILITY=1 \`
    - `./target/release/hegemon-node \`
    - `  --dev \`
@@ -44,7 +44,7 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
    - `  | jq -r '.result.primaryAddress')`
    - Restart the node with mining enabled:
    - `HEGEMON_MINE=1 \`
-   - `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333" \`
+   - `HEGEMON_SEEDS="hegemon.pauli.group:30333" \`
    - `HEGEMON_MINER_ADDRESS="$HEGEMON_MINER_ADDRESS" \`
    - `HEGEMON_PQ_STRICT_COMPATIBILITY=1 \`
    - `./target/release/hegemon-node \`
@@ -68,7 +68,7 @@ Connect a Codex-assisted operator or end user to the public Hegemon 0.10 testnet
    - `  | ./target/release/walletd --store ~/.hegemon-wallet --mode open`
 
 # Notes
-- The canonical public 0.10 join seed is `devnet.hegemonprotocol.com:30333`. Do not list legacy hostnames or raw IPs separately as fake redundancy; peers learn other addresses through P2P discovery.
+- The canonical public 0.10 join seed is `hegemon.pauli.group:30333`. Do not list legacy hostnames or raw IPs separately as fake redundancy; peers learn other addresses through P2P discovery.
 - Keep host clock sync enabled with NTP or chrony. PoW import rejects future-skewed timestamps.
 - If genesis differs, stop the node and wipe the base path before restarting with the matching release/profile.
 - Do not enter a public node RPC address into the desktop app. Run a local relay node with the approved seed and let the desktop connect to localhost.

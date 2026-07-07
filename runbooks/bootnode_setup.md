@@ -12,7 +12,7 @@ This guide covers the native Hegemon boot node. The node is the `hegemon-node` b
 All operators on the same network should use the approved seed list:
 
 ```bash
-export HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"
+export HEGEMON_SEEDS="hegemon.pauli.group:30333"
 ```
 
 Miners must share the same seed list to avoid partitions and accidental forks. PoW timestamps are rejected if they exceed the future-skew bound, so keep host time synchronized with NTP/chrony.
@@ -63,7 +63,7 @@ User=hegemon
 Group=hegemon
 Environment="RUST_LOG=info"
 Environment="RUST_BACKTRACE=1"
-Environment="HEGEMON_SEEDS=devnet.hegemonprotocol.com:30333"
+Environment="HEGEMON_SEEDS=hegemon.pauli.group:30333"
 Environment="HEGEMON_MAX_PEERS=64"
 ExecStart=/usr/local/bin/hegemon-node \
     --dev \
@@ -110,7 +110,7 @@ For a non-mining seed, `system_health` should show the node is alive and whether
 ## Verification Checklist
 
 - [ ] `make node` built the native `hegemon-node`.
-- [ ] `HEGEMON_SEEDS="devnet.hegemonprotocol.com:30333"` is set or deliberately rotated for the whole network.
+- [ ] `HEGEMON_SEEDS="hegemon.pauli.group:30333"` is set or deliberately rotated for the whole network.
 - [ ] NTP/chrony is enabled and healthy.
 - [ ] Port `30333/tcp` is reachable.
 - [ ] RPC is not publicly exposed unless intentionally protected.

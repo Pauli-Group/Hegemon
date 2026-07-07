@@ -113,17 +113,17 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 128;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
-const NATIVE_ANNOUNCE_INTERVAL: u64 = 16;
-const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
+const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 32;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(12);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
-const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 128;
+const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 32;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
 const APPROVED_PUBLIC_JOIN_SEEDS: &str = "hegemon.pauli.group:30333";
 const AES_GCM_TAG_BYTES: usize = 16;
@@ -296,6 +296,41 @@ impl NativeConfig {
 
     fn permits_empty_seed_authoring(&self) -> bool {
         self.dev || self.bootstrap_mining_authoring
+    }
+
+    fn public_testnet_profile(&self) -> bool {
+        if !self.dev || self.tmp {
+            return false;
+        }
+        self.seeds
+            .iter()
+            .any(|seed| seed.trim().eq_ignore_ascii_case(APPROVED_PUBLIC_JOIN_SEEDS))
+            || (self.bootstrap_mining_authoring
+                && self
+                    .base_path
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains("testnet"))
+    }
+
+    fn chain_spec_id(&self) -> &'static str {
+        if self.public_testnet_profile() {
+            "hegemon-native-testnet"
+        } else if self.dev {
+            "hegemon-native-dev"
+        } else {
+            "hegemon-native"
+        }
+    }
+
+    fn chain_type(&self) -> &'static str {
+        if self.public_testnet_profile() {
+            "testnet"
+        } else if self.dev {
+            "dev"
+        } else {
+            "live"
+        }
     }
 }
 
@@ -537,6 +572,12 @@ struct NativeSyncRequestRateState {
     requests: u32,
 }
 
+#[derive(Clone, Debug)]
+struct NativeOutboundSyncRequest {
+    range: NativeSyncRange,
+    requested_at: Instant,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeMiningSyncEvidenceInput {
     verified_new_progress: bool,
@@ -616,12 +657,12 @@ fn native_mining_sync_observed_peer_height(input: NativeMiningSyncEvidenceInput)
         return None;
     }
     if input.verified_new_progress {
-        return Some(input.local_best_height);
+        return Some(input.peer_best_height);
     }
     if input.verified_known_at_or_below_local_best
         && input.peer_best_height <= input.local_best_height
     {
-        return Some(input.peer_best_height);
+        return Some(input.local_best_height);
     }
     None
 }
@@ -2982,11 +3023,16 @@ pub struct NativeNode {
     pending_action_rebroadcast_cursor: AtomicU64,
     sync_target_height: AtomicU64,
     sync_target_observed: AtomicBool,
+    sync_target_peer: Mutex<Option<PeerId>>,
+    sync_target_hash: Mutex<Option<[u8; 32]>>,
     mining_sync_gate_open: AtomicBool,
+    sync_import_in_flight: AtomicBool,
     network_peer_count: Arc<AtomicUsize>,
     network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
     network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
+    sync_response_in_flight_peers: Mutex<BTreeSet<PeerId>>,
+    outbound_sync_requests: Mutex<BTreeMap<PeerId, NativeOutboundSyncRequest>>,
     mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
     miner_identity: NativeMinerIdentity,
@@ -3062,8 +3108,8 @@ impl NativeNode {
             "native Hegemon node storage reload completed"
         );
 
-        let initial_mining_sync_gate_open =
-            config.seeds.is_empty() && config.permits_empty_seed_authoring();
+        let initial_mining_sync_gate_open = config.bootstrap_mining_authoring
+            || (config.seeds.is_empty() && config.permits_empty_seed_authoring());
         let node = Arc::new(Self {
             config,
             db,
@@ -3089,11 +3135,16 @@ impl NativeNode {
             pending_action_rebroadcast_cursor: AtomicU64::new(0),
             sync_target_height: AtomicU64::new(0),
             sync_target_observed: AtomicBool::new(initial_mining_sync_gate_open),
+            sync_target_peer: Mutex::new(None),
+            sync_target_hash: Mutex::new(None),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
+            sync_import_in_flight: AtomicBool::new(false),
             network_peer_count: Arc::new(AtomicUsize::new(0)),
             network_local_peer_id: Arc::new(StdRwLock::new(None)),
             network_peer_snapshot: Arc::new(StdRwLock::new(Vec::new())),
             sync_request_rate_limits: Mutex::new(BTreeMap::new()),
+            sync_response_in_flight_peers: Mutex::new(BTreeSet::new()),
+            outbound_sync_requests: Mutex::new(BTreeMap::new()),
             mining_tasks: Mutex::new(Vec::new()),
             sync_tx: Mutex::new(None),
             miner_identity,
@@ -3140,8 +3191,91 @@ impl NativeNode {
         self.refresh_mining_sync_gate();
     }
 
+    fn observe_pending_sync_peer_height(&self, peer_best_height: u64) {
+        self.observe_pending_sync_peer_tip(None, peer_best_height, None);
+    }
+
+    fn observe_pending_sync_peer_tip(
+        &self,
+        peer_id: Option<PeerId>,
+        peer_best_height: u64,
+        peer_best_hash: Option<[u8; 32]>,
+    ) {
+        let best = self.best_meta();
+        let unresolved_equal_height_tip =
+            peer_best_height == best.height && peer_best_hash.is_some_and(|hash| hash != best.hash);
+        if peer_best_height < best.height
+            || (peer_best_height == best.height && !unresolved_equal_height_tip)
+        {
+            return;
+        }
+        self.sync_target_observed.store(true, Ordering::SeqCst);
+        self.sync_target_height
+            .fetch_max(peer_best_height, Ordering::Relaxed);
+        if let Some(peer_id) = peer_id {
+            *self.sync_target_peer.lock() = Some(peer_id);
+        }
+        if let Some(peer_best_hash) = peer_best_hash {
+            *self.sync_target_hash.lock() = Some(peer_best_hash);
+        }
+        self.mining_sync_gate_open.store(false, Ordering::SeqCst);
+    }
+
     fn has_verified_header_hash(&self, hash: &[u8; 32]) -> Result<bool> {
         Ok(self.header_by_hash(hash)?.is_some())
+    }
+
+    fn begin_sync_import(&self) -> bool {
+        self.sync_import_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn end_sync_import(&self) {
+        self.sync_import_in_flight.store(false, Ordering::Release);
+    }
+
+    fn sync_import_in_flight(&self) -> bool {
+        self.sync_import_in_flight.load(Ordering::Acquire)
+    }
+
+    fn begin_sync_response_for_peer(&self, peer_id: PeerId) -> bool {
+        self.sync_response_in_flight_peers.lock().insert(peer_id)
+    }
+
+    fn end_sync_response_for_peer(&self, peer_id: PeerId) {
+        self.sync_response_in_flight_peers.lock().remove(&peer_id);
+    }
+
+    fn begin_outbound_sync_request(&self, peer_id: Option<PeerId>, range: NativeSyncRange) -> bool {
+        let Some(peer_id) = peer_id else {
+            return true;
+        };
+        let now = Instant::now();
+        let mut requests = self.outbound_sync_requests.lock();
+        requests.retain(|_, request| {
+            now.saturating_duration_since(request.requested_at) <= NATIVE_SYNC_REQUEST_RETRY_AFTER
+        });
+        if let Some(request) = requests.get(&peer_id) {
+            if request.range == range
+                && now.saturating_duration_since(request.requested_at)
+                    < NATIVE_SYNC_REQUEST_RETRY_AFTER
+            {
+                return false;
+            }
+        }
+        requests.insert(
+            peer_id,
+            NativeOutboundSyncRequest {
+                range,
+                requested_at: now,
+            },
+        );
+        true
+    }
+
+    fn complete_outbound_sync_request(&self, peer_id: PeerId) {
+        self.outbound_sync_requests.lock().remove(&peer_id);
     }
 
     fn admit_sync_request_from_peer(
@@ -3238,8 +3372,40 @@ impl NativeNode {
             return;
         }
         let target = self.sync_target_height.load(Ordering::Relaxed);
-        self.mining_sync_gate_open
-            .store(self.best_meta().height >= target, Ordering::SeqCst);
+        let resolved = self.sync_target_resolved(target);
+        self.mining_sync_gate_open.store(resolved, Ordering::SeqCst);
+        if resolved {
+            *self.sync_target_peer.lock() = None;
+        }
+    }
+
+    fn sync_target_resolved(&self, target: u64) -> bool {
+        let best = self.best_meta();
+        if best.height < target {
+            return false;
+        }
+        let Some(target_hash) = *self.sync_target_hash.lock() else {
+            return true;
+        };
+        if best.hash == target_hash {
+            return true;
+        }
+        if best.height > target {
+            return true;
+        }
+        match self.header_by_hash(&target_hash) {
+            Ok(Some(target_meta)) => !native_meta_better_than(&target_meta, &best),
+            Ok(None) => false,
+            Err(err) => {
+                warn!(
+                    target,
+                    target_hash = %hex32(&target_hash),
+                    error = %err,
+                    "failed to resolve native sync target hash"
+                );
+                false
+            }
+        }
     }
 
     fn mining_sync_gate_allows_work(&self) -> bool {
@@ -3254,10 +3420,11 @@ impl NativeNode {
     fn sync_status_fields(&self) -> (bool, u64) {
         let target = self.sync_target_height.load(Ordering::Relaxed);
         let observed = self.sync_target_observed.load(Ordering::SeqCst);
+        let target_resolved = self.sync_target_resolved(target);
         let syncing = !self.config.seeds.is_empty()
             && (!observed
                 || !self.mining_sync_gate_open.load(Ordering::SeqCst)
-                || (target > 0 && self.best_meta().height < target));
+                || !target_resolved);
         (syncing, target)
     }
 
@@ -4049,9 +4216,6 @@ impl NativeNode {
     }
 
     fn broadcast_block_announce(&self, meta: &NativeBlockMeta) {
-        if meta.height > 1 && !meta.height.is_multiple_of(NATIVE_ANNOUNCE_INTERVAL) {
-            return;
-        }
         self.last_announce_height
             .store(meta.height, Ordering::Relaxed);
         let Some(sync_tx) = self.sync_tx.lock().clone() else {
@@ -4074,6 +4238,12 @@ impl NativeNode {
         };
         if let Err(err) = sync_tx.try_send(message) {
             debug!(error = %err, "failed to queue native block announce");
+        } else {
+            info!(
+                height = meta.height,
+                hash = %hex32(&meta.hash),
+                "queued native block announce"
+            );
         }
     }
 
@@ -5185,9 +5355,9 @@ impl NativeNode {
     fn node_config_snapshot(&self, policy: RpcMethodPolicy) -> Value {
         if policy != RpcMethodPolicy::Unsafe {
             return json!({
-                "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
+                "chainSpecId": self.config.chain_spec_id(),
                 "chainSpecName": "Hegemon",
-                "chainType": if self.config.dev { "dev" } else { "live" },
+                "chainType": self.config.chain_type(),
                 "rpcMethods": self.config.rpc_methods,
                 "redacted": true,
             });
@@ -5195,9 +5365,9 @@ impl NativeNode {
 
         json!({
             "nodeName": self.config.node_name,
-            "chainSpecId": if self.config.dev { "hegemon-native-dev" } else { "hegemon-native" },
+            "chainSpecId": self.config.chain_spec_id(),
             "chainSpecName": "Hegemon",
-            "chainType": if self.config.dev { "dev" } else { "live" },
+            "chainType": self.config.chain_type(),
             "basePath": self.config.base_path.display().to_string(),
             "p2pListenAddr": self.config.p2p_listen_addr,
             "rpcListenAddr": self.config.rpc_addr.to_string(),
@@ -5985,6 +6155,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             maybe_msg = handle.recv() => maybe_msg,
             _ = best_announce.tick() => {
                 queue_native_best_sync_announce(&node, &sync_tx);
+                queue_missing_blocks_from_sync_target(&node, &sync_tx);
                 continue;
             }
             _ = pending_rebroadcast.tick() => {
@@ -6048,7 +6219,14 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         {
                             node.observe_verified_sync_peer_height(observed_height);
                         }
-                        request_missing_blocks(&node, &handle, peer_id, announced_height).await;
+                        request_missing_blocks(
+                            &node,
+                            &handle,
+                            peer_id,
+                            announced_height,
+                            Some(meta.hash),
+                        )
+                        .await;
                     }
                     Err(err) => {
                         warn!(
@@ -6084,34 +6262,53 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     );
                     continue;
                 }
-                let best_height = node.best_meta().height;
-                let node = Arc::clone(&node);
-                let blocks = match tokio::task::spawn_blocking(move || {
-                    node.block_range(from_height, to_height)
-                })
-                .await
-                {
-                    Ok(Ok(blocks)) => blocks,
-                    Ok(Err(err)) => {
-                        warn!(
-                            from_height,
-                            to_height,
-                            error = %err,
-                            "failed to load native sync block range"
-                        );
-                        continue;
+                if !node.begin_sync_response_for_peer(peer_id) {
+                    debug!(
+                        from_height,
+                        to_height,
+                        peer = %hex32(&peer_id),
+                        "skipping duplicate native sync response while peer has a response in flight"
+                    );
+                    continue;
+                }
+                let range_node = Arc::clone(&node);
+                let response_node = Arc::clone(&node);
+                let response_tx = sync_tx.clone();
+                tokio::spawn(async move {
+                    match tokio::task::spawn_blocking(move || {
+                        range_node.block_range(from_height, to_height)
+                    })
+                    .await
+                    {
+                        Ok(Ok(blocks)) => {
+                            let best_height = response_node.best_meta().height;
+                            send_sync_response_with_sender(
+                                &response_tx,
+                                peer_id,
+                                best_height,
+                                blocks,
+                            )
+                            .await;
+                        }
+                        Ok(Err(err)) => {
+                            warn!(
+                                from_height,
+                                to_height,
+                                error = %err,
+                                "failed to load native sync block range"
+                            );
+                        }
+                        Err(err) => {
+                            warn!(
+                                from_height,
+                                to_height,
+                                error = %err,
+                                "native sync block range worker failed"
+                            );
+                        }
                     }
-                    Err(err) => {
-                        warn!(
-                            from_height,
-                            to_height,
-                            error = %err,
-                            "native sync block range worker failed"
-                        );
-                        continue;
-                    }
-                };
-                send_sync_response(&handle, peer_id, best_height, blocks).await;
+                    response_node.end_sync_response_for_peer(peer_id);
+                });
             }
             NativeSyncMessage::Response {
                 best_height,
@@ -6123,6 +6320,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     block_count = blocks.len(),
                     "received native sync response"
                 );
+                node.complete_outbound_sync_request(peer_id);
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
                     &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
@@ -6135,15 +6333,39 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     );
                     continue;
                 }
+                if native_sync_response_stale_for_local_tip(&node, best_height, &blocks) {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        best_height,
+                        block_count = blocks.len(),
+                        local_height = node.best_meta().height,
+                        "dropping stale native sync response"
+                    );
+                    continue;
+                }
+                node.observe_pending_sync_peer_height(best_height);
+                if !node.begin_sync_import() {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        best_height,
+                        block_count = blocks.len(),
+                        "deferring native sync response while another import is active"
+                    );
+                    continue;
+                }
                 let progress = NativeSyncResponseImportProgress::new(blocks.len());
                 let import_node = Arc::clone(&node);
                 let report = match tokio::task::spawn_blocking(move || {
-                    import_native_sync_response_blocks(&import_node, blocks, progress)
+                    import_native_sync_response_blocks(&import_node, blocks, best_height, progress)
                 })
                 .await
                 {
-                    Ok(report) => report,
+                    Ok(report) => {
+                        node.end_sync_import();
+                        report
+                    }
                     Err(err) => {
+                        node.end_sync_import();
                         warn!(error = %err, "native sync import worker failed");
                         continue;
                     }
@@ -6180,8 +6402,9 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     );
                 }
                 if progress.should_request_more(local_best_height, best_height) {
-                    request_missing_blocks(&node, &handle, peer_id, best_height).await;
+                    request_missing_blocks(&node, &handle, peer_id, best_height, None).await;
                 } else {
+                    queue_missing_blocks_from_sync_target(&node, &sync_tx);
                     node.refresh_mining_sync_gate();
                 }
             }
@@ -6255,13 +6478,39 @@ struct NativeSyncImportReport {
 fn import_native_sync_response_blocks(
     node: &NativeNode,
     blocks: Vec<NativeBlockMeta>,
+    peer_best_height: u64,
     mut progress: NativeSyncResponseImportProgress,
 ) -> NativeSyncImportReport {
+    if let Some(report) =
+        import_native_sync_response_winning_branch(node, &blocks, peer_best_height, &mut progress)
+    {
+        return report;
+    }
+
     let mut failure = None;
     for meta in blocks {
+        match skip_stale_nonwinning_sync_block(node, &meta, peer_best_height) {
+            Ok(true) => {
+                progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
+                continue;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                failure = Some(NativeSyncImportFailure {
+                    height: meta.height,
+                    hash: meta.hash,
+                    error: err.to_string(),
+                });
+                break;
+            }
+        }
         match node.import_announced_block(meta.clone()) {
             Ok(true) => {
                 progress.record(NativeSyncResponseImportOutcome::Imported);
+                if progress.imported_blocks == 1 {
+                    node.observe_verified_sync_peer_height(peer_best_height);
+                }
             }
             Ok(false) => {
                 progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
@@ -6278,6 +6527,188 @@ fn import_native_sync_response_blocks(
         }
     }
     NativeSyncImportReport { progress, failure }
+}
+
+fn import_native_sync_response_winning_branch(
+    node: &NativeNode,
+    blocks: &[NativeBlockMeta],
+    peer_best_height: u64,
+    progress: &mut NativeSyncResponseImportProgress,
+) -> Option<NativeSyncImportReport> {
+    let response_tip = blocks.last()?;
+    let local_best = node.best_meta();
+    if peer_best_height <= local_best.height || !native_meta_better_than(response_tip, &local_best)
+    {
+        return None;
+    }
+
+    let mut first_unknown = 0usize;
+    while first_unknown < blocks.len() {
+        match node.has_verified_header_hash(&blocks[first_unknown].hash) {
+            Ok(true) => {
+                progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
+                first_unknown += 1;
+            }
+            Ok(false) => break,
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                return Some(NativeSyncImportReport {
+                    progress: *progress,
+                    failure: Some(NativeSyncImportFailure {
+                        height: blocks[first_unknown].height,
+                        hash: blocks[first_unknown].hash,
+                        error: err.to_string(),
+                    }),
+                });
+            }
+        }
+    }
+
+    let new_chain = if first_unknown == blocks.len() {
+        match node.chain_to_hash(response_tip.hash) {
+            Ok(chain) => chain,
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                return Some(NativeSyncImportReport {
+                    progress: *progress,
+                    failure: Some(NativeSyncImportFailure {
+                        height: response_tip.height,
+                        hash: response_tip.hash,
+                        error: err.to_string(),
+                    }),
+                });
+            }
+        }
+    } else {
+        let anchor_hash = if first_unknown == 0 {
+            blocks[first_unknown].parent_hash
+        } else {
+            blocks[first_unknown - 1].hash
+        };
+        let _anchor = (match node.header_by_hash(&anchor_hash) {
+            Ok(anchor) => anchor,
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                return Some(NativeSyncImportReport {
+                    progress: *progress,
+                    failure: Some(NativeSyncImportFailure {
+                        height: blocks[first_unknown].height,
+                        hash: blocks[first_unknown].hash,
+                        error: err.to_string(),
+                    }),
+                });
+            }
+        })?;
+        let mut chain = match node.chain_to_hash(anchor_hash) {
+            Ok(chain) => chain,
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                return Some(NativeSyncImportReport {
+                    progress: *progress,
+                    failure: Some(NativeSyncImportFailure {
+                        height: blocks[first_unknown].height,
+                        hash: blocks[first_unknown].hash,
+                        error: err.to_string(),
+                    }),
+                });
+            }
+        };
+        chain.extend(blocks[first_unknown..].iter().cloned());
+        chain
+    };
+
+    let mut state = node.state.write();
+    if !native_meta_better_than(
+        new_chain.last().expect("sync response branch has tip"),
+        &state.best,
+    ) {
+        return None;
+    }
+    let previous_height = state.best.height;
+    let new_tip = new_chain
+        .last()
+        .expect("sync response branch has tip")
+        .clone();
+    match node.reorganize_chain_to_best_locked(&mut state, new_chain) {
+        Ok(()) => {
+            let imported = if first_unknown == blocks.len() {
+                1
+            } else {
+                blocks.len().saturating_sub(first_unknown)
+            };
+            progress.attempted_blocks = progress.response_block_count;
+            progress.imported_blocks = progress
+                .imported_blocks
+                .saturating_add(u64::try_from(imported).unwrap_or(u64::MAX));
+            info!(
+                imported,
+                previous_height,
+                best_height = new_tip.height,
+                peer_best_height,
+                "imported native sync response by batch reorg"
+            );
+            Some(NativeSyncImportReport {
+                progress: *progress,
+                failure: None,
+            })
+        }
+        Err(err) => {
+            progress.record(NativeSyncResponseImportOutcome::Error);
+            Some(NativeSyncImportReport {
+                progress: *progress,
+                failure: Some(NativeSyncImportFailure {
+                    height: new_tip.height,
+                    hash: new_tip.hash,
+                    error: err.to_string(),
+                }),
+            })
+        }
+    }
+}
+
+fn skip_stale_nonwinning_sync_block(
+    node: &NativeNode,
+    meta: &NativeBlockMeta,
+    peer_best_height: u64,
+) -> Result<bool> {
+    let local_best = node.best_meta();
+    if peer_best_height > local_best.height {
+        return Ok(false);
+    }
+    if meta.height > local_best.height {
+        return Ok(false);
+    }
+    if node.has_verified_header_hash(&meta.hash)? {
+        return Ok(false);
+    }
+    Ok(!native_meta_better_than(meta, &local_best))
+}
+
+fn native_sync_response_stale_for_local_tip(
+    node: &NativeNode,
+    peer_best_height: u64,
+    blocks: &[NativeBlockMeta],
+) -> bool {
+    let local_best = node.best_meta();
+    if peer_best_height > local_best.height {
+        return false;
+    }
+    let Some(response_tip) = blocks.last() else {
+        return true;
+    };
+    if response_tip.height > local_best.height {
+        return false;
+    }
+    if response_tip.hash == local_best.hash {
+        return true;
+    }
+    if native_meta_better_than(response_tip, &local_best) {
+        return false;
+    }
+    match node.has_verified_header_hash(&response_tip.hash) {
+        Ok(true) => true,
+        Ok(false) | Err(_) => !native_meta_better_than(response_tip, &local_best),
+    }
 }
 
 fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) {
@@ -6312,34 +6743,118 @@ fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) 
     }
 }
 
+fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &ProtocolSender) {
+    if node.sync_import_in_flight() {
+        return;
+    }
+    let target = node.sync_target_height.load(Ordering::Relaxed);
+    let target_hash = *node.sync_target_hash.lock();
+    let target_peer = *node.sync_target_peer.lock();
+    let best = node.best_meta();
+    let Some(range) = native_sync_observed_tip_request_range(
+        best.height,
+        best.hash,
+        target,
+        target_hash,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    ) else {
+        return;
+    };
+    if !node.begin_outbound_sync_request(target_peer, range) {
+        debug!(
+            best_height = best.height,
+            target,
+            from_height = range.from_height,
+            to_height = range.to_height,
+            "skipping duplicate in-flight native sync target request"
+        );
+        return;
+    }
+    let request = NativeSyncMessage::Request {
+        from_height: range.from_height,
+        to_height: range.to_height,
+    };
+    let payload = match encode_sync_message(&request) {
+        Ok(payload) => payload,
+        Err(err) => {
+            warn!(error = %err, "failed to encode native sync target request");
+            return;
+        }
+    };
+    let message = DirectedProtocolMessage {
+        target: target_peer,
+        message: ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload,
+        },
+    };
+    if let Err(err) = sync_tx.try_send(message) {
+        if let Some(target_peer) = target_peer {
+            node.complete_outbound_sync_request(target_peer);
+        }
+        debug!(error = %err, "failed to queue native sync target request");
+    } else {
+        let target_peer_label = target_peer
+            .map(|peer| hex32(&peer))
+            .unwrap_or_else(|| "broadcast".to_string());
+        debug!(
+            best_height = best.height,
+            target,
+            from_height = range.from_height,
+            to_height = range.to_height,
+            target_peer = target_peer_label,
+            "queued native sync target request"
+        );
+    }
+}
+
 async fn request_missing_blocks(
     node: &NativeNode,
     handle: &ProtocolHandle,
     peer_id: PeerId,
     announced_height: u64,
+    announced_hash: Option<[u8; 32]>,
 ) {
-    let best_height = node.best_meta().height;
-    let input = NativeSyncMissingRequestInput {
-        best_height,
+    node.observe_pending_sync_peer_tip(Some(peer_id), announced_height, announced_hash);
+    if node.sync_import_in_flight() {
+        debug!(
+            peer = %hex32(&peer_id),
+            announced_height,
+            "deferring missing native sync request while import is active"
+        );
+        return;
+    }
+    let best = node.best_meta();
+    let Some(range) = native_sync_observed_tip_request_range(
+        best.height,
+        best.hash,
         announced_height,
-        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-    };
-    let Some(admitted_range) = native_sync_missing_request_range(input) else {
+        announced_hash,
+        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+    ) else {
         return;
     };
-    let range = native_sync_missing_request_range_apply_reorg_backfill(
-        input,
-        admitted_range,
-        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
-    );
+    if !node.begin_outbound_sync_request(Some(peer_id), range) {
+        debug!(
+            peer = %hex32(&peer_id),
+            best_height = best.height,
+            announced_height,
+            from_height = range.from_height,
+            to_height = range.to_height,
+            "skipping duplicate in-flight native sync request"
+        );
+        return;
+    }
     debug!(
-        best_height,
+        best_height = best.height,
         announced_height,
         from_height = range.from_height,
         to_height = range.to_height,
         "requesting missing native sync blocks"
     );
-    send_sync_message(
+    let queued = send_sync_message(
         handle,
         peer_id,
         NativeSyncMessage::Request {
@@ -6348,30 +6863,39 @@ async fn request_missing_blocks(
         },
     )
     .await;
+    if !queued {
+        node.complete_outbound_sync_request(peer_id);
+    }
 }
 
-async fn send_sync_message(handle: &ProtocolHandle, peer_id: PeerId, message: NativeSyncMessage) {
+async fn send_sync_message(
+    handle: &ProtocolHandle,
+    peer_id: PeerId,
+    message: NativeSyncMessage,
+) -> bool {
     let label = native_sync_message_label(&message);
     let payload = match encode_sync_message(&message) {
         Ok(payload) => payload,
         Err(err) => {
             warn!(error = %err, "failed to encode native sync message");
-            return;
+            return false;
         }
     };
     if let Err(err) = handle.send_to(peer_id, payload).await {
         warn!(error = %err, "failed to send native sync message");
+        false
     } else {
         info!(
             peer = %hex32(&peer_id),
             message = label,
             "queued native sync message"
         );
+        true
     }
 }
 
-async fn send_sync_response(
-    handle: &ProtocolHandle,
+async fn send_sync_response_with_sender(
+    sync_tx: &ProtocolSender,
     peer_id: PeerId,
     best_height: u64,
     blocks: Vec<NativeBlockMeta>,
@@ -6391,8 +6915,18 @@ async fn send_sync_response(
             return;
         }
     };
-    if let Err(err) = handle.send_to(peer_id, payload).await {
-        warn!(error = %err, "failed to send native sync response");
+    let message = DirectedProtocolMessage {
+        target: Some(peer_id),
+        message: ProtocolMessage {
+            protocol: NATIVE_SYNC_PROTOCOL_ID,
+            payload,
+        },
+    };
+    if let Err(err) = sync_tx.try_send(message) {
+        warn!(
+            error = %err,
+            "dropped native sync response because the protocol queue is full"
+        );
     } else {
         info!(
             peer = %hex32(&peer_id),
@@ -10560,17 +11094,55 @@ fn native_sync_missing_request_range_with_reorg_backfill(
     ))
 }
 
+fn native_sync_observed_tip_request_range(
+    best_height: u64,
+    best_hash: [u8; 32],
+    announced_height: u64,
+    announced_hash: Option<[u8; 32]>,
+    max_blocks: u64,
+    backfill_blocks: u64,
+) -> Option<NativeSyncRange> {
+    let input = NativeSyncMissingRequestInput {
+        best_height,
+        announced_height,
+        max_blocks,
+    };
+    if let Some(admitted_range) = native_sync_missing_request_range(input) {
+        let gap = announced_height.saturating_sub(best_height);
+        if gap > max_blocks {
+            return Some(admitted_range);
+        }
+        return Some(native_sync_missing_request_range_apply_reorg_backfill(
+            input,
+            admitted_range,
+            backfill_blocks,
+        ));
+    }
+
+    if announced_height == 0
+        || announced_height != best_height
+        || announced_hash.is_none_or(|hash| hash == best_hash)
+        || max_blocks == 0
+    {
+        return None;
+    }
+
+    let from_height = announced_height
+        .saturating_sub(backfill_blocks)
+        .saturating_add(1);
+    Some(NativeSyncRange {
+        from_height,
+        to_height: announced_height.min(from_height.saturating_add(max_blocks - 1)),
+    })
+}
+
 fn native_sync_missing_request_range_apply_reorg_backfill(
     input: NativeSyncMissingRequestInput,
     range: NativeSyncRange,
     backfill_blocks: u64,
 ) -> NativeSyncRange {
     let gap = input.announced_height.saturating_sub(input.best_height);
-    if gap == 0
-        || backfill_blocks == 0
-        || gap > backfill_blocks
-        || input.max_blocks <= backfill_blocks
-    {
+    if gap == 0 || backfill_blocks == 0 || input.max_blocks <= backfill_blocks {
         return range;
     }
 
@@ -19548,6 +20120,140 @@ mod tests {
     }
 
     #[test]
+    fn sync_response_skips_unknown_nonwinning_backfill_without_replay() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let genesis = node.best_meta();
+
+        let canonical_work = node.prepare_work().expect("prepare canonical native work");
+        let canonical_seal = strongest_test_seal(&canonical_work, 0..512);
+        let canonical = node
+            .import_mined_block(&canonical_work, canonical_seal)
+            .expect("canonical import")
+            .expect("canonical block");
+        assert_eq!(node.best_meta().hash, canonical.hash);
+
+        let stale_side = (1..128)
+            .map(|round| mined_empty_child(&genesis, 1, test_pow_bits, round))
+            .find(|candidate| !native_meta_better_than(candidate, &canonical))
+            .expect("nonwinning side child");
+        assert!(
+            node.header_by_hash(&stale_side.hash)
+                .expect("side child lookup")
+                .is_none(),
+            "test setup should start with an unknown stale side block"
+        );
+
+        let report = import_native_sync_response_blocks(
+            &node,
+            vec![stale_side.clone()],
+            canonical.height,
+            NativeSyncResponseImportProgress::new(1),
+        );
+
+        assert!(
+            report.failure.is_none(),
+            "unexpected sync import failure: {:?}",
+            report.failure.as_ref().map(|failure| (
+                failure.height,
+                hex32(&failure.hash),
+                failure.error.clone()
+            ))
+        );
+        assert_eq!(report.progress.attempted_blocks, 1);
+        assert_eq!(report.progress.imported_blocks, 0);
+        assert_eq!(node.best_meta().hash, canonical.hash);
+        assert!(
+            node.header_by_hash(&stale_side.hash)
+                .expect("side child lookup after sync import")
+                .is_none(),
+            "sync backfill must not replay or persist unknown nonwinning side branches"
+        );
+    }
+
+    #[test]
+    fn sync_response_higher_peer_tip_imports_reorg_prefix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+        let genesis = node.best_meta();
+
+        for height in 1..=3 {
+            let work = node.prepare_work().expect("prepare local branch work");
+            let seal = strongest_test_seal(&work, (height * 16)..(height * 16 + 16));
+            let local = node
+                .import_mined_block(&work, seal)
+                .expect("local branch mined import")
+                .expect("local branch block");
+            assert_eq!(local.height, height);
+        }
+        let local_best = node.best_meta();
+        assert_eq!(local_best.height, 3);
+
+        let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+        let peer_node =
+            NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+                .expect("peer node");
+        assert_eq!(peer_node.best_meta().hash, genesis.hash);
+        let mut peer_blocks = Vec::new();
+        for height in 1..=5 {
+            let work = peer_node.prepare_work().expect("prepare peer branch work");
+            let seal = strongest_test_seal(&work, (100 + height * 16)..(116 + height * 16));
+            let peer = peer_node
+                .import_mined_block(&work, seal)
+                .expect("peer branch mined import")
+                .expect("peer branch block");
+            assert_eq!(peer.height, height);
+            peer_blocks.push(peer);
+        }
+        let peer_tip = peer_node.best_meta();
+        assert!(
+            !native_meta_better_than(&peer_blocks[0], &local_best),
+            "first peer prefix block should not individually beat the local tip"
+        );
+
+        let report = import_native_sync_response_blocks(
+            &node,
+            peer_blocks.clone(),
+            peer_tip.height,
+            NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        );
+
+        assert!(
+            report.failure.is_none(),
+            "unexpected sync import failure: {:?}",
+            report.failure.as_ref().map(|failure| (
+                failure.height,
+                hex32(&failure.hash),
+                failure.error.clone()
+            ))
+        );
+        assert_eq!(report.progress.attempted_blocks, peer_blocks.len());
+        assert!(report.progress.imported_blocks >= 2);
+        assert_eq!(node.best_meta().hash, peer_tip.hash);
+        assert_eq!(node.best_meta().height, peer_tip.height);
+        for peer in peer_blocks {
+            assert_eq!(
+                node.header_by_hash(&peer.hash)
+                    .expect("peer block lookup")
+                    .expect("peer block stored")
+                    .hash,
+                peer.hash
+            );
+            assert_eq!(
+                node.hash_by_height(peer.height)
+                    .expect("canonical height lookup"),
+                Some(peer.hash),
+                "peer branch should become canonical at height {}",
+                peer.height
+            );
+        }
+    }
+
+    #[test]
     fn reorg_replay_rechecks_historical_side_branch_artifacts_before_publish() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let test_pow_bits = 0x207f_ffff;
@@ -22182,6 +22888,44 @@ mod tests {
         );
         assert!(unsafe_snapshot.get("basePath").is_some());
         assert!(unsafe_snapshot.get("p2pListenAddr").is_some());
+    }
+
+    #[test]
+    fn approved_seeded_dev_profile_reports_public_testnet_identity() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push(APPROVED_PUBLIC_JOIN_SEEDS.to_string());
+        let node = NativeNode::open(config).expect("node");
+
+        let safe_snapshot =
+            dispatch_rpc_method(&node, "hegemon_nodeConfig", Value::Array(Vec::new()))
+                .expect("safe config snapshot");
+        assert_eq!(
+            safe_snapshot.get("chainSpecId"),
+            Some(&json!("hegemon-native-testnet"))
+        );
+        assert_eq!(safe_snapshot.get("chainType"), Some(&json!("testnet")));
+        assert_eq!(
+            dispatch_rpc_method(&node, "system_chain", Value::Array(Vec::new()))
+                .expect("system chain"),
+            json!("Hegemon")
+        );
+
+        let private_tmp = tempfile::tempdir().expect("tempdir");
+        let private_node =
+            NativeNode::open(test_config(private_tmp.path(), 0x207f_fffe, "safe", false))
+                .expect("private dev node");
+        let private_snapshot = dispatch_rpc_method(
+            &private_node,
+            "hegemon_nodeConfig",
+            Value::Array(Vec::new()),
+        )
+        .expect("private config snapshot");
+        assert_eq!(
+            private_snapshot.get("chainSpecId"),
+            Some(&json!("hegemon-native-dev"))
+        );
+        assert_eq!(private_snapshot.get("chainType"), Some(&json!("dev")));
     }
 
     #[test]
@@ -33651,7 +34395,7 @@ mod tests {
             NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
         )
         .expect("near-tip announced fork should request a bounded backfill range");
-        assert_eq!(range.from_height, 20465);
+        assert_eq!(range.from_height, 20561);
         assert_eq!(range.to_height, 20618);
 
         let straight_sync = native_sync_missing_request_range_with_reorg_backfill(
@@ -33668,15 +34412,31 @@ mod tests {
     }
 
     #[test]
-    fn native_sync_bootstrap_request_backfills_low_divergent_tip() {
+    fn native_sync_large_gap_request_still_backfills_reorg_window() {
+        let range = native_sync_missing_request_range_with_reorg_backfill(
+            NativeSyncMissingRequestInput {
+                best_height: 4614,
+                announced_height: 4960,
+                max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            },
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("higher peer branch should request enough local prefix to find a fork point");
+
+        assert_eq!(range.from_height, 4583);
+        assert_eq!(range.to_height, 4710);
+    }
+
+    #[test]
+    fn native_sync_bootstrap_request_after_first_chunk_starts_after_local_best() {
         let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
             best_height: 145,
             announced_height: 21_971,
             max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         })
-        .expect("low divergent bootstrap should request the first bounded window");
-        assert_eq!(range.from_height, 1);
-        assert_eq!(range.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+        .expect("post-bootstrap catch-up should request the next bounded window");
+        assert_eq!(range.from_height, 146);
+        assert_eq!(range.to_height, 273);
     }
 
     #[test]
@@ -33769,6 +34529,42 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_authoring_with_seed_starts_open_until_higher_target_observed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push(APPROVED_PUBLIC_JOIN_SEEDS.to_string());
+        config.bootstrap_mining_authoring = true;
+        let node = NativeNode::open(config).expect("node");
+
+        assert!(node.mining_sync_gate_allows_work());
+        let (syncing, target) = node.sync_status_fields();
+        assert!(!syncing);
+        assert_eq!(target, 0);
+
+        node.observe_pending_sync_peer_height(node.best_meta().height + 1);
+        assert!(!node.mining_sync_gate_allows_work());
+    }
+
+    #[test]
+    fn pending_sync_target_keeps_status_syncing_without_opening_mining_gate() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+
+        let target = node.best_meta().height + 10;
+        node.observe_pending_sync_peer_height(target);
+
+        let (syncing, observed_target) = node.sync_status_fields();
+        assert!(syncing);
+        assert_eq!(observed_target, target);
+        assert!(!node.mining_sync_gate_allows_work());
+    }
+
+    #[test]
     fn empty_seed_live_mining_gate_ignores_observed_open_without_bootstrap_authoring() {
         assert!(!native_mining_gate_allows_work(NativeMiningGateInput {
             has_seeds: false,
@@ -33811,11 +34607,190 @@ mod tests {
             local_best_height: best.height,
             peer_best_height: best.height,
             stopped_on_error: false,
-        })
-        .expect("known equal-height announce should produce sync evidence");
-        node.observe_verified_sync_peer_height(observed);
+        });
+        assert_eq!(observed, Some(best.height));
+        node.observe_verified_sync_peer_height(observed.expect("observed local tip"));
         assert_eq!(node.sync_target_height.load(Ordering::Relaxed), best.height);
         assert!(node.mining_sync_gate_allows_work());
+        let (syncing, target) = node.sync_status_fields();
+        assert!(!syncing);
+        assert_eq!(target, best.height);
+    }
+
+    #[test]
+    fn seeded_mining_gate_stays_closed_after_partial_sync_progress() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+        let local_best = node.best_meta();
+        let peer_best_height = local_best.height + 4_096;
+
+        let observed = native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+            verified_new_progress: true,
+            verified_known_at_or_below_local_best: false,
+            local_best_height: local_best.height,
+            peer_best_height,
+            stopped_on_error: false,
+        })
+        .expect("verified partial sync progress should produce sync evidence");
+        node.observe_verified_sync_peer_height(observed);
+
+        assert_eq!(
+            node.sync_target_height.load(Ordering::Relaxed),
+            peer_best_height
+        );
+        assert!(!node.mining_sync_gate_allows_work());
+        let (syncing, target) = node.sync_status_fields();
+        assert!(syncing);
+        assert_eq!(target, peer_best_height);
+    }
+
+    #[test]
+    fn same_height_unknown_peer_tip_keeps_seeded_node_syncing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+
+        let best = node.best_meta();
+        let mut peer_hash = [0x42; 32];
+        if peer_hash == best.hash {
+            peer_hash[0] ^= 1;
+        }
+        node.observe_pending_sync_peer_tip(Some([0x24; 32]), best.height, Some(peer_hash));
+
+        let (syncing, target) = node.sync_status_fields();
+        assert!(syncing);
+        assert_eq!(target, best.height);
+        assert!(!node.mining_sync_gate_allows_work());
+        assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
+    }
+
+    #[test]
+    fn same_height_fork_tip_requests_bounded_reorg_window() {
+        let best_hash = [0x11; 32];
+        let peer_hash = [0x22; 32];
+        let range = native_sync_observed_tip_request_range(
+            5_016,
+            best_hash,
+            5_016,
+            Some(peer_hash),
+            MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("same-height fork tip should request reorg backfill");
+        assert_eq!(range.from_height, 4_985);
+        assert_eq!(range.to_height, 5_016);
+
+        assert_eq!(
+            native_sync_observed_tip_request_range(
+                5_016,
+                best_hash,
+                5_016,
+                Some(best_hash),
+                MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+                NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn large_gap_observed_tip_requests_straight_catch_up_window() {
+        let range = native_sync_observed_tip_request_range(
+            896,
+            [0x11; 32],
+            5_039,
+            Some([0x22; 32]),
+            MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("large-gap public join should request the next catch-up chunk");
+
+        assert_eq!(range.from_height, 897);
+        assert_eq!(range.to_height, 1_024);
+    }
+
+    #[test]
+    fn native_sync_response_in_flight_deduplicates_peer() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let peer = [0x44; 32];
+
+        assert!(node.begin_sync_response_for_peer(peer));
+        assert!(!node.begin_sync_response_for_peer(peer));
+        node.end_sync_response_for_peer(peer);
+        assert!(node.begin_sync_response_for_peer(peer));
+        node.end_sync_response_for_peer(peer);
+    }
+
+    #[test]
+    fn outbound_native_sync_request_deduplicates_peer_range() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let peer = [0x45; 32];
+        let range = NativeSyncRange {
+            from_height: 769,
+            to_height: 1_280,
+        };
+
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+        assert!(!node.begin_outbound_sync_request(Some(peer), range));
+        assert!(node.begin_outbound_sync_request(
+            Some(peer),
+            NativeSyncRange {
+                from_height: 1_153,
+                to_height: 1_664,
+            },
+        ));
+        node.complete_outbound_sync_request(peer);
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+    }
+
+    #[test]
+    fn stale_native_sync_response_is_dropped_before_import() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+        let best = node.best_meta();
+
+        assert!(native_sync_response_stale_for_local_tip(
+            &node,
+            best.height,
+            &[]
+        ));
+        assert!(native_sync_response_stale_for_local_tip(
+            &node,
+            best.height,
+            std::slice::from_ref(&best)
+        ));
+
+        let mut better_same_height = best.clone();
+        better_same_height.hash = [0x7a; 32];
+        better_same_height.cumulative_work = [0xff; 48];
+        assert!(!native_sync_response_stale_for_local_tip(
+            &node,
+            best.height,
+            &[better_same_height]
+        ));
+
+        assert!(!native_sync_response_stale_for_local_tip(
+            &node,
+            best.height + 1,
+            &[]
+        ));
     }
 
     #[test]
@@ -33835,10 +34810,20 @@ mod tests {
                 verified_new_progress: false,
                 verified_known_at_or_below_local_best: true,
                 local_best_height: 10,
-                peer_best_height: 11,
+                peer_best_height: 10,
                 stopped_on_error: false,
             }),
-            None
+            Some(10)
+        );
+        assert_eq!(
+            native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
+                verified_new_progress: false,
+                verified_known_at_or_below_local_best: true,
+                local_best_height: 10,
+                peer_best_height: 9,
+                stopped_on_error: false,
+            }),
+            Some(10)
         );
     }
 
