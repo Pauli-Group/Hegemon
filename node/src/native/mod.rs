@@ -117,7 +117,8 @@ const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 128;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
-const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 32;
+const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
+const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
 const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(12);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
@@ -153,6 +154,7 @@ const MAX_NATIVE_BLOCK_ACTION_BYTES: usize = MAX_NATIVE_MEMPOOL_ACTION_BYTES;
 const MAX_NATIVE_BLOCK_META_BYTES: usize =
     MAX_NATIVE_BLOCK_ACTION_BYTES + (MAX_NATIVE_BLOCK_ACTIONS * 32) + 1024 * 1024;
 const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
+const MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES: usize = wire::MAX_WIRE_FRAME_LEN / 2;
 const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
@@ -3038,6 +3040,7 @@ pub struct NativeNode {
     miner_identity: NativeMinerIdentity,
     prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
     prepared_candidate_actions: Mutex<BTreeMap<[u8; 32], PendingAction>>,
+    prepared_candidate_build_lock: Mutex<()>,
 }
 
 impl NativeNode {
@@ -3150,6 +3153,7 @@ impl NativeNode {
             miner_identity,
             prepared_mining_actions: Mutex::new(BTreeMap::new()),
             prepared_candidate_actions: Mutex::new(BTreeMap::new()),
+            prepared_candidate_build_lock: Mutex::new(()),
         });
         Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
@@ -3601,6 +3605,11 @@ impl NativeNode {
         }
 
         let cache_key = Self::auto_candidate_cache_key(state.best.hash, &transfer_actions);
+        if let Some(action) = self.prepared_candidate_action(cache_key) {
+            return Ok(Some(action));
+        }
+
+        let _build_guard = self.prepared_candidate_build_lock.lock();
         if let Some(action) = self.prepared_candidate_action(cache_key) {
             return Ok(Some(action));
         }
@@ -4251,8 +4260,9 @@ impl NativeNode {
         &self,
         start: usize,
         limit: usize,
+        max_bytes: usize,
     ) -> Vec<PendingAction> {
-        if limit == 0 {
+        if limit == 0 || max_bytes == 0 {
             return Vec::new();
         }
         let state = self.state.read();
@@ -4264,11 +4274,25 @@ impl NativeNode {
         if pending.is_empty() {
             return Vec::new();
         }
-        let count = limit.min(pending.len());
         let start = start % pending.len();
-        (0..count)
-            .map(|offset| pending[(start + offset) % pending.len()].clone())
-            .collect()
+        let mut selected = Vec::new();
+        let mut selected_bytes = 0usize;
+        for offset in 0..pending.len() {
+            if selected.len() >= limit {
+                break;
+            }
+            let action = pending[(start + offset) % pending.len()];
+            let action_bytes = pending_action_mempool_bytes(action).max(1);
+            if !selected.is_empty() && selected_bytes.saturating_add(action_bytes) > max_bytes {
+                break;
+            }
+            selected_bytes = selected_bytes.saturating_add(action_bytes);
+            selected.push(action.clone());
+            if selected_bytes >= max_bytes {
+                break;
+            }
+        }
+        selected
     }
 
     fn rebroadcast_peer_relayable_pending_actions(&self) {
@@ -4279,13 +4303,17 @@ impl NativeNode {
         let actions = self.peer_relayable_pending_actions_from(
             start,
             NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT,
+            NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES,
         );
         if actions.is_empty() {
             return;
         }
+        let action_bytes = actions.iter().fold(0usize, |total, action| {
+            total.saturating_add(pending_action_mempool_bytes(action))
+        });
         debug!(
             action_count = actions.len(),
-            "rebroadcasting native pending actions to peers"
+            action_bytes, "rebroadcasting native pending actions to peers"
         );
         for action in actions {
             self.broadcast_pending_action(&action);
@@ -4376,14 +4404,31 @@ impl NativeNode {
             }
             let mut candidate = blocks.clone();
             candidate.push(meta.clone());
-            if let Err(err) = admit_native_sync_response_wire_budget(best_height, &candidate) {
+            let candidate_wire_bytes = match native_sync_response_wire_bytes(
+                best_height,
+                &candidate,
+            ) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    warn!(
+                        from_height = range.from_height,
+                        attempted_to_height = height,
+                        admitted_blocks = blocks.len(),
+                        max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                        error = %err,
+                        "truncated native sync response before materializing an oversized wire payload"
+                    );
+                    break;
+                }
+            };
+            if !blocks.is_empty() && candidate_wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
                 warn!(
                     from_height = range.from_height,
                     attempted_to_height = height,
                     admitted_blocks = blocks.len(),
-                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
-                    error = %err,
-                    "truncated native sync response before materializing an oversized wire payload"
+                    target_bytes = MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES,
+                    candidate_wire_bytes,
+                    "truncated native sync response to keep live relay queue responsive"
                 );
                 break;
             }
@@ -6927,10 +6972,10 @@ async fn send_sync_response_with_sender(
             payload,
         },
     };
-    if let Err(err) = sync_tx.try_send(message) {
+    if let Err(err) = sync_tx.send(message).await {
         warn!(
             error = %err,
-            "dropped native sync response because the protocol queue is full"
+            "failed to queue native sync response"
         );
     } else {
         info!(
@@ -6950,10 +6995,7 @@ fn native_sync_message_label(message: &NativeSyncMessage) -> &'static str {
     }
 }
 
-fn admit_native_sync_response_wire_budget(
-    best_height: u64,
-    blocks: &[NativeBlockMeta],
-) -> Result<()> {
+fn native_sync_response_wire_bytes(best_height: u64, blocks: &[NativeBlockMeta]) -> Result<usize> {
     let response = NativeSyncMessage::Response {
         best_height,
         blocks: blocks.to_vec(),
@@ -6973,7 +7015,7 @@ fn admit_native_sync_response_wire_budget(
             wire::MAX_WIRE_FRAME_LEN
         ));
     }
-    Ok(())
+    Ok(frame.len().saturating_add(AES_GCM_TAG_BYTES))
 }
 
 fn encode_sync_message(message: &NativeSyncMessage) -> Result<Vec<u8>> {
@@ -19818,7 +19860,7 @@ mod tests {
             }
         }
 
-        let rebroadcast = node.peer_relayable_pending_actions_from(0, 8);
+        let rebroadcast = node.peer_relayable_pending_actions_from(0, 8, usize::MAX);
         let rebroadcast_hashes = rebroadcast
             .iter()
             .map(|action| action.tx_hash)
@@ -19859,8 +19901,8 @@ mod tests {
             .map(|action| action.tx_hash)
             .collect::<Vec<_>>();
 
-        let first = node.peer_relayable_pending_actions_from(0, 2);
-        let rotated = node.peer_relayable_pending_actions_from(2, 2);
+        let first = node.peer_relayable_pending_actions_from(0, 2, usize::MAX);
+        let rotated = node.peer_relayable_pending_actions_from(2, 2, usize::MAX);
 
         assert_eq!(
             first
@@ -19876,6 +19918,43 @@ mod tests {
                 .collect::<Vec<_>>(),
             ordered_hashes[2..4]
         );
+    }
+
+    #[test]
+    fn peer_relayable_pending_action_rebroadcast_batch_respects_byte_budget() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "unsafe", false)).expect("node");
+        let anchor = node.state.read().commitment_tree.root();
+        let actions = (0..3u8)
+            .map(|offset| {
+                let mut action = test_inline_transfer_action(
+                    anchor,
+                    [120u8.saturating_add(offset); 48],
+                    [130u8.saturating_add(offset); 48],
+                    0,
+                );
+                action.ciphertext_sizes = vec![1024, 1024, 1024];
+                action.tx_hash = pending_action_hash(&action);
+                action
+            })
+            .collect::<Vec<_>>();
+        let one_action_bytes = pending_action_mempool_bytes(&actions[0]);
+        {
+            let mut state = node.state.write();
+            for action in actions {
+                state.pending_actions.insert(action.tx_hash, action);
+            }
+        }
+
+        let selected =
+            node.peer_relayable_pending_actions_from(0, 8, one_action_bytes.saturating_add(1));
+        let selected_bytes = selected.iter().fold(0usize, |total, action| {
+            total.saturating_add(pending_action_mempool_bytes(action))
+        });
+
+        assert_eq!(selected.len(), 1);
+        assert!(selected_bytes <= one_action_bytes.saturating_add(1));
     }
 
     #[test]

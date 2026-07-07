@@ -18,13 +18,14 @@ const NATIVE_ASSET_ID: u64 = 0;
 pub const MAX_INPUTS: usize = 2;
 
 const CONFIRMATION_POLL_SECS: u64 = 3;
-const CONFIRMATION_TIMEOUT_SECS: u64 = 600;
+const CONFIRMATION_TIMEOUT_SECS: u64 = 2 * 60 * 60;
+const CONFIRMATION_STALL_TIMEOUT_SECS: u64 = 15 * 60;
 
 const DEFAULT_INLINE_BUNDLE_BYTES_ESTIMATE: usize = 220_000;
 const DEFAULT_SIDECAR_BUNDLE_BYTES_ESTIMATE: usize = 80_000;
 const DEFAULT_SIDECAR_PROOFLESS_BUNDLE_BYTES_ESTIMATE: usize = 12_000;
-const CONSOLIDATION_MAX_TXS_PER_BATCH_DEFAULT: usize = 256;
-const CONSOLIDATION_MAX_BATCH_BYTES_DEFAULT: usize = 3_000_000;
+const CONSOLIDATION_MAX_TXS_PER_BATCH_DEFAULT: usize = 2;
+const CONSOLIDATION_MAX_BATCH_BYTES_DEFAULT: usize = 1_000_000;
 const MIN_SUBMISSION_BYTES_ESTIMATE: usize = 2 * 1024;
 
 #[derive(Clone, Copy, Debug)]
@@ -48,6 +49,28 @@ fn env_usize(name: &str) -> Option<usize> {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse().ok())
+}
+
+fn env_u64(name: &str) -> Option<u64> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+}
+
+fn confirmation_timeout() -> tokio::time::Duration {
+    tokio::time::Duration::from_secs(
+        env_u64("HEGEMON_WALLET_CONSOLIDATION_CONFIRMATION_TIMEOUT_SECS")
+            .unwrap_or(CONFIRMATION_TIMEOUT_SECS)
+            .max(CONFIRMATION_POLL_SECS),
+    )
+}
+
+fn confirmation_stall_timeout() -> tokio::time::Duration {
+    tokio::time::Duration::from_secs(
+        env_u64("HEGEMON_WALLET_CONSOLIDATION_STALL_TIMEOUT_SECS")
+            .unwrap_or(CONFIRMATION_STALL_TIMEOUT_SECS)
+            .max(CONFIRMATION_POLL_SECS),
+    )
 }
 
 impl ConsolidationBatchConfig {
@@ -524,22 +547,39 @@ async fn wait_for_nullifiers_spent(
     nullifiers: &[[u8; 48]],
 ) -> Result<u64, WalletError> {
     let start = std::time::Instant::now();
-    let timeout = tokio::time::Duration::from_secs(CONFIRMATION_TIMEOUT_SECS);
+    let timeout = confirmation_timeout();
+    let stall_timeout = confirmation_stall_timeout();
+    let mut last_height = store.last_synced_height().unwrap_or(0);
+    let mut last_progress = std::time::Instant::now();
 
     loop {
-        if start.elapsed() > timeout {
-            return Err(WalletError::Rpc(format!(
-                "consolidation tx not confirmed within {}s",
-                CONFIRMATION_TIMEOUT_SECS
-            )));
-        }
-
         tokio::time::sleep(tokio::time::Duration::from_secs(CONFIRMATION_POLL_SECS)).await;
         engine.sync_once().await?;
+        let current_height = store.last_synced_height()?;
+        if current_height > last_height {
+            last_height = current_height;
+            last_progress = std::time::Instant::now();
+        }
 
         let spent = rpc.check_nullifiers_spent(nullifiers).await?;
         if spent.iter().all(|v| *v) {
-            return store.last_synced_height();
+            return Ok(current_height);
+        }
+
+        if start.elapsed() > timeout {
+            return Err(WalletError::Rpc(format!(
+                "consolidation tx not confirmed within {}s (wallet synced to height {})",
+                timeout.as_secs(),
+                current_height
+            )));
+        }
+
+        if last_progress.elapsed() > stall_timeout {
+            return Err(WalletError::Rpc(format!(
+                "chain did not advance for {}s while waiting for consolidation confirmation (wallet synced to height {})",
+                stall_timeout.as_secs(),
+                current_height
+            )));
         }
     }
 }
@@ -573,8 +613,8 @@ mod tests {
         // 10 notes -> 2 notes: 8 txs
         let plan = ConsolidationPlan::estimate(10);
         assert_eq!(plan.txs_needed, 8);
-        // With disjoint 2->1 merges per round: 10 -> 5 -> 3 -> 2
-        assert_eq!(plan.blocks_needed, 3);
+        // With the default two consolidation txs per round: 10 -> 8 -> 6 -> 4 -> 2
+        assert_eq!(plan.blocks_needed, 4);
     }
 
     #[test]
@@ -590,7 +630,7 @@ mod tests {
         // 7 notes -> 2 notes: 5 txs
         let plan = ConsolidationPlan::estimate(7);
         assert_eq!(plan.txs_needed, 5);
-        // With disjoint 2->1 merges per round: 7 -> 4 -> 2
-        assert_eq!(plan.blocks_needed, 2);
+        // With the default two consolidation txs per round: 7 -> 5 -> 3 -> 2
+        assert_eq!(plan.blocks_needed, 3);
     }
 }
