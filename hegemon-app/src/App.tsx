@@ -249,6 +249,20 @@ type UiTone = 'ok' | 'warn' | 'error' | 'neutral';
 type BlockAlertTone = 'self' | 'other';
 type BlockAlertStep = { frequency: number; duration: number; gap?: number };
 type EmptyStateIconName = 'terminal' | 'transactions' | 'contacts' | 'disclosure';
+type AppIconName =
+  | 'overview'
+  | 'node'
+  | 'wallet'
+  | 'send'
+  | 'disclosure'
+  | 'console'
+  | 'height'
+  | 'target'
+  | 'sync'
+  | 'key'
+  | 'peers'
+  | 'mining'
+  | 'endpoint';
 
 const logCategoryOrder: LogCategory[] = ['mining', 'sync', 'network', 'consensus', 'storage', 'rpc', 'other'];
 
@@ -280,6 +294,124 @@ const formatNumber = (value: number | null | undefined) => {
 const formatHgm = (value: number) => `${(value / 100_000_000).toFixed(8)} HGM`;
 
 const formatBlockCount = (value: number) => `${formatNumber(value)} ${value === 1 ? 'block' : 'blocks'}`;
+
+const AppIcon = ({ name }: { name: AppIconName }) => {
+  const sharedProps = {
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    'aria-hidden': true
+  };
+
+  const paths: Record<AppIconName, JSX.Element> = {
+    overview: (
+      <>
+        <path d="M3.5 11.5 12 4l8.5 7.5" />
+        <path d="M5.5 10.5v8h13v-8" />
+        <path d="M9.5 18.5v-5h5v5" />
+      </>
+    ),
+    node: (
+      <>
+        <path d="M12 4.5v5" />
+        <path d="M6.5 14.5h11" />
+        <path d="M6.5 14.5v5" />
+        <path d="M17.5 14.5v5" />
+        <path d="M9.5 9.5h5v5h-5z" />
+        <path d="M4.5 19.5h4" />
+        <path d="M15.5 19.5h4" />
+      </>
+    ),
+    wallet: (
+      <>
+        <path d="M4 7.5h14.5a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5.5A2.5 2.5 0 0 1 3 17V8.5a1 1 0 0 1 1-1Z" />
+        <path d="M4.5 7.5 16 4.5" />
+        <path d="M16.5 13.5h4" />
+      </>
+    ),
+    send: (
+      <>
+        <path d="M4 5.5 20 12 4 18.5l3-6.5-3-6.5Z" />
+        <path d="M7 12h7" />
+      </>
+    ),
+    disclosure: (
+      <>
+        <path d="M6.5 3.5h8l4 4v13h-12z" />
+        <path d="M14.5 3.5v4h4" />
+        <path d="M8.5 14c1.2-1.7 2.4-2.5 3.5-2.5s2.3.8 3.5 2.5c-1.2 1.7-2.4 2.5-3.5 2.5S9.7 15.7 8.5 14Z" />
+        <path d="M11.25 14a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z" />
+      </>
+    ),
+    console: (
+      <>
+        <path d="M4.5 6.5h15v11h-15z" />
+        <path d="m7 10 2.5 2L7 14" />
+        <path d="M12 14h4" />
+      </>
+    ),
+    height: (
+      <>
+        <path d="M4 16.5 8.5 12l3 3 8-8" />
+        <path d="M15.5 7.5h4v4" />
+      </>
+    ),
+    target: (
+      <>
+        <path d="M12 4v3" />
+        <path d="M12 17v3" />
+        <path d="M4 12h3" />
+        <path d="M17 12h3" />
+        <path d="M7.5 12a4.5 4.5 0 1 0 9 0 4.5 4.5 0 0 0-9 0Z" />
+      </>
+    ),
+    sync: (
+      <>
+        <path d="M18.5 8.5A7 7 0 0 0 6 7l-1.5 2.5" />
+        <path d="M4.5 7.5v2h2" />
+        <path d="M5.5 15.5A7 7 0 0 0 18 17l1.5-2.5" />
+        <path d="M19.5 16.5v-2h-2" />
+      </>
+    ),
+    key: (
+      <>
+        <path d="M4.5 14.5a4 4 0 1 0 3-3.9" />
+        <path d="M11.5 12.5 20 4" />
+        <path d="M16.5 7.5 18 9" />
+        <path d="M14.5 9.5 16 11" />
+      </>
+    ),
+    peers: (
+      <>
+        <path d="M8 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+        <path d="M16 10a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Z" />
+        <path d="M4.5 19c.7-3.4 2-5 3.5-5s2.8 1.6 3.5 5" />
+        <path d="M12.5 19c.7-3.4 2-5 3.5-5s2.8 1.6 3.5 5" />
+      </>
+    ),
+    mining: (
+      <>
+        <path d="m5 19 9.5-9.5" />
+        <path d="M12 7.5 16.5 3 21 7.5l-4.5 4.5" />
+        <path d="M8.5 15.5 10 17" />
+      </>
+    ),
+    endpoint: (
+      <>
+        <path d="M6.5 7.5h11v9h-11z" />
+        <path d="M9 20h6" />
+        <path d="M12 16.5V20" />
+        <path d="M4 10h2.5" />
+        <path d="M17.5 10H20" />
+      </>
+    )
+  };
+
+  return (
+    <svg className={`app-icon app-icon-${name}`} {...sharedProps}>
+      {paths[name]}
+    </svg>
+  );
+};
 
 const EmptyStateIcon = ({ name }: { name: EmptyStateIconName }) => {
   const sharedProps = {
@@ -1022,8 +1154,6 @@ export default function App() {
   const [logNewestFirst, setLogNewestFirst] = useState(true);
 
   const [walletStatus, setWalletStatus] = useState<WalletStatus | null>(null);
-  const [walletSyncOutput, setWalletSyncOutput] = useState<string>('');
-  const [walletSendOutput, setWalletSendOutput] = useState<string>('');
   const [walletDisclosureOutput, setWalletDisclosureOutput] = useState<string>('');
   const [walletDisclosureVerifyOutput, setWalletDisclosureVerifyOutput] = useState<string>('');
   const [walletBusy, setWalletBusy] = useState(false);
@@ -1912,8 +2042,6 @@ export default function App() {
       setCreatePassphrase('');
       setCreatePassphraseConfirm('');
       setOpenPassphrase('');
-      setWalletSyncOutput('');
-      setWalletSendOutput('');
       setWalletDisclosureOutput('');
       setWalletDisclosureVerifyOutput('');
       setDisclosureRecords([]);
@@ -2077,7 +2205,6 @@ export default function App() {
             reject(error);
           });
       });
-      setWalletSyncOutput(JSON.stringify(result, null, 2));
       await refreshWalletStatus();
       await refreshDisclosureRecords();
     } catch (error) {
@@ -2247,7 +2374,6 @@ export default function App() {
           entry.id === attemptId ? { ...entry, status: 'pending', txId: normalizedTxId } : entry
         )
       );
-      setWalletSendOutput(JSON.stringify(result, null, 2));
       setRecipientAddress('');
       setSendAmount('');
       setSendMemo('');
@@ -2437,37 +2563,14 @@ export default function App() {
   );
   const displayedNodeGenesis = activeNodeGenesis ?? walletNodeGenesis;
   const activeNodeLive = Boolean(activeSummary?.reachable && displayedNodeGenesis);
-  const activeChainSpecLabel = normalizeNetworkDisplayName(activeSummary?.config?.chainSpecName);
-  const walletConnectedNetworkLabel = normalizeNetworkDisplayName(
-    walletSummary?.config?.chainSpecName ?? activeSummary?.config?.chainSpecName
-  );
   const activeSeedList = activeSummary?.config?.bootstrapNodes?.length
     ? formatSeedList(activeSummary.config.bootstrapNodes)
     : formatSeedList(activeConnection?.seeds);
   const activeHeightDeltaAbsLabel =
     typeof activeHeightDelta === 'number' ? formatBlockCount(Math.abs(activeHeightDelta)) : null;
-  const syncStateLabel =
-    nodeStartupPending
-      ? 'Starting'
-      : activeCanonicalStatus === 'mismatch'
-        ? 'Forked from Hegemon testnet'
-        : activeCanonicalStatus === 'pending'
-          ? 'Checkpoint pending'
-          : activeCanonicalStatus === 'unavailable'
-            ? 'Checkpoint unavailable'
-      : activeHeightRelation === 'syncing'
-        ? `Syncing to ${formatNumber(activeDisplaySyncTargetHeight)}`
-        : activeHeightRelation === 'aligned'
-          ? 'In sync with Hegemon testnet'
-          : activeHeightRelation === 'local_ahead'
-            ? 'Local miner ahead'
-            : activeHeightRelation === 'network_ahead'
-              ? 'Catching up to peer target'
-              : 'Unknown';
   const rpcPolicyLabel = activeSummary?.config
     ? `${activeSummary.config.rpcMethods} / ${activeSummary.config.rpcExternal ? 'network' : 'loopback'}`
     : 'N/A';
-  const p2pListenLabel = activeSummary?.config?.p2pListenAddr || 'N/A';
   const activePeerList = activeSummary?.peerList ?? [];
   const firstActivePeer = activePeerList[0] ?? null;
   const activePeerCount = activeSummaryPeerCount;
@@ -2485,11 +2588,6 @@ export default function App() {
       ? `${peerEvidenceLabel}; peer details unavailable from RPC`
       : peerEvidenceLabel;
   const activeHeightLabel = formatNumber(activeSummary?.bestNumber);
-  const walletNodeHeightLabel = formatNumber(walletSummary?.bestNumber ?? activeSummary?.bestNumber);
-  const loopbackControlLabel = activeSummary?.config?.rpcExternal ? 'External RPC exposed' : 'Loopback RPC';
-  const noSshStatusLabel = activeSummary?.config?.rpcExternal
-    ? 'External RPC exposed'
-    : 'No SSH needed';
   const syncAlignmentLabel =
     nodeStartupPending
       ? 'Starting'
@@ -2508,86 +2606,11 @@ export default function App() {
             : activeHeightRelation === 'network_ahead'
               ? `Network ahead ${activeHeightDeltaAbsLabel}`
               : 'No live height';
-  const syncAlignmentTone: 'ok' | 'warn' | 'neutral' | 'error' =
-    activeCanonicalStatus === 'mismatch'
-      ? 'error'
-      : nodeStartupPending ||
-          activeCanonicalStatus === 'pending' ||
-          activeCanonicalStatus === 'unavailable' ||
-          activeHeightRelation === 'syncing' ||
-          activeHeightRelation === 'network_ahead'
-      ? 'warn'
-      : activeCanonicalStatus === 'verified' &&
-          (activeHeightRelation === 'aligned' || activeHeightRelation === 'local_ahead')
-        ? 'ok'
-        : 'neutral';
-  const liveEnvironmentLabel = activeChainSpecLabel;
-  const liveHeadline =
-    nodeStartupPending
-      ? 'Starting Hegemon'
-      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Live on Hegemon'
-      : activeNodeLive
-        ? 'Hegemon node is online'
-        : 'Connect to Hegemon';
-  const liveHeightSummary =
-    activeHeightRelation === 'aligned'
-      ? `Local tip and peer target are ${activeHeightLabel}`
-      : activeHeightRelation === 'local_ahead'
-        ? `Local tip ${activeHeightLabel}; peer target ${formatNumber(activeDisplaySyncTargetHeight)}`
-        : activeHeightRelation === 'network_ahead'
-          ? `Local tip ${activeHeightLabel}; peer target ${formatNumber(activeDisplaySyncTargetHeight)}`
-          : activeHeightRelation === 'syncing'
-            ? `Syncing local tip ${activeHeightLabel} toward ${formatNumber(activeDisplaySyncTargetHeight)}`
-            : `Local tip ${activeHeightLabel}`;
-  const liveSubheadline = activeNodeLive
-    ? `${liveHeightSummary} on ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
-    : nodeStartupPending
-      ? `Opening ${formatEndpoint(activeConnection?.wsUrl)} and joining ${activeChainSpecLabel}. Wallet traffic stays on this laptop.`
-      : 'Start the managed local node to join Hegemon with no SSH tunnel.';
-  const liveVerdictTone: 'ok' | 'warn' | 'neutral' | 'error' =
-    nodeStartupPending
-      ? 'warn'
-      : activeCanonicalStatus === 'mismatch'
-        ? 'error'
-        : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeCanonicalStatus === 'verified'
-          ? 'ok'
-          : activeNodeLive
-            ? 'warn'
-            : 'neutral';
-  const liveVerdictLabel =
-    nodeStartupPending
-      ? 'Local node is starting'
-      : activeCanonicalStatus === 'mismatch'
-      ? 'Wrong chain'
-      : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeCanonicalStatus === 'verified'
-      ? 'Verified on Hegemon'
-      : activeNodeLive
-        ? 'Node online, checking testnet'
-        : 'Not connected';
-  const liveVerdictDetail =
-    nodeStartupPending
-      ? 'The app is launching the managed 0.10 node and will switch to live telemetry automatically.'
-      : activeCanonicalStatus === 'mismatch'
-      ? activeSummary?.canonicalCheckpoint?.detail ?? 'This node is not on the canonical Hegemon testnet branch.'
-      : activeCanonicalStatus === 'pending'
-      ? activeSummary?.canonicalCheckpoint?.detail ?? 'The node has not reached the first Hegemon testnet checkpoint yet.'
-      : activeCanonicalStatus === 'unavailable'
-      ? activeSummary?.canonicalCheckpoint?.detail ?? 'Checkpoint status is not available from the selected node.'
-      : activeNodeLive && activePeerCount !== null && activePeerCount > 0 && activeHeightRelation === 'local_ahead'
-      ? `Canonical checkpoint verified; this miner is ${activeHeightDeltaAbsLabel} ahead of the latest peer target.`
-      : activeNodeLive && activePeerCount !== null && activePeerCount > 0
-      ? 'Canonical checkpoint, seed, and peer connection match the Hegemon testnet.'
-      : activeNodeLive
-        ? 'RPC is reachable; waiting for a P2P peer.'
-        : 'Start the local node before syncing the wallet or sending funds.';
   const genesisMismatch = Boolean(walletGenesis && walletNodeGenesis && walletGenesis !== walletNodeGenesis);
   const nodeIsRunning = nodeIsLocal && Boolean(activeSummary?.reachable);
   const nodeIsManaged =
     Boolean(nodeManagedStatus?.managed) &&
     (!nodeManagedStatus?.connectionId || nodeManagedStatus.connectionId === activeConnection?.id);
-  const appControlLabel =
-    nodeIsLocal && nodeIsManaged ? 'Managed by app' : nodeIsLocal ? 'Local RPC only' : 'Local endpoint';
   const nodeToggleDisabled = nodeBusy || !nodeIsLocal || nodeTransitionAction !== null || (nodeIsRunning && !nodeIsManaged);
   const nodeToggleClass = nodeIsRunning || nodeTransitionAction === 'stopping' ? 'secondary' : 'primary';
   const nodeToggleLabel = nodeTransitionAction ? (
@@ -2628,11 +2651,9 @@ export default function App() {
       : formatHashRate(effectiveMiningHashRate);
   const miningHint = miningGateBlocked
     ? 'Mining is enabled, but this node is waiting for sync before it is allowed to mine.'
-    : activeSummary?.mining
-      ? 'Mining mode is active. To change local mining settings, stop the node, update Mining + retention, then restart.'
-      : activeParticipationRole === 'authoring_pool'
-        ? 'This connection is configured as a mining node. Enable Auto-start mining under Mining + retention and restart the node to mine locally.'
-        : 'This connection is configured as a relay node. It verifies and relays the network without local block production.';
+    : activeParticipationRole === 'authoring_pool' && !activeSummary?.mining
+      ? 'Auto-start mining is off.'
+      : null;
   const walletConnectionTone =
     walletSummary?.reachable === true ? 'ok' : walletSummary?.reachable === false ? 'error' : 'neutral';
   const walletConnectionLabel =
@@ -2664,16 +2685,6 @@ export default function App() {
     typeof walletSummary?.bestNumber === 'number' && typeof walletStatus?.lastSyncedHeight === 'number'
       ? Math.max(0, walletSummary.bestNumber - walletStatus.lastSyncedHeight)
       : null;
-  const walletHeroTitle = walletReady
-    ? 'Wallet ready on Hegemon'
-    : activeNodeLive
-      ? 'Node live; unlock wallet'
-      : 'Open wallet for Hegemon';
-  const walletHeroDetail = walletReady
-    ? `${formatCompactPath(storePath)} · synced ${formatNumber(walletStatus?.lastSyncedHeight)} · ${peerEvidenceLabel}`
-    : activeNodeLive
-      ? `${formatCompactPath(storePath)} · ${hegemonNetworkVersionLabel} height ${activeHeightLabel} · ${peerEvidenceLabel}`
-      : `${formatCompactPath(storePath)} · start the local node to join ${hegemonNetworkName}`;
   const walletBalanceDisplay = walletReady ? hgmBalanceLabel : 'Locked';
   const walletSyncDisplay = walletReady ? formatNumber(walletStatus?.lastSyncedHeight) : 'Locked';
   const walletLagDisplay = walletReady ? (walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)) : 'Open wallet';
@@ -2781,6 +2792,28 @@ export default function App() {
     });
     return warnings;
   }, [contacts]);
+  const contactsByAddress = useMemo(() => {
+    const map = new Map<string, Contact>();
+    contacts.forEach((contact) => {
+      const normalized = normalizeShieldedAddressInput(contact.address);
+      if (normalized) {
+        map.set(normalized, contact);
+      }
+    });
+    return map;
+  }, [contacts]);
+  const getContactForAddress = useCallback(
+    (address: string | null | undefined) => {
+      const normalized = normalizeShieldedAddressInput(address ?? '');
+      return normalized ? contactsByAddress.get(normalized) ?? null : null;
+    },
+    [contactsByAddress]
+  );
+  const primaryAddressContact = getContactForAddress(primaryAddress);
+  const effectiveMinerPayoutContact = getContactForAddress(effectiveMinerPayoutAddress);
+  const savedMinerAddressContact = getContactForAddress(savedMinerAddress);
+  const configuredMinerAddressContact = getContactForAddress(activeConnection?.minerAddress);
+  const configuredMinerAddressNormalized = normalizeShieldedAddressInput(activeConnection?.minerAddress ?? '');
   const sendBlockedReason = !walletReady
     ? 'Open or init a wallet to send funds.'
     : walletSummary?.reachable === false
@@ -2993,6 +3026,7 @@ export default function App() {
 
   const navItems: Array<{
     path: string;
+    icon: AppIconName;
     label: string;
     description: string;
     statusLabel?: string;
@@ -3000,6 +3034,7 @@ export default function App() {
   }> = [
     {
       path: '/overview',
+      icon: 'overview',
       label: 'Overview',
       description: activeNodeLive ? `${activeHeightLabel} · ${peerEvidenceLabel}` : 'Live status',
       statusLabel: displayedChainLabel,
@@ -3007,6 +3042,7 @@ export default function App() {
     },
     {
       path: '/node',
+      icon: 'node',
       label: 'Node',
       description: nodeNavDescription,
       statusLabel: nodeNavLabel,
@@ -3014,6 +3050,7 @@ export default function App() {
     },
     {
       path: '/wallet',
+      icon: 'wallet',
       label: 'Wallet',
       description: walletNavDescription,
       statusLabel: walletNavLabel,
@@ -3021,6 +3058,7 @@ export default function App() {
     },
     {
       path: '/send',
+      icon: 'send',
       label: 'Send',
       description: sendNavDescription,
       statusLabel: sendNavLabel,
@@ -3028,6 +3066,7 @@ export default function App() {
     },
     {
       path: '/disclosure',
+      icon: 'disclosure',
       label: 'Disclosure',
       description: disclosureRecords.length > 0 ? 'Records saved' : 'Proofs',
       statusLabel: disclosureRecords.length > 0 ? `${formatNumber(disclosureRecords.length)}` : undefined,
@@ -3035,6 +3074,7 @@ export default function App() {
     },
     {
       path: '/console',
+      icon: 'console',
       label: 'Console',
       description: consoleErrorCount > 0 ? `${formatNumber(consoleErrorCount)} errors` : 'Logs',
       statusLabel: consoleErrorCount > 0 ? `${formatNumber(consoleErrorCount)}` : undefined,
@@ -3063,195 +3103,138 @@ export default function App() {
     <div className="overview-shell">
       {GenesisMismatchBanner}
 
-      <section className="overview-dashboard">
-        <div className="overview-command-card">
-          <div className="overview-command-top">
-            <div className="hero-kicker">
-              <span className={`status-pill ${displayedChainTone}`}>{displayedChainLabel}</span>
-              {!nodeStartupPending ? <span className={`status-pill ${syncAlignmentTone}`}>{syncAlignmentLabel}</span> : null}
-              <span className="badge">{appControlLabel}</span>
-              <span className="badge">{noSshStatusLabel}</span>
-            </div>
-            <span className={`status-pill ${displayedHealthTone}`}>{displayedHealthLabel}</span>
+      <section className="control-panel">
+        <div className="control-rail" aria-label="Live status">
+          <div className="control-rail-item">
+            <span>Height</span>
+            <strong>{activeHeightLabel}</strong>
           </div>
-
-          <div className="overview-command-main">
-            <div>
-              <p className="label">{liveEnvironmentLabel}</p>
-              <h1>{liveHeadline}</h1>
-              <p>{liveSubheadline}</p>
-            </div>
-            <div className="overview-actions">
-              {walletReady ? (
-                <button className="primary" onClick={() => handleWalletSync()} disabled={walletBusy}>
-                  {walletSyncActionLabel}
-                </button>
-              ) : (
-                <Link className="action-link primary" to="/wallet">
-                  Open wallet
-                </Link>
-              )}
-              <Link className="action-link secondary" to="/send">
-                Send
-              </Link>
-              <button className={nodeToggleClass} onClick={handleNodeToggle} disabled={nodeToggleDisabled}>
-                {nodeToggleLabel}
-              </button>
-            </div>
+          <div className="control-rail-item">
+            <span>Sync</span>
+            <strong>{syncAlignmentLabel}</strong>
           </div>
-
-          <div className={`overview-verdict ${liveVerdictTone}`}>
-            <span className={`status-dot ${liveVerdictTone}`} />
-            <div>
-              <strong>{liveVerdictLabel}</strong>
-              <span>{liveVerdictDetail}</span>
-            </div>
+          <div className="control-rail-item">
+            <span>Peers</span>
+            <strong>{formatNumber(activePeerCount)}</strong>
           </div>
-
-          <div className="overview-signal-grid">
-            <div className="overview-signal featured">
-              <span>Local height</span>
-              <strong>{formatNumber(activeSummary?.bestNumber)}</strong>
-              <em>{syncStateLabel}</em>
-            </div>
-            <div className="overview-signal">
-              <span>Wallet</span>
-              <strong>{walletBalanceDisplay}</strong>
-              <em>{walletReady ? `${walletLagDisplay} block lag` : displayedWalletConnectionLabel}</em>
-            </div>
-            <div className="overview-signal">
-              <span>Mining</span>
-              <strong>{miningStatusLabel}</strong>
-              <em>{miningHashRateLabel}</em>
-            </div>
-            <div className="overview-signal">
-              <span>Send queue</span>
-              <strong>{failedActivityCount ? `${failedActivityCount} failed` : pendingActivityCount ? `${pendingActivityCount} pending` : 'Clear'}</strong>
-              <em>{sendBlockedReason ?? 'Ready'}</em>
-            </div>
+          <div className="control-rail-item">
+            <span>Mining</span>
+            <strong>{miningStatusLabel}</strong>
           </div>
-
-          <details className="connection-evidence">
-            <summary>
-              <span>Connection evidence</span>
-              <strong>
-                {activeCanonicalStatus === 'verified'
-                  ? 'Canonical checkpoint verified'
-                  : activeCanonicalStatus === 'mismatch'
-                    ? 'Fork mismatch'
-                    : firstActivePeer
-                      ? 'Peer connected; checkpoint pending'
-                      : 'Seed configured; no checkpoint yet'}
-              </strong>
-            </summary>
-            <div className="proof-stack" aria-label="Live connection evidence">
-              <div className="proof-row">
-                <span>RPC</span>
-                <strong className="mono" title={activeConnection?.wsUrl ?? ''}>{formatEndpoint(activeConnection?.wsUrl)}</strong>
-                <em>{rpcPolicyLabel}</em>
-              </div>
-              <div className="proof-row">
-                <span>Seed</span>
-                <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
-                <em>approved Hegemon testnet seed</em>
-              </div>
-              <div className="proof-row">
-                <span>Checkpoint</span>
-                <strong className="mono" title={activeSummary?.canonicalCheckpoint?.actualHash ?? ''}>
-                  {activeSummary?.canonicalCheckpoint?.height
-                    ? `${formatNumber(activeSummary.canonicalCheckpoint.height)} · ${activeCanonicalStatus}`
-                    : activeCanonicalStatus}
-                </strong>
-                <em>{activeSummary?.canonicalCheckpoint?.detail ?? 'No checkpoint data yet'}</em>
-              </div>
-              <div className="proof-row">
-                <span>Peer</span>
-                <strong className="mono" title={peerDetailLabel}>{peerDetailLabel}</strong>
-                <em>{peerEvidenceLabel}</em>
-              </div>
-              <div className="proof-row">
-                <span>Genesis</span>
-                <strong className="mono" title={displayedNodeGenesis ?? ''}>{formatHash(displayedNodeGenesis)}</strong>
-                <em>0.10 chain identity</em>
-              </div>
-            </div>
-          </details>
+          <div className="control-rail-item">
+            <span>Wallet</span>
+            <strong>{walletStateLabel}</strong>
+          </div>
         </div>
 
-        <aside className="overview-side-card">
-          <div className="overview-side-header">
-            <div>
-              <p className="label">Network</p>
-              <h2>{activeChainSpecLabel}</h2>
-            </div>
-            <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
-          </div>
-          <div className="overview-side-grid">
-            <p><span>Peer target</span><strong>{formatNumber(activeDisplaySyncTargetHeight)}</strong></p>
-            <p><span>Peers</span><strong>{formatNumber(activeSummary?.peers)}</strong></p>
-            <p><span>Payout</span><strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong></p>
-            <p><span>Spendable notes</span><strong>{spendableNotesDisplay}</strong></p>
-          </div>
-          <div className="overview-peer-note">
-            <span className="status-dot ok" />
-            <p title={p2pListenLabel}>{p2pListenLabel}</p>
-          </div>
-          <div className="overview-events-compact">
-            <div className="overview-events-heading">
-              <span>Latest events</span>
-              <strong>{overviewHighlights.length ? `${overviewHighlights.length} signals` : 'Quiet'}</strong>
-            </div>
-            {overviewHighlights.slice(0, 3).map((entry) => (
-              <div key={entry.id} className="overview-event-line">
-                <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                <p>{entry.message}</p>
-              </div>
-            ))}
-            {!overviewHighlights.length ? (
-              <p className="overview-empty-line">
-                {overviewWarningCount
-                  ? `${overviewWarningCount} retry warnings are available in Console.`
-                  : 'Critical chain and wallet events will appear here.'}
-              </p>
-            ) : null}
-          </div>
-        </aside>
-      </section>
-
-      {overviewHighlights.length || overviewWarningCount ? (
-        <section className="ops-panel">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="label">Events</p>
-              <h2 className="text-title font-semibold">Recent activity</h2>
-            </div>
-            <div className="flex flex-wrap justify-end gap-2">
-              {overviewWarningCount ? <span className="badge level-warn">{overviewWarningCount} retries</span> : null}
-              <span className="badge">{overviewHighlights.length} signals</span>
-            </div>
-          </div>
-          {overviewHighlights.length ? (
-            <div className="event-stream">
-              {overviewHighlights.map((entry) => (
-                <div key={entry.id} className="event-row">
-                  <span className="mono text-surfaceMuted/60 text-xs">{entry.timestamp ?? '--:--:--'}</span>
-                  <span className={`badge badge-highlight level-${entry.level}`}>{entry.highlight}</span>
-                  <span className="event-message">{entry.message}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="quiet-state">
-              <p className="label">No critical events</p>
+        <div className="command-surface">
+          <div className="command-focus">
+            <span className={`status-dot ${displayedChainTone}`} />
+            <div className="min-w-0">
+              <h1>{activeNodeLive ? (overviewWarningCount ? 'Review needed' : 'Ready') : 'Offline'}</h1>
               <p>
-                {overviewWarningCount
-                  ? `${overviewWarningCount} network retry warnings are available in Console.`
-                  : 'Mining, sync, and transaction milestones will appear here.'}
+                Height {activeHeightLabel}
+                {activeDisplaySyncTargetHeight ? ` / ${formatNumber(activeDisplaySyncTargetHeight)}` : ''} · {peerEvidenceLabel}
               </p>
             </div>
-          )}
-        </section>
-      ) : null}
+          </div>
+
+          <div className="command-actions">
+            {walletReady ? (
+              <button className="primary" onClick={() => handleWalletSync()} disabled={walletBusy}>
+                <AppIcon name="sync" />
+                {walletSyncActionLabel}
+              </button>
+            ) : (
+              <Link className="action-link primary" to="/wallet">
+                <AppIcon name="wallet" />
+                Open wallet
+              </Link>
+            )}
+            <Link className="action-link secondary" to="/send">
+              <AppIcon name="send" />
+              Send
+            </Link>
+            <button className={nodeToggleClass} onClick={handleNodeToggle} disabled={nodeToggleDisabled}>
+              <AppIcon name="node" />
+              {nodeToggleLabel}
+            </button>
+          </div>
+        </div>
+
+        <div className="control-rows">
+          <div className="control-row">
+            <AppIcon name="height" />
+            <span>Latest block</span>
+            <strong className="mono" title={activeSummary?.bestBlock ?? ''}>{formatHash(activeSummary?.bestBlock)}</strong>
+            <em>{updatedAtLabel}</em>
+          </div>
+          <div className="control-row">
+            <AppIcon name="wallet" />
+            <span>Wallet</span>
+            <strong>{walletBalanceDisplay}</strong>
+            <em>{walletReady ? `${walletLagDisplay} behind` : walletConnectionLabel}</em>
+          </div>
+          <div className="control-row">
+            <AppIcon name="key" />
+            <span>Payout</span>
+            <strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong>
+            <em>{miningPayoutLabel}</em>
+          </div>
+          <div className="control-row">
+            <AppIcon name="console" />
+            <span>Latest event</span>
+            <strong>{overviewHighlights[0]?.highlight ?? 'Quiet'}</strong>
+            <em>{overviewHighlights[0]?.timestamp ?? 'No alerts'}</em>
+          </div>
+        </div>
+
+        <details className="control-details">
+          <summary>
+            <strong>
+              {activeCanonicalStatus === 'verified'
+                ? 'Checkpoint verified'
+                : activeCanonicalStatus === 'mismatch'
+                  ? 'Fork mismatch'
+                  : firstActivePeer
+                    ? 'Peer connected'
+                    : 'Seed configured'}
+            </strong>
+            <span>{overviewWarningCount ? `${overviewWarningCount} warnings` : 'Details'}</span>
+          </summary>
+          <div className="proof-stack" aria-label="Connection details">
+            <div className="proof-row">
+              <span>RPC</span>
+              <strong className="mono" title={activeConnection?.wsUrl ?? ''}>{formatEndpoint(activeConnection?.wsUrl)}</strong>
+              <em>{rpcPolicyLabel}</em>
+            </div>
+            <div className="proof-row">
+              <span>Seed</span>
+              <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
+              <em>approved seed</em>
+            </div>
+            <div className="proof-row">
+              <span>Checkpoint</span>
+              <strong className="mono" title={activeSummary?.canonicalCheckpoint?.actualHash ?? ''}>
+                {activeSummary?.canonicalCheckpoint?.height
+                  ? `${formatNumber(activeSummary.canonicalCheckpoint.height)} · ${activeCanonicalStatus}`
+                  : activeCanonicalStatus}
+              </strong>
+              <em>{activeSummary?.canonicalCheckpoint?.detail ?? 'No checkpoint data yet'}</em>
+            </div>
+            <div className="proof-row">
+              <span>Peer</span>
+              <strong className="mono" title={peerDetailLabel}>{peerDetailLabel}</strong>
+              <em>{peerEvidenceLabel}</em>
+            </div>
+            <div className="proof-row">
+              <span>Genesis</span>
+              <strong className="mono" title={displayedNodeGenesis ?? ''}>{formatHash(displayedNodeGenesis)}</strong>
+              <em>0.10 identity</em>
+            </div>
+          </div>
+        </details>
+      </section>
     </div>
   );
 
@@ -3259,9 +3242,7 @@ export default function App() {
     <details className="card diagnostic-details">
       <summary>
         <div>
-          <p className="label">Configuration</p>
-          <h2 className="text-title font-semibold">Connection profile</h2>
-          <p className="text-sm text-surfaceMuted/80">Profiles, ports, storage, and mining startup options.</p>
+          <h2 className="text-title font-semibold">Configuration</h2>
         </div>
         <span className="badge">
           {activeConnection ? `${connectionModeLabels[activeConnection.mode]} · ${participationRoleLabels[activeParticipationRole]}` : 'Configure'}
@@ -3512,12 +3493,22 @@ export default function App() {
                 <>
                   <label className="space-y-2 md:col-span-2">
                     <span className="label">Miner address</span>
-                    <input
+                    <textarea
+                      className="mono min-h-28 text-xs"
+                      rows={5}
                       value={activeConnection.minerAddress ?? ''}
                       onChange={(event) => updateActiveConnection({ minerAddress: event.target.value })}
                       placeholder="shca1..."
+                      spellCheck={false}
                     />
                     {minerAddressError ? <p className="text-xs text-guard">{minerAddressError}</p> : null}
+                    {!minerAddressError && configuredMinerAddressNormalized ? (
+                      <p className={`text-xs ${configuredMinerAddressContact ? 'text-proof' : 'text-amber'}`}>
+                        {configuredMinerAddressContact
+                          ? `Saved contact: ${configuredMinerAddressContact.name}${configuredMinerAddressContact.verified ? ' · verified' : ''}`
+                          : 'No saved contact match for this mining payout address.'}
+                      </p>
+                    ) : null}
                   </label>
                   <label className="space-y-2">
                     <span className="label">Mine threads</span>
@@ -3660,17 +3651,9 @@ export default function App() {
     <section className="node-control-card">
       <div className="node-control-header">
         <div>
-          <p className="label">Active profile</p>
-          <h2 className="text-title font-semibold">{activeConnection?.label ?? 'Current node'}</h2>
-          <p className="text-sm text-surfaceMuted/80 mt-1">
-            {syncStateLabel} · {peerEvidenceLabel} · Updated {updatedAtLabel}
-          </p>
+          <h2 className="text-title font-semibold">Controls</h2>
         </div>
         <div className="node-control-actions">
-          <div className="flex items-center gap-2">
-            <span className={`status-pill ${healthTone}`}>{healthLabel}</span>
-            <span className="badge">{loopbackControlLabel}</span>
-          </div>
           <button
             className={nodeToggleClass}
             onClick={handleNodeToggle}
@@ -3681,10 +3664,37 @@ export default function App() {
         </div>
       </div>
 
-      <p className="node-hint">{miningHint}</p>
+      {miningHint ? <p className="node-hint">{miningHint}</p> : null}
 
-      <div className="node-metric-grid">
-        <div className="panel">
+      <div className="node-control-summary">
+        <p>
+          <span>Role</span>
+          <strong>{participationRoleLabels[activeParticipationRole]}</strong>
+        </p>
+        <p>
+          <span>Mining</span>
+          <strong>{miningStatusLabel}</strong>
+          <em>{miningHashRateLabel}</em>
+        </p>
+        <p>
+          <span>Payout</span>
+          <strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong>
+        </p>
+        <p>
+          <span>Storage</span>
+          <strong>{formatBytes(activeSummary?.storage?.totalBytes)}</strong>
+        </p>
+      </div>
+
+      <details className="diagnostic-details node-advanced">
+        <summary>
+          <div>
+            <p className="label">Diagnostics</p>
+          </div>
+          <span className="badge">Details</span>
+        </summary>
+        <div className="node-metric-grid">
+          <div className="panel">
           <p className="label">Role</p>
           <p className="text-lg font-medium">{participationRoleLabels[activeParticipationRole]}</p>
           {activeParticipationMeta.statusLabel ? (
@@ -3737,17 +3747,8 @@ export default function App() {
           <p className="text-lg font-medium">{formatBytes(activeSummary?.storage?.totalBytes)}</p>
           <p className="text-xs text-surfaceMuted">State: {formatBytes(activeSummary?.storage?.stateBytes)}</p>
         </div>
-      </div>
-
-      <details className="diagnostic-details node-advanced">
-        <summary>
-          <div>
-            <p className="label">Node internals</p>
-            <p className="text-sm text-surfaceMuted/80">Mining counters, storage, consensus, telemetry, and runtime config.</p>
-          </div>
-          <span className="badge">Details</span>
-        </summary>
-        <div className="grid gap-3 md:grid-cols-2">
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
         <div className="panel">
           <p className="label">Mining details</p>
           <p className="text-sm text-surfaceMuted">Threads: {activeSummary?.miningThreads ?? 'N/A'}</p>
@@ -3883,11 +3884,7 @@ export default function App() {
     <section className="card space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="label">Logs</p>
-          <h2 className="text-title font-semibold">Diagnostics timeline</h2>
-          <p className="text-sm text-surfaceMuted/80 mt-1">
-            Structured logs and milestone events for the active connection.
-          </p>
+          <h2 className="text-title font-semibold">Logs</h2>
         </div>
         <div className="flex flex-wrap gap-1.5">
           <button className="chip" type="button" aria-pressed={logFilterInfo} onClick={() => setLogFilterInfo((prev) => !prev)}>
@@ -4005,22 +4002,15 @@ export default function App() {
       <details className="wallet-access-details" open={!walletReady}>
         <summary>
           <div>
-            <p className="label">{walletReady ? 'Controls' : 'Wallet access'}</p>
-            <h2 className="text-title font-semibold">{walletReady ? 'Store/session controls' : 'Open wallet'}</h2>
-            <p className="text-sm text-surfaceMuted/80">
-              {walletReady
-                ? 'Store path, sync target, and lock settings.'
-                : 'Open or create a local wallet store before sending.'}
-            </p>
+            <h2 className="text-title font-semibold">Access</h2>
           </div>
           <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
         </summary>
 
         <div className="grid gap-6">
         <label className="space-y-2">
-          <span className="label">Store path</span>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-xs text-surfaceMuted/70">Select a wallet file in the Hegemon wallet store.</span>
+            <span className="label">Store path</span>
             <button className="secondary text-xs px-3" type="button" onClick={handlePickWalletStorePath}>
               Browse
             </button>
@@ -4036,8 +4026,7 @@ export default function App() {
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="panel space-y-4">
             <div>
-              <p className="label">Create wallet</p>
-              <p className="text-sm text-surfaceMuted">New store with a strong passphrase.</p>
+              <p className="label">Create</p>
               <p className="text-xs text-surfaceMuted">Passphrases cannot be recovered. Store it securely.</p>
             </div>
             <label className="space-y-2">
@@ -4072,8 +4061,7 @@ export default function App() {
 
           <div className="panel space-y-4">
             <div>
-              <p className="label">Open wallet</p>
-              <p className="text-sm text-surfaceMuted">Unlock an existing store to sync and send.</p>
+              <p className="label">Open</p>
             </div>
             <label className="space-y-2">
               <span className="label">Passphrase</span>
@@ -4089,7 +4077,14 @@ export default function App() {
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <details className="diagnostic-details wallet-advanced-settings">
+          <summary>
+            <div>
+              <p className="label">Advanced</p>
+            </div>
+            <span className="badge">{walletConnectionLabel}</span>
+          </summary>
+          <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2">
             <span className="label">Wallet connection</span>
             <select value={walletConnectionId} onChange={(event) => setWalletConnectionId(event.target.value)}>
@@ -4171,19 +4166,33 @@ export default function App() {
           </div>
           <p className="text-xs text-surfaceMuted">Auto-lock stops walletd and clears the unlock token.</p>
         </div>
+        </details>
         </div>
       </details>
       {GenesisMismatchBanner}
 
+      {walletReady ? (
       <div className="wallet-surface">
         <div className="wallet-identity">
           <div className="wallet-identity-header">
             <div className="min-w-0">
-              <p className="label">Receiving address</p>
-              <p className="text-xs text-surfaceMuted/70">Shielded HGM address for this wallet store.</p>
+              <p className="label">Balance</p>
+              <h2>{walletBalanceDisplay}</h2>
+              <p>
+                {walletReady
+                  ? `Synced to ${walletSyncDisplay}; lag ${walletLagDisplay} blocks`
+                  : 'Open wallet to load funds and notes'}
+              </p>
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
+              <button
+                className="secondary px-3 py-1 text-xs"
+                type="button"
+                onClick={() => handleWalletSync()}
+                disabled={walletBusy || !walletReady}
+              >
+                {walletSyncActionLabel}
+              </button>
               <button
                 className="secondary px-3 py-1 text-xs"
                 onClick={handleCopyAddress}
@@ -4191,9 +4200,17 @@ export default function App() {
               >
                 {addressCopied ? 'Copied' : 'Copy address'}
               </button>
+              <button
+                className="secondary px-3 py-1 text-xs"
+                onClick={handleWalletLock}
+                disabled={walletBusy || !activeUnlockToken}
+              >
+                Lock
+              </button>
             </div>
           </div>
           <div className="wallet-address-row">
+            <span>Receiving address</span>
             <p className="address-display" title={primaryAddress}>
               {primaryAddressLabel}
             </p>
@@ -4217,24 +4234,57 @@ export default function App() {
               <h3>{miningPayoutLabel}</h3>
               <p>{miningPayoutDetail}</p>
             </div>
-            <span className={`status-pill ${miningPayoutTone}`}>{miningPayoutLabel}</span>
           </div>
-          <div className="mining-payout-grid">
-            <div>
-              <span>Running payout</span>
-              <strong title={effectiveMinerPayoutAddress}>{effectiveMinerPayoutLabel}</strong>
+          <div className="mining-payout-current">
+            <div className="mining-payout-current-header">
+              <span>Current payout</span>
+              {effectiveMinerPayoutContact ? (
+                <span className="contact-match ok">
+                  {effectiveMinerPayoutContact.name}
+                  {effectiveMinerPayoutContact.verified ? ' · verified' : ''}
+                </span>
+              ) : effectiveMinerPayoutAddress ? (
+                <span className="contact-match warn">Not in contacts</span>
+              ) : null}
             </div>
-            <div>
-              <span>Wallet address</span>
-              <strong title={primaryAddress}>{primaryAddressLabel}</strong>
-            </div>
-            {miningPayoutPendingRestart ? (
+            {effectiveMinerPayoutAddress ? (
+              <div className="address-full mining-payout-full" title={effectiveMinerPayoutAddress}>
+                {effectiveMinerPayoutAddress}
+              </div>
+            ) : (
+              <strong>{effectiveMinerPayoutLabel}</strong>
+            )}
+          </div>
+          {miningPayoutTone !== 'ok' || miningPayoutPendingRestart ? (
+            <div className="mining-payout-grid">
+              <div>
+                <span>Wallet address</span>
+                <strong title={primaryAddress}>{primaryAddressLabel}</strong>
+                {primaryAddressContact ? (
+                  <em>
+                    {primaryAddressContact.name}
+                    {primaryAddressContact.verified ? ' · verified' : ''}
+                  </em>
+                ) : primaryAddress ? (
+                  <em>Not in contacts</em>
+                ) : null}
+              </div>
+              {miningPayoutPendingRestart ? (
               <div>
                 <span>Saved next start</span>
                 <strong title={savedMinerAddress}>{savedMinerPayoutLabel}</strong>
+                {savedMinerAddressContact ? (
+                  <em>
+                    {savedMinerAddressContact.name}
+                    {savedMinerAddressContact.verified ? ' · verified' : ''}
+                  </em>
+                ) : savedMinerAddress ? (
+                  <em>Not in contacts</em>
+                ) : null}
               </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="mining-payout-actions">
             <button
               className="secondary"
@@ -4255,94 +4305,39 @@ export default function App() {
           {miningPayoutNotice ? <p className="mining-payout-notice">{miningPayoutNotice}</p> : null}
         </div>
 
-        <div className="kpi-grid">
-          <div className="kpi-tile">
-            <p className="label">HGM balance</p>
-            <p className="mt-2 text-xl font-semibold">{walletBalanceDisplay}</p>
-          </div>
-          <div className="kpi-tile kpi-action-tile">
-            <div className="kpi-action-header">
-              <p className="label">Wallet sync</p>
-              <button
-                className="secondary kpi-action-button"
-                type="button"
-                onClick={() => handleWalletSync()}
-                disabled={walletBusy || !walletReady}
-              >
-                {walletSyncActionLabel}
-              </button>
-            </div>
-            <p className="mt-2 text-xl font-semibold">{walletSyncDisplay}</p>
-            <div className="kpi-action-footer">
-              <p className="text-xs text-surfaceMuted">
-                {walletReady ? `Lag ${walletLagDisplay} blocks` : 'Open wallet to sync notes'}
-              </p>
-              {walletBusy && walletReady ? (
-                <button className="text-link text-xs" type="button" onClick={handleWalletCancel}>
-                  Cancel
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <div className="kpi-tile">
-            <p className="label">Spendable notes</p>
-            <p className="mt-2 text-xl font-semibold">{spendableNotesDisplay}</p>
-            <p className="text-xs text-surfaceMuted">{maxInputsLine}</p>
-          </div>
-          <div className="kpi-tile">
-            <p className="label">Connected node</p>
-            <p className="mt-2 text-sm font-semibold truncate" title={walletConnectedNetworkLabel}>
-              {walletConnectedNetworkLabel}
-            </p>
-            <p className="text-xs text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
-          </div>
-        </div>
-
-        <div className="section-divider">
-          <div className="flex items-center justify-between gap-3">
-            <p className="label">Balances</p>
-            <span className="text-xs text-surfaceMuted">{walletStatus?.balances?.length ?? 0} assets</span>
-          </div>
-          <div className="mt-3 detail-grid">
-            {walletStatus?.balances?.length ? (
-              walletStatus.balances.map((balance) => (
-                <div key={balance.assetId} className="detail-row">
-                  <span>{balance.label}</span>
-                  <span className="mono">
-                    {balance.assetId === 0 ? formatHgm(balance.total) : balance.total.toLocaleString()}
-                  </span>
-                </div>
-              ))
-            ) : (
-              <p className="p-3 text-sm text-surfaceMuted">
-                {walletReady ? 'No balances yet.' : 'Open wallet to load balances.'}
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="section-divider">
-          <p className="label">Notes</p>
-          {walletStatus?.notes ? (
-            <p className="mt-2 text-sm text-surfaceMuted">
-              {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
-              {walletStatus.notes.needsConsolidation ? (
-                <span className="text-amber"> Some sends may require consolidation.</span>
-              ) : null}
-            </p>
-          ) : (
-            <p className="text-sm text-surfaceMuted">
-              {walletReady ? 'No note summary.' : 'Open wallet to load note summary.'}
-            </p>
-          )}
-        </div>
         <div className="wallet-notes-panel">
           <details className="wallet-notes-details rounded-lg border border-surfaceMuted/10 bg-midnight/30 p-3">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-2 text-sm text-surfaceMuted">
-              <span className="label">All notes</span>
-              <span className="text-xs text-surfaceMuted/80">{walletNoteDetails.length} total</span>
+              <span className="label">Assets and notes</span>
+              <span className="text-xs text-surfaceMuted/80">
+                {walletStatus?.balances?.length ?? 0} assets · {spendableNotesDisplay} spendable
+              </span>
             </summary>
             <div className="mt-3 space-y-3">
+            <div className="detail-grid">
+              {walletStatus?.balances?.length ? (
+                walletStatus.balances.map((balance) => (
+                  <div key={balance.assetId} className="detail-row">
+                    <span>{balance.label}</span>
+                    <span className="mono">
+                      {balance.assetId === 0 ? formatHgm(balance.total) : balance.total.toLocaleString()}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="p-3 text-sm text-surfaceMuted">
+                  {walletReady ? 'No balances yet.' : 'Open wallet to load balances.'}
+                </p>
+              )}
+            </div>
+            {walletStatus?.notes ? (
+              <p className="text-sm text-surfaceMuted">
+                {walletStatus.notes.spendableCount} spendable notes, max {walletStatus.notes.maxInputs} inputs.
+                {walletStatus.notes.needsConsolidation ? (
+                  <span className="text-amber"> Some sends may require consolidation.</span>
+                ) : null}
+              </p>
+            ) : null}
             {walletNoteDetails.length ? (
                 walletNoteDetails.map((note) => (
                   <div key={note.commitment} className="note-card">
@@ -4408,177 +4403,35 @@ export default function App() {
           </details>
         </div>
       </div>
+      ) : null}
 
       {WalletErrorBanner}
     </section>
   );
 
-  const WalletOutputSection = (
-    <details className="card diagnostic-details">
-      <summary>
-        <div>
-          <p className="label">Operations</p>
-          <h2 className="text-title font-semibold">Diagnostics</h2>
-        </div>
-        <span className="badge">walletd JSON</span>
-      </summary>
-      <div className="grid gap-3">
-        <div>
-          <p className="label">Sync</p>
-          <pre className="diagnostic-output">
-            {walletSyncOutput || 'N/A'}
-          </pre>
-        </div>
-        <div>
-          <p className="label">Send</p>
-          <pre className="diagnostic-output">
-            {walletSendOutput || 'N/A'}
-          </pre>
-        </div>
-      </div>
-    </details>
-  );
-
-  const WalletLiveSummarySection = (
-    <section className="wallet-command">
-      <div className="wallet-command-main">
-        <div className="hero-kicker">
-          <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-          <span className={`status-pill ${walletConnectionTone}`}>{walletConnectionLabel}</span>
-          <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
-          <span className="badge">{loopbackControlLabel}</span>
-        </div>
-        <div className="space-y-2">
-          <p className="label">Wallet control plane</p>
-          <h2>{walletHeroTitle}</h2>
-          <p className="wallet-command-detail" title={storePath}>
-            {walletHeroDetail}
-          </p>
-        </div>
-        <div className="wallet-network-strip">
-          <p>
-            <span>Network</span>
-            <strong>{activeChainSpecLabel}</strong>
-          </p>
-          <p>
-            <span>Peer</span>
-            <strong title={peerDetailLabel}>{peerDetailLabel}</strong>
-          </p>
-          <p>
-            <span>Seed</span>
-            <strong className="mono" title={activeSeedList}>{activeSeedList || 'N/A'}</strong>
-          </p>
-          <p>
-            <span>Wallet RPC</span>
-            <strong className="mono" title={walletConnection?.wsUrl ?? activeConnection?.wsUrl ?? ''}>
-              {formatEndpoint(walletConnection?.wsUrl ?? activeConnection?.wsUrl)}
-            </strong>
-          </p>
-        </div>
-      </div>
-      <div className="wallet-command-grid">
-        <p>
-          <span>Balance</span>
-          <strong>{walletBalanceDisplay}</strong>
-        </p>
-        <p>
-          <span>Wallet sync</span>
-          <strong>{walletSyncDisplay}</strong>
-        </p>
-        <p>
-          <span>Sync lag</span>
-          <strong>{walletLagDisplay}</strong>
-        </p>
-        <p>
-          <span>Node</span>
-          <strong>{walletNodeHeightLabel}</strong>
-        </p>
-      </div>
-    </section>
-  );
-
-  const SendPreflightSection = (
-    <details className="card diagnostic-details">
-      <summary>
-        <div>
-          <p className="label">Checks</p>
-          <h2 className="text-title font-semibold">Readiness</h2>
-          <p className="text-sm text-surfaceMuted/80">Wallet, chain, and note context.</p>
-        </div>
-        <span className={`status-pill ${sendBlockedReason ? 'error' : 'ok'}`}>
-          {sendBlockedReason ? 'Blocked' : 'Ready'}
-        </span>
-      </summary>
-      <div className="space-y-4">
-        <div className="grid gap-3 md:grid-cols-2">
-        <div className="panel space-y-2">
-          <p className="label">Wallet</p>
-          <div className="flex items-center gap-2">
-            <span className={`status-pill ${walletTone}`}>{walletStateLabel}</span>
-            <span className="text-sm text-surfaceMuted">{walletConnectionLabel}</span>
-          </div>
-          <p className="text-sm text-surfaceMuted">Last synced height {formatNumber(walletStatus?.lastSyncedHeight)}</p>
-          <p className="text-sm text-surfaceMuted">Node height {formatNumber(walletSummary?.bestNumber)}</p>
-          <p className="text-sm text-surfaceMuted">Sync lag {walletSyncLag === null ? 'N/A' : formatNumber(walletSyncLag)} blocks</p>
-          <p className="text-sm text-surfaceMuted">Balance {hgmBalanceLabel}</p>
-        </div>
-        <div className="panel space-y-2">
-          <p className="label">Chain</p>
-          <div className="flex items-center gap-2">
-            <span className={`status-pill ${chainTone}`}>{chainLabel}</span>
-            <span className="text-xs text-surfaceMuted">Genesis {formatHash(walletNodeGenesis ?? walletGenesis)}</span>
-          </div>
-          <p className="text-sm text-surfaceMuted" title={walletConnection?.wsUrl ?? ''}>
-            RPC {formatEndpoint(walletConnection?.wsUrl)}
-          </p>
-          <p className="text-sm text-surfaceMuted">Height {formatNumber(walletSummary?.bestNumber)}</p>
-          <p className="text-sm text-surfaceMuted">Pending pool {formatNumber(walletSummary?.pendingExtrinsics)}</p>
-        </div>
-        </div>
-      {walletStatus?.notes ? (
-        <p className="text-sm text-surfaceMuted">
-          Notes: {walletStatus.notes.spendableCount} spendable · max {walletStatus.notes.maxInputs} inputs/tx.
-          {walletStatus.notes.needsConsolidation ? (
-            <span className="text-amber"> Some sends may require consolidation.</span>
-          ) : null}
-        </p>
-      ) : null}
-      {sendBlockedReason ? (
-        <p className="text-sm text-guard">{sendBlockedReason}</p>
-      ) : (
-        <p className="text-sm text-proof">Ready to send.</p>
-      )}
-      </div>
-    </details>
-  );
-
   const SendSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Transfer</p>
-        <h2 className="text-title font-semibold">New shielded transaction</h2>
+        <h2 className="text-title font-semibold">Send</h2>
       </div>
-      <div className="send-context-strip">
-        <p>
-          <span>Wallet</span>
-          <strong>{walletStateLabel}</strong>
-          <em>{hgmBalanceLabel}</em>
-        </p>
-        <p>
-          <span>Sync</span>
-          <strong>{walletSyncLag === null ? 'N/A' : `${formatNumber(walletSyncLag)} blocks`}</strong>
-          <em>node {formatNumber(walletSummary?.bestNumber)}</em>
-        </p>
-        <p>
-          <span>Notes</span>
-          <strong>{walletStatus?.notes ? formatNumber(walletStatus.notes.spendableCount) : 'N/A'}</strong>
-          <em>max {formatNumber(walletStatus?.notes?.maxInputs)} inputs</em>
-        </p>
-        <p>
-          <span>Pending</span>
-          <strong>{formatNumber(walletSummary?.pendingExtrinsics)}</strong>
-          <em>{chainLabel}</em>
-        </p>
+      <div className="send-sync-strip">
+        <div>
+          <p className="label">Wallet sync</p>
+          <strong>{walletReady ? walletSyncDisplay : walletStateLabel}</strong>
+          <span>
+            {walletReady
+              ? `Lag ${walletLagDisplay} blocks · ${walletConnectionLabel}`
+              : `${walletConnectionLabel} · open wallet first`}
+          </span>
+        </div>
+        <button
+          className="secondary px-3 py-1 text-xs"
+          type="button"
+          onClick={() => handleWalletSync()}
+          disabled={walletBusy || !walletReady}
+        >
+          {walletSyncActionLabel}
+        </button>
       </div>
       <div className="grid gap-4">
         <label className="space-y-2">
@@ -4638,9 +4491,6 @@ export default function App() {
             <input value={sendFee} onChange={(event) => setSendFee(event.target.value)} placeholder="0" />
           </label>
         </div>
-        <p className="text-xs text-surfaceMuted">
-          Optional shielded miner tip. Leave at 0 if you do not want to add one.
-        </p>
         <label className="space-y-2">
           <span className="label">Memo</span>
           <textarea rows={2} value={sendMemo} onChange={(event) => setSendMemo(event.target.value)} />
@@ -4682,11 +4532,7 @@ export default function App() {
     <section className="card space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="label">Transactions</p>
           <h2 className="text-title font-semibold">Activity</h2>
-          <p className="text-sm text-surfaceMuted/80">
-            Outgoing transfers show up immediately. Sync to confirm mined status.
-          </p>
           {sendInFlight ? (
             <p className="text-xs text-surfaceMuted/70 mt-1">
               Sending is in progress. Sync requests run after submission finishes.
@@ -4712,89 +4558,99 @@ export default function App() {
         </div>
       ) : (
         <div className="space-y-3">
-          {activityEntries.map((entry) => (
-            <div key={entry.id} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
-              <div className="flex items-start gap-3">
-                <div
-                  className={`flex h-10 w-10 items-center justify-center rounded-full border text-[11px] font-semibold ${activityStatusClasses[entry.status]} ${entry.status === 'processing' ? 'animate-pulse-slow' : ''}`}
-                >
-                  {activityStatusSymbols[entry.status]}
-                </div>
-                <div className="flex-1 space-y-2">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-sm font-medium">
-                        Sent {formatHgm(entry.amount)} to {formatAddress(entry.recipient || 'Unknown')}
-                      </p>
-                      <p className="text-xs text-surfaceMuted">
-                        Miner tip {formatHgm(entry.fee)}
-                        {entry.memo ? ` · Memo: ${entry.memo}` : ''}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-xs text-surfaceMuted">{formatTimestamp(entry.createdAt)}</p>
-                      <p className="text-xs text-surfaceMuted">{activityStatusLabels[entry.status]}</p>
-                    </div>
+          {activityEntries.map((entry) => {
+            const recipientContact = getContactForAddress(entry.recipient);
+            const recipientAddressLabel = entry.recipient ? formatAddress(entry.recipient) : 'Unknown';
+            return (
+              <div key={entry.id} className="rounded-lg border border-surfaceMuted/10 bg-midnight/40 p-4 space-y-3">
+                <div className="flex items-start gap-3">
+                  <div
+                    className={`flex h-10 w-10 items-center justify-center rounded-full border text-[11px] font-semibold ${activityStatusClasses[entry.status]} ${entry.status === 'processing' ? 'animate-pulse-slow' : ''}`}
+                  >
+                    {activityStatusSymbols[entry.status]}
                   </div>
-                  {entry.txId ? (
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-surfaceMuted">
-                      <span className="mono">Tx {formatHash(entry.txId)}</span>
-                      {entry.confirmations !== undefined ? (
-                        <span>{entry.confirmations} confirmations</span>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  {entry.error ? <p className="text-xs text-guard">{entry.error}</p> : null}
-                  {entry.consolidationExpected || entry.consolidationSubmitted ? (
-                    <div className="mt-3 space-y-2 border-l border-surfaceMuted/15 pl-4">
-                      <p className="text-[10px] uppercase tracking-normal text-surfaceMuted/70">
-                        Note consolidation
-                      </p>
-                      {entry.notesNeeded !== undefined &&
-                      entry.walletNoteCount !== undefined &&
-                      entry.maxInputs !== undefined ? (
-                        <p className="text-xs text-surfaceMuted">
-                          Needs {entry.notesNeeded} notes (wallet has {entry.walletNoteCount}, max {entry.maxInputs} inputs/tx).
+                  <div className="flex-1 space-y-2">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <p className="text-sm font-medium">
+                          Sent {formatHgm(entry.amount)} to {recipientContact ? recipientContact.name : recipientAddressLabel}
                         </p>
-                      ) : null}
-                      <p className="text-xs text-surfaceMuted">
-                        {entry.consolidationSubmitted
-                          ? `${entry.consolidationConfirmed ?? 0}/${entry.consolidationSubmitted} confirmed`
-                          : 'Preparing consolidation…'}
-                        {entry.consolidationExpected ? ` · ~${entry.consolidationExpected} txs expected` : ''}
-                        {entry.consolidationExpectedBlocks ? ` · ~${entry.consolidationExpectedBlocks} blocks` : ''}
-                        {entry.consolidationExpected &&
-                        entry.consolidationExpectedBlocks &&
-                        entry.consolidationExpectedBlocks > 0
-                          ? ` (~${(entry.consolidationExpected / entry.consolidationExpectedBlocks).toFixed(1)} tx/block)`
-                          : ''}
-                      </p>
-                      {entry.steps ? (
-                        <div className="space-y-2 pt-1">
-                          {entry.steps.map((step) => (
-                            <div key={step.id} className="flex items-center justify-between gap-3 text-xs">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-semibold ${activityStatusClasses[step.status]} ${step.status === 'processing' ? 'animate-pulse-slow' : ''}`}
-                                >
-                                  {activityStatusSymbols[step.status]}
-                                </span>
-                                <span className="text-surfaceMuted">{step.label}</span>
-                              </div>
-                              <div className="text-surfaceMuted">
-                                {step.txId ? `Tx ${formatHash(step.txId)}` : activityStatusLabels[step.status]}
-                                {step.confirmations !== undefined ? ` · ${step.confirmations} conf` : ''}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
+                        {recipientContact ? (
+                          <p className="text-xs text-surfaceMuted">
+                            Contact match · <span className="mono">{recipientAddressLabel}</span>
+                            {recipientContact.verified ? ' · verified' : ''}
+                          </p>
+                        ) : null}
+                        <p className="text-xs text-surfaceMuted">
+                          Miner tip {formatHgm(entry.fee)}
+                          {entry.memo ? ` · Memo: ${entry.memo}` : ''}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-surfaceMuted">{formatTimestamp(entry.createdAt)}</p>
+                        <p className="text-xs text-surfaceMuted">{activityStatusLabels[entry.status]}</p>
+                      </div>
                     </div>
-                  ) : null}
+                    {entry.txId ? (
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-surfaceMuted">
+                        <span className="mono">Tx {formatHash(entry.txId)}</span>
+                        {entry.confirmations !== undefined ? (
+                          <span>{entry.confirmations} confirmations</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {entry.error ? <p className="text-xs text-guard">{entry.error}</p> : null}
+                    {entry.consolidationExpected || entry.consolidationSubmitted ? (
+                      <div className="mt-3 space-y-2 border-l border-surfaceMuted/15 pl-4">
+                        <p className="text-[10px] uppercase tracking-normal text-surfaceMuted/70">
+                          Note consolidation
+                        </p>
+                        {entry.notesNeeded !== undefined &&
+                        entry.walletNoteCount !== undefined &&
+                        entry.maxInputs !== undefined ? (
+                          <p className="text-xs text-surfaceMuted">
+                            Needs {entry.notesNeeded} notes (wallet has {entry.walletNoteCount}, max {entry.maxInputs} inputs/tx).
+                          </p>
+                        ) : null}
+                        <p className="text-xs text-surfaceMuted">
+                          {entry.consolidationSubmitted
+                            ? `${entry.consolidationConfirmed ?? 0}/${entry.consolidationSubmitted} confirmed`
+                            : 'Preparing consolidation…'}
+                          {entry.consolidationExpected ? ` · ~${entry.consolidationExpected} txs expected` : ''}
+                          {entry.consolidationExpectedBlocks ? ` · ~${entry.consolidationExpectedBlocks} blocks` : ''}
+                          {entry.consolidationExpected &&
+                          entry.consolidationExpectedBlocks &&
+                          entry.consolidationExpectedBlocks > 0
+                            ? ` (~${(entry.consolidationExpected / entry.consolidationExpectedBlocks).toFixed(1)} tx/block)`
+                            : ''}
+                        </p>
+                        {entry.steps ? (
+                          <div className="space-y-2 pt-1">
+                            {entry.steps.map((step) => (
+                              <div key={step.id} className="flex items-center justify-between gap-3 text-xs">
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className={`flex h-6 w-6 items-center justify-center rounded-full border text-[9px] font-semibold ${activityStatusClasses[step.status]} ${step.status === 'processing' ? 'animate-pulse-slow' : ''}`}
+                                  >
+                                    {activityStatusSymbols[step.status]}
+                                  </span>
+                                  <span className="text-surfaceMuted">{step.label}</span>
+                                </div>
+                                <div className="text-surfaceMuted">
+                                  {step.txId ? `Tx ${formatHash(step.txId)}` : activityStatusLabels[step.status]}
+                                  {step.confirmations !== undefined ? ` · ${step.confirmations} conf` : ''}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </section>
@@ -4804,8 +4660,7 @@ export default function App() {
     <details className="card diagnostic-details">
       <summary>
         <div>
-          <p className="label">Recipients</p>
-          <h2 className="text-title font-semibold">Address book</h2>
+          <h2 className="text-title font-semibold">Recipients</h2>
         </div>
         <span className="badge">{contacts.length} saved</span>
       </summary>
@@ -4900,10 +4755,9 @@ export default function App() {
     <section className="card flex flex-col gap-4 min-h-0">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="label">Records</p>
-          <h2 className="text-title font-semibold">Outgoing outputs</h2>
+          <h2 className="text-title font-semibold">Outputs</h2>
           <p className="text-sm text-surfaceMuted/80">
-            Select a transaction output to generate a disclosure package.
+            Select one to disclose.
           </p>
         </div>
         <button
@@ -4977,8 +4831,7 @@ export default function App() {
   const DisclosureGenerateSection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Create</p>
-        <h2 className="text-title font-semibold">Disclosure package</h2>
+        <h2 className="text-title font-semibold">Create</h2>
       </div>
       <div className="grid gap-4">
         {selectedDisclosure ? (
@@ -5038,8 +4891,7 @@ export default function App() {
   const DisclosureVerifySection = (
     <section className="card space-y-6">
       <div>
-        <p className="label">Verify</p>
-        <h2 className="text-title font-semibold">Verify proof</h2>
+        <h2 className="text-title font-semibold">Verify</h2>
       </div>
       <label className="space-y-2">
         <span className="label">Disclosure JSON</span>
@@ -5065,20 +4917,18 @@ export default function App() {
   const WalletWorkspace = (
     <div className="workspace-view max-w-7xl">
       {WalletStoreSection}
-      {WalletOutputSection}
     </div>
   );
 
+  const showActivityPanel = walletReady || activityEntries.length > 0 || sendInFlight || walletSyncQueued;
+
   const SendWorkspace = (
     <div className="workspace-view max-w-7xl">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)]">
+      <div className={showActivityPanel ? 'grid gap-5 xl:grid-cols-[minmax(0,1.08fr)_minmax(24rem,0.92fr)]' : 'grid gap-5 max-w-3xl'}>
         {SendSection}
-        {TransactionActivitySection}
+        {showActivityPanel ? TransactionActivitySection : null}
       </div>
-      <div className="grid gap-5 xl:grid-cols-2">
-        {SendPreflightSection}
-        {ContactsSection}
-      </div>
+      {ContactsSection}
     </div>
   );
 
@@ -5126,6 +4976,9 @@ export default function App() {
                 to={item.path}
                 className={({ isActive }) => `nav-link${isActive ? ' nav-link-active' : ''}`}
               >
+                <span className="nav-link-icon">
+                  <AppIcon name={item.icon} />
+                </span>
                 <div className="nav-link-copy">
                   <p className="nav-link-label">{item.label}</p>
                   <p className="nav-link-description">{item.description}</p>
@@ -5136,6 +4989,9 @@ export default function App() {
               </NavLink>
             ))}
           </nav>
+          <div className="sidebar-footer">
+            <span>v0.10.0</span>
+          </div>
         </aside>
         <div className="app-body">
           <main className="app-main">

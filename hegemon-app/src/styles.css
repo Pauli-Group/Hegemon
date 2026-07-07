@@ -112,7 +112,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .app-sidebar {
-  @apply w-full shrink-0 border-b border-surfaceMuted/10 bg-[#071321]/95 p-4 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:w-64 lg:overflow-y-auto lg:border-b-0 lg:border-r;
+  @apply flex w-full shrink-0 flex-col border-b border-surfaceMuted/10 bg-[#071321]/95 p-4 space-y-6 lg:sticky lg:top-0 lg:h-screen lg:w-64 lg:overflow-y-auto lg:border-b-0 lg:border-r;
   box-shadow: inset -1px 0 0 rgba(244, 247, 251, 0.03);
   backdrop-filter: blur(20px);
 }
@@ -126,7 +126,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .nav-link {
-  @apply flex items-center justify-between gap-3 rounded-md px-3 py-3 border border-transparent relative overflow-hidden;
+  @apply grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-3 border border-transparent relative overflow-hidden;
   transition: background-color var(--transition-fast), border-color var(--transition-base), transform var(--transition-fast);
 }
 
@@ -149,7 +149,17 @@ button.danger:hover:not(:disabled) {
 }
 
 .nav-link-copy {
-  @apply min-w-0 pl-2;
+  @apply min-w-0;
+}
+
+.nav-link-icon {
+  @apply flex h-7 w-7 items-center justify-center rounded-md border border-surfaceMuted/10 bg-midnight/30 text-surfaceMuted;
+  transition: border-color var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.nav-link:hover .nav-link-icon,
+.nav-link-active .nav-link-icon {
+  @apply border-ionosphere/35 bg-ionosphere/10 text-ionosphere;
 }
 
 .nav-link-label {
@@ -199,6 +209,19 @@ button.danger:hover:not(:disabled) {
 
 .nav-status.neutral::before {
   @apply bg-surfaceMuted/50;
+}
+
+.app-icon {
+  @apply h-5 w-5 shrink-0;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.sidebar-footer {
+  @apply mt-auto border-t border-surfaceMuted/10 pt-4 text-center text-xs text-surfaceMuted/55;
 }
 
 .action-link {
@@ -422,222 +445,127 @@ label.space-y-2 > span.label {
   @apply mt-1;
 }
 
-.overview-dashboard {
-  @apply grid gap-4 xl:grid-cols-[minmax(0,1.38fr)_minmax(24rem,0.72fr)];
+.control-panel {
+  @apply mx-auto grid w-full max-w-6xl gap-3;
 }
 
-.overview-command-card {
-  @apply min-w-0 space-y-4 rounded-md border border-surfaceMuted/10 bg-[#071323] p-5 md:p-6;
-  border-left: 4px solid #19B37E;
-  box-shadow:
-    inset 0 1px 0 rgba(244, 247, 251, 0.055),
-    0 16px 34px rgba(3, 10, 22, 0.24);
+.control-rail {
+  @apply grid overflow-hidden rounded-md border border-surfaceMuted/10 bg-[#081525]/95 sm:grid-cols-2 xl:grid-cols-5;
+  box-shadow: inset 0 1px 0 rgba(244, 247, 251, 0.035);
 }
 
-.overview-command-top,
-.overview-command-main,
-.overview-side-header,
-.overview-events-heading {
-  @apply flex min-w-0 flex-wrap items-start justify-between gap-3;
+.control-rail-item {
+  @apply min-w-0 border-t border-surfaceMuted/10 px-4 py-3;
 }
 
-.overview-command-main {
-  @apply items-end gap-5;
+.control-rail-item:first-child {
+  @apply border-t-0;
 }
 
-.overview-command-main > div:first-child {
-  @apply min-w-0 max-w-4xl space-y-2;
+@media (min-width: 640px) {
+  .control-rail-item:nth-child(-n+2) {
+    @apply border-t-0;
+  }
 }
 
-.overview-command-main h1 {
-  @apply text-2xl font-semibold leading-tight text-surface md:text-3xl;
+@media (min-width: 1280px) {
+  .control-rail-item {
+    @apply border-l border-t-0;
+  }
+
+  .control-rail-item:first-child {
+    @apply border-l-0;
+  }
 }
 
-.overview-command-main p:last-child {
-  @apply max-w-3xl text-sm leading-6 text-surfaceMuted/80;
+.control-rail-item span {
+  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/60;
 }
 
-.overview-actions {
-  @apply flex shrink-0 flex-wrap justify-end gap-2;
-}
-
-.overview-actions button,
-.overview-actions .action-link {
-  @apply min-w-[7.25rem];
-}
-
-.overview-verdict {
-  @apply flex min-w-0 items-start gap-3 rounded-md border p-3;
-}
-
-.overview-verdict.ok {
-  @apply border-proof/25 bg-proof/10;
-}
-
-.overview-verdict.warn {
-  @apply border-amber/25 bg-amber/10;
-}
-
-.overview-verdict.neutral {
-  @apply border-surfaceMuted/10 bg-midnight/35;
-}
-
-.overview-verdict .status-dot {
-  @apply mt-1.5 shrink-0;
-}
-
-.overview-verdict strong {
-  @apply block text-sm font-semibold text-surface;
-}
-
-.overview-verdict span:last-child {
-  @apply mt-0.5 block text-sm leading-5 text-surfaceMuted/80;
-}
-
-.overview-signal-grid {
-  @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-4;
-}
-
-.overview-signal {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-midnight/35 px-3 py-3;
-}
-
-.overview-signal.featured {
-  @apply bg-[#0D203B];
-}
-
-.overview-signal span,
-.overview-side-grid span,
-.overview-events-heading span {
-  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
-}
-
-.overview-signal strong {
-  @apply mt-1 block min-w-0 truncate text-xl font-semibold text-surface;
-}
-
-.overview-signal em {
-  @apply mt-0.5 block min-w-0 truncate text-xs not-italic text-surfaceMuted/70;
-}
-
-.overview-side-card {
-  @apply min-w-0 space-y-4 rounded-md border border-surfaceMuted/10 bg-[#0A1728] p-5;
-  box-shadow: inset 0 1px 0 rgba(244, 247, 251, 0.04);
-}
-
-.overview-side-header h2 {
-  @apply mt-1 text-lg font-semibold text-surface;
-}
-
-.overview-side-grid {
-  @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-1;
-}
-
-.overview-side-grid p {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-[#071323] px-3 py-2;
-}
-
-.overview-side-grid strong {
+.control-rail-item strong {
   @apply mt-1 block min-w-0 truncate text-sm font-semibold text-surface;
 }
 
-.overview-peer-note {
-  @apply flex min-w-0 items-center gap-2 rounded-md border border-surfaceMuted/10 bg-[#071323] px-3 py-2 text-xs leading-5 text-surfaceMuted/75;
+.command-surface {
+  @apply flex min-w-0 flex-wrap items-center justify-between gap-4 rounded-md border border-surfaceMuted/10 bg-[#071323] p-5 md:p-6;
+  box-shadow: inset 0 1px 0 rgba(244, 247, 251, 0.045);
 }
 
-.overview-peer-note p,
-.overview-event-line p {
-  @apply min-w-0 truncate;
+.command-focus {
+  @apply flex min-w-0 flex-1 items-center gap-4;
 }
 
-.overview-events-compact {
-  @apply space-y-2 rounded-md border border-surfaceMuted/10 bg-[#071323] p-3;
+.command-focus > .status-dot {
+  @apply h-3 w-3 shrink-0;
 }
 
-.overview-events-heading strong {
-  @apply text-xs font-semibold text-surfaceMuted;
+.command-focus h1 {
+  @apply truncate text-2xl font-semibold leading-tight text-surface md:text-3xl;
 }
 
-.overview-event-line {
-  @apply grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs text-surfaceMuted/80;
+.command-focus p:last-child {
+  @apply mt-1 truncate text-sm text-surfaceMuted/75;
 }
 
-.overview-empty-line {
-  @apply text-xs leading-5 text-surfaceMuted/75;
+.command-actions {
+  @apply flex shrink-0 flex-wrap items-center justify-end gap-2;
 }
 
-.live-hero {
-  @apply grid gap-0 overflow-hidden rounded-md border border-surfaceMuted/10 bg-[#071323] p-0 xl:grid-cols-[minmax(0,1.42fr)_minmax(21rem,0.72fr)];
-  box-shadow:
-    inset 0 1px 0 rgba(244, 247, 251, 0.055),
-    0 16px 34px rgba(3, 10, 22, 0.28);
+.command-actions button,
+.command-actions .action-link {
+  @apply inline-flex min-h-11 min-w-[8.5rem] items-center gap-2 px-4;
 }
 
-.live-hero-main {
-  @apply min-w-0 space-y-4 p-5 md:p-6 xl:p-7;
-  border-left: 4px solid #19B37E;
+.command-actions .app-icon {
+  @apply h-4 w-4;
 }
 
-.hero-kicker {
-  @apply flex flex-wrap items-center gap-2;
+.control-rows {
+  @apply grid gap-2 lg:grid-cols-2;
 }
 
-.live-heading {
-  @apply max-w-4xl space-y-2;
+.control-row {
+  @apply grid min-w-0 grid-cols-[1.5rem_7rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-surfaceMuted/10 bg-[#081525]/85 px-4 py-3;
 }
 
-.live-title {
-  @apply text-2xl font-semibold leading-tight text-surface md:text-3xl;
+.control-row .app-icon {
+  @apply h-5 w-5 text-ionosphere/80;
 }
 
-.live-subtitle {
-  @apply max-w-3xl text-sm leading-6 text-surfaceMuted/80;
+.control-row span {
+  @apply text-[10px] uppercase tracking-normal text-surfaceMuted/60;
 }
 
-.live-verdict {
-  @apply rounded-md border border-proof/25 bg-[#0B211F] p-4;
-  box-shadow: inset 0 1px 0 rgba(25, 179, 126, 0.14);
+.control-row strong {
+  @apply min-w-0 truncate text-sm font-semibold text-surface;
 }
 
-.live-verdict-copy {
-  @apply flex min-w-0 items-start gap-3;
+.control-row em {
+  @apply min-w-0 truncate text-xs not-italic text-surfaceMuted/65;
 }
 
-.live-verdict-copy .status-dot {
-  @apply mt-2 shrink-0;
+.control-details {
+  @apply overflow-hidden rounded-md border border-surfaceMuted/10 bg-[#081525]/70;
 }
 
-.live-verdict-copy strong {
-  @apply block text-base font-semibold text-surface;
+.control-details > summary {
+  @apply flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm;
 }
 
-.live-verdict-copy span:last-child {
-  @apply mt-1 block text-sm leading-6 text-surfaceMuted;
+.control-details > summary::-webkit-details-marker {
+  display: none;
 }
 
-.live-verdict-meta {
-  @apply grid grid-cols-3 gap-2;
+.control-details > summary strong {
+  @apply min-w-0 truncate font-semibold text-surface;
 }
 
-.live-verdict-meta p {
-  @apply min-w-0 rounded-md border border-proof/10 bg-[#071323] px-3 py-2;
+.control-details > summary span {
+  @apply shrink-0 text-xs text-surfaceMuted/65;
 }
 
-.live-verdict-meta span {
-  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
-}
-
-.live-verdict-meta strong {
-  @apply mt-1 block truncate text-sm font-semibold text-surface;
-}
-
-.live-command-row {
-  @apply flex flex-wrap gap-2;
-}
-
-.live-command-row button,
-.live-command-row .action-link {
-  @apply min-w-[7.5rem];
+.control-details[open] > summary {
+  @apply border-b border-surfaceMuted/10;
 }
 
 .connection-evidence {
@@ -676,8 +604,7 @@ label.space-y-2 > span.label {
   @apply border-t-0;
 }
 
-.proof-row span,
-.live-chain-grid span {
+.proof-row span {
   @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
 }
 
@@ -689,70 +616,8 @@ label.space-y-2 > span.label {
   @apply min-w-0 truncate text-xs not-italic text-surfaceMuted/70 md:text-right;
 }
 
-.live-chain-panel {
-  @apply border-t border-surfaceMuted/10 bg-[#0A1728] p-5 xl:border-l xl:border-t-0;
-}
-
-.live-height-stack {
-  @apply mt-5 rounded-md border border-surfaceMuted/10 bg-[#071323] p-4;
-}
-
-.live-height {
-  @apply text-5xl font-semibold leading-none text-surface;
-  font-variant-numeric: tabular-nums;
-}
-
-.live-height-stack p {
-  @apply mt-2 text-xs text-surfaceMuted/75;
-}
-
-.live-chain-grid {
-  @apply mt-4 grid grid-cols-2 gap-3;
-}
-
-.live-chain-grid p {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-[#071323] px-3 py-2;
-}
-
-.live-chain-grid strong {
-  @apply mt-1 block min-w-0 truncate text-sm font-semibold text-surface;
-}
-
-.live-peer-note {
-  @apply mt-4 flex min-w-0 items-center gap-2 rounded-md border border-surfaceMuted/10 bg-[#071323] px-3 py-2 text-xs leading-5 text-surfaceMuted/75;
-}
-
-.live-peer-note p {
-  @apply min-w-0 truncate;
-}
-
-.metric-grid {
-  @apply grid gap-4 xl:grid-cols-3;
-}
-
-.metric-tile {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-[#0A1728]/90 p-4;
-  box-shadow: inset 0 1px 0 rgba(244, 247, 251, 0.035);
-}
-
-.metric-tile h2 {
-  @apply mt-1 min-w-0 truncate text-base font-semibold text-surface;
-}
-
-.tile-note {
-  @apply mt-3 rounded-md border border-amber/20 bg-amber/10 px-3 py-2 text-xs;
-}
-
-.overview-bottom-grid {
-  @apply grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)];
-}
-
 .ops-panel {
   @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-[#0A1728]/90 p-4 space-y-4;
-}
-
-.quick-actions {
-  @apply grid gap-3 sm:grid-cols-2;
 }
 
 .event-stream {
@@ -773,58 +638,6 @@ label.space-y-2 > span.label {
 
 .quiet-state {
   @apply rounded-md border border-surfaceMuted/10 bg-midnight/30 px-4 py-5 text-sm text-surfaceMuted;
-}
-
-.wallet-command {
-  @apply grid overflow-hidden rounded-md border border-proof/35 bg-[#0A1A2F] lg:grid-cols-[minmax(0,1.08fr)_minmax(22rem,0.72fr)];
-  box-shadow:
-    inset 0 1px 0 rgba(244, 247, 251, 0.06),
-    0 14px 34px rgba(3, 10, 22, 0.22);
-}
-
-.wallet-command-main {
-  @apply min-w-0 space-y-5 p-5 md:p-6;
-  border-left: 4px solid #19B37E;
-}
-
-.wallet-command-main h2 {
-  @apply text-3xl font-semibold leading-tight text-surface;
-}
-
-.wallet-command-detail {
-  @apply max-w-3xl truncate text-sm text-surfaceMuted/85;
-}
-
-.wallet-network-strip {
-  @apply grid gap-2 md:grid-cols-2;
-}
-
-.wallet-network-strip p {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-midnight/35 px-3 py-2;
-}
-
-.wallet-network-strip span {
-  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
-}
-
-.wallet-network-strip strong {
-  @apply mt-1 block min-w-0 truncate text-sm font-semibold text-surface;
-}
-
-.wallet-command-grid {
-  @apply grid grid-cols-2 gap-3 border-t border-proof/20 bg-[#0D203B] p-5 lg:border-l lg:border-t-0;
-}
-
-.wallet-command-grid p {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-midnight/35 px-3 py-3;
-}
-
-.wallet-command-grid span {
-  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
-}
-
-.wallet-command-grid strong {
-  @apply mt-1 block min-w-0 truncate text-base font-semibold text-surface;
 }
 
 .wallet-main-card {
@@ -848,31 +661,23 @@ label.space-y-2 > span.label {
 }
 
 .wallet-surface {
-  @apply flex flex-col gap-4 rounded-md border border-surfaceMuted/10 bg-[#0A1629] p-4;
-}
-
-.wallet-surface > .kpi-grid {
-  order: 1;
+  @apply flex flex-col gap-4 rounded-md border border-surfaceMuted/10 bg-[#081525] p-4;
 }
 
 .wallet-surface > .wallet-identity {
-  order: 2;
+  order: 1;
 }
 
 .wallet-surface > .mining-payout-panel {
-  order: 3;
-}
-
-.wallet-surface > .section-divider {
-  order: 4;
+  order: 2;
 }
 
 .wallet-surface > .wallet-notes-panel {
-  order: 5;
+  order: 3;
 }
 
 .wallet-identity {
-  @apply overflow-hidden rounded-md border border-ionosphere/20 bg-[#0D203B];
+  @apply overflow-hidden rounded-md border border-ionosphere/25 bg-[#0C213C];
 }
 
 .wallet-identity-header {
@@ -880,15 +685,27 @@ label.space-y-2 > span.label {
 }
 
 .wallet-address-row {
-  @apply px-4 py-4;
+  @apply px-4 py-5;
 }
 
 .address-display {
-  @apply mono block min-w-0 truncate text-base font-semibold text-surface;
+  @apply mono block min-w-0 truncate text-lg font-semibold text-surface;
 }
 
 .address-full {
   @apply max-h-32 overflow-auto rounded-md border border-surfaceMuted/10 bg-midnight/55 p-3 mono text-xs text-surfaceMuted/90 break-all;
+}
+
+.send-sync-strip {
+  @apply flex flex-wrap items-center justify-between gap-3 rounded-md border border-surfaceMuted/10 bg-midnight/35 px-4 py-3;
+}
+
+.send-sync-strip strong {
+  @apply mt-1 block text-lg font-semibold text-surface;
+}
+
+.send-sync-strip span {
+  @apply mt-1 block text-xs text-surfaceMuted/75;
 }
 
 .wallet-details {
@@ -900,7 +717,7 @@ label.space-y-2 > span.label {
 }
 
 .mining-payout-panel {
-  @apply rounded-md border bg-midnight/35 p-4 space-y-4;
+  @apply rounded-md border bg-midnight/25 p-4 space-y-4;
 }
 
 .mining-payout-panel.ok {
@@ -945,6 +762,34 @@ label.space-y-2 > span.label {
 
 .mining-payout-grid strong {
   @apply mt-1 block min-w-0 truncate mono text-xs font-semibold text-surface;
+}
+
+.mining-payout-grid em {
+  @apply mt-1 block not-italic text-[11px] text-surfaceMuted/70;
+}
+
+.mining-payout-current-header {
+  @apply mb-2 flex flex-wrap items-center justify-between gap-2;
+}
+
+.mining-payout-current-header > span:first-child {
+  @apply text-[10px] uppercase tracking-normal text-surfaceMuted/65;
+}
+
+.mining-payout-full {
+  @apply max-h-28 text-surface;
+}
+
+.contact-match {
+  @apply rounded-full border px-2 py-1 text-[10px] font-semibold uppercase tracking-normal;
+}
+
+.contact-match.ok {
+  @apply border-proof/25 bg-proof/10 text-proof;
+}
+
+.contact-match.warn {
+  @apply border-amber/30 bg-amber/10 text-amber;
 }
 
 .mining-payout-actions {
@@ -996,6 +841,7 @@ label.space-y-2 > span.label {
   @apply mt-5;
 }
 
+.control-details > summary,
 .connection-evidence > summary,
 .wallet-access-details > summary,
 .wallet-details > summary,
@@ -1004,6 +850,7 @@ label.space-y-2 > span.label {
   transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
+.control-details > summary::after,
 .connection-evidence > summary::after,
 .wallet-access-details > summary::after,
 .wallet-details > summary::after,
@@ -1014,6 +861,7 @@ label.space-y-2 > span.label {
   transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
 }
 
+.control-details[open] > summary::after,
 .connection-evidence[open] > summary::after,
 .wallet-access-details[open] > summary::after,
 .wallet-details[open] > summary::after,
@@ -1023,6 +871,7 @@ label.space-y-2 > span.label {
   @apply border-ionosphere/35 bg-ionosphere/10 text-ionosphere;
 }
 
+.control-details > summary:hover::after,
 .connection-evidence > summary:hover::after,
 .wallet-access-details > summary:hover::after,
 .wallet-details > summary:hover::after,
@@ -1101,6 +950,26 @@ label.space-y-2 > span.label {
   @apply rounded-md border border-surfaceMuted/10 bg-midnight/30 px-3 py-2 text-sm text-surfaceMuted;
 }
 
+.node-control-summary {
+  @apply grid gap-2 sm:grid-cols-2 xl:grid-cols-4;
+}
+
+.node-control-summary p {
+  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-midnight/25 px-3 py-3;
+}
+
+.node-control-summary span {
+  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
+}
+
+.node-control-summary strong {
+  @apply mt-1 block min-w-0 truncate text-base font-semibold text-surface;
+}
+
+.node-control-summary em {
+  @apply mt-0.5 block min-w-0 truncate text-xs not-italic text-surfaceMuted/70;
+}
+
 .node-metric-grid {
   @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-6;
 }
@@ -1117,53 +986,8 @@ label.space-y-2 > span.label {
   @apply min-w-0;
 }
 
-.kpi-grid {
-  @apply grid gap-3 sm:grid-cols-2 xl:grid-cols-4;
-}
-
-.kpi-tile {
-  @apply rounded-md border border-surfaceMuted/10 bg-midnight/35 p-4;
-}
-
-.kpi-action-tile {
-  @apply flex min-h-[8rem] flex-col;
-}
-
-.kpi-action-header,
-.kpi-action-footer {
-  @apply flex items-center justify-between gap-3;
-}
-
-.kpi-action-button {
-  @apply px-3 py-1 text-xs;
-}
-
 .text-link {
   @apply rounded-none border-0 bg-transparent p-0 text-ionosphere/85 ring-0 hover:text-ionosphere;
-}
-
-.section-divider {
-  @apply border-t border-surfaceMuted/10 pt-4;
-}
-
-.send-context-strip {
-  @apply grid gap-2 sm:grid-cols-2 xl:grid-cols-4;
-}
-
-.send-context-strip p {
-  @apply min-w-0 rounded-md border border-surfaceMuted/10 bg-midnight/30 px-3 py-2;
-}
-
-.send-context-strip span {
-  @apply block text-[10px] uppercase tracking-normal text-surfaceMuted/65;
-}
-
-.send-context-strip strong {
-  @apply mt-1 block truncate text-sm font-semibold text-surface;
-}
-
-.send-context-strip em {
-  @apply mt-0.5 block truncate text-xs not-italic text-surfaceMuted/70;
 }
 
 .log-row {
