@@ -1,6 +1,7 @@
 use crate::PeerId;
 use crate::p2p::{CoordinationMessage, WireMessage};
 use crate::queue_budget::{ByteBudget, BytePermit};
+use crate::wire;
 use crate::{GossipMessage, ProtocolMessage};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -12,7 +13,9 @@ const DEFAULT_MAX_PEERS: usize = 64;
 const MAX_ADDRESS_BOOK_PEERS: usize = 1024;
 const MAX_ADDRESSES_PER_PEER: usize = 64;
 const MAX_STATIC_ADDRESSES: usize = 1024;
-const MAX_PEER_OUTBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+const PROOF_PROTOCOL_QUEUE_FRAME_SLOTS: usize = 16;
+const MAX_PEER_OUTBOUND_QUEUE_BYTES: usize =
+    wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS;
 
 pub type PeerSessionId = u64;
 
@@ -438,6 +441,14 @@ mod tests {
 
         exclude.extend(sample);
         assert!(manager.sample_addresses(1, &exclude).is_empty());
+    }
+
+    #[test]
+    fn peer_outbound_queue_budget_holds_multiple_full_proof_frames() {
+        let configured = std::hint::black_box(MAX_PEER_OUTBOUND_QUEUE_BYTES);
+        let required =
+            std::hint::black_box(wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS);
+        assert!(configured >= required);
     }
 
     #[tokio::test]

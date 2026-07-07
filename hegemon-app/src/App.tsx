@@ -2992,9 +2992,8 @@ export default function App() {
   const pendingActivityCount = activityEntries.filter(
     (entry) => entry.status === 'processing' || entry.status === 'pending'
   ).length;
-  const failedActivityCount = activityEntries.filter((entry) => entry.status === 'failed').length;
-  const sendNavTone: UiTone = failedActivityCount > 0 ? 'error' : pendingActivityCount > 0 ? 'warn' : 'neutral';
-  const sendNavLabel = failedActivityCount > 0 ? 'Failed' : pendingActivityCount > 0 ? `${pendingActivityCount} pending` : 'Idle';
+  const sendNavTone: UiTone = pendingActivityCount > 0 ? 'warn' : 'neutral';
+  const sendNavLabel = pendingActivityCount > 0 ? `${pendingActivityCount} pending` : 'Idle';
   const sendNavDescription =
     pendingActivityCount > 0
       ? 'Outgoing pending'

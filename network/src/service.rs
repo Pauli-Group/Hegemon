@@ -277,9 +277,13 @@ const RECENT_RECONNECT_LIMIT: usize = 5;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
 const PROTOCOL_CHANNEL_CAPACITY: usize = 1024;
-const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_PROTOCOL_INBOUND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_P2P_COMMAND_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+const PROOF_PROTOCOL_QUEUE_FRAME_SLOTS: usize = 16;
+const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize =
+    wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS;
+const MAX_PROTOCOL_INBOUND_QUEUE_BYTES: usize =
+    wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS;
+const MAX_P2P_COMMAND_QUEUE_BYTES: usize =
+    wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS;
 
 pub(crate) fn rate_limit_state_retained_before_insert(
     current_entries: usize,
@@ -2096,6 +2100,18 @@ mod tests {
     fn seed_resolution_keeps_ipv6_when_no_ipv4_exists() {
         let ipv6: SocketAddr = "[2607:5300:205:200::17c1]:30333".parse().unwrap();
         assert_eq!(prefer_ipv4_seed_addrs(vec![ipv6]), vec![ipv6]);
+    }
+
+    #[test]
+    fn protocol_queue_budgets_hold_multiple_full_proof_frames() {
+        let minimum =
+            std::hint::black_box(wire::MAX_WIRE_FRAME_LEN * PROOF_PROTOCOL_QUEUE_FRAME_SLOTS);
+        let outbound = std::hint::black_box(MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES);
+        let inbound = std::hint::black_box(MAX_PROTOCOL_INBOUND_QUEUE_BYTES);
+        let command = std::hint::black_box(MAX_P2P_COMMAND_QUEUE_BYTES);
+        assert!(outbound >= minimum);
+        assert!(inbound >= minimum);
+        assert!(command >= minimum);
     }
 
     #[test]
