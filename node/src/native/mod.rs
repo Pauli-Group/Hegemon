@@ -121,7 +121,10 @@ const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
-const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(10);
+// Sync responses carry full native block metadata and can take over a minute to
+// assemble on busy mining peers. Retrying faster than that creates a backlog of
+// stale range requests and slows fresh-node catch-up.
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(180);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
