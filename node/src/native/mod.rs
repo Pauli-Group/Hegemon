@@ -663,6 +663,17 @@ impl NativeSyncResponseImportProgress {
     }
 }
 
+fn native_sync_response_should_escalate_reorg_backfill(
+    progress: NativeSyncResponseImportProgress,
+    local_best_height: u64,
+    peer_best_height: u64,
+) -> bool {
+    progress.had_blocks
+        && !progress.stopped_on_error
+        && !progress.completed_with_only_known_blocks()
+        && local_best_height < peer_best_height
+}
+
 fn native_mining_sync_observed_peer_height(input: NativeMiningSyncEvidenceInput) -> Option<u64> {
     if input.stopped_on_error {
         return None;
@@ -6821,10 +6832,11 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         peer_best_height = best_height,
                         "imported native sync response"
                     );
-                } else if progress.had_blocks
-                    && !progress.stopped_on_error
-                    && local_best_height < best_height
-                {
+                } else if native_sync_response_should_escalate_reorg_backfill(
+                    progress,
+                    local_best_height,
+                    best_height,
+                ) {
                     let backfill_blocks = node.escalate_sync_reorg_backfill();
                     info!(
                         best_height = local_best_height,
@@ -34924,6 +34936,34 @@ mod tests {
         meta.hash[..8].copy_from_slice(&height.to_le_bytes());
         meta.parent_hash = [discriminator.wrapping_add(1); 32];
         meta
+    }
+
+    #[test]
+    fn stale_known_sync_response_requests_more_without_reorg_escalation() {
+        let mut progress = NativeSyncResponseImportProgress::new(128);
+        for _ in 0..128 {
+            assert!(progress.record(NativeSyncResponseImportOutcome::AlreadyKnown));
+        }
+
+        assert!(progress.completed_with_only_known_blocks());
+        assert!(progress.should_request_more(128, 6_132));
+        assert!(!native_sync_response_should_escalate_reorg_backfill(
+            progress, 128, 6_132
+        ));
+    }
+
+    #[test]
+    fn unproductive_unknown_sync_response_escalates_reorg_backfill() {
+        let mut progress = NativeSyncResponseImportProgress::new(128);
+        for _ in 0..127 {
+            assert!(progress.record(NativeSyncResponseImportOutcome::AlreadyKnown));
+        }
+
+        assert!(!progress.completed_with_only_known_blocks());
+        assert!(progress.should_request_more(128, 6_132));
+        assert!(native_sync_response_should_escalate_reorg_backfill(
+            progress, 128, 6_132
+        ));
     }
 
     #[test]
