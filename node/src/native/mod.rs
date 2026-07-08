@@ -121,7 +121,7 @@ const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
-const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(30);
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(10);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
@@ -3342,9 +3342,10 @@ impl NativeNode {
         let mut completed = false;
         for target in [Some(peer_id), None] {
             let should_remove = requests.get(&target).is_some_and(|request| {
-                response_range
-                    .map(|range| native_sync_ranges_overlap(request.range, range))
-                    .unwrap_or(true)
+                response_range.map_or(true, |range| {
+                    native_sync_ranges_overlap(request.range, range)
+                        || range.to_height < request.range.from_height
+                })
             });
             if should_remove {
                 requests.remove(&target);
@@ -35852,11 +35853,20 @@ mod tests {
         };
 
         assert!(node.begin_outbound_sync_request(Some(peer), range));
-        assert!(!node.complete_outbound_sync_response(
+        assert!(node.complete_outbound_sync_response(
             peer,
             Some(NativeSyncRange {
                 from_height: 1,
                 to_height: 128,
+            }),
+        ));
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+
+        assert!(!node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 257,
+                to_height: 384,
             }),
         ));
         assert!(!node.begin_outbound_sync_request(Some(peer), range));
