@@ -115,6 +115,7 @@ const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 128;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
+const MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS: usize = 32;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
@@ -7135,44 +7136,70 @@ fn import_native_sync_response_tip_extension(
         expected_parent = meta.hash;
     }
 
-    let mut state = node.state.write();
-    if state.best.hash != anchor_hash {
+    let mut offset = first_unknown;
+    let mut imported_total = 0usize;
+    let mut last_imported_height = local_best.height;
+    while offset < blocks.len() {
+        let expected_anchor = if offset == first_unknown {
+            anchor_hash
+        } else {
+            blocks[offset - 1].hash
+        };
+        let end = offset
+            .saturating_add(MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS)
+            .min(blocks.len());
+        let batch = &blocks[offset..end];
+        let batch_tip = batch.last().expect("non-empty sync tip extension batch");
+        let imported = {
+            let mut state = node.state.write();
+            if state.best.hash != expected_anchor {
+                if imported_total == 0 {
+                    return None;
+                }
+                break;
+            }
+            match node.commit_sync_tip_extension_batch_locked(&mut state, batch) {
+                Ok(imported) => imported,
+                Err(err) => {
+                    progress.attempted_blocks = progress.response_block_count;
+                    progress.imported_blocks = progress
+                        .imported_blocks
+                        .saturating_add(u64::try_from(imported_total).unwrap_or(u64::MAX));
+                    progress.stopped_on_error = true;
+                    return Some(NativeSyncImportReport {
+                        progress: *progress,
+                        failure: Some(NativeSyncImportFailure {
+                            height: batch_tip.height,
+                            hash: batch_tip.hash,
+                            error: err.to_string(),
+                        }),
+                    });
+                }
+            }
+        };
+        imported_total = imported_total.saturating_add(imported);
+        last_imported_height = batch_tip.height;
+        offset = end;
+    }
+
+    if imported_total == 0 {
         return None;
     }
-    let batch = &blocks[first_unknown..];
-    let batch_tip = batch.last().expect("non-empty sync tip extension batch");
-    match node.commit_sync_tip_extension_batch_locked(&mut state, batch) {
-        Ok(imported) => {
-            progress.attempted_blocks = progress.response_block_count;
-            progress.imported_blocks = progress
-                .imported_blocks
-                .saturating_add(u64::try_from(imported).unwrap_or(u64::MAX));
-            if imported > 0 {
-                node.observe_verified_sync_peer_height(peer_best_height);
-            }
-            info!(
-                imported,
-                best_height = batch_tip.height,
-                peer_best_height,
-                "imported native sync response by tip-extension batch"
-            );
-            Some(NativeSyncImportReport {
-                progress: *progress,
-                failure: None,
-            })
-        }
-        Err(err) => {
-            progress.record(NativeSyncResponseImportOutcome::Error);
-            Some(NativeSyncImportReport {
-                progress: *progress,
-                failure: Some(NativeSyncImportFailure {
-                    height: batch_tip.height,
-                    hash: batch_tip.hash,
-                    error: err.to_string(),
-                }),
-            })
-        }
-    }
+    progress.attempted_blocks = progress.response_block_count;
+    progress.imported_blocks = progress
+        .imported_blocks
+        .saturating_add(u64::try_from(imported_total).unwrap_or(u64::MAX));
+    node.observe_verified_sync_peer_height(peer_best_height);
+    info!(
+        imported = imported_total,
+        best_height = last_imported_height,
+        peer_best_height,
+        "imported native sync response by chunked tip-extension batches"
+    );
+    Some(NativeSyncImportReport {
+        progress: *progress,
+        failure: None,
+    })
 }
 
 fn skip_stale_nonwinning_sync_block(
