@@ -163,6 +163,7 @@ const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES: usize = wire::MAX_WIRE_FRAME_LEN / 2;
 const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
+const NATIVE_MINING_BACKGROUND_THREAD_CAP: u32 = 2;
 const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 3;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
@@ -3677,6 +3678,7 @@ impl NativeNode {
                 requested_threads,
                 effective_threads = threads,
                 available_threads,
+                background_thread_cap = NATIVE_MINING_BACKGROUND_THREAD_CAP,
                 reserved_service_threads = NATIVE_MINING_RESERVED_SERVICE_THREADS,
                 "capped native mining threads to preserve sync and RPC liveness"
             );
@@ -17294,7 +17296,9 @@ fn effective_native_mining_threads(requested: u32, available_threads: u32) -> u3
     let liveness_cap = available
         .saturating_sub(NATIVE_MINING_RESERVED_SERVICE_THREADS)
         .max(1);
-    requested.min(liveness_cap)
+    requested
+        .min(liveness_cap)
+        .min(NATIVE_MINING_BACKGROUND_THREAD_CAP)
 }
 
 fn start_mining_threads_from_params(params: &Value) -> Result<u32> {
@@ -24424,9 +24428,10 @@ mod tests {
         assert_eq!(effective_native_mining_threads(8, 4), 1);
         assert_eq!(effective_native_mining_threads(8, 2), 1);
         assert_eq!(effective_native_mining_threads(1, 4), 1);
+        assert_eq!(effective_native_mining_threads(8, 16), 2);
         assert_eq!(
             effective_native_mining_threads(MAX_NATIVE_MINING_THREADS, 16),
-            13
+            NATIVE_MINING_BACKGROUND_THREAD_CAP
         );
     }
 
