@@ -4477,10 +4477,7 @@ impl NativeNode {
             return Ok(Vec::new());
         };
         let mut blocks = Vec::new();
-        let mut canonical_rows_verified = 0usize;
-        let mut action_bodies_verified = 0usize;
         let mut previous_parent_anchor_verified = range.from_height == 0;
-        let mut published_to_height = None;
         let mut parent = if range.from_height == 0 {
             None
         } else {
@@ -4501,45 +4498,15 @@ impl NativeNode {
                     previous_parent_anchor_verified = true;
                 }
             }
-            let mut candidate = blocks.clone();
-            candidate.push(meta.clone());
-            let candidate_wire_bytes = match native_sync_response_wire_bytes(
-                best_height,
-                &candidate,
-            ) {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    warn!(
-                        from_height = range.from_height,
-                        attempted_to_height = height,
-                        admitted_blocks = blocks.len(),
-                        max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
-                        error = %err,
-                        "truncated native sync response before materializing an oversized wire payload"
-                    );
-                    break;
-                }
-            };
-            if !blocks.is_empty() && candidate_wire_bytes > MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES {
-                warn!(
-                    from_height = range.from_height,
-                    attempted_to_height = height,
-                    admitted_blocks = blocks.len(),
-                    target_bytes = MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES,
-                    candidate_wire_bytes,
-                    "truncated native sync response to keep live relay queue responsive"
-                );
-                break;
-            }
             parent = Some(meta.clone());
             blocks.push(meta);
-            canonical_rows_verified = canonical_rows_verified.saturating_add(1);
-            if height != 0 {
-                action_bodies_verified = action_bodies_verified.saturating_add(1);
-            }
-            published_to_height = Some(height);
         }
-        let Some(published_to_height) = published_to_height else {
+        truncate_native_sync_response_blocks_to_wire_budget(
+            best_height,
+            range.from_height,
+            &mut blocks,
+        );
+        let Some(published_to_height) = blocks.last().map(|block| block.height) else {
             return Ok(Vec::new());
         };
         let published_range = NativeSyncRange {
@@ -4550,8 +4517,8 @@ impl NativeNode {
             native_sync_block_range_publication_admission_input(
                 published_range,
                 &blocks,
-                canonical_rows_verified,
-                action_bodies_verified,
+                blocks.len(),
+                blocks.iter().filter(|block| block.height != 0).count(),
                 previous_parent_anchor_verified,
             ),
         )
@@ -7534,6 +7501,54 @@ fn native_sync_message_label(message: &NativeSyncMessage) -> &'static str {
         NativeSyncMessage::Request { .. } => "request",
         NativeSyncMessage::Response { .. } => "response",
         NativeSyncMessage::PendingAction { .. } => "pending_action",
+    }
+}
+
+fn truncate_native_sync_response_blocks_to_wire_budget(
+    best_height: u64,
+    from_height: u64,
+    blocks: &mut Vec<NativeBlockMeta>,
+) {
+    let original_len = blocks.len();
+    loop {
+        let Some(last) = blocks.last() else {
+            return;
+        };
+        match native_sync_response_wire_bytes(best_height, blocks) {
+            Ok(bytes) if bytes <= MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES || blocks.len() == 1 => {
+                if blocks.len() < original_len {
+                    warn!(
+                        from_height,
+                        to_height = last.height,
+                        admitted_blocks = blocks.len(),
+                        original_blocks = original_len,
+                        target_bytes = MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES,
+                        wire_bytes = bytes,
+                        "truncated native sync response to fit live relay budget"
+                    );
+                }
+                return;
+            }
+            Ok(bytes) => {
+                let current_len = blocks.len();
+                let estimated_len = ((current_len as u128)
+                    .saturating_mul(MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES as u128)
+                    / (bytes as u128))
+                    .max(1) as usize;
+                let shrink_to = estimated_len.min(current_len.saturating_sub(1)).max(1);
+                blocks.truncate(shrink_to);
+            }
+            Err(err) => {
+                warn!(
+                    from_height,
+                    attempted_blocks = blocks.len(),
+                    max_bytes = MAX_NATIVE_SYNC_MESSAGE_BYTES,
+                    error = %err,
+                    "truncated native sync response before materializing an oversized wire payload"
+                );
+                blocks.pop();
+            }
+        }
     }
 }
 
