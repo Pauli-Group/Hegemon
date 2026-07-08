@@ -163,6 +163,7 @@ const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES: usize = wire::MAX_WIRE_FRAME_LEN / 2;
 const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
+const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 2;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
 #[derive(Clone, Debug, Parser)]
@@ -3668,7 +3669,18 @@ impl NativeNode {
     }
 
     fn start_mining(self: &Arc<Self>, threads: u32) {
-        let threads = threads.max(1);
+        let requested_threads = threads.max(1);
+        let available_threads = native_available_parallelism();
+        let threads = effective_native_mining_threads(requested_threads, available_threads);
+        if threads < requested_threads {
+            warn!(
+                requested_threads,
+                effective_threads = threads,
+                available_threads,
+                reserved_service_threads = NATIVE_MINING_RESERVED_SERVICE_THREADS,
+                "capped native mining threads to preserve sync and RPC liveness"
+            );
+        }
         self.mining.store(true, Ordering::SeqCst);
 
         let mut tasks = self.mining_tasks.lock();
@@ -17268,6 +17280,23 @@ fn parse_mining_thread_count_u64(requested: u64, context: &str) -> Result<u32> {
     Ok(requested as u32)
 }
 
+fn native_available_parallelism() -> u32 {
+    std::thread::available_parallelism()
+        .ok()
+        .and_then(|threads| u32::try_from(threads.get()).ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn effective_native_mining_threads(requested: u32, available_threads: u32) -> u32 {
+    let requested = requested.max(1);
+    let available = available_threads.max(1);
+    let liveness_cap = available
+        .saturating_sub(NATIVE_MINING_RESERVED_SERVICE_THREADS)
+        .max(1);
+    requested.min(liveness_cap)
+}
+
 fn start_mining_threads_from_params(params: &Value) -> Result<u32> {
     let Some(first) = first_param(params) else {
         return Ok(1);
@@ -24390,6 +24419,17 @@ mod tests {
         assert!(!node.mining.load(Ordering::SeqCst));
     }
 
+    #[test]
+    fn native_mining_threads_preserve_service_headroom() {
+        assert_eq!(effective_native_mining_threads(8, 4), 2);
+        assert_eq!(effective_native_mining_threads(8, 2), 1);
+        assert_eq!(effective_native_mining_threads(1, 4), 1);
+        assert_eq!(
+            effective_native_mining_threads(MAX_NATIVE_MINING_THREADS, 16),
+            14
+        );
+    }
+
     #[tokio::test]
     async fn start_mining_spawns_requested_task_count() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -24399,14 +24439,16 @@ mod tests {
 
         node.start_mining(3);
         tokio::task::yield_now().await;
+        let expected = effective_native_mining_threads(3, native_available_parallelism());
         assert!(node.mining.load(Ordering::SeqCst));
-        assert_eq!(node.mining_threads.load(Ordering::Relaxed), 3);
-        assert_eq!(node.mining_tasks.lock().len(), 3);
+        assert_eq!(node.mining_threads.load(Ordering::Relaxed), expected);
+        assert_eq!(node.mining_tasks.lock().len(), expected as usize);
 
         node.start_mining(2);
         tokio::task::yield_now().await;
-        assert_eq!(node.mining_threads.load(Ordering::Relaxed), 2);
-        assert_eq!(node.mining_tasks.lock().len(), 2);
+        let expected = effective_native_mining_threads(2, native_available_parallelism());
+        assert_eq!(node.mining_threads.load(Ordering::Relaxed), expected);
+        assert_eq!(node.mining_tasks.lock().len(), expected as usize);
 
         node.stop_mining();
         assert!(!node.mining.load(Ordering::SeqCst));
