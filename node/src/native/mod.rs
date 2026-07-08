@@ -3454,9 +3454,7 @@ impl NativeNode {
         let mut completed = false;
         for target in [Some(peer_id), None] {
             let should_remove = requests.get(&target).is_some_and(|request| {
-                response_range.map_or(true, |range| {
-                    native_sync_ranges_overlap(request.range, range)
-                })
+                response_range.is_none_or(|range| native_sync_ranges_overlap(request.range, range))
             });
             if should_remove {
                 requests.remove(&target);
@@ -35611,7 +35609,6 @@ mod tests {
 
     #[test]
     fn live_native_sync_request_window_is_smaller_than_protocol_admission_cap() {
-        assert!(NATIVE_SYNC_REQUEST_BLOCKS < MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
         let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
             best_height: 0,
             announced_height: 10_000,
@@ -35620,6 +35617,7 @@ mod tests {
         .expect("fresh public join should request a bounded live chunk");
         assert_eq!(range.from_height, 1);
         assert_eq!(range.to_height, NATIVE_SYNC_REQUEST_BLOCKS);
+        assert!(range.to_height < MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
     }
 
     #[test]
