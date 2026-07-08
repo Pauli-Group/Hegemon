@@ -20,7 +20,7 @@ use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectedPeerSnapshot {
@@ -216,13 +216,14 @@ impl ProtocolMultiplexer {
                 return;
             };
             if handler
-                .try_send(QueuedInboundProtocolMessage {
+                .send(QueuedInboundProtocolMessage {
                     message: (peer_id, msg),
                     _permit: permit,
                 })
+                .await
                 .is_err()
             {
-                warn!("dropping protocol message because handler queue is full or closed");
+                warn!("dropping protocol message because handler queue is closed");
             }
         } else {
             warn!(
@@ -696,7 +697,7 @@ impl P2PService {
                                         .await;
                                 }
                                 WireMessage::Proto(proto_msg) => {
-                                    info!(
+                                    debug!(
                                         protocol = proto_msg.protocol,
                                         peer = ?peer_id,
                                         payload_bytes = proto_msg.payload.len(),
@@ -723,7 +724,7 @@ impl P2PService {
                 // Handle protocol messages from registered components
                 Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
                     let outbound = outbound.message;
-                    info!(
+                    debug!(
                         protocol = outbound.message.protocol,
                         target = ?outbound.target,
                         payload_bytes = outbound.message.payload.len(),
@@ -733,7 +734,7 @@ impl P2PService {
                         Some(peer_id) => {
                             self
                                 .peer_manager
-                                .send_to(&peer_id, WireMessage::Proto(outbound.message))
+                                .send_to_reliable(&peer_id, WireMessage::Proto(outbound.message))
                                 .await;
                         }
                         None => {

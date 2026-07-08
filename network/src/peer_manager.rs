@@ -175,6 +175,13 @@ impl PeerManager {
         }
     }
 
+    pub async fn send_to_reliable(&self, peer_id: &PeerId, msg: WireMessage) {
+        if let Some(entry) = self.peers.get(peer_id) {
+            self.queue_to_sender(entry.peer_id, entry.addr, entry.tx.clone(), msg)
+                .await;
+        }
+    }
+
     pub async fn ping_all(&self) {
         for entry in self.peers.values() {
             self.try_queue_to_entry(entry, WireMessage::Ping);
@@ -205,6 +212,40 @@ impl PeerManager {
                 addr = %entry.addr,
                 bytes,
                 "dropping outbound peer message because queue is full or closed"
+            );
+        }
+    }
+
+    async fn queue_to_sender(
+        &self,
+        peer_id: PeerId,
+        addr: SocketAddr,
+        tx: mpsc::Sender<QueuedWireMessage>,
+        msg: WireMessage,
+    ) {
+        let bytes = wire_message_queue_bytes(&msg);
+        let Some(permit) = self.outbound_budget.try_acquire(bytes) else {
+            warn!(
+                peer = ?peer_id,
+                addr = %addr,
+                bytes,
+                "dropping outbound peer message over byte queue budget"
+            );
+            return;
+        };
+        if tx
+            .send(QueuedWireMessage {
+                msg,
+                _permit: permit,
+            })
+            .await
+            .is_err()
+        {
+            warn!(
+                peer = ?peer_id,
+                addr = %addr,
+                bytes,
+                "dropping outbound peer message because queue is closed"
             );
         }
     }
@@ -467,6 +508,39 @@ mod tests {
         manager.send_to(&peer, WireMessage::Pong).await;
         manager.broadcast(WireMessage::Pong).await;
         manager.ping_all().await;
+    }
+
+    #[tokio::test]
+    async fn reliable_peer_send_waits_for_queue_capacity() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [15u8; 32];
+        let addr: SocketAddr = "127.0.0.1:9302".parse().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.try_send(queued_for_test(WireMessage::Ping))
+            .expect("fill queue");
+        assert_eq!(
+            manager.try_add_peer(peer, addr, tx, 1, true),
+            AddPeerResult::Accepted
+        );
+
+        let send = manager.send_to_reliable(&peer, WireMessage::Pong);
+        tokio::pin!(send);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut send)
+                .await
+                .is_err()
+        );
+        assert!(matches!(
+            rx.recv().await.map(|queued| queued.msg),
+            Some(WireMessage::Ping)
+        ));
+        tokio::time::timeout(Duration::from_secs(1), send)
+            .await
+            .expect("reliable send completes after queue drains");
+        assert!(matches!(
+            rx.recv().await.map(|queued| queued.msg),
+            Some(WireMessage::Pong)
+        ));
     }
 
     #[tokio::test]

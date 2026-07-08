@@ -574,6 +574,13 @@ struct NativeSyncRequestRateState {
     requests: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeSyncResponseStart {
+    Started,
+    DuplicateRange,
+    BusyWithDifferentRange,
+}
+
 #[derive(Clone, Debug)]
 struct NativeOutboundSyncRequest {
     range: NativeSyncRange,
@@ -3033,8 +3040,8 @@ pub struct NativeNode {
     network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
     network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
-    sync_response_in_flight_peers: Mutex<BTreeSet<PeerId>>,
-    outbound_sync_requests: Mutex<BTreeMap<PeerId, NativeOutboundSyncRequest>>,
+    sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, NativeSyncRange>>,
+    outbound_sync_requests: Mutex<BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>>,
     mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
     miner_identity: NativeMinerIdentity,
@@ -3146,7 +3153,7 @@ impl NativeNode {
             network_local_peer_id: Arc::new(StdRwLock::new(None)),
             network_peer_snapshot: Arc::new(StdRwLock::new(Vec::new())),
             sync_request_rate_limits: Mutex::new(BTreeMap::new()),
-            sync_response_in_flight_peers: Mutex::new(BTreeSet::new()),
+            sync_response_in_flight_peers: Mutex::new(BTreeMap::new()),
             outbound_sync_requests: Mutex::new(BTreeMap::new()),
             mining_tasks: Mutex::new(Vec::new()),
             sync_tx: Mutex::new(None),
@@ -3243,8 +3250,20 @@ impl NativeNode {
         self.sync_import_in_flight.load(Ordering::Acquire)
     }
 
-    fn begin_sync_response_for_peer(&self, peer_id: PeerId) -> bool {
-        self.sync_response_in_flight_peers.lock().insert(peer_id)
+    fn begin_sync_response_for_peer(
+        &self,
+        peer_id: PeerId,
+        range: NativeSyncRange,
+    ) -> NativeSyncResponseStart {
+        let mut responses = self.sync_response_in_flight_peers.lock();
+        match responses.get(&peer_id).copied() {
+            Some(existing) if existing == range => NativeSyncResponseStart::DuplicateRange,
+            Some(_) => NativeSyncResponseStart::BusyWithDifferentRange,
+            None => {
+                responses.insert(peer_id, range);
+                NativeSyncResponseStart::Started
+            }
+        }
     }
 
     fn end_sync_response_for_peer(&self, peer_id: PeerId) {
@@ -3252,9 +3271,6 @@ impl NativeNode {
     }
 
     fn begin_outbound_sync_request(&self, peer_id: Option<PeerId>, range: NativeSyncRange) -> bool {
-        let Some(peer_id) = peer_id else {
-            return true;
-        };
         let now = Instant::now();
         let mut requests = self.outbound_sync_requests.lock();
         requests.retain(|_, request| {
@@ -3279,6 +3295,12 @@ impl NativeNode {
     }
 
     fn complete_outbound_sync_request(&self, peer_id: PeerId) {
+        let mut requests = self.outbound_sync_requests.lock();
+        requests.remove(&Some(peer_id));
+        requests.remove(&None);
+    }
+
+    fn complete_outbound_sync_request_target(&self, peer_id: Option<PeerId>) {
         self.outbound_sync_requests.lock().remove(&peer_id);
     }
 
@@ -6200,7 +6222,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
             maybe_msg = handle.recv() => maybe_msg,
             _ = best_announce.tick() => {
                 queue_native_best_sync_announce(&node, &sync_tx);
-                queue_missing_blocks_from_sync_target(&node, &sync_tx);
+                queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
                 continue;
             }
             _ = pending_rebroadcast.tick() => {
@@ -6296,23 +6318,51 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 if to_height < from_height {
                     continue;
                 }
+                let requested_range = NativeSyncRange {
+                    from_height,
+                    to_height,
+                };
+                let local_best_height = node.best_meta().height;
+                if from_height > local_best_height.saturating_add(1) {
+                    debug!(
+                        from_height,
+                        to_height,
+                        local_best_height,
+                        peer = %hex32(&peer_id),
+                        "ignoring native sync request above local tip"
+                    );
+                    continue;
+                }
+                match node.begin_sync_response_for_peer(peer_id, requested_range) {
+                    NativeSyncResponseStart::Started => {}
+                    NativeSyncResponseStart::DuplicateRange => {
+                        debug!(
+                            from_height,
+                            to_height,
+                            peer = %hex32(&peer_id),
+                            "ignoring duplicate native sync response range already in flight"
+                        );
+                        continue;
+                    }
+                    NativeSyncResponseStart::BusyWithDifferentRange => {
+                        debug!(
+                            from_height,
+                            to_height,
+                            peer = %hex32(&peer_id),
+                            "deferring native sync request while another response is in flight"
+                        );
+                        continue;
+                    }
+                }
                 if let Err(rejection) = admit_native_sync_request_from_peer(node.as_ref(), peer_id)
                 {
+                    node.end_sync_response_for_peer(peer_id);
                     warn!(
                         from_height,
                         to_height,
                         peer = %hex32(&peer_id),
                         rejection = rejection.label(),
                         "rejecting rate-limited native sync request"
-                    );
-                    continue;
-                }
-                if !node.begin_sync_response_for_peer(peer_id) {
-                    debug!(
-                        from_height,
-                        to_height,
-                        peer = %hex32(&peer_id),
-                        "skipping duplicate native sync response while peer has a response in flight"
                     );
                     continue;
                 }
@@ -6449,7 +6499,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 if progress.should_request_more(local_best_height, best_height) {
                     request_missing_blocks(&node, &handle, peer_id, best_height, None).await;
                 } else {
-                    queue_missing_blocks_from_sync_target(&node, &sync_tx);
+                    queue_missing_blocks_from_sync_target(&node, &sync_tx).await;
                     node.refresh_mining_sync_gate();
                 }
             }
@@ -6758,6 +6808,10 @@ fn native_sync_response_stale_for_local_tip(
 
 fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) {
     let meta = node.best_meta();
+    if meta.height == 0 && node.sync_target_height.load(Ordering::Relaxed) > 0 {
+        debug!("skipping genesis-only native sync announce while catching up");
+        return;
+    }
     let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
     let payload = match encode_sync_message(&announce) {
         Ok(payload) => payload,
@@ -6780,7 +6834,7 @@ fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) 
             "failed to queue native best sync announce"
         );
     } else {
-        info!(
+        debug!(
             height = meta.height,
             hash = %hex32(&meta.hash),
             "queued native best sync announce"
@@ -6788,7 +6842,7 @@ fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) 
     }
 }
 
-fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &ProtocolSender) {
+async fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &ProtocolSender) {
     if node.sync_import_in_flight() {
         return;
     }
@@ -6823,6 +6877,7 @@ fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &ProtocolSe
     let payload = match encode_sync_message(&request) {
         Ok(payload) => payload,
         Err(err) => {
+            node.complete_outbound_sync_request_target(target_peer);
             warn!(error = %err, "failed to encode native sync target request");
             return;
         }
@@ -6834,10 +6889,8 @@ fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &ProtocolSe
             payload,
         },
     };
-    if let Err(err) = sync_tx.try_send(message) {
-        if let Some(target_peer) = target_peer {
-            node.complete_outbound_sync_request(target_peer);
-        }
+    if let Err(err) = sync_tx.send(message).await {
+        node.complete_outbound_sync_request_target(target_peer);
         debug!(error = %err, "failed to queue native sync target request");
     } else {
         let target_peer_label = target_peer
@@ -34828,11 +34881,34 @@ mod tests {
         let node =
             NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
         let peer = [0x44; 32];
+        let range = NativeSyncRange {
+            from_height: 1,
+            to_height: 128,
+        };
 
-        assert!(node.begin_sync_response_for_peer(peer));
-        assert!(!node.begin_sync_response_for_peer(peer));
+        assert_eq!(
+            node.begin_sync_response_for_peer(peer, range),
+            NativeSyncResponseStart::Started
+        );
+        assert_eq!(
+            node.begin_sync_response_for_peer(peer, range),
+            NativeSyncResponseStart::DuplicateRange
+        );
+        assert_eq!(
+            node.begin_sync_response_for_peer(
+                peer,
+                NativeSyncRange {
+                    from_height: 129,
+                    to_height: 256,
+                },
+            ),
+            NativeSyncResponseStart::BusyWithDifferentRange
+        );
         node.end_sync_response_for_peer(peer);
-        assert!(node.begin_sync_response_for_peer(peer));
+        assert_eq!(
+            node.begin_sync_response_for_peer(peer, range),
+            NativeSyncResponseStart::Started
+        );
         node.end_sync_response_for_peer(peer);
     }
 
@@ -34849,6 +34925,8 @@ mod tests {
 
         assert!(node.begin_outbound_sync_request(Some(peer), range));
         assert!(!node.begin_outbound_sync_request(Some(peer), range));
+        assert!(node.begin_outbound_sync_request(None, range));
+        assert!(!node.begin_outbound_sync_request(None, range));
         assert!(node.begin_outbound_sync_request(
             Some(peer),
             NativeSyncRange {
@@ -34858,6 +34936,9 @@ mod tests {
         ));
         node.complete_outbound_sync_request(peer);
         assert!(node.begin_outbound_sync_request(Some(peer), range));
+        assert!(node.begin_outbound_sync_request(None, range));
+        node.complete_outbound_sync_request_target(None);
+        assert!(node.begin_outbound_sync_request(None, range));
     }
 
     #[test]
