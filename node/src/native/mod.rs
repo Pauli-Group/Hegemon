@@ -113,7 +113,7 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 256;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS: usize = 32;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
@@ -121,7 +121,7 @@ const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
-const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(180);
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(30);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
@@ -35273,8 +35273,12 @@ mod tests {
         )
         .expect("higher peer branch should request enough local prefix to find a fork point");
 
-        assert_eq!(range.from_height, 4583);
-        assert_eq!(range.to_height, 4960);
+        let expected_from = 4583;
+        assert_eq!(range.from_height, expected_from);
+        assert_eq!(
+            range.to_height,
+            expected_from + MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1
+        );
     }
 
     #[test]
