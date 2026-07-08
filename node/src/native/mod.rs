@@ -113,7 +113,7 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 128;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS: usize = 32;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
@@ -121,7 +121,7 @@ const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
-const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(12);
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(180);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
@@ -3296,13 +3296,8 @@ impl NativeNode {
         requests.retain(|_, request| {
             now.saturating_duration_since(request.requested_at) <= NATIVE_SYNC_REQUEST_RETRY_AFTER
         });
-        if let Some(request) = requests.get(&peer_id) {
-            if request.range == range
-                && now.saturating_duration_since(request.requested_at)
-                    < NATIVE_SYNC_REQUEST_RETRY_AFTER
-            {
-                return false;
-            }
+        if requests.contains_key(&peer_id) {
+            return false;
         }
         requests.insert(
             peer_id,
@@ -35264,19 +35259,23 @@ mod tests {
         .expect("higher peer branch should request enough local prefix to find a fork point");
 
         assert_eq!(range.from_height, 4583);
-        assert_eq!(range.to_height, 4710);
+        assert_eq!(range.to_height, 4960);
     }
 
     #[test]
     fn native_sync_bootstrap_request_after_first_chunk_starts_after_local_best() {
+        let best_height = MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 17;
         let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
-            best_height: 145,
+            best_height,
             announced_height: 21_971,
             max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         })
         .expect("post-bootstrap catch-up should request the next bounded window");
-        assert_eq!(range.from_height, 146);
-        assert_eq!(range.to_height, 273);
+        assert_eq!(range.from_height, best_height + 1);
+        assert_eq!(
+            range.to_height,
+            best_height + MAX_NATIVE_SYNC_RESPONSE_BLOCKS
+        );
     }
 
     #[test]
@@ -35555,7 +35554,7 @@ mod tests {
         .expect("large-gap public join should request the next catch-up chunk");
 
         assert_eq!(range.from_height, 897);
-        assert_eq!(range.to_height, 1_024);
+        assert_eq!(range.to_height, 896 + MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
     }
 
     #[test]
@@ -35570,8 +35569,14 @@ mod tests {
         )
         .expect("escalated large-gap fork recovery should request ancestor context");
 
-        assert_eq!(range.from_height, 5_814);
-        assert_eq!(range.to_height, 5_941);
+        let expected_from = 5_940u64
+            .saturating_sub(NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS)
+            .saturating_add(1);
+        assert_eq!(range.from_height, expected_from);
+        assert_eq!(
+            range.to_height,
+            expected_from + MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1
+        );
     }
 
     #[test]
@@ -35651,7 +35656,7 @@ mod tests {
         assert!(!node.begin_outbound_sync_request(Some(peer), range));
         assert!(node.begin_outbound_sync_request(None, range));
         assert!(!node.begin_outbound_sync_request(None, range));
-        assert!(node.begin_outbound_sync_request(
+        assert!(!node.begin_outbound_sync_request(
             Some(peer),
             NativeSyncRange {
                 from_height: 1_153,
