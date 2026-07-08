@@ -3231,6 +3231,12 @@ impl NativeNode {
         self.sync_target_observed.store(true, Ordering::SeqCst);
         self.sync_target_height
             .fetch_max(peer_best_height, Ordering::Relaxed);
+        let best = self.best_meta();
+        let target = self.sync_target_height.load(Ordering::Relaxed);
+        if target <= best.height && peer_best_height <= best.height {
+            *self.sync_target_peer.lock() = None;
+            *self.sync_target_hash.lock() = None;
+        }
         self.refresh_mining_sync_gate();
     }
 
@@ -35644,6 +35650,36 @@ mod tests {
         assert_eq!(target, best.height);
         assert!(!node.mining_sync_gate_allows_work());
         assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
+    }
+
+    #[test]
+    fn verified_equal_height_sync_evidence_clears_stale_fork_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+
+        let best = node.best_meta();
+        let mut peer_hash = [0x42; 32];
+        if peer_hash == best.hash {
+            peer_hash[0] ^= 1;
+        }
+        node.observe_pending_sync_peer_tip(Some([0x24; 32]), best.height, Some(peer_hash));
+        assert!(!node.mining_sync_gate_allows_work());
+        assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
+        assert_eq!(*node.sync_target_hash.lock(), Some(peer_hash));
+
+        node.observe_verified_sync_peer_height(best.height);
+
+        let (syncing, target) = node.sync_status_fields();
+        assert!(!syncing);
+        assert_eq!(target, best.height);
+        assert!(node.mining_sync_gate_allows_work());
+        assert_eq!(*node.sync_target_peer.lock(), None);
+        assert_eq!(*node.sync_target_hash.lock(), None);
     }
 
     #[test]
