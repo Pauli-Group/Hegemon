@@ -233,6 +233,7 @@ struct WalletCapabilities {
     disclosure: bool,
     auto_consolidate: bool,
     notes_summary: bool,
+    note_details: bool,
     error_codes: bool,
     private_multisig: bool,
 }
@@ -257,6 +258,8 @@ struct WalletStatusResponse {
     pending: Vec<PendingEntry>,
     recent: Vec<PendingEntry>,
     notes: Option<NoteSummary>,
+    note_details: Vec<NoteDetailEntry>,
+    note_accounting: Vec<NoteAccountingEntry>,
     genesis_hash: Option<String>,
 }
 
@@ -283,6 +286,38 @@ struct PendingEntry {
     status: String,
     confirmations: u64,
     created_at: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteDetailEntry {
+    asset_id: u64,
+    value: u64,
+    memo: Option<String>,
+    address: String,
+    diversifier_index: u32,
+    position: u64,
+    ciphertext_index: u64,
+    status: String,
+    nullifier: Option<String>,
+    commitment: String,
+    source: String,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NoteAccountingEntry {
+    asset_id: u64,
+    label: String,
+    spendable_count: usize,
+    locked_count: usize,
+    spent_count: usize,
+    total_count: usize,
+    spendable: u64,
+    locked: u64,
+    spent: u64,
+    recovered_total: u64,
+    balance_total: u64,
 }
 
 #[derive(Serialize)]
@@ -1006,11 +1041,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
             let spendable = balances.get(asset_id).copied().unwrap_or(0);
             let locked = pending_balances.get(asset_id).copied().unwrap_or(0);
             let total = spendable.saturating_add(locked);
-            let label = if *asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
-                "HGM".to_string()
-            } else {
-                format!("asset {}", asset_id)
-            };
+            let label = asset_label(*asset_id);
             BalanceEntry {
                 asset_id: *asset_id,
                 label,
@@ -1031,6 +1062,8 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
         .collect();
 
     let notes = summarize_notes(store)?;
+    let note_details = render_note_details(store)?;
+    let note_accounting = render_note_accounting(&note_details);
     let genesis_hash = store
         .genesis_hash()
         .map_err(WalletdError::internal)?
@@ -1042,6 +1075,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
             disclosure: true,
             auto_consolidate: true,
             notes_summary: true,
+            note_details: true,
             error_codes: true,
             private_multisig: true,
         },
@@ -1056,6 +1090,8 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
         pending: pending_entries,
         recent: recent_entries,
         notes,
+        note_details,
+        note_accounting,
         genesis_hash,
     })
 }
@@ -1087,6 +1123,95 @@ fn summarize_notes(store: &Arc<WalletStore>) -> WalletdResult<Option<NoteSummary
             blocks_needed: plan.blocks_needed as u64,
         }),
     }))
+}
+
+fn render_note_details(store: &Arc<WalletStore>) -> WalletdResult<Vec<NoteDetailEntry>> {
+    let mut notes = store.tracked_notes().map_err(WalletdError::internal)?;
+    notes.sort_by(|left, right| {
+        right
+            .position
+            .cmp(&left.position)
+            .then_with(|| right.ciphertext_index.cmp(&left.ciphertext_index))
+    });
+
+    notes
+        .into_iter()
+        .map(|note| {
+            let commitment = note_commitment_bytes(
+                note.note.note.value,
+                note.note.note.asset_id,
+                &note.note.note_data.pk_recipient,
+                &note.note.note_data.pk_auth,
+                &note.note.note.rho,
+                &note.note.note.r,
+            );
+            let memo = memo_to_string(&Some(note.note.note.memo.clone()));
+            let address = note.note.address.encode().map_err(WalletdError::internal)?;
+            let status = if note.spent {
+                "spent"
+            } else if note.pending_spend {
+                "pending"
+            } else {
+                "spendable"
+            };
+
+            Ok(NoteDetailEntry {
+                asset_id: note.note.note.asset_id,
+                value: note.note.note.value,
+                memo,
+                address,
+                diversifier_index: note.note.diversifier_index,
+                position: note.position,
+                ciphertext_index: note.ciphertext_index,
+                status: status.to_string(),
+                nullifier: note
+                    .nullifier
+                    .map(|nullifier| format!("0x{}", hex::encode(nullifier))),
+                commitment: format!("0x{}", hex::encode(commitment)),
+                source: note.source.as_str().to_string(),
+            })
+        })
+        .collect()
+}
+
+fn render_note_accounting(notes: &[NoteDetailEntry]) -> Vec<NoteAccountingEntry> {
+    let mut by_asset = std::collections::BTreeMap::<u64, NoteAccountingEntry>::new();
+    for note in notes {
+        let entry = by_asset
+            .entry(note.asset_id)
+            .or_insert_with(|| NoteAccountingEntry {
+                asset_id: note.asset_id,
+                label: asset_label(note.asset_id),
+                ..NoteAccountingEntry::default()
+            });
+        entry.total_count = entry.total_count.saturating_add(1);
+        entry.recovered_total = entry.recovered_total.saturating_add(note.value);
+        match note.status.as_str() {
+            "spendable" => {
+                entry.spendable_count = entry.spendable_count.saturating_add(1);
+                entry.spendable = entry.spendable.saturating_add(note.value);
+            }
+            "pending" => {
+                entry.locked_count = entry.locked_count.saturating_add(1);
+                entry.locked = entry.locked.saturating_add(note.value);
+            }
+            "spent" => {
+                entry.spent_count = entry.spent_count.saturating_add(1);
+                entry.spent = entry.spent.saturating_add(note.value);
+            }
+            _ => {}
+        }
+        entry.balance_total = entry.spendable.saturating_add(entry.locked);
+    }
+    by_asset.into_values().collect()
+}
+
+fn asset_label(asset_id: u64) -> String {
+    if asset_id == transaction_circuit::constants::NATIVE_ASSET_ID {
+        "HGM".to_string()
+    } else {
+        format!("asset {}", asset_id)
+    }
 }
 
 fn render_pending(tx: &wallet::PendingTransaction, latest_height: u64) -> PendingEntry {
@@ -3225,6 +3350,71 @@ mod tests {
         assert!(response.ok, "{:?}", response.error);
         let result = response.result.unwrap();
         assert_eq!(result["notes"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn walletd_status_exposes_recovered_note_details() {
+        let (store, store_path) = temp_store();
+        let address = store.primary_address().unwrap();
+        let note = wallet::NotePlaintext::coinbase(42_000_000_000, &[7u8; 32]);
+        let note_data = note.to_note_data(address.pk_recipient, address.pk_auth);
+        let commitment = note_commitment_bytes(
+            note.value,
+            note.asset_id,
+            &note_data.pk_recipient,
+            &note_data.pk_auth,
+            &note.rho,
+            &note.r,
+        );
+        store
+            .append_commitments_with_sources(&[(0, commitment, wallet::NoteSource::MiningReward)])
+            .unwrap();
+        store
+            .apply_ciphertext_batch(
+                0,
+                vec![Some(wallet::viewing::RecoveredNote {
+                    diversifier_index: address.diversifier_index,
+                    note,
+                    note_data,
+                    address: address.clone(),
+                })],
+            )
+            .unwrap();
+
+        let status = status_get(&store, &store_path).unwrap();
+        assert_eq!(status.note_details.len(), 1);
+        let detail = &status.note_details[0];
+        assert_eq!(
+            detail.asset_id,
+            transaction_circuit::constants::NATIVE_ASSET_ID
+        );
+        assert_eq!(detail.value, 42_000_000_000);
+        assert_eq!(detail.memo, None);
+        assert_eq!(detail.address, address.encode().unwrap());
+        assert_eq!(detail.diversifier_index, address.diversifier_index);
+        assert_eq!(detail.position, 0);
+        assert_eq!(detail.ciphertext_index, 0);
+        assert_eq!(detail.status, "spendable");
+        assert_eq!(detail.commitment, format!("0x{}", hex::encode(commitment)));
+        assert_eq!(detail.source, "mining_reward");
+        assert!(detail.nullifier.is_some());
+        assert!(status.capabilities.note_details);
+        assert_eq!(status.note_accounting.len(), 1);
+        let accounting = &status.note_accounting[0];
+        assert_eq!(
+            accounting.asset_id,
+            transaction_circuit::constants::NATIVE_ASSET_ID
+        );
+        assert_eq!(accounting.label, "HGM");
+        assert_eq!(accounting.spendable_count, 1);
+        assert_eq!(accounting.locked_count, 0);
+        assert_eq!(accounting.spent_count, 0);
+        assert_eq!(accounting.total_count, 1);
+        assert_eq!(accounting.spendable, 42_000_000_000);
+        assert_eq!(accounting.locked, 0);
+        assert_eq!(accounting.spent, 0);
+        assert_eq!(accounting.recovered_total, 42_000_000_000);
+        assert_eq!(accounting.balance_total, 42_000_000_000);
     }
 
     fn temp_store() -> (Arc<WalletStore>, String) {

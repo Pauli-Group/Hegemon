@@ -15,7 +15,7 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 Every fresh clone must begin with `make setup` followed by `make node`. The setup command installs toolchains, and `make node` builds the native `hegemon-node` binary. Run `HEGEMON_MINE=1 ./target/release/hegemon-node --dev --tmp` to start a native dev node with mining enabled.
 
-For shared mining environments, document and use `HEGEMON_SEEDS="hegemon.pauli.group:30333"` unless the approved seed list has been deliberately rotated. All miners on the same network must share the same seed list to avoid partitions and forks, and mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
+For shared mining environments, document and use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved seed list has been deliberately rotated. All miners on the same network must share the same seed list to avoid partitions and forks, and mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
 
 # Design and Methods Docs
 

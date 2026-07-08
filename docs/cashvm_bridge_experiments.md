@@ -75,7 +75,7 @@ The tests check deterministic encoding, 128-byte state commitment size, proof ch
 This experiment does not change mining setup. For shared Hegemon mining environments, operators should still set:
 
 ```bash
-HEGEMON_SEEDS="hegemon.pauli.group:30333"
+HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"
 ```
 
 All miners on the same network must share the same seed list to avoid partitions and forks. Mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.

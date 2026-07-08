@@ -83,7 +83,7 @@ cargo run -p hegemon-node --example hegemon_loopback_bridge -- \
   --risc0-receipt-hex 0x...
 ```
 
-For shared mining or public testnet operation, set `HEGEMON_SEEDS="hegemon.pauli.group:30333"` on every miner unless the approved seed list has been deliberately rotated. Miners on the same network must share the same seed list to avoid partitions and forks. Keep NTP or chrony enabled on mining hosts because future-skewed PoW timestamps are rejected.
+For shared mining or public testnet operation, set `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` on every miner unless the approved seed list has been deliberately rotated. Miners on the same network must share the same seed list to avoid partitions and forks. Keep NTP or chrony enabled on mining hosts because future-skewed PoW timestamps are rejected.
 
 For this local loopback, the source and destination are intentionally separate test roles.
 

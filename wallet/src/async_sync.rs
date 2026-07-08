@@ -178,11 +178,11 @@ impl AsyncWalletSyncEngine {
                 if entries.is_empty() {
                     break;
                 }
-                let pairs: Vec<(u64, [u8; 48])> = entries
+                let pairs: Vec<(u64, [u8; 48], crate::store::NoteSource)> = entries
                     .iter()
-                    .map(|entry| (entry.index, entry.value))
+                    .map(|entry| (entry.index, entry.value, entry.source))
                     .collect();
-                self.store.append_commitments(&pairs)?;
+                self.store.append_commitments_with_sources(&pairs)?;
                 commitment_cursor = self.store.next_commitment_index()?;
                 outcome.commitments += entries.len();
             }
@@ -243,6 +243,32 @@ impl AsyncWalletSyncEngine {
                     continue;
                 }
                 return Err(err);
+            }
+
+            if self.store.commitment_sources_need_backfill()? && note_status.leaf_count > 0 {
+                let mut source_cursor = 0u64;
+                while source_cursor < note_status.leaf_count {
+                    let entries = self
+                        .client
+                        .commitments(source_cursor, self.page_limit)
+                        .await?;
+                    if entries.is_empty() {
+                        break;
+                    }
+                    let sources: Vec<(u64, crate::store::NoteSource)> = entries
+                        .iter()
+                        .map(|entry| (entry.index, entry.source))
+                        .collect();
+                    self.store.backfill_commitment_sources(&sources)?;
+                    let next_cursor = entries
+                        .last()
+                        .map(|entry| entry.index.saturating_add(1))
+                        .unwrap_or(source_cursor);
+                    if next_cursor <= source_cursor {
+                        break;
+                    }
+                    source_cursor = next_cursor;
+                }
             }
 
             // Sync ciphertexts and attempt decryption

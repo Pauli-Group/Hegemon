@@ -104,6 +104,7 @@ impl WalletStore {
             pending: Vec::new(),
             recent: Vec::new(),
             commitments: Vec::new(),
+            commitment_sources: Vec::new(),
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
@@ -134,6 +135,7 @@ impl WalletStore {
             pending: Vec::new(),
             recent: Vec::new(),
             commitments: Vec::new(),
+            commitment_sources: Vec::new(),
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,
@@ -336,6 +338,7 @@ impl WalletStore {
             state.pending.clear();
             state.recent.clear();
             state.commitments.clear();
+            state.commitment_sources.clear();
             state.next_commitment_index = 0;
             state.next_ciphertext_index = 0;
             state.last_synced_height = 0;
@@ -372,16 +375,29 @@ impl WalletStore {
     }
 
     pub fn append_commitments(&self, entries: &[(u64, Commitment)]) -> Result<(), WalletError> {
+        let entries: Vec<(u64, Commitment, NoteSource)> = entries
+            .iter()
+            .map(|(index, commitment)| (*index, *commitment, NoteSource::Unknown))
+            .collect();
+        self.append_commitments_with_sources(&entries)
+    }
+
+    pub fn append_commitments_with_sources(
+        &self,
+        entries: &[(u64, Commitment, NoteSource)],
+    ) -> Result<(), WalletError> {
         if entries.is_empty() {
             return Ok(());
         }
         self.with_mut(|state| {
+            ensure_commitment_source_len(state);
             let mut expected = state.next_commitment_index;
-            for (index, value) in entries {
+            for (index, value, source) in entries {
                 if *index != expected {
                     return Err(WalletError::InvalidState("commitment index mismatch"));
                 }
                 state.commitments.push(*value);
+                state.commitment_sources.push(*source);
                 expected = expected
                     .checked_add(1)
                     .ok_or(WalletError::InvalidState("commitment index overflow"))?;
@@ -389,6 +405,49 @@ impl WalletStore {
             state.next_commitment_index = expected;
             self.invalidate_commitment_tree_cache()?;
             Ok(())
+        })
+    }
+
+    pub fn backfill_commitment_sources(
+        &self,
+        entries: &[(u64, NoteSource)],
+    ) -> Result<(), WalletError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.with_mut(|state| {
+            ensure_commitment_source_len(state);
+            for (index, source) in entries {
+                if *source == NoteSource::Unknown {
+                    continue;
+                }
+                let commitment_index = usize::try_from(*index)
+                    .map_err(|_| WalletError::InvalidState("commitment source index overflow"))?;
+                if commitment_index >= state.commitments.len() {
+                    continue;
+                }
+                state.commitment_sources[commitment_index] = *source;
+                let commitment = state.commitments[commitment_index];
+                let tracked_source = note_source_for_commitment(state, commitment, *source);
+                for note in state
+                    .notes
+                    .iter_mut()
+                    .filter(|note| note.position == *index)
+                {
+                    note.source = tracked_source;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn commitment_sources_need_backfill(&self) -> Result<bool, WalletError> {
+        self.with_state(|state| {
+            Ok(state.commitment_sources.len() < state.commitments.len()
+                || state
+                    .notes
+                    .iter()
+                    .any(|note| note.source == NoteSource::Unknown))
         })
     }
 
@@ -492,6 +551,7 @@ impl WalletStore {
                             nullifier,
                             spent: false,
                             pending_spend: false,
+                            source: note_source_for_position(state, position),
                         });
                         added = added
                             .checked_add(1)
@@ -525,6 +585,7 @@ impl WalletStore {
                                     nullifier: None,
                                     spent: false,
                                     pending_spend: false,
+                                    source: note_source_for_position(state, position),
                                 });
                                 added = added
                                     .checked_add(1)
@@ -566,6 +627,7 @@ impl WalletStore {
                 nullifier,
                 spent: false,
                 pending_spend: false,
+                source: note_source_for_position(state, position),
             });
             added = true;
             Ok(())
@@ -725,6 +787,7 @@ impl WalletStore {
                     nullifier: None,
                     spent: false,
                     pending_spend: false,
+                    source: note_source_for_position(state, position),
                 });
             }
             Ok(())
@@ -784,6 +847,7 @@ impl WalletStore {
                     nullifier: note.nullifier,
                     spent: note.spent,
                     pending_spend: note.pending_spend,
+                    source: note.source,
                 })
                 .collect();
             notes.sort_by_key(|note| note.position);
@@ -1091,6 +1155,14 @@ impl WalletStore {
                     genesis_hash,
                     created_at,
                 });
+                for note in &mut state.notes {
+                    let commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+                        &note.note.note_data.commitment(),
+                    );
+                    if commitment == output.commitment {
+                        note.source = NoteSource::LocalChange;
+                    }
+                }
             }
             Ok(())
         })
@@ -1404,6 +1476,46 @@ fn matching_local_note_opening<'a>(
     })
 }
 
+fn ensure_commitment_source_len(state: &mut WalletState) {
+    if state.commitment_sources.len() < state.commitments.len() {
+        state
+            .commitment_sources
+            .resize(state.commitments.len(), NoteSource::Unknown);
+    }
+}
+
+fn note_source_for_position(state: &WalletState, position: u64) -> NoteSource {
+    let Ok(index) = usize::try_from(position) else {
+        return NoteSource::Unknown;
+    };
+    let source = state
+        .commitment_sources
+        .get(index)
+        .copied()
+        .unwrap_or(NoteSource::Unknown);
+    let Some(commitment) = state.commitments.get(index).copied() else {
+        return source;
+    };
+    note_source_for_commitment(state, commitment, source)
+}
+
+fn note_source_for_commitment(
+    state: &WalletState,
+    commitment: Commitment,
+    source: NoteSource,
+) -> NoteSource {
+    if source == NoteSource::Transfer
+        && state
+            .outgoing_disclosures
+            .iter()
+            .any(|record| record.commitment == commitment)
+    {
+        NoteSource::LocalChange
+    } else {
+        source
+    }
+}
+
 fn validate_imported_local_note_opening(
     state: &WalletState,
     opening: &LocalNoteOpeningRecord,
@@ -1589,12 +1701,20 @@ fn set_private_file_permissions(path: &Path) -> Result<(), WalletError> {
 }
 
 fn deserialize_wallet_state(bytes: &[u8]) -> Result<WalletState, WalletError> {
-    deserialize_exact::<WalletState>(bytes).map_err(|err| match err {
-        WalletError::Serialization(message) => {
-            WalletError::Serialization(format!("failed to deserialize wallet state: {message}"))
+    match deserialize_exact::<WalletState>(bytes) {
+        Ok(state) => Ok(state),
+        Err(current_err) => {
+            if let Ok(state) = deserialize_exact::<WalletStateV9BeforeNoteSources>(bytes) {
+                return Ok(WalletState::from(state));
+            }
+            Err(match current_err {
+                WalletError::Serialization(message) => WalletError::Serialization(format!(
+                    "failed to deserialize wallet state: {message}"
+                )),
+                other => other,
+            })
         }
-        other => other,
-    })
+    }
 }
 
 fn deserialize_wallet_state_v8(bytes: &[u8]) -> Result<WalletState, WalletError> {
@@ -1636,6 +1756,36 @@ pub enum WalletMode {
     WatchOnly,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteSource {
+    #[default]
+    Unknown,
+    MiningReward,
+    Transfer,
+    LocalChange,
+}
+
+impl NoteSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NoteSource::Unknown => "unknown",
+            NoteSource::MiningReward => "mining_reward",
+            NoteSource::Transfer => "transfer",
+            NoteSource::LocalChange => "local_change",
+        }
+    }
+
+    pub fn from_rpc_label(label: &str) -> Self {
+        match label {
+            "mining_reward" | "coinbase" => NoteSource::MiningReward,
+            "transfer" | "shielded_transfer" => NoteSource::Transfer,
+            "local_change" | "change" => NoteSource::LocalChange,
+            _ => NoteSource::Unknown,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct WalletState {
     mode: WalletMode,
@@ -1653,6 +1803,8 @@ struct WalletState {
     recent: Vec<RecentTransaction>,
     #[serde(with = "serde_vec_bytes48")]
     commitments: Vec<Commitment>,
+    #[serde(default)]
+    commitment_sources: Vec<NoteSource>,
     next_commitment_index: u64,
     next_ciphertext_index: u64,
     last_synced_height: u64,
@@ -1662,6 +1814,38 @@ struct WalletState {
     outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
     /// Genesis hash of the chain this wallet was synced with.
     /// Used to detect chain resets/mismatches.
+    #[serde(default, with = "serde_option_bytes32")]
+    genesis_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    multisig_accounts: Vec<MultisigAccountRecord>,
+    #[serde(default)]
+    local_note_openings: Vec<LocalNoteOpeningRecord>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WalletStateV9BeforeNoteSources {
+    mode: WalletMode,
+    tree_depth: u32,
+    #[serde(with = "serde_option_bytes32")]
+    root_secret: Option<[u8; 32]>,
+    derived: Option<DerivedKeys>,
+    incoming: IncomingViewingKey,
+    full_viewing_key: Option<FullViewingKey>,
+    outgoing: Option<OutgoingViewingKey>,
+    next_address_index: u32,
+    notes: Vec<TrackedNoteBeforeNoteSource>,
+    pending: Vec<PendingTransaction>,
+    #[serde(default)]
+    recent: Vec<RecentTransaction>,
+    #[serde(with = "serde_vec_bytes48")]
+    commitments: Vec<Commitment>,
+    next_commitment_index: u64,
+    next_ciphertext_index: u64,
+    last_synced_height: u64,
+    #[serde(default, with = "serde_option_bytes32")]
+    last_synced_block_hash: Option<[u8; 32]>,
+    #[serde(default)]
+    outgoing_disclosures: Vec<OutgoingDisclosureRecord>,
     #[serde(default, with = "serde_option_bytes32")]
     genesis_hash: Option<[u8; 32]>,
     #[serde(default)]
@@ -1681,7 +1865,7 @@ struct WalletStateV8 {
     full_viewing_key: Option<FullViewingKey>,
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
-    notes: Vec<TrackedNote>,
+    notes: Vec<TrackedNoteBeforeNoteSource>,
     pending: Vec<PendingTransaction>,
     #[serde(default)]
     recent: Vec<RecentTransaction>,
@@ -1760,7 +1944,7 @@ struct WalletStateV7 {
     full_viewing_key: Option<FullViewingKey>,
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
-    notes: Vec<TrackedNote>,
+    notes: Vec<TrackedNoteBeforeNoteSource>,
     pending: Vec<PendingTransaction>,
     #[serde(default)]
     recent: Vec<RecentTransaction>,
@@ -1790,7 +1974,7 @@ struct WalletStateV6 {
     full_viewing_key: Option<FullViewingKey>,
     outgoing: Option<OutgoingViewingKey>,
     next_address_index: u32,
-    notes: Vec<TrackedNote>,
+    notes: Vec<TrackedNoteBeforeNoteSource>,
     pending: Vec<PendingTransaction>,
     #[serde(default)]
     recent: Vec<RecentTransaction>,
@@ -1807,6 +1991,34 @@ struct WalletStateV6 {
     genesis_hash: Option<[u8; 32]>,
 }
 
+impl From<WalletStateV9BeforeNoteSources> for WalletState {
+    fn from(value: WalletStateV9BeforeNoteSources) -> Self {
+        Self {
+            mode: value.mode,
+            tree_depth: value.tree_depth,
+            root_secret: value.root_secret,
+            derived: value.derived,
+            incoming: value.incoming,
+            full_viewing_key: value.full_viewing_key,
+            outgoing: value.outgoing,
+            next_address_index: value.next_address_index,
+            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
+            pending: value.pending,
+            recent: value.recent,
+            commitments: value.commitments,
+            commitment_sources: Vec::new(),
+            next_commitment_index: value.next_commitment_index,
+            next_ciphertext_index: value.next_ciphertext_index,
+            last_synced_height: value.last_synced_height,
+            last_synced_block_hash: value.last_synced_block_hash,
+            outgoing_disclosures: value.outgoing_disclosures,
+            genesis_hash: value.genesis_hash,
+            multisig_accounts: value.multisig_accounts,
+            local_note_openings: value.local_note_openings,
+        }
+    }
+}
+
 impl From<WalletStateV6> for WalletState {
     fn from(value: WalletStateV6) -> Self {
         Self {
@@ -1818,10 +2030,11 @@ impl From<WalletStateV6> for WalletState {
             full_viewing_key: value.full_viewing_key,
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
-            notes: value.notes,
+            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
             pending: value.pending,
             recent: value.recent,
             commitments: value.commitments,
+            commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
@@ -1857,10 +2070,11 @@ impl From<WalletStateV8> for WalletState {
             full_viewing_key: value.full_viewing_key,
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
-            notes: value.notes,
+            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
             pending: value.pending,
             recent: value.recent,
             commitments: value.commitments,
+            commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
@@ -1884,10 +2098,11 @@ impl From<WalletStateV7> for WalletState {
             full_viewing_key: value.full_viewing_key,
             outgoing: value.outgoing,
             next_address_index: value.next_address_index,
-            notes: value.notes,
+            notes: value.notes.into_iter().map(TrackedNote::from).collect(),
             pending: value.pending,
             recent: value.recent,
             commitments: value.commitments,
+            commitment_sources: Vec::new(),
             next_commitment_index: value.next_commitment_index,
             next_ciphertext_index: value.next_ciphertext_index,
             last_synced_height: value.last_synced_height,
@@ -1909,6 +2124,46 @@ struct TrackedNote {
     nullifier: Option<[u8; 48]>,
     spent: bool,
     pending_spend: bool,
+    #[serde(default)]
+    source: NoteSource,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrackedNoteBeforeNoteSource {
+    note: RecoveredNote,
+    position: u64,
+    ciphertext_index: u64,
+    #[serde(with = "serde_option_bytes48")]
+    nullifier: Option<[u8; 48]>,
+    spent: bool,
+    pending_spend: bool,
+}
+
+impl From<TrackedNoteBeforeNoteSource> for TrackedNote {
+    fn from(value: TrackedNoteBeforeNoteSource) -> Self {
+        Self {
+            note: value.note,
+            position: value.position,
+            ciphertext_index: value.ciphertext_index,
+            nullifier: value.nullifier,
+            spent: value.spent,
+            pending_spend: value.pending_spend,
+            source: NoteSource::Unknown,
+        }
+    }
+}
+
+impl From<TrackedNote> for TrackedNoteBeforeNoteSource {
+    fn from(value: TrackedNote) -> Self {
+        Self {
+            note: value.note,
+            position: value.position,
+            ciphertext_index: value.ciphertext_index,
+            nullifier: value.nullifier,
+            spent: value.spent,
+            pending_spend: value.pending_spend,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -2066,6 +2321,7 @@ pub struct TrackedNoteView {
     pub nullifier: Option<[u8; 48]>,
     pub spent: bool,
     pub pending_spend: bool,
+    pub source: NoteSource,
 }
 
 impl SpendableNote {
@@ -2401,7 +2657,12 @@ mod tests {
                     full_viewing_key: state.full_viewing_key.clone(),
                     outgoing: state.outgoing.clone(),
                     next_address_index: state.next_address_index,
-                    notes: state.notes.clone(),
+                    notes: state
+                        .notes
+                        .iter()
+                        .cloned()
+                        .map(TrackedNoteBeforeNoteSource::from)
+                        .collect(),
                     pending: state.pending.clone(),
                     recent: state.recent.clone(),
                     commitments: state.commitments.clone(),
@@ -2417,6 +2678,62 @@ mod tests {
         let plaintext = bincode::serialize(&legacy).unwrap();
         let migrated = deserialize_wallet_state_v6(&plaintext).unwrap();
         assert!(migrated.multisig_accounts.is_empty());
+    }
+
+    #[test]
+    fn wallet_state_v9_without_note_sources_migrates() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let ivk = store.incoming_key().unwrap();
+        let address = store.primary_address().unwrap();
+        let mut rng = StdRng::seed_from_u64(101);
+        let note = NotePlaintext::random(10, 0, MemoPlaintext::default(), &mut rng);
+        let ciphertext = NoteCiphertext::encrypt(&address, &note, &mut rng).unwrap();
+        let recovered = ivk.decrypt_note(&ciphertext).unwrap();
+        let commitment = felts_to_bytes48(&recovered.note_data.commitment());
+        store
+            .append_commitments_with_sources(&[(0, commitment, NoteSource::MiningReward)])
+            .unwrap();
+        store.register_ciphertext_index(0).unwrap();
+        store.record_recovered_note(recovered, 0, 0).unwrap();
+        let legacy = store
+            .with_state(|state| {
+                Ok(WalletStateV9BeforeNoteSources {
+                    mode: state.mode,
+                    tree_depth: state.tree_depth,
+                    root_secret: state.root_secret,
+                    derived: state.derived.clone(),
+                    incoming: state.incoming.clone(),
+                    full_viewing_key: state.full_viewing_key.clone(),
+                    outgoing: state.outgoing.clone(),
+                    next_address_index: state.next_address_index,
+                    notes: state
+                        .notes
+                        .iter()
+                        .cloned()
+                        .map(TrackedNoteBeforeNoteSource::from)
+                        .collect(),
+                    pending: state.pending.clone(),
+                    recent: state.recent.clone(),
+                    commitments: state.commitments.clone(),
+                    next_commitment_index: state.next_commitment_index,
+                    next_ciphertext_index: state.next_ciphertext_index,
+                    last_synced_height: state.last_synced_height,
+                    last_synced_block_hash: state.last_synced_block_hash,
+                    outgoing_disclosures: state.outgoing_disclosures.clone(),
+                    genesis_hash: state.genesis_hash,
+                    multisig_accounts: state.multisig_accounts.clone(),
+                    local_note_openings: state.local_note_openings.clone(),
+                })
+            })
+            .unwrap();
+        let plaintext = bincode::serialize(&legacy).unwrap();
+        let migrated = deserialize_wallet_state(&plaintext).unwrap();
+        assert!(migrated.commitment_sources.is_empty());
+        assert_eq!(migrated.notes.len(), 1);
+        assert_eq!(migrated.notes[0].source, NoteSource::Unknown);
+        assert_eq!(migrated.next_commitment_index, legacy.next_commitment_index);
     }
 
     fn accumulator_ciphertext_fixture(
@@ -2469,6 +2786,24 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].note.note_data.pk_auth, [42u8; 32]);
         assert_eq!(notes[0].nullifier, None);
+    }
+
+    #[test]
+    fn tracked_note_records_commitment_source() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("wallet.dat");
+        let store = WalletStore::create_full(&path, "passphrase").unwrap();
+        let (_ciphertext, opening, commitment) =
+            accumulator_ciphertext_fixture(&store, [43u8; 32], 43);
+        store
+            .append_commitments_with_sources(&[(0, commitment, NoteSource::MiningReward)])
+            .unwrap();
+        store.record_local_note_opening(opening).unwrap();
+
+        assert_eq!(store.apply_ciphertext_batch(0, vec![None]).unwrap(), 1);
+        let notes = store.tracked_notes().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].source, NoteSource::MiningReward);
     }
 
     #[test]
@@ -2740,6 +3075,7 @@ mod tests {
             pending: Vec::new(),
             recent: Vec::new(),
             commitments: Vec::new(),
+            commitment_sources: Vec::new(),
             next_commitment_index: 0,
             next_ciphertext_index: 0,
             last_synced_height: 0,

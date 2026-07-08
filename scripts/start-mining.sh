@@ -167,10 +167,10 @@ else
     if [[ -n "${BOOTNODE:-}" ]]; then
         export HEGEMON_SEEDS="$(seed_from_bootnode "$BOOTNODE")"
     else
-        export HEGEMON_SEEDS="${HEGEMON_SEEDS:-hegemon.pauli.group:30333}"
+        export HEGEMON_SEEDS="${HEGEMON_SEEDS:-hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333}"
     fi
     if [[ -z "$HEGEMON_SEEDS" ]]; then
-        echo "ERROR: HEGEMON_SEEDS is empty. Use HEGEMON_SEEDS=\"hegemon.pauli.group:30333\" or set HEGEMON_LOCAL_DEV_MINING=1 for isolated dev mining." >&2
+        echo "ERROR: HEGEMON_SEEDS is empty. Use HEGEMON_SEEDS=\"hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333\" or set HEGEMON_LOCAL_DEV_MINING=1 for isolated dev mining." >&2
         exit 1
     fi
     echo "Mode: shared mining"

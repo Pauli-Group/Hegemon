@@ -132,7 +132,10 @@ const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 32;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
 const NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS: u64 = MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1;
-const APPROVED_PUBLIC_JOIN_SEEDS: &str = "hegemon.pauli.group:30333";
+const APPROVED_PUBLIC_JOIN_SEED_OVH: &str = "hegemon.pauli.group:30333";
+const APPROVED_PUBLIC_JOIN_SEED_DEV: &str = "devnet.hegemonprotocol.com:30333";
+const APPROVED_PUBLIC_JOIN_SEEDS: &str =
+    "hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333";
 const AES_GCM_TAG_BYTES: usize = 16;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
 const PQ_IDENTITY_SEED_LEN: usize = 32;
@@ -312,15 +315,16 @@ impl NativeConfig {
         if !self.dev || self.tmp {
             return false;
         }
-        self.seeds
-            .iter()
-            .any(|seed| seed.trim().eq_ignore_ascii_case(APPROVED_PUBLIC_JOIN_SEEDS))
-            || (self.bootstrap_mining_authoring
-                && self
-                    .base_path
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .contains("testnet"))
+        self.seeds.iter().any(|seed| {
+            let seed = seed.trim();
+            seed.eq_ignore_ascii_case(APPROVED_PUBLIC_JOIN_SEED_OVH)
+                || seed.eq_ignore_ascii_case(APPROVED_PUBLIC_JOIN_SEED_DEV)
+        }) || (self.bootstrap_mining_authoring
+            && self
+                .base_path
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("testnet"))
     }
 
     fn chain_spec_id(&self) -> &'static str {
@@ -5999,6 +6003,7 @@ impl NativeNode {
         let mut entries = Vec::new();
         let total = self.state.read().commitment_tree.leaf_count();
         let end = wallet_page_end(page, total)?;
+        let sources = self.wallet_commitment_sources_for_range(page.start, end)?;
         for index in page.start..end {
             let commitment = self.load_wallet_commitment_at(index)?;
             let commitment_hex = hex48(&commitment);
@@ -6006,6 +6011,7 @@ impl NativeNode {
                 "index": index,
                 "value": commitment_hex,
                 "commitment": commitment_hex,
+                "source": sources.get(&index).copied().unwrap_or("unknown"),
             }));
         }
         Ok(json!({
@@ -6039,6 +6045,44 @@ impl NativeNode {
             }));
         }
         Ok((entries, leaf_count))
+    }
+
+    fn wallet_commitment_sources_for_range(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<BTreeMap<u64, &'static str>> {
+        let mut sources = BTreeMap::new();
+        if start >= end {
+            return Ok(sources);
+        }
+
+        let best_height = self.state.read().best.height;
+        let mut commitment_index = 0u64;
+        for height in 1..=best_height {
+            if commitment_index >= end {
+                break;
+            }
+            let meta = self.load_canonical_block_at_height_unverified(height)?;
+            for action in decode_block_actions(&meta)? {
+                let source = wallet_commitment_source_label(&action);
+                for _ in &action.commitments {
+                    if commitment_index >= start && commitment_index < end {
+                        sources.insert(commitment_index, source);
+                    }
+                    commitment_index = commitment_index
+                        .checked_add(1)
+                        .ok_or_else(|| anyhow!("native commitment source index overflow"))?;
+                    if commitment_index >= end {
+                        break;
+                    }
+                }
+                if commitment_index >= end {
+                    break;
+                }
+            }
+        }
+        Ok(sources)
     }
 
     fn load_wallet_commitment_at(&self, index: u64) -> Result<[u8; 48]> {
@@ -12403,6 +12447,16 @@ fn is_shielded_transfer_action(action: &PendingAction) -> bool {
 
 fn is_coinbase_action(action: &PendingAction) -> bool {
     action.family_id == FAMILY_SHIELDED_POOL && action.action_id == ACTION_MINT_COINBASE
+}
+
+fn wallet_commitment_source_label(action: &PendingAction) -> &'static str {
+    if is_coinbase_action(action) {
+        "mining_reward"
+    } else if is_shielded_transfer_action(action) {
+        "transfer"
+    } else {
+        "unknown"
+    }
 }
 
 fn is_candidate_artifact_action(action: &PendingAction) -> bool {
@@ -22676,6 +22730,7 @@ mod tests {
         let commitment_entry = commitments["entries"][0].as_object().expect("entry object");
         assert!(commitment_entry.contains_key("value"));
         assert!(commitment_entry.contains_key("commitment"));
+        assert_eq!(commitment_entry["source"], json!("mining_reward"));
 
         let ciphertexts = node
             .wallet_ciphertexts(json!({"start": 0, "limit": 1}))
@@ -23993,7 +24048,7 @@ mod tests {
     fn approved_seeded_dev_profile_reports_public_testnet_identity() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
-        config.seeds.push(APPROVED_PUBLIC_JOIN_SEEDS.to_string());
+        config.seeds.push(APPROVED_PUBLIC_JOIN_SEED_OVH.to_string());
         let node = NativeNode::open(config).expect("node");
 
         let safe_snapshot =
@@ -35651,7 +35706,13 @@ mod tests {
         std::env::set_var("HEGEMON_SEEDS", APPROVED_PUBLIC_JOIN_SEEDS);
         let seeded = NativeConfig::from_cli(cli(tmp.path().join("seeded")))
             .expect("seeded live mining is admitted");
-        assert_eq!(seeded.seeds, vec![APPROVED_PUBLIC_JOIN_SEEDS]);
+        assert_eq!(
+            seeded.seeds,
+            vec![
+                APPROVED_PUBLIC_JOIN_SEED_OVH.to_string(),
+                APPROVED_PUBLIC_JOIN_SEED_DEV.to_string()
+            ]
+        );
 
         match saved_mine {
             Some(value) => std::env::set_var("HEGEMON_MINE", value),
@@ -35706,7 +35767,7 @@ mod tests {
     fn bootstrap_authoring_with_seed_starts_open_until_higher_target_observed() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
-        config.seeds.push(APPROVED_PUBLIC_JOIN_SEEDS.to_string());
+        config.seeds.push(APPROVED_PUBLIC_JOIN_SEED_OVH.to_string());
         config.bootstrap_mining_authoring = true;
         let node = NativeNode::open(config).expect("node");
 

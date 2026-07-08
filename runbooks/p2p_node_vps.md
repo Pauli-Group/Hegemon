@@ -55,7 +55,7 @@ NODE_BASE_PATH=/var/lib/hegemon-node
 NODE_PORT=30333
 NODE_RPC_PORT=9944
 # Approved shared seed list. All miners/operators should use the same value.
-HEGEMON_SEEDS=hegemon.pauli.group:30333
+HEGEMON_SEEDS=hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333
 # Set to 1 to mine on this host.
 HEGEMON_MINE=0
 ENV
