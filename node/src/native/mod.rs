@@ -3344,7 +3344,6 @@ impl NativeNode {
             let should_remove = requests.get(&target).is_some_and(|request| {
                 response_range.map_or(true, |range| {
                     native_sync_ranges_overlap(request.range, range)
-                        || range.to_height < request.range.from_height
                 })
             });
             if should_remove {
@@ -35853,13 +35852,15 @@ mod tests {
         };
 
         assert!(node.begin_outbound_sync_request(Some(peer), range));
-        assert!(node.complete_outbound_sync_response(
+        assert!(!node.complete_outbound_sync_response(
             peer,
             Some(NativeSyncRange {
                 from_height: 1,
                 to_height: 128,
             }),
         ));
+        assert!(!node.begin_outbound_sync_request(Some(peer), range));
+        node.complete_outbound_sync_request(peer);
         assert!(node.begin_outbound_sync_request(Some(peer), range));
 
         assert!(!node.complete_outbound_sync_response(
