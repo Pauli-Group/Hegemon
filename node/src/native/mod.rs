@@ -115,6 +115,7 @@ const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 256;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
+const NATIVE_SYNC_REQUEST_BLOCKS: u64 = 64;
 const MAX_NATIVE_SYNC_IMPORT_BATCH_BLOCKS: usize = 32;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
@@ -7549,7 +7550,7 @@ async fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &Prot
         best.hash,
         target,
         target_hash,
-        MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        NATIVE_SYNC_REQUEST_BLOCKS,
         node.sync_reorg_backfill_blocks(),
     ) else {
         return;
@@ -7621,7 +7622,7 @@ async fn request_missing_blocks(
     let missing_request_input = NativeSyncMissingRequestInput {
         best_height: best.height,
         announced_height,
-        max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+        max_blocks: NATIVE_SYNC_REQUEST_BLOCKS,
     };
     let admitted_missing_range = native_sync_missing_request_range(missing_request_input);
     let Some(range) = native_sync_observed_tip_request_range_from_admitted_missing(
@@ -35559,6 +35560,19 @@ mod tests {
             range.to_height,
             best_height + MAX_NATIVE_SYNC_RESPONSE_BLOCKS
         );
+    }
+
+    #[test]
+    fn live_native_sync_request_window_is_smaller_than_protocol_admission_cap() {
+        assert!(NATIVE_SYNC_REQUEST_BLOCKS < MAX_NATIVE_SYNC_RESPONSE_BLOCKS);
+        let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
+            best_height: 0,
+            announced_height: 10_000,
+            max_blocks: NATIVE_SYNC_REQUEST_BLOCKS,
+        })
+        .expect("fresh public join should request a bounded live chunk");
+        assert_eq!(range.from_height, 1);
+        assert_eq!(range.to_height, NATIVE_SYNC_REQUEST_BLOCKS);
     }
 
     #[test]
