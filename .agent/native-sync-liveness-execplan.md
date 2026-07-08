@@ -26,8 +26,12 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - [x] (2026-07-08 03:47Z) Patched catch-up load tolerance after the measurement exposed peer timeout/reconnect brittleness: larger command queue, five-minute stale-peer timeout, and 512-block sync response windows bounded by the existing wire-size cap.
 - [x] (2026-07-08 03:50Z) Reran focused tests after the catch-up load patch: `cargo test -p network --lib` and `cargo test -p hegemon-node native_sync --lib --no-default-features`.
 - [x] (2026-07-08 03:52Z) Rebuilt the local release node with `make node` after the second patch.
-- [ ] Deploy the second patched release binary to `hegemon-ovh` and `hegemon-dev`.
-- [ ] Resync a fresh local base path from `hegemon.pauli.group:30333` after the second seed-side patch is live.
+- [x] (2026-07-08 04:22Z) Reverted the 512-block response-window experiment after live measurement showed worse pauses; kept the 128-block response cap.
+- [x] (2026-07-08 04:45Z) Added and deployed the first tip-extension importer patch, then measured fresh local sync; it avoided reorg rebuilds but still flushed each block individually and reached only height 256 after 300s.
+- [x] (2026-07-08 05:08Z) Added the batch tip-extension commit path so a contiguous sync response validates block-by-block but persists the whole chunk in one atomic write.
+- [x] (2026-07-08 05:18Z) Reran focused validation after the batch patch: `cargo fmt -p network -p hegemon-node --check`, `cargo test -p hegemon-node sync_response_tip_extension_imports_contiguous_chunk --lib --no-default-features`, `cargo test -p hegemon-node native_sync --lib --no-default-features`, `cargo test -p network --lib`, and `make node`.
+- [ ] Deploy the batch tip-extension release binary to `hegemon-ovh` and `hegemon-dev`.
+- [ ] Resync a fresh local base path from `hegemon.pauli.group:30333` after the batch patch is live.
 - [ ] Compare measured sync progress before and after the full change.
 - [ ] Push the PR branch and report validation evidence.
 
@@ -53,6 +57,8 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
   Evidence: The node restarted at height 3,712, connected to the seed, then timed out `158.69.222.121:30333`; late messages from that peer were ignored as an inactive session and the local target stayed empty.
 - Observation: The live seed miner remained healthy after the PR binary deploy, while `hegemon-dev` was behind the OVH tip during the measurement window.
   Evidence: `hegemon-ovh` reported height 5,961, target 5,961, `syncing:false`; `hegemon-dev` reported height 5,940, target 5,961, `syncing:true`.
+- Observation: The first tip-extension importer removed the reorg rebuild, but still committed and flushed each block one at a time.
+  Evidence: A fresh local run against `hegemon.pauli.group:30333` reached height 128 at 60s, remained there at 120s, reached 256 at 180s, and remained at 256 at 300s; logs used `imported native sync response` instead of `by batch reorg`, showing the new path was active but still bounded by per-block persistence.
 
 ## Decision Log
 
@@ -77,6 +83,9 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - Decision: Add a straight-line tip-extension importer for native sync responses.
   Rationale: The next live run showed responses arriving quickly but canonical progress landing only every few minutes because each response went through full branch reorganization, replay, and index rebuild from genesis. When a response is anchored directly at the current local tip, importing each block through the existing announced-tip extension path preserves validation while avoiding the reorg rebuild path.
   Date/Author: 2026-07-08 / Codex
+- Decision: Batch contiguous tip-extension persistence after per-block validation.
+  Rationale: The first tip-extension importer proved the reorg rebuild was avoidable, but live measurement showed the remaining cost was one sled transaction and durability flush per block. The batch path keeps announced-block validation, action-root checks, replay refinement, proof/artifact verification, and state-root/nullifier-root checks for every block, then writes the verified contiguous chunk to the canonical indexes in one atomic transaction.
+  Date/Author: 2026-07-08 / Codex
 
 ## Outcomes & Retrospective
 
@@ -84,7 +93,7 @@ The initial PR binary deployment turned the public-seed join path from stuck to 
 
 The 512-block response-window experiment was then built, deployed, and measured against the public seed path. It imported the first 512-block chunk but then paused long enough that height remained 512 at 300 seconds and the next 512-block import did not land until roughly 225 seconds later. That result is worse operational behavior than the smaller windows, so the final patch keeps the original 128-block response cap and retains only the reliable P2P delivery, larger command queue, and longer stale-peer timeout fixes.
 
-After deploying that cap correction, another fresh local sync against `hegemon.pauli.group:30333` exposed the next bottleneck: the node reached height 128 at 90 seconds, 256 at 240 seconds, and only 384 at 600 seconds. Logs showed native sync responses arriving repeatedly while imports landed late, which pointed at local import/reorg cost rather than network delivery. The final importer patch adds the contiguous-tip fast path and must be measured from a fresh base path after deployment.
+After deploying that cap correction, another fresh local sync against `hegemon.pauli.group:30333` exposed the next bottleneck: the node reached height 128 at 90 seconds, 256 at 240 seconds, and only 384 at 600 seconds. Logs showed native sync responses arriving repeatedly while imports landed late, which pointed at local import/reorg cost rather than network delivery. The first contiguous-tip fast path avoided reorg rebuilds but still committed each block separately and remained too slow. The current patch batches verified contiguous tip-extension chunks into one atomic commit and must be measured from a fresh base path after deployment.
 
 ## Context and Orientation
 

@@ -2269,6 +2269,7 @@ enum NativeBlockCommitmentAdmissionRejection {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeAtomicCommitKind {
     MinedBlockCommit,
+    TipExtensionBatchCommit,
     CanonicalReorgCommit,
     CanonicalIndexRepair,
     NoncanonicalBlockRecord,
@@ -4790,6 +4791,185 @@ impl NativeNode {
         Ok(())
     }
 
+    fn commit_sync_tip_extension_batch_locked(
+        &self,
+        state: &mut NativeState,
+        metas: &[NativeBlockMeta],
+    ) -> Result<usize> {
+        if metas.is_empty() {
+            return Ok(0);
+        }
+
+        let mut next_state = state.clone();
+        let mut pow_chain = self.chain_to_hash(state.best.hash)?;
+        let mut parent = next_state.best.clone();
+        let mut block_entries = Vec::with_capacity(metas.len());
+        let mut height_entries = Vec::with_capacity(metas.len());
+        let mut commitment_entries = Vec::new();
+        let mut ciphertext_archive_entries = Vec::new();
+        let mut nullifier_entries = Vec::new();
+        let mut bridge_replay_entries = Vec::new();
+        let mut ciphertext_index_entries = Vec::new();
+        let mut pending_action_removals = Vec::new();
+        let mut staged_ciphertext_removals = Vec::new();
+        let mut action_count = 0usize;
+        let mut planned_action_count = 0usize;
+
+        for meta in metas {
+            if self.header_by_hash(&meta.hash)?.is_some() {
+                return Err(anyhow!(
+                    "native sync tip extension batch includes already known block {}",
+                    hex32(&meta.hash)
+                ));
+            }
+            if meta.parent_hash != parent.hash {
+                return Err(anyhow!(
+                    "native sync tip extension batch is not contiguous at height {}",
+                    meta.height
+                ));
+            }
+
+            let expected_pow_bits =
+                native_expected_child_pow_bits_from_chain(&pow_chain, self.config.pow_bits)?;
+            validate_announced_block(&parent, meta, expected_pow_bits)?;
+            let expected_header_mmr_len = header_mmr_leaf_count_after_best(&next_state.best)?;
+            let expected_header_mmr_root =
+                header_mmr_root_from_peaks(expected_header_mmr_len, &next_state.header_mmr_peaks);
+            let parent_state = NativeState {
+                best: next_state.best.clone(),
+                header_mmr_peaks: next_state.header_mmr_peaks.clone(),
+                pending_actions: BTreeMap::new(),
+                commitment_tree: next_state.commitment_tree.clone(),
+                nullifiers: next_state.nullifiers.clone(),
+                consumed_bridge_messages: next_state.consumed_bridge_messages.clone(),
+                stablecoin_policy_authorizations: next_state
+                    .stablecoin_policy_authorizations
+                    .clone(),
+                staged_ciphertexts: BTreeMap::new(),
+                staged_proofs: BTreeMap::new(),
+            };
+
+            let actions = decode_block_actions(meta)?;
+            let expected_action_bytes: Vec<Vec<u8>> = actions.iter().map(Encode::encode).collect();
+            if meta.action_bytes != expected_action_bytes {
+                return Err(anyhow!(
+                    "native sync tip extension action bytes mismatch at height {}",
+                    meta.height
+                ));
+            }
+            verify_decoded_action_root(&actions, meta, "native sync tip extension action root")?;
+            let (state_root, nullifier_root, extrinsics_root, tx_count) =
+                preview_pending_roots(&self.da_ciphertext_tree, &parent_state, &actions)?;
+            let kernel_root = consensus::types::kernel_root_from_shielded_root(&state_root);
+            let bridge_messages = bridge_messages_from_actions(&actions, meta.height)?;
+            let message_root = bridge_message_root(&bridge_messages);
+            let message_count = u32::try_from(bridge_messages.len())
+                .map_err(|_| anyhow!("native bridge message count overflow"))?;
+            let (fee_total, has_coinbase) =
+                native_block_replay_supply_parts(&actions, meta.height)?;
+            evaluate_native_block_replay_refinement_for_actions(
+                "native sync tip extension replay refinement failed",
+                &self.da_ciphertext_tree,
+                Some(&self.ciphertext_archive_tree),
+                &parent_state,
+                &actions,
+                native_block_replay_refinement_input_from_state(
+                    &parent_state,
+                    meta.height,
+                    fee_total,
+                    has_coinbase,
+                    meta.supply_digest,
+                    tx_count == meta.tx_count,
+                    state_root == meta.state_root,
+                    kernel_root == meta.kernel_root,
+                    nullifier_root == meta.nullifier_root,
+                    extrinsics_root == meta.extrinsics_root,
+                    message_root == meta.message_root,
+                    message_count == meta.message_count,
+                    meta.header_mmr_root == expected_header_mmr_root,
+                    meta.header_mmr_len == expected_header_mmr_len,
+                ),
+            )?;
+            validate_block_actions_locked(&parent_state, &actions)?;
+            verify_native_block_artifacts_locked(self, &parent_state, &actions, meta)?;
+
+            let planned =
+                plan_pending_action_effects(&self.da_ciphertext_tree, &next_state, &actions)?;
+            let action_len = actions.len();
+            let planned_len = planned.len();
+            append_native_block_commit_index_entries(
+                "native sync tip extension",
+                &actions,
+                &planned,
+                &mut commitment_entries,
+                &mut ciphertext_archive_entries,
+                &mut nullifier_entries,
+                &mut bridge_replay_entries,
+                &mut ciphertext_index_entries,
+                &mut pending_action_removals,
+                &mut staged_ciphertext_removals,
+            )?;
+            action_count = action_count
+                .checked_add(action_len)
+                .ok_or_else(|| anyhow!("native sync tip extension action count overflow"))?;
+            planned_action_count =
+                planned_action_count
+                    .checked_add(planned_len)
+                    .ok_or_else(|| {
+                        anyhow!("native sync tip extension planned action count overflow")
+                    })?;
+
+            apply_planned_actions_to_memory(&mut next_state, &actions, &planned)?;
+            if next_state.commitment_tree.root() != meta.state_root
+                || nullifier_root_from_set(&next_state.nullifiers) != meta.nullifier_root
+            {
+                return Err(anyhow!(
+                    "native sync tip extension preview mismatch at height {}",
+                    meta.height
+                ));
+            }
+
+            block_entries.push((meta.hash, bincode::serialize(meta)?));
+            height_entries.push((meta.height, meta.hash));
+            next_state.header_mmr_peaks = append_header_mmr_peak_state(&next_state, meta)?;
+            next_state.best = meta.clone();
+            pow_chain.push(meta.clone());
+            parent = meta.clone();
+        }
+
+        let canonical_index_plan = NativeCanonicalIndexPlan {
+            commitment_entries,
+            nullifier_entries,
+            bridge_replay_entries,
+            ciphertext_index_entries,
+            ciphertext_archive_entries,
+        };
+        self.commit_sync_tip_extension_batch_atomically(
+            canonical_index_plan,
+            &block_entries,
+            &height_entries,
+            &pending_action_removals,
+            &staged_ciphertext_removals,
+            action_count,
+            planned_action_count,
+            &next_state.best,
+        )?;
+        self.flush_native_durability_barrier(
+            "native sync tip extension batch commit",
+            NativeStorageDurabilityOperation::MinedBlockCommit,
+        )?;
+        self.verify_persisted_canonical_head(
+            &next_state.best,
+            "native sync tip extension batch commit",
+        )?;
+        self.prune_invalid_pending_actions_after_state_advance(
+            &mut next_state,
+            "native sync tip extension pending action repair",
+        )?;
+        publish_mined_state(state, next_state);
+        Ok(metas.len())
+    }
+
     fn prune_invalid_pending_actions_after_state_advance(
         &self,
         state: &mut NativeState,
@@ -5195,6 +5375,106 @@ impl NativeNode {
                 },
             );
         commit_result.map_err(|err| anyhow!("atomic native mined block commit failed: {err}"))?;
+        Ok(())
+    }
+
+    fn commit_sync_tip_extension_batch_atomically(
+        &self,
+        canonical_index_plan: NativeCanonicalIndexPlan,
+        block_entries: &[([u8; 32], Vec<u8>)],
+        height_entries: &[(u64, [u8; 32])],
+        pending_action_removals: &[[u8; 32]],
+        staged_ciphertext_removals: &[[u8; 48]],
+        action_count: usize,
+        planned_action_count: usize,
+        best: &NativeBlockMeta,
+    ) -> Result<()> {
+        evaluate_native_atomic_commit_manifest_admission(
+            native_tip_extension_batch_commit_manifest(
+                &canonical_index_plan,
+                block_entries,
+                height_entries,
+                pending_action_removals.len(),
+                staged_ciphertext_removals.len(),
+                action_count,
+                planned_action_count,
+            ),
+        )
+        .map_err(|rejection| {
+            native_atomic_commit_manifest_admission_error(
+                "native sync tip extension batch commit manifest",
+                rejection,
+            )
+        })?;
+        let NativeCanonicalIndexPlan {
+            commitment_entries,
+            nullifier_entries,
+            bridge_replay_entries,
+            ciphertext_index_entries,
+            ciphertext_archive_entries,
+        } = canonical_index_plan;
+        let best_record = bincode::serialize(best)?;
+        let commit_result: sled::transaction::TransactionResult<(), std::convert::Infallible> = (
+            &self.meta_tree,
+            &self.height_tree,
+            &self.block_tree,
+            &self.commitment_tree,
+            &self.nullifier_tree,
+            &self.bridge_inbound_tree,
+            &self.ciphertext_index_tree,
+            &self.ciphertext_archive_tree,
+            &self.da_ciphertext_tree,
+            &self.action_tree,
+        )
+            .transaction(
+                |(
+                    meta_tree,
+                    height_tree,
+                    block_tree,
+                    commitment_tree,
+                    nullifier_tree,
+                    bridge_inbound_tree,
+                    ciphertext_index_tree,
+                    ciphertext_archive_tree,
+                    da_ciphertext_tree,
+                    action_tree,
+                )| {
+                    for (hash, encoded) in block_entries {
+                        block_tree.insert(hash.to_vec(), encoded.clone())?;
+                    }
+                    for (height, hash) in height_entries {
+                        height_tree.insert(height_key(*height).to_vec(), hash.to_vec())?;
+                    }
+                    for (index, commitment) in &commitment_entries {
+                        commitment_tree
+                            .insert(index.to_be_bytes().to_vec(), commitment.to_vec())?;
+                    }
+                    for (index, bytes) in &ciphertext_archive_entries {
+                        ciphertext_archive_tree
+                            .insert(index.to_be_bytes().to_vec(), bytes.clone())?;
+                    }
+                    for nullifier in &nullifier_entries {
+                        nullifier_tree.insert(nullifier.to_vec(), b"1".to_vec())?;
+                    }
+                    for replay_key in &bridge_replay_entries {
+                        bridge_inbound_tree.insert(replay_key.to_vec(), b"1".to_vec())?;
+                    }
+                    for (hash, value) in &ciphertext_index_entries {
+                        ciphertext_index_tree.insert(hash.to_vec(), value.clone())?;
+                    }
+                    for hash in pending_action_removals {
+                        action_tree.remove(hash.to_vec())?;
+                    }
+                    for hash in staged_ciphertext_removals {
+                        da_ciphertext_tree.remove(hash.to_vec())?;
+                    }
+                    meta_tree.insert(META_BEST_KEY.to_vec(), best_record.clone())?;
+                    Ok(())
+                },
+            );
+        commit_result.map_err(|err| {
+            anyhow!("atomic native sync tip extension batch commit failed: {err}")
+        })?;
         Ok(())
     }
 
@@ -6799,34 +7079,44 @@ fn import_native_sync_response_tip_extension(
         expected_parent = meta.hash;
     }
 
-    let mut failure = None;
-    for meta in &blocks[first_unknown..] {
-        match node.import_announced_block(meta.clone()) {
-            Ok(true) => {
-                progress.record(NativeSyncResponseImportOutcome::Imported);
-                if progress.imported_blocks == 1 {
-                    node.observe_verified_sync_peer_height(peer_best_height);
-                }
+    let mut state = node.state.write();
+    if state.best.hash != anchor_hash {
+        return None;
+    }
+    let batch = &blocks[first_unknown..];
+    let batch_tip = batch.last().expect("non-empty sync tip extension batch");
+    match node.commit_sync_tip_extension_batch_locked(&mut state, batch) {
+        Ok(imported) => {
+            progress.attempted_blocks = progress.response_block_count;
+            progress.imported_blocks = progress
+                .imported_blocks
+                .saturating_add(u64::try_from(imported).unwrap_or(u64::MAX));
+            if imported > 0 {
+                node.observe_verified_sync_peer_height(peer_best_height);
             }
-            Ok(false) => {
-                progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
-            }
-            Err(err) => {
-                progress.record(NativeSyncResponseImportOutcome::Error);
-                failure = Some(NativeSyncImportFailure {
-                    height: meta.height,
-                    hash: meta.hash,
+            info!(
+                imported,
+                best_height = batch_tip.height,
+                peer_best_height,
+                "imported native sync response by tip-extension batch"
+            );
+            Some(NativeSyncImportReport {
+                progress: *progress,
+                failure: None,
+            })
+        }
+        Err(err) => {
+            progress.record(NativeSyncResponseImportOutcome::Error);
+            Some(NativeSyncImportReport {
+                progress: *progress,
+                failure: Some(NativeSyncImportFailure {
+                    height: batch_tip.height,
+                    hash: batch_tip.hash,
                     error: err.to_string(),
-                });
-                break;
-            }
+                }),
+            })
         }
     }
-
-    Some(NativeSyncImportReport {
-        progress: *progress,
-        failure,
-    })
 }
 
 fn skip_stale_nonwinning_sync_block(
@@ -13274,6 +13564,7 @@ fn native_block_commitment_admission_error(
 fn expected_atomic_block_record_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit => 1,
+        NativeAtomicCommitKind::TipExtensionBatchCommit => input.chain_block_count,
         NativeAtomicCommitKind::CanonicalReorgCommit => input.chain_block_count,
         NativeAtomicCommitKind::CanonicalIndexRepair => 0,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 1,
@@ -13283,6 +13574,7 @@ fn expected_atomic_block_record_writes(input: NativeAtomicCommitManifestAdmissio
 fn expected_atomic_height_index_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit => 1,
+        NativeAtomicCommitKind::TipExtensionBatchCommit => input.height_entry_count,
         NativeAtomicCommitKind::CanonicalReorgCommit => input.height_entry_count,
         NativeAtomicCommitKind::CanonicalIndexRepair
         | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13291,9 +13583,9 @@ fn expected_atomic_height_index_writes(input: NativeAtomicCommitManifestAdmissio
 
 fn expected_atomic_best_pointer_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
-        NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::CanonicalReorgCommit => {
-            1
-        }
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit => 1,
         NativeAtomicCommitKind::CanonicalIndexRepair
         | NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
     }
@@ -13316,7 +13608,8 @@ fn expected_atomic_pending_action_removals(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> usize {
     match input.kind {
-        NativeAtomicCommitKind::MinedBlockCommit => input.action_count,
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit => input.action_count,
         _ => 0,
     }
 }
@@ -13331,6 +13624,7 @@ fn expected_atomic_pending_action_writes(input: NativeAtomicCommitManifestAdmiss
 fn expected_atomic_commitment_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_commitment_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13340,6 +13634,7 @@ fn expected_atomic_commitment_writes(input: NativeAtomicCommitManifestAdmissionI
 fn expected_atomic_nullifier_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_nullifier_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13349,6 +13644,7 @@ fn expected_atomic_nullifier_writes(input: NativeAtomicCommitManifestAdmissionIn
 fn expected_atomic_bridge_replay_writes(input: NativeAtomicCommitManifestAdmissionInput) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_bridge_replay_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13360,6 +13656,7 @@ fn expected_atomic_ciphertext_index_writes(
 ) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_index_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13371,6 +13668,7 @@ fn expected_atomic_ciphertext_archive_writes(
 ) -> usize {
     match input.kind {
         NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
         | NativeAtomicCommitKind::CanonicalReorgCommit
         | NativeAtomicCommitKind::CanonicalIndexRepair => input.source_ciphertext_archive_count,
         NativeAtomicCommitKind::NoncanonicalBlockRecord => 0,
@@ -13381,7 +13679,9 @@ fn expected_atomic_staged_ciphertext_removals(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> usize {
     match input.kind {
-        NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::CanonicalReorgCommit => {
+        NativeAtomicCommitKind::MinedBlockCommit
+        | NativeAtomicCommitKind::TipExtensionBatchCommit
+        | NativeAtomicCommitKind::CanonicalReorgCommit => {
             input.source_staged_ciphertext_removal_count
         }
         _ => 0,
@@ -13391,8 +13691,10 @@ fn expected_atomic_staged_ciphertext_removals(
 fn evaluate_native_atomic_commit_manifest_admission(
     input: NativeAtomicCommitManifestAdmissionInput,
 ) -> Result<(), NativeAtomicCommitManifestAdmissionRejection> {
-    if matches!(input.kind, NativeAtomicCommitKind::MinedBlockCommit)
-        && input.action_count != input.planned_action_count
+    if matches!(
+        input.kind,
+        NativeAtomicCommitKind::MinedBlockCommit | NativeAtomicCommitKind::TipExtensionBatchCommit
+    ) && input.action_count != input.planned_action_count
     {
         Err(NativeAtomicCommitManifestAdmissionRejection::MinedPlanLength)
     } else if input.block_record_writes != expected_atomic_block_record_writes(input) {
@@ -13484,6 +13786,44 @@ fn native_mined_block_commit_manifest(
         ciphertext_index_writes: ciphertext_hash_count,
         ciphertext_archive_writes: materialized_ciphertext_count,
         staged_ciphertext_removals: ciphertext_hash_count,
+    }
+}
+
+fn native_tip_extension_batch_commit_manifest(
+    canonical_index_plan: &NativeCanonicalIndexPlan,
+    block_entries: &[([u8; 32], Vec<u8>)],
+    height_entries: &[(u64, [u8; 32])],
+    pending_action_removal_count: usize,
+    staged_ciphertext_removal_count: usize,
+    action_count: usize,
+    planned_action_count: usize,
+) -> NativeAtomicCommitManifestAdmissionInput {
+    NativeAtomicCommitManifestAdmissionInput {
+        kind: NativeAtomicCommitKind::TipExtensionBatchCommit,
+        action_count,
+        planned_action_count,
+        chain_block_count: block_entries.len(),
+        height_entry_count: height_entries.len(),
+        pending_entry_count: 0,
+        source_commitment_count: canonical_index_plan.commitment_entries.len(),
+        source_nullifier_count: canonical_index_plan.nullifier_entries.len(),
+        source_bridge_replay_count: canonical_index_plan.bridge_replay_entries.len(),
+        source_ciphertext_index_count: canonical_index_plan.ciphertext_index_entries.len(),
+        source_ciphertext_archive_count: canonical_index_plan.ciphertext_archive_entries.len(),
+        source_staged_ciphertext_removal_count: staged_ciphertext_removal_count,
+        block_record_writes: block_entries.len(),
+        height_index_writes: height_entries.len(),
+        best_pointer_writes: 1,
+        canonical_index_cleared: false,
+        pending_tree_cleared: false,
+        pending_action_removals: pending_action_removal_count,
+        pending_action_writes: 0,
+        commitment_writes: canonical_index_plan.commitment_entries.len(),
+        nullifier_writes: canonical_index_plan.nullifier_entries.len(),
+        bridge_replay_writes: canonical_index_plan.bridge_replay_entries.len(),
+        ciphertext_index_writes: canonical_index_plan.ciphertext_index_entries.len(),
+        ciphertext_archive_writes: canonical_index_plan.ciphertext_archive_entries.len(),
+        staged_ciphertext_removals: staged_ciphertext_removal_count,
     }
 }
 
@@ -14405,6 +14745,68 @@ fn clear_staged_ciphertext_markers(state: &mut NativeState, action: &PendingActi
     for hash in &action.ciphertext_hashes {
         state.staged_ciphertexts.remove(&hex48(hash));
     }
+}
+
+fn append_native_block_commit_index_entries(
+    context: &'static str,
+    actions: &[PendingAction],
+    planned: &[NativePlannedActionEffect],
+    commitment_entries: &mut Vec<(u64, [u8; 48])>,
+    ciphertext_archive_entries: &mut Vec<(u64, Vec<u8>)>,
+    nullifier_entries: &mut Vec<[u8; 48]>,
+    bridge_replay_entries: &mut Vec<[u8; 48]>,
+    ciphertext_index_entries: &mut Vec<([u8; 48], Vec<u8>)>,
+    pending_action_removals: &mut Vec<[u8; 32]>,
+    staged_ciphertext_removals: &mut Vec<[u8; 48]>,
+) -> Result<()> {
+    for (action, effect) in actions.iter().zip(planned.iter()) {
+        if action.ciphertext_hashes.len() != action.ciphertext_sizes.len() {
+            return Err(anyhow!(
+                "{context} ciphertext metadata count mismatch: hashes={} sizes={}",
+                action.ciphertext_hashes.len(),
+                action.ciphertext_sizes.len()
+            ));
+        }
+
+        for (offset, commitment) in action.commitments.iter().enumerate() {
+            let offset = u64::try_from(offset)
+                .map_err(|_| anyhow!("{context} commitment offset overflow"))?;
+            let index = effect
+                .commitment_start
+                .checked_add(offset)
+                .ok_or_else(|| anyhow!("{context} commitment index overflow"))?;
+            commitment_entries.push((index, *commitment));
+        }
+        for (offset, bytes) in effect.ciphertexts.iter().enumerate() {
+            let offset = u64::try_from(offset)
+                .map_err(|_| anyhow!("{context} ciphertext offset overflow"))?;
+            let index = effect
+                .commitment_start
+                .checked_add(offset)
+                .ok_or_else(|| anyhow!("{context} ciphertext index overflow"))?;
+            ciphertext_archive_entries.push((index, bytes.clone()));
+        }
+
+        nullifier_entries.extend(action.nullifiers.iter().copied());
+        if let Some(replay_key) = effect.replay_key {
+            bridge_replay_entries.push(replay_key);
+        }
+
+        for (idx, hash) in action.ciphertext_hashes.iter().enumerate() {
+            let size = action.ciphertext_sizes[idx];
+            let idx = u64::try_from(idx)
+                .map_err(|_| anyhow!("{context} ciphertext row offset overflow"))?;
+            let mut value = Vec::with_capacity(32 + 4 + 8);
+            value.extend_from_slice(&action.tx_hash);
+            value.extend_from_slice(&size.to_le_bytes());
+            value.extend_from_slice(&idx.to_le_bytes());
+            ciphertext_index_entries.push((*hash, value));
+        }
+
+        pending_action_removals.push(action.tx_hash);
+        staged_ciphertext_removals.extend(action.ciphertext_hashes.iter().copied());
+    }
+    Ok(())
 }
 
 fn plan_canonical_index_rebuild(
@@ -28259,6 +28661,7 @@ mod tests {
     fn native_atomic_commit_kind_from_label(label: &str) -> NativeAtomicCommitKind {
         match label {
             "mined_block_commit" => NativeAtomicCommitKind::MinedBlockCommit,
+            "tip_extension_batch_commit" => NativeAtomicCommitKind::TipExtensionBatchCommit,
             "canonical_reorg_commit" => NativeAtomicCommitKind::CanonicalReorgCommit,
             "canonical_index_repair" => NativeAtomicCommitKind::CanonicalIndexRepair,
             "noncanonical_block_record" => NativeAtomicCommitKind::NoncanonicalBlockRecord,
