@@ -163,7 +163,7 @@ const MAX_NATIVE_SYNC_MESSAGE_BYTES: usize = wire::MAX_WIRE_FRAME_LEN;
 const MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES: usize = wire::MAX_WIRE_FRAME_LEN / 2;
 const MAX_NATIVE_SYNC_PENDING_ACTION_BYTES: usize = MAX_NATIVE_BLOCK_ACTION_PAYLOAD_BYTES;
 const MAX_NATIVE_MINING_THREADS: u32 = 64;
-const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 2;
+const NATIVE_MINING_RESERVED_SERVICE_THREADS: u32 = 3;
 const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 
 #[derive(Clone, Debug, Parser)]
@@ -24421,12 +24421,12 @@ mod tests {
 
     #[test]
     fn native_mining_threads_preserve_service_headroom() {
-        assert_eq!(effective_native_mining_threads(8, 4), 2);
+        assert_eq!(effective_native_mining_threads(8, 4), 1);
         assert_eq!(effective_native_mining_threads(8, 2), 1);
         assert_eq!(effective_native_mining_threads(1, 4), 1);
         assert_eq!(
             effective_native_mining_threads(MAX_NATIVE_MINING_THREADS, 16),
-            14
+            13
         );
     }
 
