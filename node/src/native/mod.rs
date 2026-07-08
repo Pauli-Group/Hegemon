@@ -126,6 +126,7 @@ const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(1
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
 const NATIVE_SYNC_REORG_BACKFILL_BLOCKS: u64 = 32;
 const NATIVE_SYNC_BOOTSTRAP_BACKFILL_FLOOR: u64 = 1;
+const NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS: u64 = MAX_NATIVE_SYNC_RESPONSE_BLOCKS - 1;
 const APPROVED_PUBLIC_JOIN_SEEDS: &str = "hegemon.pauli.group:30333";
 const AES_GCM_TAG_BYTES: usize = 16;
 const PQ_IDENTITY_SEED_FILE: &str = "pq-identity.seed";
@@ -3035,6 +3036,7 @@ pub struct NativeNode {
     sync_target_observed: AtomicBool,
     sync_target_peer: Mutex<Option<PeerId>>,
     sync_target_hash: Mutex<Option<[u8; 32]>>,
+    sync_reorg_backfill_blocks: AtomicU64,
     mining_sync_gate_open: AtomicBool,
     sync_import_in_flight: AtomicBool,
     network_peer_count: Arc<AtomicUsize>,
@@ -3148,6 +3150,7 @@ impl NativeNode {
             sync_target_observed: AtomicBool::new(initial_mining_sync_gate_open),
             sync_target_peer: Mutex::new(None),
             sync_target_hash: Mutex::new(None),
+            sync_reorg_backfill_blocks: AtomicU64::new(NATIVE_SYNC_REORG_BACKFILL_BLOCKS),
             mining_sync_gate_open: AtomicBool::new(initial_mining_sync_gate_open),
             sync_import_in_flight: AtomicBool::new(false),
             network_peer_count: Arc::new(AtomicUsize::new(0)),
@@ -3303,6 +3306,47 @@ impl NativeNode {
 
     fn complete_outbound_sync_request_target(&self, peer_id: Option<PeerId>) {
         self.outbound_sync_requests.lock().remove(&peer_id);
+    }
+
+    fn sync_reorg_backfill_blocks(&self) -> u64 {
+        self.sync_reorg_backfill_blocks
+            .load(Ordering::Relaxed)
+            .clamp(
+                NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+                NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS,
+            )
+    }
+
+    fn reset_sync_reorg_backfill(&self) {
+        self.sync_reorg_backfill_blocks
+            .store(NATIVE_SYNC_REORG_BACKFILL_BLOCKS, Ordering::Relaxed);
+    }
+
+    fn escalate_sync_reorg_backfill(&self) -> u64 {
+        let mut current = self.sync_reorg_backfill_blocks();
+        loop {
+            let next = current
+                .saturating_mul(2)
+                .max(NATIVE_SYNC_REORG_BACKFILL_BLOCKS.saturating_add(1))
+                .min(NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS);
+            match self.sync_reorg_backfill_blocks.compare_exchange(
+                current,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return next,
+                Err(observed) => {
+                    current = observed.clamp(
+                        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+                        NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS,
+                    );
+                    if current >= NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS {
+                        return current;
+                    }
+                }
+            }
+        }
     }
 
     fn admit_sync_request_from_peer(
@@ -6769,11 +6813,23 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     node.observe_verified_sync_peer_height(observed_height);
                 }
                 if progress.imported_blocks > 0 {
+                    node.reset_sync_reorg_backfill();
                     info!(
                         imported = progress.imported_blocks,
                         best_height = local_best_height,
                         peer_best_height = best_height,
                         "imported native sync response"
+                    );
+                } else if progress.had_blocks
+                    && !progress.stopped_on_error
+                    && local_best_height < best_height
+                {
+                    let backfill_blocks = node.escalate_sync_reorg_backfill();
+                    info!(
+                        best_height = local_best_height,
+                        peer_best_height = best_height,
+                        backfill_blocks,
+                        "expanded native sync reorg backfill after unproductive response"
                     );
                 }
                 if progress.should_request_more(local_best_height, best_height) {
@@ -7214,7 +7270,7 @@ async fn queue_missing_blocks_from_sync_target(node: &NativeNode, sync_tx: &Prot
         target,
         target_hash,
         MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
-        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        node.sync_reorg_backfill_blocks(),
     ) else {
         return;
     };
@@ -7292,7 +7348,7 @@ async fn request_missing_blocks(
         missing_request_input,
         best.hash,
         announced_hash,
-        NATIVE_SYNC_REORG_BACKFILL_BLOCKS,
+        node.sync_reorg_backfill_blocks(),
         admitted_missing_range,
     ) else {
         return;
@@ -11584,7 +11640,7 @@ fn native_sync_observed_tip_request_range_from_admitted_missing(
 ) -> Option<NativeSyncRange> {
     if let Some(admitted_range) = admitted_missing_range {
         let gap = input.announced_height.saturating_sub(input.best_height);
-        if gap > input.max_blocks {
+        if gap > input.max_blocks && backfill_blocks <= NATIVE_SYNC_REORG_BACKFILL_BLOCKS {
             return Some(admitted_range);
         }
         return Some(native_sync_missing_request_range_apply_reorg_backfill(
@@ -35392,6 +35448,47 @@ mod tests {
 
         assert_eq!(range.from_height, 897);
         assert_eq!(range.to_height, 1_024);
+    }
+
+    #[test]
+    fn native_sync_escalated_large_gap_observed_tip_requests_reorg_context() {
+        let range = native_sync_observed_tip_request_range(
+            5_940,
+            [0x31; 32],
+            6_077,
+            Some([0x07; 32]),
+            MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
+            NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS,
+        )
+        .expect("escalated large-gap fork recovery should request ancestor context");
+
+        assert_eq!(range.from_height, 5_814);
+        assert_eq!(range.to_height, 5_941);
+    }
+
+    #[test]
+    fn native_sync_reorg_backfill_escalates_and_resets() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+
+        assert_eq!(
+            node.sync_reorg_backfill_blocks(),
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS
+        );
+        assert!(node.escalate_sync_reorg_backfill() > NATIVE_SYNC_REORG_BACKFILL_BLOCKS);
+        while node.sync_reorg_backfill_blocks() < NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS {
+            node.escalate_sync_reorg_backfill();
+        }
+        assert_eq!(
+            node.sync_reorg_backfill_blocks(),
+            NATIVE_SYNC_MAX_REORG_BACKFILL_BLOCKS
+        );
+        node.reset_sync_reorg_backfill();
+        assert_eq!(
+            node.sync_reorg_backfill_blocks(),
+            NATIVE_SYNC_REORG_BACKFILL_BLOCKS
+        );
     }
 
     #[test]

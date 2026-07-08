@@ -86,6 +86,9 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - Decision: Batch contiguous tip-extension persistence after per-block validation.
   Rationale: The first tip-extension importer proved the reorg rebuild was avoidable, but live measurement showed the remaining cost was one sled transaction and durability flush per block. The batch path keeps announced-block validation, action-root checks, replay refinement, proof/artifact verification, and state-root/nullifier-root checks for every block, then writes the verified contiguous chunk to the canonical indexes in one atomic transaction.
   Date/Author: 2026-07-08 / Codex
+- Decision: Escalate the native sync reorg backfill window after an ahead response imports no blocks.
+  Rationale: Live measurement found `hegemon-dev` stuck at height 5,940 while `hegemon-ovh` was at 6,077; the last common block was 5,891. The fixed 32-block backfill could not include a common ancestor, and the large-gap request path asked for 5,941 onward, so every response was unattachable. The fix keeps fast straight catch-up for normal fresh joins, then expands backfill up to the response-window cap only after an unproductive ahead response.
+  Date/Author: 2026-07-08 / Codex
 
 ## Outcomes & Retrospective
 
@@ -93,7 +96,9 @@ The initial PR binary deployment turned the public-seed join path from stuck to 
 
 The 512-block response-window experiment was then built, deployed, and measured against the public seed path. It imported the first 512-block chunk but then paused long enough that height remained 512 at 300 seconds and the next 512-block import did not land until roughly 225 seconds later. That result is worse operational behavior than the smaller windows, so the final patch keeps the original 128-block response cap and retains only the reliable P2P delivery, larger command queue, and longer stale-peer timeout fixes.
 
-After deploying that cap correction, another fresh local sync against `hegemon.pauli.group:30333` exposed the next bottleneck: the node reached height 128 at 90 seconds, 256 at 240 seconds, and only 384 at 600 seconds. Logs showed native sync responses arriving repeatedly while imports landed late, which pointed at local import/reorg cost rather than network delivery. The first contiguous-tip fast path avoided reorg rebuilds but still committed each block separately and remained too slow. The current patch batches verified contiguous tip-extension chunks into one atomic commit and must be measured from a fresh base path after deployment.
+After deploying that cap correction, another fresh local sync against `hegemon.pauli.group:30333` exposed the next bottleneck: the node reached height 128 at 90 seconds, 256 at 240 seconds, and only 384 at 600 seconds. Logs showed native sync responses arriving repeatedly while imports landed late, which pointed at local import/reorg cost rather than network delivery. The first contiguous-tip fast path avoided reorg rebuilds but still committed each block separately and remained too slow. The current patch batches verified contiguous tip-extension chunks into one atomic commit.
+
+The next deployment exposed a separate live fork-recovery bug on `hegemon-dev`: it received 128-block sync responses but stayed at height 5,940 while the seed kept advancing. Comparing canonical block hashes showed `hegemon-dev` and `hegemon-ovh` last agreed at height 5,891. Because the large-gap request path suppressed reorg backfill, the stuck node kept requesting 5,941 onward and never received the shared ancestor required to reorganize. The current patch adds adaptive backfill escalation after unproductive ahead responses and must be measured against both the stuck miner and a fresh local resync.
 
 ## Context and Orientation
 
