@@ -262,7 +262,7 @@ enum PeerRunOutcome {
 }
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -277,6 +277,7 @@ const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
+const P2P_COMMAND_CHANNEL_CAPACITY: usize = 4096;
 const PROTOCOL_CHANNEL_CAPACITY: usize = 1024;
 const PROOF_PROTOCOL_QUEUE_FRAME_SLOTS: usize = 16;
 const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize =
@@ -439,7 +440,7 @@ impl P2PService {
 
         info!("p2p service listening on {}", self.addr);
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(100);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(P2P_COMMAND_CHANNEL_CAPACITY);
 
         let nat_result = NatTraversal::attempt_mapping(&self.nat_config).await;
         self.advertised_addrs = nat_result.external_addresses.clone();

@@ -21,8 +21,13 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - [x] (2026-07-08 02:42Z) Patched directed protocol sends to wait for peer queue capacity, so sync responses are not dropped behind a full per-peer channel.
 - [x] (2026-07-08 03:18Z) Reran focused tests after the network queue patch: `cargo test -p network --lib` and `cargo test -p hegemon-node native_sync --lib --no-default-features`.
 - [x] (2026-07-08 03:19Z) Rebuilt the release node with `make node`.
-- [ ] Deploy the patched release binary to `hegemon-ovh` and `hegemon-dev` with timestamped binary backups.
-- [ ] Resync a fresh local base path from `hegemon.pauli.group:30333` after the seed-side patch is live.
+- [x] (2026-07-08 03:22Z) Deployed the patched Linux release binary to `hegemon-ovh` and `hegemon-dev` through a systemd drop-in that can be removed for rollback.
+- [x] (2026-07-08 03:34Z) Measured fresh local sync from `hegemon.pauli.group:30333`; height advanced from 0 to 3,712 in 600s instead of remaining stuck at 0.
+- [x] (2026-07-08 03:47Z) Patched catch-up load tolerance after the measurement exposed peer timeout/reconnect brittleness: larger command queue, five-minute stale-peer timeout, and 512-block sync response windows bounded by the existing wire-size cap.
+- [x] (2026-07-08 03:50Z) Reran focused tests after the catch-up load patch: `cargo test -p network --lib` and `cargo test -p hegemon-node native_sync --lib --no-default-features`.
+- [x] (2026-07-08 03:52Z) Rebuilt the local release node with `make node` after the second patch.
+- [ ] Deploy the second patched release binary to `hegemon-ovh` and `hegemon-dev`.
+- [ ] Resync a fresh local base path from `hegemon.pauli.group:30333` after the second seed-side patch is live.
 - [ ] Compare measured sync progress before and after the full change.
 - [ ] Push the PR branch and report validation evidence.
 
@@ -42,6 +47,12 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
   Evidence: `MAX_NATIVE_SYNC_RESPONSE_TARGET_BYTES` is `wire::MAX_WIRE_FRAME_LEN / 2` (8 MiB), while the peer outbound queue budget is `wire::MAX_WIRE_FRAME_LEN * 16` (256 MiB). The failure is therefore a lossy scheduling/delivery problem, not an intentionally oversized response.
 - Observation: Focused tests and the release build pass on the PR branch after the network queue patch.
   Evidence: `cargo test -p network --lib` passed 78 tests, `cargo test -p hegemon-node native_sync --lib --no-default-features` passed 13 tests, and `make node` completed.
+- Observation: Deploying the network queue patch to both miners fixed the height-0 stall for a fresh local node.
+  Evidence: A temporary local node syncing from `hegemon.pauli.group:30333` reached height 384 at 45s, 1,280 at 120s, 1,792 at 180s, and 3,712 at 600s. The pre-deploy baseline was still height 0 at 180s.
+- Observation: A continuation run from the same temporary data directory exposed stale-session brittleness under catch-up load.
+  Evidence: The node restarted at height 3,712, connected to the seed, then timed out `158.69.222.121:30333`; late messages from that peer were ignored as an inactive session and the local target stayed empty.
+- Observation: The live seed miner remained healthy after the PR binary deploy, while `hegemon-dev` was behind the OVH tip during the measurement window.
+  Evidence: `hegemon-ovh` reported height 5,961, target 5,961, `syncing:false`; `hegemon-dev` reported height 5,940, target 5,961, `syncing:true`.
 
 ## Decision Log
 
@@ -57,10 +68,16 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - Decision: Await per-peer queue capacity for targeted registered-protocol messages while leaving broadcast, ping, and address gossip on the existing non-blocking path.
   Rationale: Native sync responses are directed protocol replies. Dropping a multi-megabyte block-range response makes a joining node look connected but frozen. Broadcasts remain best-effort so one slow peer does not stall the network service.
   Date/Author: 2026-07-08 / Codex
+- Decision: Increase the P2P command channel to 4,096 entries and stale-peer timeout to five minutes.
+  Rationale: Block catch-up moves large protocol responses and import work through the same service. The previous 100-command queue and 90-second timeout could declare a seed stale during live catch-up even though messages were arriving late. The byte budgets still cap memory use.
+  Date/Author: 2026-07-08 / Codex
+- Decision: Raise native sync response windows from 128 to 512 blocks while keeping the existing wire-size truncation cap.
+  Rationale: A fresh node should not need roughly 47 request/response round trips for a 6k-block testnet when normal ranges fit safely below the existing frame budget. The byte cap remains the authority for large blocks.
+  Date/Author: 2026-07-08 / Codex
 
 ## Outcomes & Retrospective
 
-No outcome yet. This section will be updated after local resync measurement and PR push.
+The initial PR binary deployment turned the public-seed join path from stuck to advancing: fresh local sync from `hegemon.pauli.group:30333` progressed from height 0 to 3,712 in 600 seconds. That is a real liveness improvement over the baseline height-0 stall, but not yet acceptable as the final outcome because full catch-up is still slow and restart continuation exposed a stale-peer timeout. The second patch addresses that load tolerance and must be measured after seed deployment.
 
 ## Context and Orientation
 
