@@ -3273,6 +3273,69 @@ impl NativeNode {
         true
     }
 
+    fn clear_hash_anchored_sync_target_to_local_tip(
+        &self,
+        evidence_peer_height: u64,
+        evidence_hash: [u8; 32],
+        reason: &'static str,
+    ) -> bool {
+        let best = self.best_meta();
+        let target = self.sync_target_height.load(Ordering::Relaxed);
+        if target <= best.height {
+            return false;
+        }
+        let Some(target_hash) = *self.sync_target_hash.lock() else {
+            return false;
+        };
+        if target_hash != evidence_hash {
+            return false;
+        }
+        self.sync_target_height
+            .store(best.height, Ordering::Relaxed);
+        *self.sync_target_peer.lock() = None;
+        *self.sync_target_hash.lock() = None;
+        self.refresh_mining_sync_gate();
+        info!(
+            target,
+            local_height = best.height,
+            evidence_peer_height,
+            evidence_hash = %hex32(&evidence_hash),
+            reason,
+            "cleared hash-anchored native sync target"
+        );
+        true
+    }
+
+    fn clear_nonwinning_sync_target_response_to_local_tip(
+        &self,
+        peer_best_height: u64,
+        blocks: &[NativeBlockMeta],
+    ) -> bool {
+        let best = self.best_meta();
+        let target = self.sync_target_height.load(Ordering::Relaxed);
+        if target <= best.height {
+            return false;
+        }
+        let Some(target_hash) = *self.sync_target_hash.lock() else {
+            return false;
+        };
+        let Some(target_meta) = blocks
+            .iter()
+            .rev()
+            .find(|meta| meta.height == target && meta.hash == target_hash)
+        else {
+            return false;
+        };
+        if native_meta_better_than(target_meta, &best) {
+            return false;
+        }
+        self.clear_hash_anchored_sync_target_to_local_tip(
+            peer_best_height,
+            target_hash,
+            "non-winning native sync target response",
+        )
+    }
+
     fn observe_pending_sync_peer_height(&self, peer_best_height: u64) {
         self.observe_pending_sync_peer_tip(None, peer_best_height, None);
     }
@@ -6704,6 +6767,33 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                                 false
                             }
                         };
+                        if !native_meta_better_than(&meta, &node.best_meta()) {
+                            if known_verified {
+                                let local_height = node.best_meta().height;
+                                node.clear_hash_anchored_sync_target_to_local_tip(
+                                    announced_height,
+                                    meta.hash,
+                                    "non-winning native sync announce",
+                                );
+                                node.observe_verified_sync_peer_height(local_height);
+                                debug!(
+                                    peer = %hex32(&peer_id),
+                                    height = announced_height,
+                                    hash = %hex32(&meta.hash),
+                                    local_height,
+                                    "ignored verified non-winning native sync announce"
+                                );
+                            } else {
+                                debug!(
+                                    peer = %hex32(&peer_id),
+                                    height = announced_height,
+                                    hash = %hex32(&meta.hash),
+                                    local_height = node.best_meta().height,
+                                    "ignored unverified non-winning native sync announce"
+                                );
+                            }
+                            continue;
+                        }
                         if let Some(observed_height) =
                             native_mining_sync_observed_peer_height(NativeMiningSyncEvidenceInput {
                                 verified_new_progress: false,
@@ -6891,10 +6981,20 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 if native_sync_response_stale_for_local_tip(&node, best_height, &blocks) {
                     debug!(
                         peer = %hex32(&peer_id),
+                    best_height,
+                    block_count = blocks.len(),
+                    local_height = node.best_meta().height,
+                    "dropping stale native sync response"
+                    );
+                    continue;
+                }
+                if node.clear_nonwinning_sync_target_response_to_local_tip(best_height, &blocks) {
+                    debug!(
+                        peer = %hex32(&peer_id),
                         best_height,
                         block_count = blocks.len(),
                         local_height = node.best_meta().height,
-                        "dropping stale native sync response"
+                        "ignored non-winning native sync target response"
                     );
                     continue;
                 }
@@ -35766,6 +35866,71 @@ mod tests {
         assert!(!node.mining_sync_gate_allows_work());
         assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
         assert_eq!(*node.sync_target_hash.lock(), Some(peer_hash));
+    }
+
+    #[test]
+    fn nonwinning_hash_anchored_sync_response_clears_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+
+        let best = node.best_meta();
+        let mut target = best.clone();
+        target.height = best.height + 1;
+        target.hash = [0x51; 32];
+        target.parent_hash = best.hash;
+        target.cumulative_work = [0; 48];
+        assert!(!native_meta_better_than(&target, &best));
+        node.observe_pending_sync_peer_tip(Some([0x24; 32]), target.height, Some(target.hash));
+        assert!(!node.mining_sync_gate_allows_work());
+
+        assert!(node.clear_nonwinning_sync_target_response_to_local_tip(
+            target.height,
+            std::slice::from_ref(&target)
+        ));
+
+        let (syncing, observed_target) = node.sync_status_fields();
+        assert!(!syncing);
+        assert_eq!(observed_target, best.height);
+        assert!(node.mining_sync_gate_allows_work());
+        assert_eq!(*node.sync_target_peer.lock(), None);
+        assert_eq!(*node.sync_target_hash.lock(), None);
+    }
+
+    #[test]
+    fn better_hash_anchored_sync_response_keeps_target() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut config = test_config(tmp.path(), 0x207f_ffff, "safe", false);
+        config.seeds.push("127.0.0.1:30333".to_string());
+        let node = NativeNode::open(config).expect("node");
+        for _ in 0..2 {
+            mine_empty_native_block(&node);
+        }
+
+        let best = node.best_meta();
+        let mut target = best.clone();
+        target.height = best.height + 1;
+        target.hash = [0x52; 32];
+        target.parent_hash = best.hash;
+        target.cumulative_work = [0xff; 48];
+        assert!(native_meta_better_than(&target, &best));
+        node.observe_pending_sync_peer_tip(Some([0x24; 32]), target.height, Some(target.hash));
+
+        assert!(!node.clear_nonwinning_sync_target_response_to_local_tip(
+            target.height,
+            std::slice::from_ref(&target)
+        ));
+
+        let (syncing, observed_target) = node.sync_status_fields();
+        assert!(syncing);
+        assert_eq!(observed_target, target.height);
+        assert!(!node.mining_sync_gate_allows_work());
+        assert_eq!(*node.sync_target_peer.lock(), Some([0x24; 32]));
+        assert_eq!(*node.sync_target_hash.lock(), Some(target.hash));
     }
 
     #[test]
