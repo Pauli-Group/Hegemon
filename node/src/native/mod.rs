@@ -4539,7 +4539,7 @@ impl NativeNode {
         } else {
             let parent =
                 self.load_canonical_block_at_height_unverified(height.saturating_sub(1))?;
-            let expected_pow_bits = self.expected_child_pow_bits(&parent)?;
+            let expected_pow_bits = self.expected_canonical_child_pow_bits(&parent)?;
             verify_native_block_meta_projection(Some(&parent), &meta, Some(expected_pow_bits))
                 .with_context(|| {
                     format!(
@@ -4634,6 +4634,38 @@ impl NativeNode {
             ));
         }
         native_expected_child_pow_bits_from_chain(&chain, self.config.pow_bits)
+    }
+
+    fn expected_canonical_child_pow_bits(&self, parent: &NativeBlockMeta) -> Result<u32> {
+        let new_height = parent
+            .height
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("native PoW child height overflow"))?;
+        let anchor_timestamp_ms = if let Some(anchor_steps) =
+            consensus::pow::pow_retarget_anchor_steps(parent.height, new_height)
+        {
+            let anchor_height = parent.height.checked_sub(anchor_steps).ok_or_else(|| {
+                anyhow!(
+                    "native PoW retarget anchor underflow at parent height {}",
+                    parent.height
+                )
+            })?;
+            Some(
+                self.load_canonical_block_at_height_unverified(anchor_height)?
+                    .timestamp_ms,
+            )
+        } else {
+            None
+        };
+        consensus::pow::expected_pow_bits_from_schedule(
+            self.config.pow_bits,
+            parent.pow_bits,
+            parent.height,
+            new_height,
+            parent.timestamp_ms,
+            anchor_timestamp_ms,
+        )
+        .map_err(|err| anyhow!("native PoW bits schedule failed: {err}"))
     }
 
     fn replay_state_to_hash(&self, hash: [u8; 32]) -> Result<NativeState> {
@@ -6732,10 +6764,14 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 best_height,
                 mut blocks,
             } => {
+                let received_from_height = blocks.first().map(|block| block.height);
+                let received_to_height = blocks.last().map(|block| block.height);
                 info!(
                     peer = %hex32(&peer_id),
                     best_height,
                     block_count = blocks.len(),
+                    from_height = ?received_from_height,
+                    to_height = ?received_to_height,
                     "received native sync response"
                 );
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
@@ -7459,6 +7495,9 @@ async fn send_sync_response_with_sender(
     best_height: u64,
     blocks: Vec<NativeBlockMeta>,
 ) {
+    let from_height = blocks.first().map(|block| block.height);
+    let to_height = blocks.last().map(|block| block.height);
+    let block_count = blocks.len();
     let response = NativeSyncMessage::Response {
         best_height,
         blocks,
@@ -7490,6 +7529,9 @@ async fn send_sync_response_with_sender(
         info!(
             peer = %hex32(&peer_id),
             best_height,
+            block_count,
+            from_height = ?from_height,
+            to_height = ?to_height,
             "queued native sync response"
         );
     }
