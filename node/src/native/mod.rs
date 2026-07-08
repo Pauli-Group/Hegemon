@@ -113,7 +113,7 @@ const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 const MAX_PREPARED_MINING_WORKS: usize = 128;
 const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
-const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 512;
+const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 128;
 const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize = MAX_NATIVE_SYNC_RESPONSE_BLOCKS as usize;
 const NATIVE_SYNC_BEST_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(2);
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from_secs(5);
@@ -34581,19 +34581,19 @@ mod tests {
         .expect("higher peer branch should request enough local prefix to find a fork point");
 
         assert_eq!(range.from_height, 4583);
-        assert_eq!(range.to_height, 4960);
+        assert_eq!(range.to_height, 4710);
     }
 
     #[test]
     fn native_sync_bootstrap_request_after_first_chunk_starts_after_local_best() {
         let range = native_sync_missing_request_range(NativeSyncMissingRequestInput {
-            best_height: MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 17,
+            best_height: 145,
             announced_height: 21_971,
             max_blocks: MAX_NATIVE_SYNC_RESPONSE_BLOCKS,
         })
         .expect("post-bootstrap catch-up should request the next bounded window");
-        assert_eq!(range.from_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS + 18);
-        assert_eq!(range.to_height, MAX_NATIVE_SYNC_RESPONSE_BLOCKS * 2 + 17);
+        assert_eq!(range.from_height, 146);
+        assert_eq!(range.to_height, 273);
     }
 
     #[test]

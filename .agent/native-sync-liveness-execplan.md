@@ -71,13 +71,15 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - Decision: Increase the P2P command channel to 4,096 entries and stale-peer timeout to five minutes.
   Rationale: Block catch-up moves large protocol responses and import work through the same service. The previous 100-command queue and 90-second timeout could declare a seed stale during live catch-up even though messages were arriving late. The byte budgets still cap memory use.
   Date/Author: 2026-07-08 / Codex
-- Decision: Raise native sync response windows from 128 to 512 blocks while keeping the existing wire-size truncation cap.
-  Rationale: A fresh node should not need roughly 47 request/response round trips for a 6k-block testnet when normal ranges fit safely below the existing frame budget. The byte cap remains the authority for large blocks.
+- Decision: Keep native sync response windows at 128 blocks after live-testing a 512-block window.
+  Rationale: The 512-block experiment did reduce request count, but live resync stalled for several minutes after each large import chunk. Smaller windows keep import latency and peer responsiveness better under the current verifier/storage path, while the reliable queue and timeout fixes address the original dropped-response failure.
   Date/Author: 2026-07-08 / Codex
 
 ## Outcomes & Retrospective
 
-The initial PR binary deployment turned the public-seed join path from stuck to advancing: fresh local sync from `hegemon.pauli.group:30333` progressed from height 0 to 3,712 in 600 seconds. That is a real liveness improvement over the baseline height-0 stall, but not yet acceptable as the final outcome because full catch-up is still slow and restart continuation exposed a stale-peer timeout. The second patch addresses that load tolerance and must be measured after seed deployment.
+The initial PR binary deployment turned the public-seed join path from stuck to advancing: fresh local sync from `hegemon.pauli.group:30333` progressed from height 0 to 3,712 in 600 seconds. That is a real liveness improvement over the baseline height-0 stall, but not yet acceptable as the final outcome because full catch-up is still slow and restart continuation exposed a stale-peer timeout.
+
+The 512-block response-window experiment was then built, deployed, and measured against the public seed path. It imported the first 512-block chunk but then paused long enough that height remained 512 at 300 seconds and the next 512-block import did not land until roughly 225 seconds later. That result is worse operational behavior than the smaller windows, so the final patch keeps the original 128-block response cap and retains only the reliable P2P delivery, larger command queue, and longer stale-peer timeout fixes.
 
 ## Context and Orientation
 
