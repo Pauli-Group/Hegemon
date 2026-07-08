@@ -513,6 +513,10 @@ struct NativeSyncRange {
     to_height: u64,
 }
 
+fn native_sync_ranges_overlap(left: NativeSyncRange, right: NativeSyncRange) -> bool {
+    left.from_height <= right.to_height && right.from_height <= left.to_height
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeSyncResponseRangeInput {
     from_height: u64,
@@ -3314,6 +3318,27 @@ impl NativeNode {
         let mut requests = self.outbound_sync_requests.lock();
         requests.remove(&Some(peer_id));
         requests.remove(&None);
+    }
+
+    fn complete_outbound_sync_response(
+        &self,
+        peer_id: PeerId,
+        response_range: Option<NativeSyncRange>,
+    ) -> bool {
+        let mut requests = self.outbound_sync_requests.lock();
+        let mut completed = false;
+        for target in [Some(peer_id), None] {
+            let should_remove = requests.get(&target).is_some_and(|request| {
+                response_range
+                    .map(|range| native_sync_ranges_overlap(request.range, range))
+                    .unwrap_or(true)
+            });
+            if should_remove {
+                requests.remove(&target);
+                completed = true;
+            }
+        }
+        completed
     }
 
     fn complete_outbound_sync_request_target(&self, peer_id: Option<PeerId>) {
@@ -6751,7 +6776,6 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     block_count = blocks.len(),
                     "received native sync response"
                 );
-                node.complete_outbound_sync_request(peer_id);
                 if let Err(rejection) = admit_and_sort_native_sync_response_blocks(
                     &mut blocks,
                     MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE,
@@ -6763,6 +6787,23 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         "rejecting oversized native sync response"
                     );
                     continue;
+                }
+                let response_range = match (blocks.first(), blocks.last()) {
+                    (Some(first), Some(last)) => Some(NativeSyncRange {
+                        from_height: first.height,
+                        to_height: last.height,
+                    }),
+                    _ => None,
+                };
+                let completed_request =
+                    node.complete_outbound_sync_response(peer_id, response_range);
+                if !completed_request {
+                    debug!(
+                        peer = %hex32(&peer_id),
+                        best_height,
+                        block_count = blocks.len(),
+                        "native sync response did not match current in-flight request"
+                    );
                 }
                 if native_sync_response_stale_for_local_tip(&node, best_height, &blocks) {
                     debug!(
@@ -35622,6 +35663,37 @@ mod tests {
         assert!(node.begin_outbound_sync_request(None, range));
         node.complete_outbound_sync_request_target(None);
         assert!(node.begin_outbound_sync_request(None, range));
+    }
+
+    #[test]
+    fn outbound_native_sync_response_completion_is_range_aware() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let peer = [0x46; 32];
+        let range = NativeSyncRange {
+            from_height: 129,
+            to_height: 256,
+        };
+
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+        assert!(!node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 1,
+                to_height: 128,
+            }),
+        ));
+        assert!(!node.begin_outbound_sync_request(Some(peer), range));
+
+        assert!(node.complete_outbound_sync_response(
+            peer,
+            Some(NativeSyncRange {
+                from_height: 128,
+                to_height: 384,
+            }),
+        ));
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
     }
 
     #[test]
