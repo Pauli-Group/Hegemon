@@ -122,10 +122,10 @@ const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_INTERVAL: Duration = Duration::from
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_LIMIT: usize = 8;
 const NATIVE_SYNC_PENDING_ACTION_REBROADCAST_BYTES: usize = 8 * 1024 * 1024;
 const NATIVE_SYNC_REQUEST_RATE_WINDOW: Duration = Duration::from_secs(10);
-// Sync responses carry full native block metadata and can take several minutes
-// to arrive on busy mining peers. Retrying faster than the live response window
-// creates duplicate range work and slows fresh-node catch-up.
-const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(300);
+// Sync responses carry full native block metadata. Keep one live request in
+// flight, but retry quickly enough that a dropped response does not freeze
+// fresh-node catch-up for minutes.
+const NATIVE_SYNC_REQUEST_RETRY_AFTER: Duration = Duration::from_secs(20);
 const MAX_NATIVE_SYNC_REQUESTS_PER_WINDOW: u32 = 4;
 const NATIVE_SYNC_REQUEST_RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_NATIVE_SYNC_REQUEST_RATE_LIMIT_PEERS: usize = 4096;
@@ -36175,6 +36175,29 @@ mod tests {
         node.complete_outbound_sync_request(peer);
         node.complete_outbound_sync_request_target(None);
         assert!(node.begin_outbound_sync_request(None, range));
+    }
+
+    #[test]
+    fn outbound_native_sync_request_retries_after_live_timeout() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let node =
+            NativeNode::open(test_config(tmp.path(), 0x207f_ffff, "safe", false)).expect("node");
+        let peer = [0x47; 32];
+        let range = NativeSyncRange {
+            from_height: 385,
+            to_height: 448,
+        };
+
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
+        assert!(!node.begin_outbound_sync_request(Some(peer), range));
+        {
+            let mut requests = node.outbound_sync_requests.lock();
+            let request = requests.get_mut(&Some(peer)).expect("tracked request");
+            request.requested_at = Instant::now()
+                .checked_sub(NATIVE_SYNC_REQUEST_RETRY_AFTER + Duration::from_millis(1))
+                .expect("past instant");
+        }
+        assert!(node.begin_outbound_sync_request(Some(peer), range));
     }
 
     #[test]
