@@ -701,6 +701,18 @@ fn native_mining_gate_allows_work(input: NativeMiningGateInput) -> bool {
     }
 }
 
+fn native_sync_catch_up_target(
+    best_height: u64,
+    sync_target_observed: bool,
+    sync_target_height: u64,
+) -> Option<(u64, u64)> {
+    if sync_target_observed && sync_target_height > best_height {
+        Some((best_height, sync_target_height))
+    } else {
+        None
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct NativeActionHashAdmissionInput {
     action_count_matches: bool,
@@ -3531,6 +3543,14 @@ impl NativeNode {
         (syncing, target)
     }
 
+    fn catching_up_to_sync_target(&self) -> Option<(u64, u64)> {
+        native_sync_catch_up_target(
+            self.best_meta().height,
+            self.sync_target_observed.load(Ordering::SeqCst),
+            self.sync_target_height.load(Ordering::Relaxed),
+        )
+    }
+
     fn start_mining(self: &Arc<Self>, threads: u32) {
         let threads = threads.max(1);
         self.mining.store(true, Ordering::SeqCst);
@@ -4481,10 +4501,11 @@ impl NativeNode {
         let mut parent = if range.from_height == 0 {
             None
         } else {
-            Some(self.load_canonical_sync_block_at_height(range.from_height - 1)?)
+            Some(self.load_canonical_block_at_height_unverified(range.from_height - 1)?)
         };
+        let mut action_bodies_verified = 0usize;
         for height in range.from_height..=range.to_height {
-            let meta = self.load_canonical_sync_block_at_height(height)?;
+            let meta = self.load_canonical_block_at_height_unverified(height)?;
             if let Some(parent) = parent.as_ref() {
                 if meta.parent_hash != parent.hash {
                     return Err(anyhow!(
@@ -4497,6 +4518,16 @@ impl NativeNode {
                 if height == range.from_height {
                     previous_parent_anchor_verified = true;
                 }
+            }
+            if meta.height != 0 {
+                verify_canonical_sync_block_body(&meta).with_context(|| {
+                    format!(
+                        "validate canonical native sync block body at height {} ({})",
+                        meta.height,
+                        hex32(&meta.hash)
+                    )
+                })?;
+                action_bodies_verified = action_bodies_verified.saturating_add(1);
             }
             parent = Some(meta.clone());
             blocks.push(meta);
@@ -4518,7 +4549,7 @@ impl NativeNode {
                 published_range,
                 &blocks,
                 blocks.len(),
-                blocks.iter().filter(|block| block.height != 0).count(),
+                action_bodies_verified,
                 previous_parent_anchor_verified,
             ),
         )
@@ -6678,6 +6709,17 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     to_height,
                 };
                 let local_best_height = node.best_meta().height;
+                if let Some((best_height, target_height)) = node.catching_up_to_sync_target() {
+                    debug!(
+                        from_height,
+                        to_height,
+                        best_height,
+                        target_height,
+                        peer = %hex32(&peer_id),
+                        "ignoring native sync request while catching up"
+                    );
+                    continue;
+                }
                 if from_height > local_best_height.saturating_add(1) {
                     debug!(
                         from_height,
@@ -6724,6 +6766,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 let range_node = Arc::clone(&node);
                 let response_node = Arc::clone(&node);
                 let response_tx = sync_tx.clone();
+                let load_started = Instant::now();
                 tokio::spawn(async move {
                     match tokio::task::spawn_blocking(move || {
                         range_node.block_range(from_height, to_height)
@@ -6732,6 +6775,13 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                     {
                         Ok(Ok(blocks)) => {
                             let best_height = response_node.best_meta().height;
+                            info!(
+                                from_height,
+                                to_height,
+                                block_count = blocks.len(),
+                                load_elapsed_ms = load_started.elapsed().as_millis(),
+                                "loaded native sync block range"
+                            );
                             send_sync_response_with_sender(
                                 &response_tx,
                                 peer_id,
@@ -7300,8 +7350,11 @@ fn native_sync_response_stale_for_local_tip(
 
 fn queue_native_best_sync_announce(node: &NativeNode, sync_tx: &ProtocolSender) {
     let meta = node.best_meta();
-    if meta.height == 0 && node.sync_target_height.load(Ordering::Relaxed) > 0 {
-        debug!("skipping genesis-only native sync announce while catching up");
+    if let Some((best_height, target_height)) = node.catching_up_to_sync_target() {
+        debug!(
+            best_height,
+            target_height, "skipping native sync announce while catching up"
+        );
         return;
     }
     let announce = NativeSyncMessage::Announce(Box::new(meta.clone()));
@@ -7469,6 +7522,13 @@ async fn send_sync_message(
     message: NativeSyncMessage,
 ) -> bool {
     let label = native_sync_message_label(&message);
+    let (from_height, to_height) = match &message {
+        NativeSyncMessage::Request {
+            from_height,
+            to_height,
+        } => (Some(*from_height), Some(*to_height)),
+        _ => (None, None),
+    };
     let payload = match encode_sync_message(&message) {
         Ok(payload) => payload,
         Err(err) => {
@@ -7483,6 +7543,8 @@ async fn send_sync_message(
         info!(
             peer = %hex32(&peer_id),
             message = label,
+            from_height = ?from_height,
+            to_height = ?to_height,
             "queued native sync message"
         );
         true
@@ -34690,6 +34752,17 @@ mod tests {
             actual, case.expected_allows_work,
             "{} native mining gate policy drifted from Lean spec",
             case.name
+        );
+    }
+
+    #[test]
+    fn native_sync_catch_up_target_only_when_observed_target_is_ahead() {
+        assert_eq!(native_sync_catch_up_target(0, false, 512), None);
+        assert_eq!(native_sync_catch_up_target(512, true, 512), None);
+        assert_eq!(native_sync_catch_up_target(768, true, 512), None);
+        assert_eq!(
+            native_sync_catch_up_target(512, true, 768),
+            Some((512, 768))
         );
     }
 
