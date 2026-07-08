@@ -20,7 +20,7 @@ use tokio::net::{TcpListener, TcpStream, lookup_host};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectedPeerSnapshot {
@@ -216,13 +216,14 @@ impl ProtocolMultiplexer {
                 return;
             };
             if handler
-                .try_send(QueuedInboundProtocolMessage {
+                .send(QueuedInboundProtocolMessage {
                     message: (peer_id, msg),
                     _permit: permit,
                 })
+                .await
                 .is_err()
             {
-                warn!("dropping protocol message because handler queue is full or closed");
+                warn!("dropping protocol message because handler queue is closed");
             }
         } else {
             warn!(
@@ -261,7 +262,7 @@ enum PeerRunOutcome {
 }
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -276,6 +277,7 @@ const OPPORTUNISTIC_BATCH: usize = 4;
 const RECENT_RECONNECT_LIMIT: usize = 5;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
+const P2P_COMMAND_CHANNEL_CAPACITY: usize = 4096;
 const PROTOCOL_CHANNEL_CAPACITY: usize = 1024;
 const PROOF_PROTOCOL_QUEUE_FRAME_SLOTS: usize = 16;
 const MAX_PROTOCOL_OUTBOUND_QUEUE_BYTES: usize =
@@ -438,7 +440,7 @@ impl P2PService {
 
         info!("p2p service listening on {}", self.addr);
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(100);
+        let (cmd_tx, mut cmd_rx) = mpsc::channel::<P2PCommand>(P2P_COMMAND_CHANNEL_CAPACITY);
 
         let nat_result = NatTraversal::attempt_mapping(&self.nat_config).await;
         self.advertised_addrs = nat_result.external_addresses.clone();
@@ -696,7 +698,7 @@ impl P2PService {
                                         .await;
                                 }
                                 WireMessage::Proto(proto_msg) => {
-                                    info!(
+                                    debug!(
                                         protocol = proto_msg.protocol,
                                         peer = ?peer_id,
                                         payload_bytes = proto_msg.payload.len(),
@@ -723,7 +725,7 @@ impl P2PService {
                 // Handle protocol messages from registered components
                 Some(outbound) = self.protocol_mux.next_outbound(), if self.protocol_mux.has_protocols() => {
                     let outbound = outbound.message;
-                    info!(
+                    debug!(
                         protocol = outbound.message.protocol,
                         target = ?outbound.target,
                         payload_bytes = outbound.message.payload.len(),
@@ -733,7 +735,7 @@ impl P2PService {
                         Some(peer_id) => {
                             self
                                 .peer_manager
-                                .send_to(&peer_id, WireMessage::Proto(outbound.message))
+                                .send_to_reliable(&peer_id, WireMessage::Proto(outbound.message))
                                 .await;
                         }
                         None => {
