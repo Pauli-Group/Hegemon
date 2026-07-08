@@ -6659,6 +6659,16 @@ fn import_native_sync_response_winning_branch(
         }
     }
 
+    if let Some(report) = import_native_sync_response_tip_extension(
+        node,
+        blocks,
+        first_unknown,
+        peer_best_height,
+        progress,
+    ) {
+        return Some(report);
+    }
+
     let new_chain = if first_unknown == blocks.len() {
         match node.chain_to_hash(response_tip.hash) {
             Ok(chain) => chain,
@@ -6759,6 +6769,64 @@ fn import_native_sync_response_winning_branch(
             })
         }
     }
+}
+
+fn import_native_sync_response_tip_extension(
+    node: &NativeNode,
+    blocks: &[NativeBlockMeta],
+    first_unknown: usize,
+    peer_best_height: u64,
+    progress: &mut NativeSyncResponseImportProgress,
+) -> Option<NativeSyncImportReport> {
+    if first_unknown >= blocks.len() {
+        return None;
+    }
+    let local_best = node.best_meta();
+    let anchor_hash = if first_unknown == 0 {
+        blocks[first_unknown].parent_hash
+    } else {
+        blocks[first_unknown - 1].hash
+    };
+    if anchor_hash != local_best.hash {
+        return None;
+    }
+
+    let mut expected_parent = anchor_hash;
+    for meta in &blocks[first_unknown..] {
+        if meta.parent_hash != expected_parent {
+            return None;
+        }
+        expected_parent = meta.hash;
+    }
+
+    let mut failure = None;
+    for meta in &blocks[first_unknown..] {
+        match node.import_announced_block(meta.clone()) {
+            Ok(true) => {
+                progress.record(NativeSyncResponseImportOutcome::Imported);
+                if progress.imported_blocks == 1 {
+                    node.observe_verified_sync_peer_height(peer_best_height);
+                }
+            }
+            Ok(false) => {
+                progress.record(NativeSyncResponseImportOutcome::AlreadyKnown);
+            }
+            Err(err) => {
+                progress.record(NativeSyncResponseImportOutcome::Error);
+                failure = Some(NativeSyncImportFailure {
+                    height: meta.height,
+                    hash: meta.hash,
+                    error: err.to_string(),
+                });
+                break;
+            }
+        }
+    }
+
+    Some(NativeSyncImportReport {
+        progress: *progress,
+        failure,
+    })
 }
 
 fn skip_stale_nonwinning_sync_block(
@@ -20408,6 +20476,54 @@ mod tests {
                 peer.height
             );
         }
+    }
+
+    #[test]
+    fn sync_response_tip_extension_imports_contiguous_chunk() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let test_pow_bits = 0x207f_ffff;
+        let node = NativeNode::open(test_config(tmp.path(), test_pow_bits, "unsafe", false))
+            .expect("node");
+
+        let peer_tmp = tempfile::tempdir().expect("peer tempdir");
+        let peer_node =
+            NativeNode::open(test_config(peer_tmp.path(), test_pow_bits, "unsafe", false))
+                .expect("peer node");
+        assert_eq!(node.best_meta().hash, peer_node.best_meta().hash);
+
+        let mut peer_blocks = Vec::new();
+        for height in 1..=3 {
+            let work = peer_node.prepare_work().expect("prepare peer branch work");
+            let seal = strongest_test_seal(&work, (height * 32)..(height * 32 + 32));
+            let peer = peer_node
+                .import_mined_block(&work, seal)
+                .expect("peer branch mined import")
+                .expect("peer branch block");
+            assert_eq!(peer.height, height);
+            peer_blocks.push(peer);
+        }
+        let peer_tip = peer_node.best_meta();
+
+        let report = import_native_sync_response_blocks(
+            &node,
+            peer_blocks.clone(),
+            peer_tip.height,
+            NativeSyncResponseImportProgress::new(peer_blocks.len()),
+        );
+
+        assert!(
+            report.failure.is_none(),
+            "unexpected sync import failure: {:?}",
+            report.failure.as_ref().map(|failure| (
+                failure.height,
+                hex32(&failure.hash),
+                failure.error.clone()
+            ))
+        );
+        assert_eq!(report.progress.attempted_blocks, peer_blocks.len());
+        assert_eq!(report.progress.imported_blocks, peer_blocks.len() as u64);
+        assert_eq!(node.best_meta().hash, peer_tip.hash);
+        assert_eq!(node.best_meta().height, peer_tip.height);
     }
 
     #[test]

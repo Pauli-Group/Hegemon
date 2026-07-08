@@ -74,12 +74,17 @@ Public Hegemon testnet users should be able to start the shipped 0.10 node, poin
 - Decision: Keep native sync response windows at 128 blocks after live-testing a 512-block window.
   Rationale: The 512-block experiment did reduce request count, but live resync stalled for several minutes after each large import chunk. Smaller windows keep import latency and peer responsiveness better under the current verifier/storage path, while the reliable queue and timeout fixes address the original dropped-response failure.
   Date/Author: 2026-07-08 / Codex
+- Decision: Add a straight-line tip-extension importer for native sync responses.
+  Rationale: The next live run showed responses arriving quickly but canonical progress landing only every few minutes because each response went through full branch reorganization, replay, and index rebuild from genesis. When a response is anchored directly at the current local tip, importing each block through the existing announced-tip extension path preserves validation while avoiding the reorg rebuild path.
+  Date/Author: 2026-07-08 / Codex
 
 ## Outcomes & Retrospective
 
 The initial PR binary deployment turned the public-seed join path from stuck to advancing: fresh local sync from `hegemon.pauli.group:30333` progressed from height 0 to 3,712 in 600 seconds. That is a real liveness improvement over the baseline height-0 stall, but not yet acceptable as the final outcome because full catch-up is still slow and restart continuation exposed a stale-peer timeout.
 
 The 512-block response-window experiment was then built, deployed, and measured against the public seed path. It imported the first 512-block chunk but then paused long enough that height remained 512 at 300 seconds and the next 512-block import did not land until roughly 225 seconds later. That result is worse operational behavior than the smaller windows, so the final patch keeps the original 128-block response cap and retains only the reliable P2P delivery, larger command queue, and longer stale-peer timeout fixes.
+
+After deploying that cap correction, another fresh local sync against `hegemon.pauli.group:30333` exposed the next bottleneck: the node reached height 128 at 90 seconds, 256 at 240 seconds, and only 384 at 600 seconds. Logs showed native sync responses arriving repeatedly while imports landed late, which pointed at local import/reorg cost rather than network delivery. The final importer patch adds the contiguous-tip fast path and must be measured from a fresh base path after deployment.
 
 ## Context and Orientation
 
