@@ -507,7 +507,7 @@ struct PendingAction {
     received_ms: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct NativeSyncRange {
     from_height: u64,
     to_height: u64,
@@ -584,7 +584,6 @@ struct NativeSyncRequestRateState {
 enum NativeSyncResponseStart {
     Started,
     DuplicateRange,
-    BusyWithDifferentRange,
 }
 
 #[derive(Clone, Debug)]
@@ -3071,7 +3070,7 @@ pub struct NativeNode {
     network_local_peer_id: Arc<StdRwLock<Option<PeerId>>>,
     network_peer_snapshot: Arc<StdRwLock<Vec<ConnectedPeerSnapshot>>>,
     sync_request_rate_limits: Mutex<BTreeMap<PeerId, NativeSyncRequestRateState>>,
-    sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, NativeSyncRange>>,
+    sync_response_in_flight_peers: Mutex<BTreeMap<PeerId, BTreeSet<NativeSyncRange>>>,
     outbound_sync_requests: Mutex<BTreeMap<Option<PeerId>, NativeOutboundSyncRequest>>,
     mining_tasks: Mutex<Vec<JoinHandle<()>>>,
     sync_tx: Mutex<Option<ProtocolSender>>,
@@ -3294,18 +3293,22 @@ impl NativeNode {
         range: NativeSyncRange,
     ) -> NativeSyncResponseStart {
         let mut responses = self.sync_response_in_flight_peers.lock();
-        match responses.get(&peer_id).copied() {
-            Some(existing) if existing == range => NativeSyncResponseStart::DuplicateRange,
-            Some(_) => NativeSyncResponseStart::BusyWithDifferentRange,
-            None => {
-                responses.insert(peer_id, range);
-                NativeSyncResponseStart::Started
-            }
+        let ranges = responses.entry(peer_id).or_default();
+        if !ranges.insert(range) {
+            NativeSyncResponseStart::DuplicateRange
+        } else {
+            NativeSyncResponseStart::Started
         }
     }
 
-    fn end_sync_response_for_peer(&self, peer_id: PeerId) {
-        self.sync_response_in_flight_peers.lock().remove(&peer_id);
+    fn end_sync_response_for_peer(&self, peer_id: PeerId, range: NativeSyncRange) {
+        let mut responses = self.sync_response_in_flight_peers.lock();
+        if let Some(ranges) = responses.get_mut(&peer_id) {
+            ranges.remove(&range);
+            if ranges.is_empty() {
+                responses.remove(&peer_id);
+            }
+        }
     }
 
     fn begin_outbound_sync_request(&self, peer_id: Option<PeerId>, range: NativeSyncRange) -> bool {
@@ -6747,19 +6750,10 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                         );
                         continue;
                     }
-                    NativeSyncResponseStart::BusyWithDifferentRange => {
-                        debug!(
-                            from_height,
-                            to_height,
-                            peer = %hex32(&peer_id),
-                            "deferring native sync request while another response is in flight"
-                        );
-                        continue;
-                    }
                 }
                 if let Err(rejection) = admit_native_sync_request_from_peer(node.as_ref(), peer_id)
                 {
-                    node.end_sync_response_for_peer(peer_id);
+                    node.end_sync_response_for_peer(peer_id, requested_range);
                     warn!(
                         from_height,
                         to_height,
@@ -6772,6 +6766,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                 let range_node = Arc::clone(&node);
                 let response_node = Arc::clone(&node);
                 let response_tx = sync_tx.clone();
+                let response_range = requested_range;
                 let load_started = Instant::now();
                 tokio::spawn(async move {
                     match tokio::task::spawn_blocking(move || {
@@ -6813,7 +6808,7 @@ async fn native_sync_loop(node: Arc<NativeNode>, mut handle: ProtocolHandle) {
                             );
                         }
                     }
-                    response_node.end_sync_response_for_peer(peer_id);
+                    response_node.end_sync_response_for_peer(peer_id, response_range);
                 });
             }
             NativeSyncMessage::Response {
@@ -35801,14 +35796,25 @@ mod tests {
                     to_height: 256,
                 },
             ),
-            NativeSyncResponseStart::BusyWithDifferentRange
+            NativeSyncResponseStart::Started
         );
-        node.end_sync_response_for_peer(peer);
+        node.end_sync_response_for_peer(
+            peer,
+            NativeSyncRange {
+                from_height: 129,
+                to_height: 256,
+            },
+        );
+        assert_eq!(
+            node.begin_sync_response_for_peer(peer, range),
+            NativeSyncResponseStart::DuplicateRange
+        );
+        node.end_sync_response_for_peer(peer, range);
         assert_eq!(
             node.begin_sync_response_for_peer(peer, range),
             NativeSyncResponseStart::Started
         );
-        node.end_sync_response_for_peer(peer);
+        node.end_sync_response_for_peer(peer, range);
     }
 
     #[test]
