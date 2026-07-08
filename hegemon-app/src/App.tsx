@@ -239,6 +239,18 @@ type DisclosureGroup = {
 
 type NodeTransitionAction = 'starting' | 'stopping';
 
+const isWalletSessionClosedError = (message: string) => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes('walletd process not running') ||
+    normalized.includes('walletd stopped') ||
+    normalized.includes('walletd stdin not available') ||
+    normalized.includes('wallet is locked') ||
+    normalized.includes('wallet unlock token') ||
+    normalized.includes('expired')
+  );
+};
+
 type NodeTransition = {
   action: NodeTransitionAction;
   connectionId: string;
@@ -1882,29 +1894,14 @@ export default function App() {
   };
 
   const invalidateWalletSession = useCallback(
-    (message: string, storePathOverride?: string) => {
-      const targetStorePath = (storePathOverride ?? storePath).trim();
+    (_message: string, _storePathOverride?: string) => {
       setWalletStatus(null);
-      setWalletError(message);
+      setWalletError(null);
       setActiveUnlockToken(null);
       setWalletSyncQueued(false);
       setDisclosureRecords([]);
-      if (!targetStorePath) {
-        return;
-      }
-      setSendAttempts((prev) =>
-        prev.map((entry) =>
-          entry.storePath === targetStorePath && entry.status === 'pending'
-            ? {
-                ...entry,
-                status: 'failed',
-                error: entry.error ?? message
-              }
-            : entry
-        )
-      );
     },
-    [storePath]
+    []
   );
 
   const requireActiveUnlockToken = () => {
@@ -1927,22 +1924,16 @@ export default function App() {
         const status = await window.hegemon.wallet.status(resolvedStorePath, unlockToken, true);
         setWalletStatus(status);
         setWalletError(null);
+        return true;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Wallet status failed.';
-        const normalized = message.toLowerCase();
-        if (
-          normalized.includes('walletd process not running') ||
-          normalized.includes('walletd stopped') ||
-          normalized.includes('walletd stdin not available') ||
-          normalized.includes('wallet is locked') ||
-          normalized.includes('wallet unlock token') ||
-          normalized.includes('expired')
-        ) {
+        if (isWalletSessionClosedError(message)) {
           invalidateWalletSession(message, resolvedStorePath || storePath);
-          return;
+          return false;
         }
         setWalletStatus(null);
         setWalletError(message);
+        return false;
       }
     },
     [activeUnlockToken, invalidateWalletSession, storePath]
@@ -1963,6 +1954,10 @@ export default function App() {
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Disclosure list failed.';
         const code = (error as { code?: string }).code;
+        if (isWalletSessionClosedError(message)) {
+          invalidateWalletSession(message, storePath);
+          return;
+        }
         if (code === 'unknown_method' || message.includes('unknown method disclosure.list')) {
           setDisclosureRecords([]);
           return;
@@ -1972,7 +1967,7 @@ export default function App() {
         setDisclosureListBusy(false);
       }
     },
-    [activeUnlockToken]
+    [activeUnlockToken, invalidateWalletSession, storePath]
   );
 
   const handleWalletInit = async () => {
@@ -2205,10 +2200,17 @@ export default function App() {
             reject(error);
           });
       });
-      await refreshWalletStatus();
-      await refreshDisclosureRecords();
+      const refreshed = await refreshWalletStatus();
+      if (refreshed) {
+        await refreshDisclosureRecords();
+      }
     } catch (error) {
-      setWalletError(error instanceof Error ? error.message : 'Wallet sync failed.');
+      const message = error instanceof Error ? error.message : 'Wallet sync failed.';
+      if (isWalletSessionClosedError(message)) {
+        invalidateWalletSession(message, storePath);
+      } else {
+        setWalletError(message);
+      }
     } finally {
       setWalletBusy(false);
     }
@@ -2377,8 +2379,10 @@ export default function App() {
       setRecipientAddress('');
       setSendAmount('');
       setSendMemo('');
-      await refreshWalletStatus();
-      await refreshDisclosureRecords();
+      const refreshed = await refreshWalletStatus();
+      if (refreshed) {
+        await refreshDisclosureRecords();
+      }
     } catch (error) {
       if (attemptId) {
         const message = humanizeWalletAddressError(error);
@@ -2873,12 +2877,18 @@ export default function App() {
     const attemptEntries: ActivityEntry[] = sortedAttempts.map((attempt, index) => {
       const windowEnd = index > 0 ? sortedAttempts[index - 1]?.createdAt : null;
       const pending = attempt.txId ? activityByTxId.get(attempt.txId) : null;
+      const txId = attempt.txId ? normalizeTxId(attempt.txId) ?? attempt.txId : undefined;
+      const walletSessionClosedForKnownTx = Boolean(
+        txId && attempt.status === 'failed' && attempt.error && isWalletSessionClosedError(attempt.error)
+      );
       const missingWalletPending =
         attempt.status === 'pending' && !pending && walletUnlocked && !walletError;
       const status = pending
         ? pending.status === 'confirmed'
           ? 'confirmed'
           : 'pending'
+        : walletSessionClosedForKnownTx
+          ? 'pending'
         : missingWalletPending
           ? 'failed'
           : attempt.status;
@@ -2926,11 +2936,13 @@ export default function App() {
         fee: attempt.fee,
         memo: attempt.memo,
         status,
-        txId: normalizeTxId(pending?.txId) ?? attempt.txId,
+        txId: normalizeTxId(pending?.txId) ?? txId,
         confirmations: pending?.confirmations,
         error: missingWalletPending
           ? attempt.error ?? 'Submission never appeared in wallet pending state.'
-          : attempt.error,
+          : walletSessionClosedForKnownTx
+            ? undefined
+            : attempt.error,
         notesNeeded: attempt.notesNeeded,
         walletNoteCount: attempt.walletNoteCount,
         maxInputs: attempt.maxInputs,

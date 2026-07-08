@@ -149,6 +149,16 @@ assert.equal(
   false,
   'Copy-address failures must not mark the wallet itself unhealthy.'
 );
+assert.doesNotMatch(
+  appSource,
+  /const invalidateWalletSession[\s\S]*?setSendAttempts[\s\S]*?const requireActiveUnlockToken/,
+  'Wallet session expiry must not rewrite transaction attempts as failed.'
+);
+assert.match(
+  appSource,
+  /walletSessionClosedForKnownTx/,
+  'Known transactions must remain non-failed when the wallet later locks or disconnects.'
+);
 assert.match(appSource, /Mining rewards/);
 assert.match(appSource, /miningPayoutMismatch/);
 assert.match(
