@@ -4633,7 +4633,7 @@ impl NativeNode {
         };
         let mut action_bodies_verified = 0usize;
         for height in range.from_height..=range.to_height {
-            let meta = self.load_canonical_block_at_height_unverified(height)?;
+            let meta = self.load_canonical_sync_block_at_height(height)?;
             if let Some(parent) = parent.as_ref() {
                 if meta.parent_hash != parent.hash {
                     return Err(anyhow!(
@@ -4648,13 +4648,6 @@ impl NativeNode {
                 }
             }
             if meta.height != 0 {
-                verify_canonical_sync_block_body(&meta).with_context(|| {
-                    format!(
-                        "validate canonical native sync block body at height {} ({})",
-                        meta.height,
-                        hex32(&meta.hash)
-                    )
-                })?;
                 action_bodies_verified = action_bodies_verified.saturating_add(1);
             }
             parent = Some(meta.clone());
