@@ -210,16 +210,11 @@ fn compute_transaction_id(
     out
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ProofVerificationMode {
+    #[default]
     InlineRequired,
     SelfContainedAggregation,
-}
-
-impl Default for ProofVerificationMode {
-    fn default() -> Self {
-        Self::InlineRequired
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

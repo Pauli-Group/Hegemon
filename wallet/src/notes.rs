@@ -536,7 +536,7 @@ fn encode_compact_u64(value: u64, out: &mut Vec<u8>) {
         let v = ((value as u32) << 2) | 0x02;
         out.extend_from_slice(&v.to_le_bytes());
     } else {
-        let bytes_needed = ((64 - value.leading_zeros() + 7) / 8) as u8;
+        let bytes_needed = (64 - value.leading_zeros()).div_ceil(8) as u8;
         out.push(((bytes_needed - 4) << 2) | 0x03);
         let value_bytes = value.to_le_bytes();
         out.extend_from_slice(&value_bytes[..bytes_needed as usize]);

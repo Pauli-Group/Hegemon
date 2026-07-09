@@ -427,7 +427,7 @@ fn data_shards_for_len(len: usize, chunk_size: usize) -> usize {
 
 fn parity_shards_for_data(data_shards: usize) -> usize {
     // Use a 1.5x overhead baseline: p = ceil(k / 2).
-    let parity = (data_shards + 1) / 2;
+    let parity = data_shards.div_ceil(2);
     parity.max(1)
 }
 

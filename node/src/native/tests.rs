@@ -18468,7 +18468,7 @@ fn load_pending_actions_rejects_malformed_key() {
         .open_tree("pending_actions")
         .expect("pending action tree");
     let action = test_outbound_bridge_action(b"persisted malformed key");
-    tree.insert(&[7u8; 31], action.encode())
+    tree.insert([7u8; 31], action.encode())
         .expect("insert malformed pending action key");
 
     let err = load_pending_actions(&tree).expect_err("malformed pending action key must reject");
@@ -18712,7 +18712,7 @@ fn load_staged_proofs_drops_malformed_key() {
         .open()
         .expect("temporary sled db");
     let tree = db.open_tree("staged_proofs").expect("staged proof tree");
-    tree.insert(&[7u8; 63], [1u8, 2, 3].as_slice())
+    tree.insert([7u8; 63], [1u8, 2, 3].as_slice())
         .expect("insert malformed proof key");
 
     let loaded = load_staged_proofs(&db, &tree).expect("load staged proofs");

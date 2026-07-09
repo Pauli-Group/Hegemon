@@ -1767,19 +1767,21 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         "tx-leaf ciphertext-hash list length does not match active output flags"
     );
 
-    let mut public = TransactionPublicInputsP3::default();
-    public.input_flags = stark_inputs
-        .input_flags
-        .iter()
-        .copied()
-        .map(|flag| Goldilocks::from_u64(u64::from(flag)))
-        .collect();
-    public.output_flags = stark_inputs
-        .output_flags
-        .iter()
-        .copied()
-        .map(|flag| Goldilocks::from_u64(u64::from(flag)))
-        .collect();
+    let mut public = TransactionPublicInputsP3 {
+        input_flags: stark_inputs
+            .input_flags
+            .iter()
+            .copied()
+            .map(|flag| Goldilocks::from_u64(u64::from(flag)))
+            .collect(),
+        output_flags: stark_inputs
+            .output_flags
+            .iter()
+            .copied()
+            .map(|flag| Goldilocks::from_u64(u64::from(flag)))
+            .collect(),
+        ..TransactionPublicInputsP3::default()
+    };
     for (slot, value) in public_nullifier_slots.iter().enumerate() {
         public.nullifiers[slot] = bytes48_to_felts(value)
             .ok_or_else(|| anyhow::anyhow!("tx nullifier {} is non-canonical", slot))?;
@@ -7969,9 +7971,11 @@ mod tests {
     }
 
     fn oversized_public_inputs_proof() -> TransactionProof {
-        let mut public_inputs = TransactionPublicInputs::default();
-        public_inputs.circuit_version = LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit;
-        public_inputs.crypto_suite = LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto;
+        let mut public_inputs = TransactionPublicInputs {
+            circuit_version: LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit,
+            crypto_suite: LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto,
+            ..TransactionPublicInputs::default()
+        };
         let top_level_nullifiers = public_inputs.nullifiers.clone();
         let top_level_commitments = public_inputs.commitments.clone();
         let top_level_balance_slots = public_inputs.balance_slots.clone();

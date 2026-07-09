@@ -8,7 +8,16 @@ use scale_info::TypeInfo;
 use crate::types::{BindingHash, StablecoinPolicyBinding, StarkProof};
 
 #[derive(
-    Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, MaxEncodedLen, TypeInfo,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Encode,
+    Decode,
+    DecodeWithMemTracking,
+    MaxEncodedLen,
+    TypeInfo,
+    Default,
 )]
 pub struct VerifyingKey {
     pub id: u32,
@@ -20,17 +29,6 @@ pub struct VerifyingKey {
 impl VerifyingKey {
     pub fn key_hash(&self) -> [u8; 32] {
         self.air_hash
-    }
-}
-
-impl Default for VerifyingKey {
-    fn default() -> Self {
-        Self {
-            id: 0,
-            enabled: false,
-            air_hash: [0u8; 32],
-            circuit_id: [0u8; 32],
-        }
     }
 }
 

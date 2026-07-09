@@ -1996,19 +1996,21 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         "tx ciphertext-hash list length does not match active output flags"
     );
 
-    let mut public = TransactionPublicInputsP3::default();
-    public.input_flags = stark_inputs
-        .input_flags
-        .iter()
-        .copied()
-        .map(|flag| Goldilocks::new(u64::from(flag)))
-        .collect();
-    public.output_flags = stark_inputs
-        .output_flags
-        .iter()
-        .copied()
-        .map(|flag| Goldilocks::new(u64::from(flag)))
-        .collect();
+    let mut public = TransactionPublicInputsP3 {
+        input_flags: stark_inputs
+            .input_flags
+            .iter()
+            .copied()
+            .map(|flag| Goldilocks::new(u64::from(flag)))
+            .collect(),
+        output_flags: stark_inputs
+            .output_flags
+            .iter()
+            .copied()
+            .map(|flag| Goldilocks::new(u64::from(flag)))
+            .collect(),
+        ..TransactionPublicInputsP3::default()
+    };
     public.nullifiers = tx
         .nullifiers
         .iter()

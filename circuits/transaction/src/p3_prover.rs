@@ -135,7 +135,7 @@ impl TransactionProverP3 {
             let schedule_row = schedule.row_slice(row).expect("schedule row missing");
             let row_slice = trace.row_mut(row);
             row_slice[COL_SCHEDULE_START..COL_SCHEDULE_START + PREPROCESSED_WIDTH]
-                .copy_from_slice(&*schedule_row);
+                .copy_from_slice(&schedule_row);
         }
 
         let (input_notes, input_flags) = pad_inputs(&witness.inputs);

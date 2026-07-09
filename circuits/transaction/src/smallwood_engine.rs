@@ -3035,7 +3035,7 @@ impl SmallwoodConfig {
         let nb_unstacked_rows = packing_factor + profile.nb_opened_evals;
         let mut nb_unstacked_cols = 0usize;
         for &deg in &degree {
-            let w = (deg + 1 - profile.nb_opened_evals + (packing_factor - 1)) / packing_factor;
+            let w = (deg + 1 - profile.nb_opened_evals).div_ceil(packing_factor);
             width.push(w);
             let d = (packing_factor * w + profile.nb_opened_evals) - (deg + 1);
             if w == 1 && d != 0 {

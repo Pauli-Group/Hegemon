@@ -258,8 +258,10 @@ impl NoteScanner {
     /// Returns a `ScanResult` with all owned notes found.
     pub fn scan_batch(&self, notes: &[PositionedNote]) -> ScanResult {
         let start = Instant::now();
-        let mut result = ScanResult::default();
-        result.total_scanned = notes.len();
+        let mut result = ScanResult {
+            total_scanned: notes.len(),
+            ..ScanResult::default()
+        };
 
         for note in notes {
             match self.scan_note(note) {

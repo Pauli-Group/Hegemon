@@ -1598,9 +1598,11 @@ mod tests {
     }
 
     fn dummy_proof() -> TransactionProof {
-        let mut public_inputs = TransactionPublicInputs::default();
-        public_inputs.circuit_version = LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit;
-        public_inputs.crypto_suite = LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto;
+        let public_inputs = TransactionPublicInputs {
+            circuit_version: LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit,
+            crypto_suite: LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto,
+            ..TransactionPublicInputs::default()
+        };
         TransactionProof {
             nullifiers: public_inputs.nullifiers.clone(),
             commitments: public_inputs.commitments.clone(),
