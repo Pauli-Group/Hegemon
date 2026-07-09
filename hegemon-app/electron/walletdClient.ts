@@ -16,18 +16,18 @@ import type {
 } from '../src/types';
 import { resolveBinaryPath } from './binPaths';
 import { applyEnvDefaults, copyParentEnv, createBaseChildEnv } from './childProcessEnv';
+import {
+  parseWalletdResponseLine,
+  rejectLineDelimitedPassphrase,
+  resolveWalletdRequestTimeoutMs,
+  walletdExitError,
+  walletdResponseError
+} from './walletdProtocol';
 
 type PendingRequest = {
   resolve: (value: any) => void;
   reject: (reason: Error) => void;
-};
-
-type WalletdResponse = {
-  id: number;
-  ok: boolean;
-  result?: any;
-  error?: string;
-  error_code?: string;
+  timer: NodeJS.Timeout;
 };
 
 type WalletdMode = 'open' | 'create';
@@ -57,12 +57,6 @@ const WALLETD_ENV_PASSTHROUGH = [
   'WALLET_PENDING_TIMEOUT_SECS',
   'WALLET_CONSOLIDATION_PENDING_TIMEOUT_SECS'
 ] as const;
-
-function rejectLineDelimitedPassphrase(passphrase: string): void {
-  if (passphrase.includes('\n') || passphrase.includes('\r')) {
-    throw new Error('Wallet passphrase cannot contain line breaks.');
-  }
-}
 
 function walletdSpawnEnv(): NodeJS.ProcessEnv {
   const env = createBaseChildEnv();
@@ -152,8 +146,24 @@ export class WalletdClient {
     const payload = JSON.stringify({ id, method, params });
     this.process.stdin.write(`${payload}\n`);
 
+    const timeoutMs = resolveWalletdRequestTimeoutMs(
+      process.env.HEGEMON_WALLETD_REQUEST_TIMEOUT_MS
+    );
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(id);
+        if (!pending) {
+          return;
+        }
+        this.pending.delete(id);
+        pending.reject(
+          new Error(
+            `walletd request '${method}' timed out after ${timeoutMs} ms; the walletd process may be wedged. Stop and reopen the wallet to recover.`
+          )
+        );
+      }, timeoutMs);
+      timer.unref?.();
+      this.pending.set(id, { resolve, reject, timer });
     });
   }
 
@@ -223,37 +233,29 @@ export class WalletdClient {
   }
 
   private handleResponseLine(line: string) {
-    const trimmed = line.trim();
-    if (!trimmed) {
+    const parsed = parseWalletdResponseLine(line);
+    if (parsed.kind === 'empty') {
       return;
     }
-    let response: WalletdResponse;
-    try {
-      response = JSON.parse(trimmed) as WalletdResponse;
-    } catch {
-      if (!trimmed.startsWith('{')) {
-        console.warn(`walletd stdout: ${trimmed}`);
-        return;
-      }
-      console.error(`walletd invalid JSON response: ${trimmed}`);
+    if (parsed.kind === 'noise') {
+      console.warn(`walletd stdout: ${parsed.text}`);
       return;
     }
+    if (parsed.kind === 'invalid') {
+      console.error(`walletd invalid JSON response: ${parsed.text}`);
+      return;
+    }
+    const response = parsed.response;
     const pending = this.pending.get(response.id);
     if (!pending) {
       return;
     }
     this.pending.delete(response.id);
+    clearTimeout(pending.timer);
     if (response.ok) {
       pending.resolve(response.result ?? null);
     } else {
-      const message = response.error || 'walletd error';
-      const error = new Error(
-        response.error_code ? `${message} (${response.error_code})` : message
-      );
-      if (response.error_code) {
-        (error as { code?: string }).code = response.error_code;
-      }
-      pending.reject(error);
+      pending.reject(walletdResponseError(response));
     }
   }
 
@@ -268,22 +270,40 @@ export class WalletdClient {
     this.rejectPending(new Error('walletd stopped'));
     this.clearProcessState();
 
+    let exited = false;
     const exitPromise = new Promise<void>((resolve) => {
-      process.once('exit', () => resolve());
-      process.once('error', () => resolve());
+      const settle = () => {
+        exited = true;
+        resolve();
+      };
+      process.once('exit', settle);
+      process.once('error', settle);
     });
 
     process.kill('SIGINT');
 
-    const timeout = new Promise<void>((resolve) => {
-      setTimeout(() => resolve(), 1500);
-    });
+    await Promise.race([
+      exitPromise,
+      new Promise<void>((resolve) => {
+        setTimeout(() => resolve(), 1500);
+      })
+    ]);
 
-    await Promise.race([exitPromise, timeout]);
+    if (!exited) {
+      // walletd ignored or could not service SIGINT within the grace period;
+      // escalate so a wedged process cannot outlive the app session.
+      try {
+        process.kill('SIGKILL');
+      } catch {
+        // Process may have exited between the check and the kill.
+      }
+      await exitPromise;
+    }
   }
 
   private rejectPending(error: Error) {
     for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.pending.clear();
@@ -312,31 +332,7 @@ export class WalletdClient {
   }
 
   private buildExitError(code: number | null, signal: NodeJS.Signals | null) {
-    const summary = this.formatStderrSummary();
-    if (summary) {
-      const cleaned = summary.replace(/^Error:\s*/, '').trim();
-      if (cleaned) {
-        return new Error(cleaned);
-      }
-    }
-    const suffix = signal ? ` (signal ${signal})` : '';
-    return new Error(`walletd exited with code ${code ?? 'unknown'}${suffix}`);
-  }
-
-  private formatStderrSummary() {
-    if (!this.stderrBuffer.length) {
-      return '';
-    }
-    const lines = this.stderrBuffer.filter(Boolean);
-    if (!lines.length) {
-      return '';
-    }
-    const first = lines[0];
-    const last = lines[lines.length - 1].replace(/^\d+:\s*/, '');
-    if (lines.length > 1 && last && last !== first) {
-      return `${first} (${last})`;
-    }
-    return first;
+    return walletdExitError(code, signal, this.stderrBuffer);
   }
 }
 

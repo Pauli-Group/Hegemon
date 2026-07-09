@@ -337,18 +337,14 @@ impl Default for StablecoinPolicyBinding {
     DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
+    Default,
 )]
 pub enum DaAvailabilityPolicy {
+    #[default]
     FullFetch,
     Sampling,
 }
 
-impl Default for DaAvailabilityPolicy {
-    fn default() -> Self {
-        DaAvailabilityPolicy::FullFetch
-    }
-}
-
 #[derive(
     Clone,
     Copy,
@@ -360,18 +356,14 @@ impl Default for DaAvailabilityPolicy {
     DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
+    Default,
 )]
 pub enum CiphertextPolicy {
+    #[default]
     InlineAllowed,
     SidecarOnly,
 }
 
-impl Default for CiphertextPolicy {
-    fn default() -> Self {
-        CiphertextPolicy::InlineAllowed
-    }
-}
-
 #[derive(
     Clone,
     Copy,
@@ -383,16 +375,12 @@ impl Default for CiphertextPolicy {
     DecodeWithMemTracking,
     TypeInfo,
     MaxEncodedLen,
+    Default,
 )]
 pub enum ProofAvailabilityPolicy {
+    #[default]
     InlineRequired,
     SelfContained,
-}
-
-impl Default for ProofAvailabilityPolicy {
-    fn default() -> Self {
-        ProofAvailabilityPolicy::InlineRequired
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]

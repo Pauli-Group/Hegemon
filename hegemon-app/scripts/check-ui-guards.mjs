@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
@@ -10,7 +10,19 @@ const here = dirname(fileURLToPath(import.meta.url));
 const modulePath = resolve(here, '../src/appGuards.ts');
 const source = readFileSync(modulePath, 'utf8');
 const appPath = resolve(here, '../src/App.tsx');
-const appSource = readFileSync(appPath, 'utf8');
+// The renderer is decomposed across App.tsx plus src/lib and src/components
+// modules; guard assertions apply to the combined renderer source so the
+// negative checks (e.g. no direct navigator.clipboard use) keep their strength.
+const rendererSourcePaths = [
+  appPath,
+  ...readdirSync(resolve(here, '../src/lib'))
+    .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+    .map((name) => resolve(here, '../src/lib', name)),
+  ...readdirSync(resolve(here, '../src/components'))
+    .filter((name) => name.endsWith('.tsx'))
+    .map((name) => resolve(here, '../src/components', name))
+];
+const appSource = rendererSourcePaths.map((path) => readFileSync(path, 'utf8')).join('\n');
 const nodeManagerPath = resolve(here, '../electron/nodeManager.ts');
 const nodeManagerSource = readFileSync(nodeManagerPath, 'utf8');
 const compiled = ts.transpileModule(source, {

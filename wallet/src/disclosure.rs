@@ -162,7 +162,7 @@ mod serde_vec_hex_48 {
     where
         S: Serializer,
     {
-        let encoded: Vec<String> = values.iter().map(|v| encode_hex_48(v)).collect();
+        let encoded: Vec<String> = values.iter().map(encode_hex_48).collect();
         encoded.serialize(serializer)
     }
 

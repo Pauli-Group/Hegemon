@@ -58,7 +58,7 @@ fn print_account(name: &str, seed: &[u8; 32]) {
     println!("{} Dev Account:", name);
     println!("  Seed: 0x{}", hex::encode(seed));
     println!("  Public Key Len: {} bytes", pk_bytes.len());
-    println!("  AccountId (hex): 0x{}", hex::encode(&account_id));
+    println!("  AccountId (hex): 0x{}", hex::encode(account_id));
     println!("  AccountId (SS58): {}", ss58);
     println!();
 }

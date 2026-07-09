@@ -342,7 +342,7 @@ pub async fn execute_consolidation(
         // Step 2: Select only notes needed for target_value
         // Sort by value descending - prefer larger notes (including consolidated ones)
         let mut notes = store.spendable_notes(NATIVE_ASSET_ID)?;
-        notes.sort_by(|a, b| b.value().cmp(&a.value()));
+        notes.sort_by_key(|note| std::cmp::Reverse(note.value()));
 
         let (selected, _selected_value, required_value) =
             select_notes_for_target(&notes, target_value, fee_per_tx)?;
@@ -430,7 +430,7 @@ pub async fn execute_consolidation(
                 );
             }
 
-            let built = build_consolidation_transaction(&*store, note_0, note_1, fee_per_tx)?;
+            let built = build_consolidation_transaction(&store, note_0, note_1, fee_per_tx)?;
             let mut tx_bytes = estimate_submission_bytes(&built.bundle, batch_config);
 
             if pair_index == 0 {

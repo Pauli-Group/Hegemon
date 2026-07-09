@@ -731,7 +731,7 @@ impl Default for NativeBackendParams {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct LatticeBackend {
     pub params: NativeBackendParams,
 }
@@ -1009,14 +1009,6 @@ impl PreparedMatrixCache {
             self.access_order.remove(position);
         }
         self.access_order.push_back(key);
-    }
-}
-
-impl Default for LatticeBackend {
-    fn default() -> Self {
-        Self {
-            params: NativeBackendParams::default(),
-        }
     }
 }
 
