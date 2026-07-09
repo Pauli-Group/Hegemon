@@ -1989,14 +1989,78 @@ fn rust_caller_symbol_leaf(symbol: &str) -> &str {
         .map_or(symbol, |(_, method)| method)
 }
 
+/// Collect the names of non-test file submodules declared in a `mod.rs`
+/// source, in declaration order. Only declaration-form modules (`mod x;`)
+/// count; inline modules (`mod x { .. }`) already live in the same source
+/// text. Modules named `tests` or annotated with a non-production `cfg`
+/// attribute are excluded so test-only code cannot satisfy bindings.
+fn rust_non_test_file_submodules(sanitized: &str) -> Vec<String> {
+    let mut submodules = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(mod_start) = find_rust_token(sanitized, "mod", cursor) {
+        cursor = mod_start + 3;
+        let Some((module_name, after_name)) = parse_rust_identifier_after(sanitized, mod_start + 3)
+        else {
+            continue;
+        };
+        // Declaration form only: the next non-identifier byte must be `;`.
+        if find_rust_body_start(sanitized, after_name).is_some() {
+            continue;
+        }
+        if module_name == "tests"
+            || preceding_rust_attrs_contain_non_production_cfg(sanitized, mod_start)
+        {
+            continue;
+        }
+        submodules.push(module_name);
+    }
+    submodules
+}
+
+/// Load the Rust source a binding path denotes. A binding on a module root
+/// (`.../mod.rs`) denotes the whole module namespace, exactly as Rust does:
+/// the root file is concatenated with each declared non-test sibling
+/// `<name>.rs` file so callee/caller resolution keeps working when a module
+/// is split into files without any semantic change.
+fn rust_binding_module_source(root: &Path, raw_path: &str) -> Result<String> {
+    let path = root.join(raw_path);
+    let source = fs::read_to_string(&path)
+        .with_context(|| format!("read {} implementation binding source", path.display()))?;
+    let is_module_root = Path::new(raw_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("mod.rs");
+    if !is_module_root {
+        return Ok(source);
+    }
+    let Some(dir) = path.parent() else {
+        return Ok(source);
+    };
+    let sanitized_root = sanitize_rust_source(&source);
+    let mut combined = source;
+    for submodule in rust_non_test_file_submodules(&sanitized_root) {
+        let sibling = dir.join(format!("{submodule}.rs"));
+        if !sibling.exists() {
+            continue;
+        }
+        let sibling_source = fs::read_to_string(&sibling).with_context(|| {
+            format!(
+                "read {} module member for implementation binding",
+                sibling.display()
+            )
+        })?;
+        combined.push('\n');
+        combined.push_str(&sibling_source);
+    }
+    Ok(combined)
+}
+
 fn validate_rust_implementation_binding(
     root: &Path,
     claim_id: &str,
     binding: &ImplementationBinding,
 ) -> Result<()> {
-    let path = root.join(&binding.path);
-    let source = fs::read_to_string(&path)
-        .with_context(|| format!("read {} implementation binding source", path.display()))?;
+    let source = rust_binding_module_source(root, &binding.path)?;
     let sanitized = sanitize_rust_source(&source);
     let test_module_spans = rust_cfg_test_module_spans(&sanitized);
     let functions = rust_function_spans(&sanitized)?;
@@ -5417,6 +5481,109 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_constraints, 0);
         assert_eq!(report.implementation_order_edges, 0);
+    }
+
+    #[test]
+    fn module_root_binding_resolves_across_split_module_files() {
+        let root = test_root("module-split-implementation-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod admission;\n\
+             mod node_impl;\n\
+             pub(crate) use admission::*;\n\
+             #[cfg(test)]\n\
+             mod tests;\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/admission.rs",
+            "pub(crate) fn verified_helper() {}\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/node_impl.rs",
+            "struct NativeNode;\n\
+             impl NativeNode {\n\
+                 pub(crate) fn import_mined_block(&self) { verified_helper(); }\n\
+             }\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/tests.rs",
+            "fn test_only_helper() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["NativeNode::import_mined_block"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("module-split implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn module_root_binding_ignores_cfg_test_module_files() {
+        let root = test_root("module-split-test-file-excluded");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod admission;\n\
+             #[cfg(test)]\n\
+             mod tests;\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/admission.rs",
+            "pub(crate) fn verified_helper() {}\n",
+        );
+        // The only caller lives in the cfg(test) module file; test-only code
+        // must not satisfy a module-root binding.
+        write_repo_file(
+            &root,
+            "src/native/tests.rs",
+            "fn import_mined_block() { verified_helper(); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["import_mined_block"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("test-module caller must not satisfy module binding");
+        assert!(err
+            .to_string()
+            .contains("implementation binding caller import_mined_block is missing"));
+    }
+
+    #[test]
+    fn rust_non_test_file_submodules_skips_tests_and_inline_modules() {
+        let sanitized = sanitize_rust_source(
+            "mod admission;\npub(crate) mod util;\nmod inline_module { fn f() {} }\n#[cfg(test)]\nmod tests;\n",
+        );
+        assert_eq!(
+            rust_non_test_file_submodules(&sanitized),
+            vec!["admission".to_owned(), "util".to_owned()]
+        );
     }
 
     #[test]
@@ -9547,18 +9714,22 @@ mod tests {
     }
 
     fn blueprint_fixture_with_binding(callee: &str, callers: &[&str]) -> Value {
+        blueprint_fixture_with_binding_at("src/native.rs", callee, callers)
+    }
+
+    fn blueprint_fixture_with_binding_at(path: &str, callee: &str, callers: &[&str]) -> Value {
         let mut blueprint = blueprint_fixture("accepted", &[], &["support.dep"]);
         let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
         let target = nodes[1].as_object_mut().expect("target object");
         target.insert(
             "implementation_paths".to_owned(),
-            json!(["evidence/target.txt", "src/native.rs"]),
+            json!(["evidence/target.txt", path]),
         );
         target.insert(
             "implementation_bindings".to_owned(),
             json!([
                 {
-                    "path": "src/native.rs",
+                    "path": path,
                     "callee": callee,
                     "required_callers": callers
                 }

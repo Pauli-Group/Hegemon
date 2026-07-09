@@ -48,7 +48,7 @@ To see it working: `cargo test -p hegemon-node` passes unchanged, and
 
 # Milestones
 
-## M1. Split tests out of node/src/native/mod.rs — IN PROGRESS
+## M1. Split tests out of node/src/native/mod.rs — DONE
 
 * Move the `#[cfg(test)] mod tests { ... }` block (from the `mod tests {` line
   to the matching final `}` at end of file) into `node/src/native/tests.rs`,
@@ -62,7 +62,7 @@ To see it working: `cargo test -p hegemon-node` passes unchanged, and
 * Verify: `cargo test -p hegemon-node --no-run` compiles; `cargo test -p
   hegemon-node` passes.
 
-## M2. Split production code into submodules — NOT STARTED
+## M2. Split production code into submodules — DONE
 
 Move cohesive line ranges of the remaining `mod.rs` into sibling files under
 `node/src/native/`, each declared in `mod.rs` and re-exported with
@@ -98,7 +98,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
 * Verify after each move: `cargo check -p hegemon-node`, then full
   `cargo test -p hegemon-node` at the end.
 
-## M3. Harden hegemon-app walletdClient — NOT STARTED
+## M3. Harden hegemon-app walletdClient — DONE
 
 * Add a per-request timeout (default 600000 ms, override via
   `HEGEMON_WALLETD_REQUEST_TIMEOUT_MS`, minimum 1000 ms). On timeout the
@@ -109,7 +109,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
   process has not exited, and awaits exit afterwards.
 * Verify: `npm --prefix hegemon-app run typecheck`.
 
-## M4. Extract modules from App.tsx — NOT STARTED
+## M4. Extract modules from App.tsx — DONE
 
 * Move the pre-`App()` helper components and shared constants into:
   `src/components/AppIcon.tsx`, `src/components/EmptyStateIcon.tsx`,
@@ -121,7 +121,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
 * Verify: `npm --prefix hegemon-app run typecheck` and
   `npm --prefix hegemon-app run check:ui-guards`.
 
-## M5. Add vitest unit-test rig — NOT STARTED
+## M5. Add vitest unit-test rig — DONE
 
 * Dev-dependency `vitest`; `npm test` runs `vitest run`. Tests cover:
   `electron/walletdClient` response-line parsing and timeout behavior (via
@@ -129,7 +129,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
   normalizer extracted from `electron/main.ts` into `electron/rpcEndpoint.ts`
   (main.ts imports it; logic unchanged).
 
-## M6. Documentation & verification — NOT STARTED
+## M6. Documentation & verification — DONE
 
 * Update `DESIGN.md` native-node section file references if any point at
   `node/src/native/mod.rs` internals (grep first; whitepaper references
@@ -142,6 +142,20 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
 * 2026-07-08: Chose directory split with `pub(crate) use` re-exports over
   `include!()` tricks — re-exports keep rustdoc/module semantics honest while
   preserving every internal path via the glob re-export namespace.
+* 2026-07-08: The formal blueprint (`config/formal-security-blueprint.json`)
+  pins 177 implementation bindings to `node/src/native/mod.rs`, and
+  `scripts/hegemon_formal_core::validate_rust_implementation_binding` resolved
+  callee + required callers inside that single file. Splitting the module
+  would have broken the formal-core release gate. Decision: teach the
+  validator that a binding on a module root (`.../mod.rs`) denotes the whole
+  module namespace — the root file concatenated with each declared non-test
+  sibling `<name>.rs` submodule — which is exactly Rust's module semantics.
+  `#[cfg(test)] mod tests;` files and modules named `tests` are excluded so
+  test-only code still cannot satisfy bindings (covered by new unit tests
+  `module_root_binding_resolves_across_split_module_files`,
+  `module_root_binding_ignores_cfg_test_module_files`, and
+  `rust_non_test_file_submodules_skips_tests_and_inline_modules`). The
+  blueprint JSON itself needs no churn, keeping review diffs small.
 * 2026-07-08: Deferred full `App()` page decomposition: 59 interleaved state
   hooks need a context/props design decision that should not be bundled with
   mechanical extraction. The extraction in M4 plus the test rig in M5 make the
@@ -152,5 +166,29 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
 
 # Progress
 
-* Branch `hardening/monolith-split-and-app-rig` created; plan authored; M1 starting.
+* M1–M5 complete on branch `hardening/monolith-split-and-app-rig`:
+  - node/src/native/mod.rs (43,514 lines) is now mod.rs (3,115) plus nine
+    production modules and tests.rs; 433 node tests pass, clippy/fmt clean.
+  - App.tsx reduced from 5,278 to 4,260 lines with src/lib/{config,appTypes,
+    format,logs,connections} and src/components/{AppIcon,EmptyStateIcon,
+    ScrollToTop}; check-ui-guards scans the combined renderer sources.
+  - walletd client: per-request timeout + SIGINT->SIGKILL escalation;
+    protocol helpers extracted and unit-tested (vitest, 37 tests).
+* Additional scope beyond the plan: workspace clippy allow-list burned down
+  from 17 entries to 4 (needless_borrow, type_complexity, too_many_arguments,
+  result_large_err kept); 13 stylistic allows removed and all findings fixed
+  across both CI clippy package sets.
+* Formal-core gate: `scripts/hegemon_formal_core` now resolves module-root
+  (`mod.rs`) implementation bindings across the whole module namespace
+  (root file + declared non-test sibling submodule files), excluding
+  `#[cfg(test)]` module files. 128 crate unit tests pass (3 new), and the
+  full `bash scripts/check_formal_core.sh` release gate passes end-to-end
+  on the split module (exit 0), including check-claims, check-blueprint
+  with all 177 native-module bindings, formal inventory, system-model
+  gates, and every Lean vector regression lane.
+* M6 done: full gate suite green — cargo test -p hegemon-node (433),
+  wallet --lib (122), consensus/state-da/protocol-shielded-pool (562 incl.
+  node), both clippy sets -D warnings clean, cargo fmt --all --check clean,
+  native startup policy, app typecheck + vitest (37) + check:ui-guards +
+  electron-vite build + packaged-app autostart guard, formal-core gate.
 ```
