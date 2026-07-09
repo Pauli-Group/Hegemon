@@ -91,4 +91,3 @@ export const inferParticipationRole = (connection: NodeConnection): NodeParticip
   }
   return connection.miningIntent || connection.minerAddress ? 'authoring_pool' : 'full_node';
 };
-

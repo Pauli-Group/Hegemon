@@ -117,4 +117,3 @@ export const AppIcon = ({ name }: { name: AppIconName }) => {
     </svg>
   );
 };
-

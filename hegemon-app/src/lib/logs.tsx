@@ -97,4 +97,3 @@ export const parseLogLine = (line: string, index: number): LogEntry => {
     highlight: highlightLog(line)
   };
 };
-

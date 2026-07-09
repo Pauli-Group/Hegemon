@@ -405,4 +405,3 @@ export const shouldAutoStartDefaultProfile = (connection: NodeConnection): boole
 
 export const findDefaultManagedConnection = (connections: NodeConnection[]) =>
   connections.find((connection) => shouldAutoStartDefaultProfile(connection)) ?? null;
-

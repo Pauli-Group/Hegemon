@@ -96,4 +96,3 @@ export type AppIconName =
   | 'peers'
   | 'mining'
   | 'endpoint';
-

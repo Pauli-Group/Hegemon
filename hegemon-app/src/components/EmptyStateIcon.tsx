@@ -51,4 +51,3 @@ export const EmptyStateIcon = ({ name }: { name: EmptyStateIconName }) => {
     </svg>
   );
 };
-

@@ -284,4 +284,3 @@ export const activityStatusClasses: Record<ActivityStatus, string> = {
   confirmed: 'border-ionosphere/40 text-ionosphere bg-ionosphere/15',
   failed: 'border-guard/40 text-guard bg-guard/10'
 };
-
