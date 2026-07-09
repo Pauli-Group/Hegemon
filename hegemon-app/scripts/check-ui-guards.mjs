@@ -181,10 +181,10 @@ assert.match(
   /findDefaultManagedConnection/,
   'Unreachable stale profiles must fall back to the canonical managed local Hegemon profile.'
 );
-assert.equal(
-  appSource.includes('devnet.hegemonprotocol.com'),
-  false,
-  'The public desktop default must not reference the retired devnet seed.'
+assert.match(
+  appSource,
+  /hegemon\.pauli\.group:30333['"], ['"]devnet\.hegemonprotocol\.com:30333/,
+  'The public desktop default must include both approved Hegemon testnet miners.'
 );
 
 console.log('app UI guard checks passed');

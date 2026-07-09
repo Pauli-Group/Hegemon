@@ -247,7 +247,7 @@ Key options:
 - `--base-path <PATH>` - Persistent database location
 - `--rpc-port <PORT>` - JSON-RPC port (default: 9944)
 - `--port <PORT>` - P2P port (default: 30333)
-- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333"`, to avoid forks.
+- `HEGEMON_SEEDS=<host:port,...>` - Bootstrap peers for native P2P sync. Shared miners must use the same approved seed list, currently `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"`, to avoid forks.
 
 Environment variables:
 - `HEGEMON_MINE=1` - Enable mining

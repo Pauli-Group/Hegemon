@@ -44,6 +44,7 @@ use tokio::sync::RwLock;
 use crate::error::WalletError;
 use crate::notes::NoteCiphertext;
 use crate::rpc::TransactionBundle;
+use crate::store::NoteSource;
 use transaction_circuit::StablecoinPolicyBinding;
 
 fn is_method_unavailable(error: &WalletError, method: &str) -> bool {
@@ -239,6 +240,9 @@ pub struct CommitmentEntry {
     /// Commitment value (48-byte encoding)
     #[serde(with = "crate::serde_bytes48::bytes48")]
     pub value: [u8; 48],
+    /// Protocol action source for this commitment.
+    #[serde(default)]
+    pub source: NoteSource,
 }
 
 /// Paginated commitment response
@@ -258,6 +262,9 @@ pub struct CommitmentWireEntry {
     pub index: u64,
     /// Commitment value (hex encoded)
     pub value: String,
+    /// Protocol action source for this commitment.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Archive provider entry from archive RPC.
@@ -656,6 +663,11 @@ impl NodeRpcClient {
                 Ok(CommitmentEntry {
                     index: entry.index,
                     value,
+                    source: entry
+                        .source
+                        .as_deref()
+                        .map(NoteSource::from_rpc_label)
+                        .unwrap_or(NoteSource::Unknown),
                 })
             })
             .collect()

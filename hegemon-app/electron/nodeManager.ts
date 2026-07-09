@@ -15,7 +15,8 @@ import { applyEnvDefaults, copyParentEnv, createBaseChildEnv, setEnvValue } from
 const DEFAULT_RPC_PORT = 9955;
 const CANONICAL_TESTNET_P2P_PORT = 30333;
 const LEGACY_TESTNET_P2P_PORT = 31333;
-const APPROVED_SEEDS = 'hegemon.pauli.group:30333';
+const APPROVED_SEED_ENTRIES = ['hegemon.pauli.group:30333', 'devnet.hegemonprotocol.com:30333'] as const;
+const APPROVED_SEEDS = APPROVED_SEED_ENTRIES.join(',');
 const PUBLIC_TESTNET_NAME = 'Hegemon';
 const CANONICAL_TESTNET_CHECKPOINTS = [
   {
@@ -31,7 +32,9 @@ const LEGACY_SEED_ALIASES: Record<string, string> = {
   'hegemon.pauli.group:31333': APPROVED_SEEDS,
   'hegemon.pauli.group:30333': APPROVED_SEEDS,
   '158.69.222.121:31333': APPROVED_SEEDS,
-  '158.69.222.121:30333': APPROVED_SEEDS
+  '158.69.222.121:30333': APPROVED_SEEDS,
+  'devnet.hegemonprotocol.com:30333': APPROVED_SEEDS,
+  '51.222.86.107:30333': APPROVED_SEEDS
 };
 const DEFAULT_LOCAL_BASE_PATH = '~/.hegemon-node';
 const DEFAULT_DEV_010_BASE_PATH = '~/.hegemon-node-native-010-dev';
@@ -63,12 +66,14 @@ const normalizeSeedList = (value?: string | null) => {
   const normalized: string[] = [];
   const seen = new Set<string>();
   for (const entry of (value ?? '').split(',')) {
-    const candidate = LEGACY_SEED_ALIASES[entry.trim().toLowerCase()] ?? entry.trim().toLowerCase();
-    if (!candidate || seen.has(candidate)) {
-      continue;
+    const expanded = LEGACY_SEED_ALIASES[entry.trim().toLowerCase()] ?? entry.trim().toLowerCase();
+    for (const candidate of expanded.split(',')) {
+      if (!candidate || seen.has(candidate)) {
+        continue;
+      }
+      seen.add(candidate);
+      normalized.push(candidate);
     }
-    seen.add(candidate);
-    normalized.push(candidate);
   }
   return normalized.join(',');
 };

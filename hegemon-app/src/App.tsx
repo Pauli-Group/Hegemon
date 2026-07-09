@@ -19,13 +19,14 @@ import blockMinedAudio from './assets/sounds/block-mined.wav';
 import blockReceivedAudio from './assets/sounds/block-received.wav';
 import { computeNodeDisplayState, legacyContactWarning } from './appGuards';
 
-const defaultStorePath = '~/.hegemon-wallet-native-010';
+const defaultStorePath = '~/.hegemon-wallet-010';
 const canonicalTestnetP2pPort = 30333;
 const shieldedAddressPrefix = 'shca1';
 const shieldedAddressLength = 2634;
 const shieldedAddressDataCharset = /^[023456789acdefghjklmnpqrstuvwxyz]+$/;
 const shieldedAddressSeparatorPattern = /[\s\u200B\u200C\u200D\uFEFF]+/g;
-const approvedSeeds = 'hegemon.pauli.group:30333';
+const approvedSeedEntries = ['hegemon.pauli.group:30333', 'devnet.hegemonprotocol.com:30333'] as const;
+const approvedSeeds = approvedSeedEntries.join(',');
 const hegemonNetworkName = 'Hegemon';
 const hegemonNetworkVersionLabel = 'Hegemon 0.10';
 const defaultDevConnectionLabel = hegemonNetworkName;
@@ -43,11 +44,14 @@ const legacySeedAliases: Record<string, string> = {
   'hegemon.pauli.group:31333': approvedSeeds,
   'hegemon.pauli.group:30333': approvedSeeds,
   '158.69.222.121:31333': approvedSeeds,
-  '158.69.222.121:30333': approvedSeeds
+  '158.69.222.121:30333': approvedSeeds,
+  'devnet.hegemonprotocol.com:30333': approvedSeeds,
+  '51.222.86.107:30333': approvedSeeds
 };
 const connectionsKey = 'hegemon.nodeConnections';
 const activeConnectionKey = 'hegemon.activeConnection';
 const walletConnectionKey = 'hegemon.walletConnection';
+const walletStorePathKey = 'hegemon.walletStorePath';
 const walletAutoLockEnabledKey = 'hegemon.walletAutoLockEnabled';
 const walletAutoLockMinutesKey = 'hegemon.walletAutoLockMinutes';
 const blockAlertEnabledKey = 'hegemon.blockAlertEnabled';
@@ -55,6 +59,7 @@ const minWalletPassphraseLength = 12;
 const defaultRpcPort = 9955;
 const defaultP2pPort = canonicalTestnetP2pPort;
 const maxDesktopMineThreads = 4;
+const walletHistoryPageSize = 24;
 const defaultMineThreads = (() => {
   const hardwareConcurrency =
     typeof navigator !== 'undefined' && Number.isFinite(navigator.hardwareConcurrency)
@@ -129,12 +134,13 @@ const normalizeSeedsValue = (value: string | null | undefined) => {
   const normalized: string[] = [];
   const seen = new Set<string>();
   for (const rawSeed of (value ?? '').split(',')) {
-    const seed = canonicalizeSeedEntry(rawSeed);
-    if (!seed || seen.has(seed)) {
-      continue;
+    for (const seed of canonicalizeSeedEntry(rawSeed).split(',')) {
+      if (!seed || seen.has(seed)) {
+        continue;
+      }
+      seen.add(seed);
+      normalized.push(seed);
     }
-    seen.add(seed);
-    normalized.push(seed);
   }
   return normalized.join(',');
 };
@@ -1173,11 +1179,16 @@ export default function App() {
   const [walletError, setWalletError] = useState<string | null>(null);
   const [addressCopied, setAddressCopied] = useState(false);
   const [addressCopyError, setAddressCopyError] = useState<string | null>(null);
+  const [inboundHistoryLimit, setInboundHistoryLimit] = useState(walletHistoryPageSize);
+  const [outboundHistoryLimit, setOutboundHistoryLimit] = useState(walletHistoryPageSize);
   const [miningPayoutNotice, setMiningPayoutNotice] = useState<string | null>(null);
   const [disclosureCopied, setDisclosureCopied] = useState(false);
   const [disclosureCopyError, setDisclosureCopyError] = useState<string | null>(null);
 
-  const [storePath, setStorePath] = useState(defaultStorePath);
+  const [storePath, setStorePath] = useState(() => {
+    const storedPath = window.localStorage.getItem(walletStorePathKey)?.trim();
+    return storedPath || defaultStorePath;
+  });
   const [createPassphrase, setCreatePassphrase] = useState('');
   const [createPassphraseConfirm, setCreatePassphraseConfirm] = useState('');
   const [openPassphrase, setOpenPassphrase] = useState('');
@@ -1290,6 +1301,13 @@ export default function App() {
   }, [blockAlertEnabled]);
 
   useEffect(() => {
+    const trimmed = storePath.trim();
+    if (trimmed) {
+      window.localStorage.setItem(walletStorePathKey, trimmed);
+    }
+  }, [storePath]);
+
+  useEffect(() => {
     if (connections.length === 0) {
       return;
     }
@@ -1399,6 +1417,11 @@ export default function App() {
       setSelectedDisclosureKey(null);
     }
   }, [walletStatus]);
+
+  useEffect(() => {
+    setInboundHistoryLimit(walletHistoryPageSize);
+    setOutboundHistoryLimit(walletHistoryPageSize);
+  }, [walletStatus?.storePath, walletStatus?.primaryAddress]);
 
   const activeConnection = useMemo(
     () => connections.find((connection) => connection.id === activeConnectionId) ?? null,
@@ -2836,7 +2859,84 @@ export default function App() {
     () => [...pendingTransactions, ...recentTransactions],
     [pendingTransactions, recentTransactions]
   );
-  const walletNoteDetails = walletStatus?.noteDetails ?? [];
+  const walletNoteDetailsRaw = walletStatus?.noteDetails;
+  const walletNoteDetailsAvailable = Array.isArray(walletNoteDetailsRaw);
+  const walletNoteDetails = walletNoteDetailsAvailable ? walletNoteDetailsRaw : [];
+  const nativeNoteAccounting = walletStatus?.noteAccounting?.find((entry) => entry.assetId === 0) ?? null;
+  const walletHistory = useMemo(() => {
+    const notes = walletNoteDetails
+      .slice()
+      .sort((a, b) => b.position - a.position || b.ciphertextIndex - a.ciphertextIndex);
+    const inbound = notes.filter((note) => note.source === 'transfer');
+    const rewards = notes.filter((note) => note.source === 'mining_reward');
+    const change = notes.filter((note) => note.source === 'local_change');
+    const unknown = notes.filter((note) => !note.source || note.source === 'unknown');
+    const sentByTxId = new Map<string, (typeof walletActivity)[number]>();
+    walletActivity.forEach((entry) => {
+      const key = normalizeTxId(entry.txId) ?? `${entry.createdAt}:${entry.address}:${entry.amount}:${entry.fee}`;
+      const existing = sentByTxId.get(key);
+      if (!existing || (existing.status !== 'confirmed' && entry.status === 'confirmed')) {
+        sentByTxId.set(key, entry);
+      }
+    });
+    const sent = Array.from(sentByTxId.values()).sort(
+      (a, b) => parseTimestamp(b.createdAt) - parseTimestamp(a.createdAt)
+    );
+    const nativeNotes = notes.filter((note) => note.assetId === 0);
+    const nativeSpendable = nativeNotes
+      .filter((note) => note.status === 'spendable')
+      .reduce((sum, note) => sum + note.value, 0);
+    const nativeLocked = nativeNotes
+      .filter((note) => note.status === 'pending')
+      .reduce((sum, note) => sum + note.value, 0);
+    const nativeBalanceTotal = nativeSpendable + nativeLocked;
+    const nativeInboundTotal = inbound
+      .filter((note) => note.assetId === 0)
+      .reduce((sum, note) => sum + note.value, 0);
+    const nativeRewardTotal = rewards
+      .filter((note) => note.assetId === 0)
+      .reduce((sum, note) => sum + note.value, 0);
+    const nativeChangeTotal = change
+      .filter((note) => note.assetId === 0)
+      .reduce((sum, note) => sum + note.value, 0);
+    const expectedNativeBalance = hgmBalance?.total ?? null;
+    const accountingMatchesBalance =
+      walletNoteDetailsAvailable &&
+      expectedNativeBalance !== null &&
+      nativeNoteAccounting !== null &&
+      nativeNoteAccounting.spendable === hgmBalance?.spendable &&
+      nativeNoteAccounting.locked === hgmBalance?.locked &&
+      nativeNoteAccounting.balanceTotal === expectedNativeBalance &&
+      nativeBalanceTotal === expectedNativeBalance;
+
+    return {
+      noteDetailsAvailable: walletNoteDetailsAvailable,
+      inbound,
+      rewards,
+      change,
+      unknown,
+      sent,
+      nativeSpendable,
+      nativeLocked,
+      nativeBalanceTotal,
+      nativeInboundTotal,
+      nativeRewardTotal,
+      nativeChangeTotal,
+      expectedNativeBalance,
+      accountingMatchesBalance,
+      displayedInbound: inbound.slice(0, inboundHistoryLimit),
+      displayedSent: sent.slice(0, outboundHistoryLimit),
+      nativeAccounting: nativeNoteAccounting
+    };
+  }, [
+    hgmBalance,
+    inboundHistoryLimit,
+    nativeNoteAccounting,
+    outboundHistoryLimit,
+    walletActivity,
+    walletNoteDetails,
+    walletNoteDetailsAvailable
+  ]);
   const activityByTxId = useMemo(() => {
     const map = new Map<string, typeof walletActivity[number]>();
     walletActivity.forEach((entry) => {
@@ -4236,6 +4336,160 @@ export default function App() {
             </details>
           ) : null}
           {addressCopyError ? <p className="wallet-inline-error">{addressCopyError}</p> : null}
+        </div>
+
+        <div className="wallet-history-panel">
+          <div className="wallet-history-header">
+            <div>
+              <p className="label">Transactions</p>
+              <h3>Wallet history</h3>
+            </div>
+            <span>
+              {walletHistory.noteDetailsAvailable
+                ? `${walletHistory.inbound.length} inbound · ${walletHistory.sent.length} outbound`
+                : `${walletHistory.sent.length} outbound · inbound unavailable`}
+            </span>
+          </div>
+          {walletHistory.noteDetailsAvailable ? (
+            <div className={`wallet-history-accounting ${walletHistory.accountingMatchesBalance ? 'ok' : 'warn'}`}>
+              <strong>
+                {walletHistory.accountingMatchesBalance ? 'Recovered notes match balance' : 'History does not reconcile'}
+              </strong>
+              <span>
+                Inbound {formatHgm(walletHistory.nativeInboundTotal)} · rewards {formatHgm(walletHistory.nativeRewardTotal)} ·
+                change {formatHgm(walletHistory.nativeChangeTotal)}
+              </span>
+            </div>
+          ) : (
+            <div className="wallet-history-accounting warn">
+              <strong>Inbound history unavailable</strong>
+              <span>Restart walletd with the current build; the app will not report false zeroes.</span>
+            </div>
+          )}
+          <div className="wallet-history-grid">
+            <section className="wallet-history-section">
+              <header>
+                <h4>Inbound transfers</h4>
+                <span>{walletHistory.noteDetailsAvailable ? walletHistory.inbound.length : 'N/A'}</span>
+              </header>
+              {walletHistory.unknown.length ? (
+                <p className="wallet-history-empty warn">
+                  {formatNumber(walletHistory.unknown.length)} older notes still need source classification. Sync again with
+                  the current node build if this does not clear.
+                </p>
+              ) : null}
+              {walletHistory.displayedInbound.length ? (
+                <div className="wallet-history-list">
+                  {walletHistory.displayedInbound.map((note) => {
+                    const contact = getContactForAddress(note.address);
+                    const noteStatus =
+                      note.status === 'spendable'
+                        ? 'Available'
+                        : note.status === 'pending'
+                          ? 'Pending spend'
+                          : note.status === 'spent'
+                            ? 'Spent'
+                            : note.status;
+                    return (
+                      <div key={`inbound-${note.commitment}`} className="wallet-history-row inbound">
+                        <div className="wallet-history-row-main">
+                          <strong>+ {note.assetId === 0 ? formatHgm(note.value) : note.value.toLocaleString()}</strong>
+                          <span title={note.address}>{contact ? contact.name : formatAddress(note.address)}</span>
+                          <em>
+                            {contact
+                              ? `Contact match${contact.verified ? ' · verified' : ''}`
+                              : `Address ${formatAddress(note.address)}`}
+                          </em>
+                          {note.memo ? <em title={note.memo}>Memo · {note.memo}</em> : null}
+                        </div>
+                        <div className="wallet-history-row-meta">
+                          <span className={`history-status ${note.status}`}>{noteStatus}</span>
+                          <span className="mono" title={note.commitment}>
+                            Note {formatHash(note.commitment)}
+                          </span>
+                          <span>
+                            position {formatNumber(note.position)} · ct {formatNumber(note.ciphertextIndex)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {walletHistory.inbound.length > walletHistory.displayedInbound.length ? (
+                    <button
+                      className="wallet-history-load-more"
+                      type="button"
+                      onClick={() => setInboundHistoryLimit((limit) => limit + walletHistoryPageSize)}
+                    >
+                      Load more inbound transfers
+                      <span>
+                        Showing {walletHistory.displayedInbound.length} of {walletHistory.inbound.length}
+                      </span>
+                    </button>
+                  ) : null}
+                </div>
+              ) : !walletHistory.noteDetailsAvailable ? (
+                <p className="wallet-history-empty">Open with the updated walletd to load recovered note history.</p>
+              ) : (
+                <p className="wallet-history-empty">No inbound transfers found.</p>
+              )}
+            </section>
+
+            <section className="wallet-history-section">
+              <header>
+                <h4>Outbound transfers</h4>
+                <span>{walletHistory.sent.length}</span>
+              </header>
+              {walletHistory.displayedSent.length ? (
+                <div className="wallet-history-list">
+                  {walletHistory.displayedSent.map((entry) => {
+                    const recipientContact = getContactForAddress(entry.address);
+                    const recipientLabel = recipientContact ? recipientContact.name : formatAddress(entry.address);
+                    const isConsolidation = entry.memo?.toLowerCase() === 'consolidation';
+                    return (
+                      <div key={`sent-${entry.txId}`} className="wallet-history-row outbound">
+                        <div className="wallet-history-row-main">
+                          <strong>- {formatHgm(entry.amount)}</strong>
+                          <span title={entry.address}>{isConsolidation ? 'Consolidation' : recipientLabel}</span>
+                          {recipientContact ? (
+                            <em>
+                              Contact match · {formatAddress(entry.address)}
+                              {recipientContact.verified ? ' · verified' : ''}
+                            </em>
+                          ) : (
+                            <em title={entry.address}>{formatAddress(entry.address)}</em>
+                          )}
+                          {entry.memo && !isConsolidation ? <em title={entry.memo}>Memo · {entry.memo}</em> : null}
+                        </div>
+                        <div className="wallet-history-row-meta">
+                          <span className={`history-status ${entry.status}`}>{entry.status}</span>
+                          <span className="mono" title={entry.txId}>
+                            Tx {formatHash(entry.txId)}
+                          </span>
+                          <span>
+                            {formatTimestamp(entry.createdAt)} · {entry.confirmations} conf · fee {formatHgm(entry.fee)}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {walletHistory.sent.length > walletHistory.displayedSent.length ? (
+                    <button
+                      className="wallet-history-load-more"
+                      type="button"
+                      onClick={() => setOutboundHistoryLimit((limit) => limit + walletHistoryPageSize)}
+                    >
+                      Load more outbound transfers
+                      <span>
+                        Showing {walletHistory.displayedSent.length} of {walletHistory.sent.length}
+                      </span>
+                    </button>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="wallet-history-empty">No outgoing transfers yet.</p>
+              )}
+            </section>
+          </div>
         </div>
 
         <div className={`mining-payout-panel ${miningPayoutTone}`}>

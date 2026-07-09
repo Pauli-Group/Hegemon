@@ -10,7 +10,12 @@ const APP_PATH =
   process.env.HEGEMON_APP_BUNDLE ?? path.join(ROOT_DIR, 'hegemon-app/dist/mac-arm64/Hegemon.app');
 const BUNDLE_ID = process.env.HEGEMON_APP_BUNDLE_ID ?? 'com.hegemon.desktop';
 const RPC_URL = process.env.HEGEMON_APP_AUTOSTART_RPC_URL ?? 'http://127.0.0.1:9955';
-const APPROVED_SEED = process.env.HEGEMON_APP_EXPECTED_SEED ?? 'hegemon.pauli.group:30333';
+const APPROVED_SEEDS = (
+  process.env.HEGEMON_APP_EXPECTED_SEED ?? 'hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333'
+)
+  .split(',')
+  .map((seed) => seed.trim())
+  .filter(Boolean);
 const RPC_DOWN_TIMEOUT_MS = Number.parseInt(
   process.env.HEGEMON_APP_AUTOSTART_RPC_DOWN_TIMEOUT_MS ?? '45000',
   10
@@ -221,8 +226,10 @@ function isLoopbackRpc(config) {
 
 function usesApprovedSeed(config) {
   const { bootstrapText } = configFacts(config);
-  const [expectedHost, expectedPort] = APPROVED_SEED.split(':');
-  return bootstrapText.includes(expectedHost) && bootstrapText.includes(expectedPort);
+  return APPROVED_SEEDS.every((seed) => {
+    const [expectedHost, expectedPort] = seed.split(':');
+    return bootstrapText.includes(expectedHost) && bootstrapText.includes(expectedPort);
+  });
 }
 
 function summarizeSnapshot(snapshot) {

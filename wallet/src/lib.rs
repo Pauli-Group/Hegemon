@@ -52,7 +52,7 @@ pub use scanner::{
 };
 pub use shielded_tx::{BuiltShieldedTx, ProofStats, ShieldedOutput, ShieldedTxBuilder};
 pub use store::{
-    LocalMultisigAccumulatorOpening, LocalNoteOpeningRecord, OutgoingDisclosureDraft,
+    LocalMultisigAccumulatorOpening, LocalNoteOpeningRecord, NoteSource, OutgoingDisclosureDraft,
     OutgoingDisclosureRecord, PendingStatus, PendingTransaction, RecentTransaction, SpendableNote,
     TrackedNoteView, TransferRecipient, WalletMode, WalletStore,
 };

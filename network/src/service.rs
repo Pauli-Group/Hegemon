@@ -467,6 +467,8 @@ impl P2PService {
                 .copied()
                 .collect();
         }
+        self.peer_manager
+            .record_static_addresses(self.learned_addresses.iter().copied());
         let local_addrs: HashSet<_> = self.advertised_addrs.iter().copied().collect();
         self.peer_store
             .remove_addresses(local_addrs.iter().copied())?;
@@ -1074,11 +1076,6 @@ impl P2PService {
             );
             return None;
         }
-        if self.address_announcement_rate_limited(&peer_id) {
-            warn!(source, ?peer_id, "rate-limited peer address announcement");
-            return None;
-        }
-
         let filtered = self.sanitize_peer_addresses(addrs);
         if filtered.is_empty() {
             warn!(
@@ -1088,7 +1085,26 @@ impl P2PService {
             );
             return None;
         }
+        if self.address_announcement_rate_limited(&peer_id) {
+            warn!(source, ?peer_id, "rate-limited peer address announcement");
+            return None;
+        }
         Some(filtered)
+    }
+
+    fn dial_learned_candidates(&self, cmd_tx: mpsc::Sender<P2PCommand>) {
+        if self.peer_manager.peer_count() >= self.peer_manager.max_peers() {
+            return;
+        }
+        let mut excluded = self.peer_manager.connected_addresses();
+        excluded.extend(self.persistent_dial_addresses.iter().copied());
+        let candidates =
+            self.peer_manager
+                .address_candidates(self.addr, &excluded, OPPORTUNISTIC_BATCH);
+        for addr in candidates {
+            info!("opportunistic dial to {}", addr);
+            self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
+        }
     }
 
     fn accept_local_addresses(
@@ -1179,6 +1195,7 @@ impl P2PService {
                     && self.remember_peer_addresses(sender, addrs.clone()).is_ok()
                 {
                     self.broadcast_addresses(sender, addrs).await;
+                    self.dial_learned_candidates(cmd_tx.clone());
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
@@ -1195,9 +1212,11 @@ impl P2PService {
                     .map(|addr| addr.to_socket_addr())
                     .collect();
                 if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "relay registration")
-                    && let Err(err) = self.remember_peer_addresses(sender, addrs)
                 {
-                    warn!(?err, "failed to persist relay registration addresses");
+                    match self.remember_peer_addresses(sender, addrs) {
+                        Ok(()) => self.dial_learned_candidates(cmd_tx.clone()),
+                        Err(err) => warn!(?err, "failed to persist relay registration addresses"),
+                    }
                 }
             }
             CoordinationMessage::PunchRequest {
@@ -2102,6 +2121,41 @@ mod tests {
     fn seed_resolution_keeps_ipv6_when_no_ipv4_exists() {
         let ipv6: SocketAddr = "[2607:5300:205:200::17c1]:30333".parse().unwrap();
         assert_eq!(prefer_ipv4_seed_addrs(vec![ipv6]), vec![ipv6]);
+    }
+
+    #[test]
+    fn empty_peer_address_announcement_does_not_consume_rate_limit() {
+        let identity = PeerIdentity::generate(b"address-rate-limit");
+        let addr: SocketAddr = "127.0.0.1:9501".parse().unwrap();
+        let gossip = GossipRouter::new(8);
+        let mut service = P2PService::new(
+            identity,
+            addr,
+            vec![],
+            Vec::new(),
+            gossip.handle(),
+            8,
+            temp_store("addr-rate-limit"),
+            RelayConfig::default(),
+            NatTraversalConfig::disabled(addr),
+        );
+        let peer: PeerId = [8u8; 32];
+
+        assert!(
+            service
+                .accept_peer_addresses(
+                    peer,
+                    vec!["10.1.2.3:30333".parse().unwrap()],
+                    "invalid test"
+                )
+                .is_none(),
+            "private addresses must still be rejected"
+        );
+
+        let accepted = service
+            .accept_peer_addresses(peer, vec!["8.8.8.8:30333".parse().unwrap()], "valid test")
+            .expect("valid public address must not be rate-limited by the previous rejection");
+        assert_eq!(accepted, vec!["8.8.8.8:30333".parse().unwrap()]);
     }
 
     #[test]

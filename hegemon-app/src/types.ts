@@ -227,6 +227,21 @@ export type WalletNoteDetail = {
   status: string;
   nullifier?: string | null;
   commitment: string;
+  source?: 'unknown' | 'mining_reward' | 'transfer' | 'local_change' | string;
+};
+
+export type WalletNoteAccounting = {
+  assetId: number;
+  label: string;
+  spendableCount: number;
+  lockedCount: number;
+  spentCount: number;
+  totalCount: number;
+  spendable: number;
+  locked: number;
+  spent: number;
+  recoveredTotal: number;
+  balanceTotal: number;
 };
 
 export type WalletStatus = {
@@ -235,7 +250,9 @@ export type WalletStatus = {
     disclosure: boolean;
     autoConsolidate: boolean;
     notesSummary: boolean;
+    noteDetails?: boolean;
     errorCodes: boolean;
+    privateMultisig?: boolean;
   };
   walletMode?: 'full' | 'watch_only';
   storePath?: string;
@@ -246,6 +263,7 @@ export type WalletStatus = {
   recent?: WalletPending[];
   notes?: WalletNotes | null;
   noteDetails?: WalletNoteDetail[] | null;
+  noteAccounting?: WalletNoteAccounting[] | null;
   genesisHash?: string | null;
 };
 

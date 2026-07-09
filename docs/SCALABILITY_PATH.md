@@ -46,7 +46,7 @@ The current deployment target stays simple:
 
 Current approved public join seed list for miners and full nodes:
 
-    HEGEMON_SEEDS="hegemon.pauli.group:30333"
+    HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"
 
 All miners and verifiers in the same testnet must use the same approved `HEGEMON_SEEDS` value to avoid peer partitions and forks. The first public authoring node after a full reset should not seed itself; bring it up first, then use the join seed list on every other node. All mining hosts must keep NTP/chrony time sync enabled because PoW headers beyond the future-skew bound are rejected.
 
