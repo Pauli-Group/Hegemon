@@ -100,7 +100,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
 
 ## M3. Harden hegemon-app walletdClient — NOT STARTED
 
-* Add a per-request timeout (default 120000 ms, override via
+* Add a per-request timeout (default 600000 ms, override via
   `HEGEMON_WALLETD_REQUEST_TIMEOUT_MS`, minimum 1000 ms). On timeout the
   pending promise rejects with a descriptive error and is removed from the
   pending map; the walletd process is left running (long syncs must not kill
@@ -146,7 +146,7 @@ working via the `pub(crate) use` re-exports in `mod.rs`, so `super::*` in
   hooks need a context/props design decision that should not be bundled with
   mechanical extraction. The extraction in M4 plus the test rig in M5 make the
   follow-up tractable.
-* 2026-07-08: walletd request timeout defaults long (120 s) because wallet
+* 2026-07-08: walletd request timeout defaults long (600 s) because wallet
   sync over WS can legitimately take minutes on first scan; the goal is to
   eliminate forever-hangs, not to race long syncs.
 

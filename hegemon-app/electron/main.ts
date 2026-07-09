@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { NodeManager } from './nodeManager';
 import { WalletdClient } from './walletdClient';
+import { normalizeLoopbackWalletOneShotRpcEndpoint } from './rpcEndpoint';
 import type {
   NodeMiningRequest,
   NodeStartOptions,
@@ -33,7 +34,6 @@ const rendererUrlOverride = app.isPackaged
 const contactsFileName = 'contacts.json';
 const privateDirectoryMode = 0o700;
 const privateFileMode = 0o600;
-const loopbackRpcHosts = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
 let contactsWriteQueue: Promise<void> = Promise.resolve();
 let shutdownInProgress = false;
 const DEFAULT_UNLOCK_TTL_MS = 5 * 60 * 1000;
@@ -66,48 +66,6 @@ const chmodPrivate = async (path: string, mode: number) => {
     return;
   }
   await chmod(path, mode);
-};
-
-const normalizeLoopbackWalletRpcEndpoint = (endpoint: string) => {
-  if (typeof endpoint !== 'string') {
-    throw new Error('Wallet RPC endpoint is required.');
-  }
-  const trimmed = endpoint.trim();
-  if (!trimmed) {
-    throw new Error('Wallet RPC endpoint is required.');
-  }
-
-  let parsed: URL;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new Error('Wallet RPC endpoint must be a valid URL.');
-  }
-
-  if (!['ws:', 'wss:', 'http:', 'https:'].includes(parsed.protocol)) {
-    throw new Error('Wallet RPC endpoint must use ws, wss, http, or https.');
-  }
-  if (parsed.username || parsed.password || parsed.hash) {
-    throw new Error('Wallet RPC endpoint must not include credentials or fragments.');
-  }
-  if (!loopbackRpcHosts.has(parsed.hostname.toLowerCase())) {
-    throw new Error('Wallet RPC endpoint must be loopback. Run a local Hegemon P2P relay node for remote network access.');
-  }
-  return parsed.toString();
-};
-
-const normalizeLoopbackWalletOneShotRpcEndpoint = (endpoint: string) => {
-  const normalized = normalizeLoopbackWalletRpcEndpoint(endpoint);
-  const parsed = new URL(normalized);
-  if (parsed.protocol === 'ws:') {
-    parsed.protocol = 'http:';
-    return parsed.toString();
-  }
-  if (parsed.protocol === 'wss:') {
-    parsed.protocol = 'https:';
-    return parsed.toString();
-  }
-  return normalized;
 };
 
 const configureAppMenu = () => {
