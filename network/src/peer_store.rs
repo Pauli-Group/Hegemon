@@ -115,8 +115,33 @@ impl PeerStore {
     }
 
     pub fn record_disconnected(&mut self, addr: SocketAddr) -> Result<(), NetworkError> {
-        // Disconnections still refresh the timestamp so reconnect attempts prefer fresher peers.
-        self.record_connected(addr)
+        let now = SystemTime::now();
+        let mut changed = self.prune_stale();
+
+        match self.entries.entry(addr) {
+            Entry::Vacant(entry) => {
+                entry.insert(PeerRecord {
+                    addr,
+                    last_updated: now,
+                    last_connected: None,
+                });
+                changed = true;
+            }
+            Entry::Occupied(mut entry) => {
+                let record = entry.get_mut();
+                if record.last_updated != now {
+                    record.last_updated = now;
+                    changed = true;
+                }
+            }
+        }
+
+        let capped = self.enforce_max_entries();
+        if changed || capped {
+            self.persist()?;
+        }
+
+        Ok(())
     }
 
     pub fn record_learned(
@@ -168,7 +193,7 @@ impl PeerStore {
         Ok(())
     }
 
-    pub fn recent_peers(
+    pub fn recent_connected_peers(
         &mut self,
         limit: usize,
         exclude: &HashSet<SocketAddr>,
@@ -181,6 +206,7 @@ impl PeerStore {
         let mut entries: Vec<_> = self
             .entries
             .values()
+            .filter(|entry| entry.last_connected.is_some())
             .filter(|entry| !exclude.contains(&entry.addr))
             .cloned()
             .collect();
@@ -480,7 +506,7 @@ mod tests {
         }
 
         let exclude: HashSet<_> = [addrs[1]].into_iter().collect();
-        let recent = store.recent_peers(5, &exclude).unwrap();
+        let recent = store.recent_connected_peers(5, &exclude).unwrap();
 
         // Should skip excluded, take most recent first, and cap at 5 entries.
         assert_eq!(recent.len(), 5);
@@ -489,6 +515,43 @@ mod tests {
         assert_eq!(recent[2], addrs[3]);
         assert_eq!(recent[3], addrs[2]);
         assert_eq!(recent[4], addrs[0]);
+    }
+
+    #[test]
+    fn disconnect_does_not_promote_failed_endpoint_or_erase_success_recency() {
+        let path = temp_path("peer_store_disconnect_recency");
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path,
+            ttl: Duration::from_secs(60),
+            max_entries: 10,
+        });
+        let connected: SocketAddr = "127.0.0.1:9050".parse().unwrap();
+        let failed: SocketAddr = "127.0.0.1:9051".parse().unwrap();
+        let connected_at = SystemTime::now() - Duration::from_secs(10);
+
+        store.entries.insert(
+            connected,
+            PeerRecord {
+                addr: connected,
+                last_updated: connected_at,
+                last_connected: Some(connected_at),
+            },
+        );
+
+        store.record_disconnected(connected).unwrap();
+        store.record_disconnected(failed).unwrap();
+
+        assert_eq!(
+            store.entries[&connected].last_connected,
+            Some(connected_at),
+            "disconnect bookkeeping must preserve the last successful connection time"
+        );
+        assert_eq!(store.entries[&failed].last_connected, None);
+        assert_eq!(
+            store.recent_connected_peers(10, &HashSet::new()).unwrap(),
+            vec![connected],
+            "never-connected endpoints stay out of persistent reconnect targets"
+        );
     }
 
     #[test]

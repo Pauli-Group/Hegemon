@@ -128,8 +128,16 @@ impl PeerManager {
         self.max_peers
     }
 
+    pub fn has_capacity(&self) -> bool {
+        self.max_peers == 0 || self.peers.len() < self.max_peers
+    }
+
     pub fn remaining_capacity(&self) -> usize {
-        self.max_peers.saturating_sub(self.peers.len())
+        if self.max_peers == 0 {
+            usize::MAX
+        } else {
+            self.max_peers.saturating_sub(self.peers.len())
+        }
     }
 
     pub fn peer_address(&self, peer_id: &PeerId) -> Option<SocketAddr> {
@@ -147,6 +155,12 @@ impl PeerManager {
             .values()
             .map(|entry| (entry.peer_id, entry.addr))
             .collect()
+    }
+
+    pub fn connected_peer_ids(&self) -> Vec<PeerId> {
+        let mut peer_ids: Vec<_> = self.peers.keys().copied().collect();
+        peer_ids.sort_unstable();
+        peer_ids
     }
 
     pub fn mark_heartbeat(&mut self, peer_id: &PeerId) {
@@ -265,6 +279,7 @@ impl PeerManager {
             .collect();
         for (peer_id, _) in &stale {
             self.peers.remove(peer_id);
+            self.advertised.remove(peer_id);
         }
         stale
     }
@@ -446,6 +461,44 @@ mod tests {
         assert!(sample.contains(&addr_b));
         assert!(sample.contains(&addr_static));
         assert!(!sample.contains(&addr_a));
+    }
+
+    #[test]
+    fn zero_peer_limit_keeps_unlimited_capacity() {
+        let mut manager = PeerManager::new(0);
+        assert!(manager.has_capacity());
+        assert_eq!(manager.remaining_capacity(), usize::MAX);
+
+        let peer: PeerId = [9u8; 32];
+        let addr: SocketAddr = "127.0.0.1:9199".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        assert_eq!(
+            manager.try_add_peer(peer, addr, tx, 1, true),
+            AddPeerResult::Accepted
+        );
+        assert!(manager.has_capacity());
+        assert_eq!(manager.remaining_capacity(), usize::MAX);
+    }
+
+    #[test]
+    fn stale_peer_pruning_clears_per_session_advertisement_state() {
+        let mut manager = PeerManager::new(4);
+        let peer: PeerId = [10u8; 32];
+        let addr: SocketAddr = "127.0.0.1:9200".parse().unwrap();
+        let advertised: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+        assert_eq!(
+            manager.try_add_peer(peer, addr, tx, 1, true),
+            AddPeerResult::Accepted
+        );
+        manager.record_advertised(peer, [advertised]);
+        manager.peers.get_mut(&peer).unwrap().last_seen = Instant::now() - Duration::from_secs(60);
+
+        assert_eq!(
+            manager.prune_stale(Duration::from_secs(30)),
+            vec![(peer, addr)]
+        );
+        assert!(manager.advertised_to(&peer).is_empty());
     }
 
     #[test]
