@@ -690,24 +690,20 @@ Every session must still rekey: both the modern PQ transport and the legacy `Pee
 
 The Hegemon node’s PQ network stack is **not** libp2p, so we do not get Kademlia/mDNS discovery “for free”.
 
-Instead, once a PQ connection is established, peers run a small “address exchange” protocol over the PQ framed message channel:
+Once an authenticated PQ connection is established, peers exchange bounded coordination messages inside the `HNW1` framed channel:
 
-* Protocol id: `/hegemon/discovery/pq/1`
-* Messages (`HNW1` version marker plus bounded postcard encoding):
+* `GetAddr { limit }` asks one connected peer for a capped sample of known endpoints.
+* `Addr { addrs }` carries dialable endpoints. The receiver filters non-public, zero-port, duplicate, and local addresses before recording or forwarding them.
+* `RelayRegistration { reachable }` publishes the sender's own candidates. An unspecified-IP entry is a listening-port hint only: the receiver combines the claimed port with the IP observed on the authenticated transport. An explicit entry is accepted only when its IP equals that observed IP. The receiver never treats the inbound TCP source port as reusable and never lets this self-registration path inject an unrelated host.
+* `PunchRequest` and `PunchResponse` provide bounded coordination hooks, but there is no implemented relay data plane or complete simultaneous-open NAT hole-punch flow.
 
-  * `Hello { listen_port }` – the receiver combines the *observed peer IP* with `listen_port` to form a dialable `IP:port` even if the connection’s TCP source port was ephemeral.
-  * `GetAddrs { limit }` and `Addrs { addrs }` – bounded address lists used to share additional dial targets beyond seeds.
-  * `GetPeerGraph { limit }` and `PeerGraph { peers }` – bounded lists of currently connected peers used to build a multi-hop peer graph for dashboards.
+Nodes persist learned addresses under the native `--base-path` in `<base-path>/pq-peers.bin`. Successfully connected cached peers are eligible for a bounded persistent reconnect sample; learned-only endpoints remain bounded one-off candidates. Disconnect bookkeeping refreshes cache lifetime without pretending the disconnect was a new successful connection.
 
-Nodes persist learned addresses under the native `--base-path` (cache file: `<base-path>/pq-peers.bin`) and opportunistically dial a small batch of learned addresses when peer count is low. `HEGEMON_SEEDS` remains the bootstrap mechanism; operators should use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved seed list has deliberately rotated, and miners on the same network must share the same seed list to avoid partitions. Mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
+Every 60 seconds, the service requests addresses from a rotating batch of at most eight connected peers and then reserves at most four learned dials. Learned candidates are sorted and selected through a rotating cursor, so an unreachable prefix cannot monopolize every batch. One-off attempts are deduplicated by endpoint, capped at sixteen concurrent attempts, bounded by a ten-second TCP connect timeout plus the existing handshake timeout, and placed on exponential failure backoff from 30 seconds up to 15 minutes. Configured seeds and recently successful peers keep their persistent reconnect loops. A zero `max_peers` value means unlimited admission and does not disable discovery.
 
-To ensure early-joining nodes continue to learn about peers that connect later, nodes periodically re-request addresses from a random connected peer and attempt a bounded batch of dials from the discovery cache while below the peer target (defaults: `HEGEMON_PQ_DISCOVERY_MIN_PEERS=4`, `HEGEMON_PQ_DISCOVERY_TICK_SECS=30`).
-Nodes also request peer graphs on a periodic tick (default: `HEGEMON_PQ_PEER_GRAPH_TICK_SECS=30`) so monitoring tools can render the network topology.
+`HEGEMON_SEEDS` remains the bootstrap mechanism; operators should use `HEGEMON_SEEDS="hegemon.pauli.group:30333,devnet.hegemonprotocol.com:30333"` unless the approved seed list has deliberately rotated. All miners on one network must share that list to avoid partitions and forks. Mining hosts must keep NTP or chrony enabled because future-skewed PoW timestamps are rejected.
 
-Sync source selection is gated by an explicit compatibility probe instead of a "peer is not too far ahead" heuristic. For unknown peers, the node first issues `CompatibilityProbe { local_genesis_hash, sync_protocol_version, aggregation_proof_format }` and only marks the peer sync-compatible if the response confirms all three values match local expectations. Peers that mismatch on chain identity, sync protocol compatibility version, or aggregation proof format ID are marked incompatible and excluded from sync candidate selection. This keeps bootstrap for brand-new nodes unbounded by height while still filtering legacy/wrong-chain noise deterministically.
-Sync request/response correlation uses explicit request identifiers in `SyncMessage::RequestV2 { request_id, request }`; responders echo that ID in `SyncResponse`, and clients accept responses only when `(peer_id, request_id, request_type)` matches a tracked pending request.
-Sync scheduling prioritizes already-compatible peers before probing unknown peers, so legacy/high-noise peers cannot stall catch-up when a valid peer is available. Peers newly marked incompatible are disconnected automatically. Discovery address/graph traffic and cached discovery dials are restricted to compatibility-verified peers (chain + protocol + aggregation format) to prevent wrong-chain/legacy nodes from polluting the active peer set.
-When no compatible peer currently advertises a higher tip, nodes run a lightweight tip-poll state (`GetBlocks` from `best+1`) that does not mark the node as "actively syncing", so mining continues without pause/resume churn while still recovering from missed announces.
+This produces a mesh among publicly reachable nodes without making the seed a permanent message router. It does not make an outbound-only node reachable: operators must expose or map the P2P listener, and automatic router mapping remains an explicit caller choice rather than a native-launcher default. The service still has no Kademlia DHT, relay circuit, autonomous ban system, or proof that a claimed public listening port is reachable. Native sync messages remain `Announce`, bounded range `Request`/`Response`, and `PendingAction`; their separate admission and replay checks are described in the native sync sections below.
 
 ### 2. Object definitions (bits, fields, encodings)
 

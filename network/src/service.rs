@@ -252,6 +252,12 @@ enum P2PCommand {
         session_id: PeerSessionId,
         inbound: bool,
     },
+    DialFinished {
+        addr: SocketAddr,
+    },
+    DialFailed {
+        addr: SocketAddr,
+    },
     InboundHandshakeFailed,
 }
 
@@ -261,8 +267,16 @@ enum PeerRunOutcome {
     Disconnected,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct DialRetryState {
+    failures: u32,
+    retry_after: Instant,
+}
+
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const DISCOVERY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const RECONNECT_BASE: Duration = Duration::from_secs(2);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -274,7 +288,11 @@ const RATE_LIMIT_STATE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_RATE_LIMIT_STATE_PEERS: usize = 4096;
 const RATE_LIMIT_STATE_PEER_MULTIPLIER: usize = 4;
 const OPPORTUNISTIC_BATCH: usize = 4;
-const RECENT_RECONNECT_LIMIT: usize = 5;
+const MAX_INFLIGHT_OPPORTUNISTIC_DIALS: usize = 16;
+const OPPORTUNISTIC_RETRY_BASE: Duration = Duration::from_secs(30);
+const OPPORTUNISTIC_RETRY_MAX: Duration = Duration::from_secs(15 * 60);
+const DISCOVERY_QUERY_BATCH: usize = 8;
+const RECENT_RECONNECT_LIMIT: usize = 16;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
 const P2P_COMMAND_CHANNEL_CAPACITY: usize = 4096;
@@ -349,10 +367,15 @@ pub struct P2PService {
     learned_addresses: HashSet<SocketAddr>,
     last_addr_request: HashMap<PeerId, Instant>,
     last_addr_announcement: HashMap<PeerId, Instant>,
+    last_relay_registration: HashMap<PeerId, Instant>,
     last_punch_request: HashMap<PeerId, Instant>,
     seen_gossip: SeenGossipCache,
     inbound_message_budget: ByteBudget,
     persistent_dial_addresses: HashSet<SocketAddr>,
+    inflight_dial_addresses: HashSet<SocketAddr>,
+    dial_retry: HashMap<SocketAddr, DialRetryState>,
+    dial_candidate_cursor: usize,
+    discovery_cursor: usize,
     peer_count_observer: Option<Arc<AtomicUsize>>,
     peer_snapshot_observer: Option<Arc<RwLock<Vec<ConnectedPeerSnapshot>>>>,
 }
@@ -386,10 +409,15 @@ impl P2PService {
             learned_addresses: HashSet::new(),
             last_addr_request: HashMap::new(),
             last_addr_announcement: HashMap::new(),
+            last_relay_registration: HashMap::new(),
             last_punch_request: HashMap::new(),
             seen_gossip: SeenGossipCache::default(),
             inbound_message_budget: ByteBudget::new(MAX_P2P_COMMAND_QUEUE_BYTES),
             persistent_dial_addresses: HashSet::new(),
+            inflight_dial_addresses: HashSet::new(),
+            dial_retry: HashMap::new(),
+            dial_candidate_cursor: 0,
+            discovery_cursor: 0,
             peer_count_observer: None,
             peer_snapshot_observer: None,
         }
@@ -502,6 +530,9 @@ impl P2PService {
         let mut gossip_rx = self.gossip.subscribe();
         let mut heartbeat = interval(HEARTBEAT_INTERVAL);
         heartbeat.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut discovery_refresh = interval(DISCOVERY_REFRESH_INTERVAL);
+        discovery_refresh.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        discovery_refresh.tick().await;
         let inbound_handshakes = Arc::new(Semaphore::new(self.inbound_handshake_backlog_limit()));
         let mut pending_inbound_handshakes = 0usize;
 
@@ -576,6 +607,8 @@ impl P2PService {
                             );
                             match admission {
                                 AddPeerResult::Accepted => {
+                                    self.inflight_dial_addresses.remove(&addr);
+                                    self.dial_retry.remove(&addr);
                                     let _ = admit.send(true);
                                 }
                                 AddPeerResult::Duplicate(active_session) => {
@@ -649,6 +682,12 @@ impl P2PService {
                                 );
                             }
                             self.publish_peer_state();
+                        }
+                        P2PCommand::DialFinished { addr } => {
+                            self.inflight_dial_addresses.remove(&addr);
+                        }
+                        P2PCommand::DialFailed { addr } => {
+                            self.record_dial_failure(addr);
                         }
                         P2PCommand::Message {
                             queued,
@@ -757,20 +796,11 @@ impl P2PService {
                     if pruned_any {
                         self.publish_peer_state();
                     }
-                    let connected = self.peer_manager.connected_addresses();
-                    if self.peer_manager.peer_count() < self.peer_manager.max_peers() {
-                        let mut excluded = connected;
-                        excluded.extend(self.persistent_dial_addresses.iter().copied());
-                        let candidates = self.peer_manager.address_candidates(
-                            self.addr,
-                            &excluded,
-                            OPPORTUNISTIC_BATCH,
-                        );
-                        for addr in candidates {
-                            info!("opportunistic dial to {}", addr);
-                            self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
-                        }
-                    }
+                    self.dial_learned_candidates(cmd_tx.clone());
+                }
+
+                _ = discovery_refresh.tick() => {
+                    self.refresh_peer_discovery(cmd_tx.clone()).await;
                 }
             }
         }
@@ -785,6 +815,13 @@ impl P2PService {
             .await;
     }
 
+    async fn refresh_peer_discovery(&mut self, cmd_tx: mpsc::Sender<P2PCommand>) {
+        for peer_id in self.next_discovery_peers(DISCOVERY_QUERY_BATCH) {
+            self.request_addresses(peer_id).await;
+        }
+        self.dial_learned_candidates(cmd_tx);
+    }
+
     fn spawn_connect(
         &self,
         addr: SocketAddr,
@@ -795,8 +832,8 @@ impl P2PService {
         tokio::spawn(async move {
             let mut backoff = RECONNECT_BASE;
             loop {
-                match TcpStream::connect(addr).await {
-                    Ok(socket) => {
+                match timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
+                    Ok(Ok(socket)) => {
                         let mut connection = Connection::new(socket);
                         match timeout(HANDSHAKE_TIMEOUT, connection.handshake_initiator(&identity))
                             .await
@@ -830,9 +867,10 @@ impl P2PService {
                             }
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         warn!("failed to connect to peer {}: {}", addr, e);
                     }
+                    Err(_) => warn!("connection attempt timed out with {}", addr),
                 }
                 sleep(backoff).await;
                 backoff = (backoff * 2).min(RECONNECT_MAX);
@@ -1092,19 +1130,121 @@ impl P2PService {
         Some(filtered)
     }
 
-    fn dial_learned_candidates(&self, cmd_tx: mpsc::Sender<P2PCommand>) {
-        if self.peer_manager.peer_count() >= self.peer_manager.max_peers() {
-            return;
-        }
-        let mut excluded = self.peer_manager.connected_addresses();
-        excluded.extend(self.persistent_dial_addresses.iter().copied());
-        let candidates =
-            self.peer_manager
-                .address_candidates(self.addr, &excluded, OPPORTUNISTIC_BATCH);
+    fn dial_learned_candidates(&mut self, cmd_tx: mpsc::Sender<P2PCommand>) {
+        let candidates = self.reserve_dial_candidates(OPPORTUNISTIC_BATCH);
         for addr in candidates {
             info!("opportunistic dial to {}", addr);
             self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
         }
+    }
+
+    fn reserve_dial_candidates(&mut self, limit: usize) -> Vec<SocketAddr> {
+        let available = self.available_oneoff_dial_slots().min(limit);
+        if available == 0 {
+            return Vec::new();
+        }
+        let connected = self.peer_manager.connected_addresses();
+        let now = Instant::now();
+        let mut candidates: Vec<_> = self
+            .learned_addresses
+            .iter()
+            .copied()
+            .filter(|addr| *addr != self.addr)
+            .filter(|addr| !connected.contains(addr))
+            .filter(|addr| !self.persistent_dial_addresses.contains(addr))
+            .filter(|addr| !self.inflight_dial_addresses.contains(addr))
+            .filter(|addr| {
+                self.dial_retry
+                    .get(addr)
+                    .is_none_or(|state| state.retry_after <= now)
+            })
+            .collect();
+        candidates.sort_unstable();
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let count = available.min(candidates.len());
+        let start = self.dial_candidate_cursor % candidates.len();
+        let selected: Vec<_> = (0..count)
+            .map(|offset| candidates[(start + offset) % candidates.len()])
+            .collect();
+        self.dial_candidate_cursor = (start + count) % candidates.len();
+        self.inflight_dial_addresses
+            .extend(selected.iter().copied());
+        selected
+    }
+
+    fn record_dial_failure(&mut self, addr: SocketAddr) {
+        self.inflight_dial_addresses.remove(&addr);
+        self.dial_retry
+            .retain(|candidate, _| self.learned_addresses.contains(candidate));
+        let failures = self
+            .dial_retry
+            .get(&addr)
+            .map_or(1, |state| state.failures.saturating_add(1));
+        let exponent = failures.saturating_sub(1).min(8);
+        let delay = OPPORTUNISTIC_RETRY_BASE
+            .saturating_mul(1u32 << exponent)
+            .min(OPPORTUNISTIC_RETRY_MAX);
+        self.dial_retry.insert(
+            addr,
+            DialRetryState {
+                failures,
+                retry_after: Instant::now() + delay,
+            },
+        );
+    }
+
+    fn available_oneoff_dial_slots(&self) -> usize {
+        if !self.peer_manager.has_capacity() {
+            return 0;
+        }
+        let dial_slots =
+            MAX_INFLIGHT_OPPORTUNISTIC_DIALS.saturating_sub(self.inflight_dial_addresses.len());
+        let peer_slots = self
+            .peer_manager
+            .remaining_capacity()
+            .saturating_sub(self.inflight_dial_addresses.len());
+        dial_slots.min(peer_slots)
+    }
+
+    fn try_spawn_oneoff_connect(
+        &mut self,
+        addr: SocketAddr,
+        cmd_tx: mpsc::Sender<P2PCommand>,
+    ) -> bool {
+        if self.available_oneoff_dial_slots() == 0
+            || addr == self.addr
+            || self.persistent_dial_addresses.contains(&addr)
+            || self.inflight_dial_addresses.contains(&addr)
+            || self.peer_manager.connected_addresses().contains(&addr)
+            || self
+                .dial_retry
+                .get(&addr)
+                .is_some_and(|state| state.retry_after > Instant::now())
+        {
+            return false;
+        }
+        self.inflight_dial_addresses.insert(addr);
+        self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
+        true
+    }
+
+    fn next_discovery_peers(&mut self, limit: usize) -> Vec<PeerId> {
+        let peers = self.peer_manager.connected_peer_ids();
+        if peers.is_empty() || limit == 0 {
+            self.discovery_cursor = 0;
+            return Vec::new();
+        }
+
+        let count = limit.min(peers.len());
+        let start = self.discovery_cursor % peers.len();
+        let selected = (0..count)
+            .map(|offset| peers[(start + offset) % peers.len()])
+            .collect();
+        self.discovery_cursor = (start + count) % peers.len();
+        selected
     }
 
     fn accept_local_addresses(
@@ -1207,14 +1347,23 @@ impl P2PService {
                     );
                     return;
                 }
-                let addrs: Vec<_> = reachable
-                    .into_iter()
-                    .map(|addr| addr.to_socket_addr())
-                    .collect();
-                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "relay registration")
-                {
-                    match self.remember_peer_addresses(sender, addrs) {
-                        Ok(()) => self.dial_learned_candidates(cmd_tx.clone()),
+                let Some(transport_addr) = self.peer_manager.peer_address(&sender) else {
+                    warn!(?sender, "ignored relay registration from unknown peer");
+                    return;
+                };
+                let addrs = normalize_relay_registration_addresses(
+                    transport_addr,
+                    reachable
+                        .into_iter()
+                        .map(|addr| addr.to_socket_addr())
+                        .collect(),
+                );
+                if let Some(addrs) = self.accept_relay_registration(sender, addrs) {
+                    match self.remember_peer_addresses(sender, addrs.clone()) {
+                        Ok(()) => {
+                            self.broadcast_addresses(sender, addrs).await;
+                            self.dial_learned_candidates(cmd_tx.clone());
+                        }
                         Err(err) => warn!(?err, "failed to persist relay registration addresses"),
                     }
                 }
@@ -1239,7 +1388,7 @@ impl P2PService {
                     if let Err(err) = self.remember_peer_addresses(sender, addrs) {
                         warn!(?err, "failed to persist punch-request address");
                     }
-                    self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx.clone());
+                    self.try_spawn_oneoff_connect(addr, cmd_tx.clone());
                     let response = CoordinationMessage::PunchResponse {
                         target: sender,
                         responder_addr: CompactAddress::from(self.addr),
@@ -1279,7 +1428,7 @@ impl P2PService {
                     if let Err(err) = self.remember_peer_addresses(sender, addrs) {
                         warn!(?err, "failed to persist punch-response address");
                     }
-                    self.spawn_oneoff_connect(addr, self.identity.clone(), cmd_tx);
+                    self.try_spawn_oneoff_connect(addr, cmd_tx);
                 } else if self.relay_config.allow_relay {
                     self.peer_manager
                         .send_to(
@@ -1321,6 +1470,36 @@ impl P2PService {
         false
     }
 
+    fn accept_relay_registration(
+        &mut self,
+        peer_id: PeerId,
+        addrs: Vec<SocketAddr>,
+    ) -> Option<Vec<SocketAddr>> {
+        let filtered = self.sanitize_peer_addresses(addrs);
+        if filtered.is_empty() {
+            warn!(?peer_id, "relay registration had no public addresses");
+            return None;
+        }
+        if self.relay_registration_rate_limited(&peer_id) {
+            warn!(?peer_id, "rate-limited relay registration");
+            return None;
+        }
+        Some(filtered)
+    }
+
+    fn relay_registration_rate_limited(&mut self, peer_id: &PeerId) -> bool {
+        let now = Instant::now();
+        let cap = self.rate_limit_state_cap();
+        Self::prune_rate_limit_map(&mut self.last_relay_registration, now, cap);
+        if let Some(last) = self.last_relay_registration.get(peer_id)
+            && now.duration_since(*last) < ADDRESS_RATE_LIMIT
+        {
+            return true;
+        }
+        self.last_relay_registration.insert(*peer_id, now);
+        false
+    }
+
     fn punch_rate_limited(&mut self, peer_id: &PeerId) -> bool {
         let now = Instant::now();
         let cap = self.rate_limit_state_cap();
@@ -1347,6 +1526,7 @@ impl P2PService {
     fn prune_rate_limit_maps_for_peer(&mut self, peer_id: &PeerId) {
         self.last_addr_request.remove(peer_id);
         self.last_addr_announcement.remove(peer_id);
+        self.last_relay_registration.remove(peer_id);
         self.last_punch_request.remove(peer_id);
     }
 
@@ -1491,7 +1671,7 @@ impl P2PService {
 
         let mut recent = self
             .peer_store
-            .recent_peers(RECENT_RECONNECT_LIMIT, &exclude)?;
+            .recent_connected_peers(RECENT_RECONNECT_LIMIT, &exclude)?;
         exclude.extend(recent.iter().copied());
         targets.append(&mut recent);
 
@@ -1586,8 +1766,9 @@ impl P2PService {
     ) {
         let inbound_message_budget = self.inbound_message_budget.clone();
         tokio::spawn(async move {
-            match TcpStream::connect(addr).await {
-                Ok(socket) => {
+            let mut connected = false;
+            match timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await {
+                Ok(Ok(socket)) => {
                     let mut connection = Connection::new(socket);
                     match timeout(HANDSHAKE_TIMEOUT, connection.handshake_initiator(&identity))
                         .await
@@ -1595,26 +1776,34 @@ impl P2PService {
                         Ok(Ok(peer_id)) => {
                             if peer_id == identity.peer_id() {
                                 warn!(%addr, "rejecting opportunistic self dial");
-                                return;
+                            } else {
+                                let session_id = next_peer_session_id();
+                                connected = Self::run_peer_loop(
+                                    connection,
+                                    addr,
+                                    peer_id,
+                                    session_id,
+                                    cmd_tx.clone(),
+                                    false,
+                                    inbound_message_budget,
+                                )
+                                .await
+                                    == PeerRunOutcome::Disconnected;
                             }
-                            let session_id = next_peer_session_id();
-                            let _ = Self::run_peer_loop(
-                                connection,
-                                addr,
-                                peer_id,
-                                session_id,
-                                cmd_tx,
-                                false,
-                                inbound_message_budget,
-                            )
-                            .await;
                         }
                         Ok(Err(e)) => warn!("handshake failed with {}: {}", addr, e),
                         Err(_) => warn!("handshake timed out with {}", addr),
                     }
                 }
-                Err(e) => warn!("opportunistic dial to {} failed: {}", addr, e),
+                Ok(Err(e)) => warn!("opportunistic dial to {} failed: {}", addr, e),
+                Err(_) => warn!("opportunistic dial to {} timed out", addr),
             }
+            let completion = if connected {
+                P2PCommand::DialFinished { addr }
+            } else {
+                P2PCommand::DialFailed { addr }
+            };
+            let _ = cmd_tx.send(completion).await;
         });
     }
 }
@@ -1682,6 +1871,25 @@ fn dialable_listen_addr(addr: SocketAddr) -> Option<SocketAddr> {
     } else {
         Some(addr)
     }
+}
+
+fn normalize_relay_registration_addresses(
+    transport_addr: SocketAddr,
+    addrs: Vec<SocketAddr>,
+) -> Vec<SocketAddr> {
+    addrs
+        .into_iter()
+        .filter(|addr| addr.port() != 0)
+        .filter_map(|addr| {
+            if addr.ip().is_unspecified() {
+                Some(SocketAddr::new(transport_addr.ip(), addr.port()))
+            } else if addr.ip() == transport_addr.ip() {
+                Some(addr)
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 fn is_dialable_addr(addr: SocketAddr) -> bool {
@@ -1799,6 +2007,24 @@ mod tests {
     }
 
     #[test]
+    fn relay_registration_port_hint_uses_observed_transport_ip() {
+        let transport: SocketAddr = "8.8.8.8:49152".parse().unwrap();
+        let hint: SocketAddr = "0.0.0.0:30333".parse().unwrap();
+        let matching: SocketAddr = "8.8.8.8:30334".parse().unwrap();
+        let unrelated: SocketAddr = "1.1.1.1:30335".parse().unwrap();
+        let zero_port: SocketAddr = "0.0.0.0:0".parse().unwrap();
+
+        assert_eq!(
+            normalize_relay_registration_addresses(
+                transport,
+                vec![hint, matching, unrelated, zero_port]
+            ),
+            vec!["8.8.8.8:30333".parse().unwrap(), matching],
+            "registration may claim listening ports, never a third-party IP"
+        );
+    }
+
+    #[test]
     fn peer_supplied_addresses_must_be_public_routable() {
         let rejected = [
             "0.0.0.0:30333",
@@ -1871,6 +2097,159 @@ mod tests {
                 .is_none(),
             "over-limit address lists are rejected before filtering or recording"
         );
+    }
+
+    #[test]
+    fn address_response_does_not_suppress_immediate_relay_registration() {
+        let mut service = test_service("separate-registration-rate-limit", 8);
+        let peer: PeerId = [24u8; 32];
+        let announced: SocketAddr = "8.8.4.4:30333".parse().unwrap();
+        let registered: SocketAddr = "1.1.1.1:30333".parse().unwrap();
+
+        assert!(
+            service
+                .accept_peer_addresses(peer, vec![announced], "address response")
+                .is_some()
+        );
+        assert!(
+            service
+                .accept_relay_registration(peer, vec![registered])
+                .is_some(),
+            "independent address and registration messages need independent rate windows"
+        );
+        assert!(
+            service
+                .accept_relay_registration(peer, vec![registered])
+                .is_none(),
+            "repeated registrations remain rate-limited"
+        );
+    }
+
+    #[test]
+    fn rotating_discovery_eventually_queries_every_connected_peer() {
+        let mut service = test_service("rotating-discovery", 16);
+        for index in 1..=10u8 {
+            let peer: PeerId = [index; 32];
+            let addr: SocketAddr = format!("127.0.0.1:{}", 31_000 + index as u16)
+                .parse()
+                .unwrap();
+            let (tx, _rx) = mpsc::channel(1);
+            assert_eq!(
+                service
+                    .peer_manager
+                    .try_add_peer(peer, addr, tx, index as u64, true),
+                AddPeerResult::Accepted
+            );
+        }
+
+        let first = service.next_discovery_peers(4);
+        let second = service.next_discovery_peers(4);
+        let third = service.next_discovery_peers(4);
+        let queried: HashSet<_> = first.iter().chain(&second).chain(&third).copied().collect();
+
+        assert_eq!(queried.len(), 10);
+        assert!(first.iter().all(|peer| !second.contains(peer)));
+    }
+
+    #[test]
+    fn opportunistic_dials_are_bounded_deduplicated_and_work_in_unlimited_mode() {
+        let mut service = test_service("bounded-oneoff-dials", 0);
+        let candidates: Vec<SocketAddr> = ["8.8.8.8:30333", "1.1.1.1:30333"]
+            .into_iter()
+            .map(|addr| addr.parse().unwrap())
+            .collect();
+        service.learned_addresses.extend(candidates.iter().copied());
+
+        let reserved = service.reserve_dial_candidates(OPPORTUNISTIC_BATCH);
+        assert_eq!(reserved.len(), candidates.len());
+        assert!(
+            service
+                .reserve_dial_candidates(OPPORTUNISTIC_BATCH)
+                .is_empty(),
+            "an address with an active dial must not be selected again"
+        );
+
+        service.inflight_dial_addresses.remove(&reserved[0]);
+        assert_eq!(
+            service.reserve_dial_candidates(OPPORTUNISTIC_BATCH),
+            vec![reserved[0]],
+            "a completed attempt becomes eligible for a later retry"
+        );
+    }
+
+    #[test]
+    fn failed_dial_batch_backs_off_and_does_not_starve_other_candidates() {
+        let mut service = test_service("failed-dial-rotation", 0);
+        let candidates: Vec<SocketAddr> = (1..=6u16)
+            .map(|port| format!("8.8.8.8:{}", 30_000 + port).parse().unwrap())
+            .collect();
+        service.learned_addresses.extend(candidates.iter().copied());
+
+        let first = service.reserve_dial_candidates(OPPORTUNISTIC_BATCH);
+        assert_eq!(first.len(), OPPORTUNISTIC_BATCH);
+        for addr in &first {
+            service.record_dial_failure(*addr);
+        }
+
+        let second = service.reserve_dial_candidates(OPPORTUNISTIC_BATCH);
+        assert_eq!(second.len(), candidates.len() - first.len());
+        assert!(second.iter().all(|addr| !first.contains(addr)));
+        assert!(first.iter().all(|addr| {
+            service
+                .dial_retry
+                .get(addr)
+                .is_some_and(|state| state.failures == 1 && state.retry_after > Instant::now())
+        }));
+    }
+
+    #[tokio::test]
+    async fn relay_registration_is_propagated_to_another_connected_peer() {
+        let mut service = test_service("registration-propagation", 2);
+        let origin: PeerId = [25u8; 32];
+        let other: PeerId = [26u8; 32];
+        let observed_origin: SocketAddr = "8.8.8.8:49152".parse().unwrap();
+        let other_addr: SocketAddr = "1.1.1.1:30333".parse().unwrap();
+        let (origin_tx, _origin_rx) = mpsc::channel(4);
+        let (other_tx, mut other_rx) = mpsc::channel(4);
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(origin, observed_origin, origin_tx, 1, false),
+            AddPeerResult::Accepted
+        );
+        assert_eq!(
+            service
+                .peer_manager
+                .try_add_peer(other, other_addr, other_tx, 2, false),
+            AddPeerResult::Accepted
+        );
+
+        let (cmd_tx, _cmd_rx) = mpsc::channel(1);
+        service
+            .handle_coordination(
+                origin,
+                CoordinationMessage::RelayRegistration {
+                    reachable: vec![CompactAddress::from(
+                        "0.0.0.0:30333".parse::<SocketAddr>().unwrap(),
+                    )],
+                },
+                cmd_tx,
+            )
+            .await;
+
+        let expected: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        assert!(service.learned_addresses.contains(&expected));
+        match tokio::time::timeout(StdDuration::from_secs(1), other_rx.recv())
+            .await
+            .expect("registered address propagated")
+            .expect("other peer channel open")
+            .msg
+        {
+            WireMessage::Coordinate(CoordinationMessage::Addr { addrs }) => {
+                assert_eq!(addrs, vec![CompactAddress::from(expected)]);
+            }
+            other => panic!("unexpected registration relay: {other:?}"),
+        }
     }
 
     #[test]
@@ -2079,11 +2458,13 @@ mod tests {
 
         service.last_addr_request.insert(peer, now);
         service.last_addr_announcement.insert(peer, now);
+        service.last_relay_registration.insert(peer, now);
         service.last_punch_request.insert(peer, now);
         service.prune_rate_limit_maps_for_peer(&peer);
 
         assert!(!service.last_addr_request.contains_key(&peer));
         assert!(!service.last_addr_announcement.contains_key(&peer));
+        assert!(!service.last_relay_registration.contains_key(&peer));
         assert!(!service.last_punch_request.contains_key(&peer));
 
         let cap = service.rate_limit_state_cap();
