@@ -1678,22 +1678,42 @@ impl P2PService {
         let mut targets = Vec::new();
 
         for addr in imported_peers {
-            if !exclude.contains(&addr) {
-                exclude.insert(addr);
+            if exclude.insert(addr) {
                 targets.push(addr);
             }
         }
 
-        let mut recent = self
-            .peer_store
-            .recent_connected_peers(RECENT_RECONNECT_LIMIT, &exclude)?;
-        exclude.extend(recent.iter().copied());
-        targets.append(&mut recent);
-
+        let mut trusted_ips: HashSet<_> = exclude.iter().map(|addr| addr.ip()).collect();
+        let mut seed_endpoints = exclude.clone();
+        let mut seed_candidates = Vec::new();
         for addr in resolved_seeds {
-            if !exclude.contains(&addr) {
+            trusted_ips.insert(addr.ip());
+            if seed_endpoints.insert(addr) {
+                seed_candidates.push(addr);
+            }
+        }
+
+        let recent = self
+            .peer_store
+            .recent_connected_peers(MAX_LEARNED_ADDRESSES, &exclude)?;
+        let mut recent_count = 0usize;
+        let mut recent_ips = HashSet::new();
+        for addr in recent {
+            if recent_count == RECENT_RECONNECT_LIMIT {
+                break;
+            }
+            if trusted_ips.contains(&addr.ip()) || !recent_ips.insert(addr.ip()) {
+                continue;
+            }
+            if exclude.insert(addr) {
                 targets.push(addr);
-                exclude.insert(addr);
+                recent_count += 1;
+            }
+        }
+
+        for addr in seed_candidates {
+            if exclude.insert(addr) {
+                targets.push(addr);
             }
         }
 
@@ -2614,8 +2634,8 @@ mod tests {
 
         service.advertised_addrs = vec![addr];
 
-        let peers: Vec<SocketAddr> = (0..6)
-            .map(|i| format!("127.0.0.1:96{:02}", i).parse().unwrap())
+        let peers: Vec<SocketAddr> = (1..=6)
+            .map(|octet| format!("127.0.1.{octet}:9600").parse().unwrap())
             .collect();
         for peer in &peers {
             service.peer_store.record_connected(*peer).unwrap();
@@ -2663,8 +2683,8 @@ mod tests {
 
         service.advertised_addrs = vec![addr];
 
-        let cached: Vec<SocketAddr> = (0..3)
-            .map(|i| format!("127.0.0.1:97{:02}", i).parse().unwrap())
+        let cached: Vec<SocketAddr> = (1..=3)
+            .map(|octet| format!("127.0.3.{octet}:9700").parse().unwrap())
             .collect();
         for peer in &cached {
             service.peer_store.record_connected(*peer).unwrap();
@@ -2693,5 +2713,54 @@ mod tests {
             imported
         );
         assert!(cached.iter().all(|peer| targets.contains(peer)));
+        assert!(targets.contains(&"127.0.0.1:9810".parse().unwrap()));
+    }
+
+    #[test]
+    fn startup_targets_deduplicate_cached_ports_by_ip_and_preserve_seed() {
+        let identity = PeerIdentity::generate(b"startup-target-ip-dedup");
+        let addr: SocketAddr = "127.0.0.1:9551".parse().unwrap();
+        let gossip = GossipRouter::new(8);
+        let mut service = P2PService::new(
+            identity,
+            addr,
+            vec![],
+            Vec::new(),
+            gossip.handle(),
+            8,
+            temp_store("startup-ip-dedup"),
+            RelayConfig::default(),
+            NatTraversalConfig::disabled(addr),
+        );
+        service.advertised_addrs = vec![addr];
+
+        for port in 30_000..30_006 {
+            service
+                .peer_store
+                .record_connected(SocketAddr::new("8.8.8.8".parse().unwrap(), port))
+                .unwrap();
+        }
+        service
+            .peer_store
+            .record_connected("1.1.1.1:30333".parse().unwrap())
+            .unwrap();
+
+        let seed: SocketAddr = "8.8.8.8:30333".parse().unwrap();
+        let targets = service
+            .startup_targets(Vec::new(), vec![seed], &HashSet::new())
+            .unwrap();
+
+        assert_eq!(
+            targets
+                .iter()
+                .filter(|target| target.ip() == seed.ip())
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![seed],
+            "the configured seed must replace stale cached ports on its IP"
+        );
+        assert!(targets.contains(&"1.1.1.1:30333".parse().unwrap()));
+        let target_ips: HashSet<_> = targets.iter().map(|target| target.ip()).collect();
+        assert_eq!(target_ips.len(), targets.len());
     }
 }

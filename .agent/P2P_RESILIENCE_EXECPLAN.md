@@ -23,6 +23,7 @@ The behavior is visible through focused network tests. A three-node test must sh
 - [x] (2026-07-10 04:32Z) Published revision `e52dbde8`, opened PR #198, and obtained a fully green GitHub check suite.
 - [x] (2026-07-10 05:08Z) Deployed `e52dbde8` to the packaged laptop app, `hegemon-dev`, and `hegemon-ovh`; verified exact shared block hashes, active mining on both VPS hosts, NTP, and direct non-star TCP links.
 - [x] (2026-07-10 05:23Z) Hardened learned dialing after the live OVH canary exposed multi-port records for one public IP: at most one opportunistic dial per IP may now be in flight.
+- [x] (2026-07-10 05:53Z) Extended the per-IP rule to cached persistent startup reconnect targets after the dev canary proved old cached ports use that separate path; configured seeds now supersede stale cached ports on their IP while explicit same-host endpoints remain supported.
 - [ ] Publish and deploy the final per-IP revision, verify the three-node chain and topology again, and require all GitHub checks to pass on the final PR head.
 
 ## Surprises & Discoveries
@@ -48,6 +49,12 @@ The behavior is visible through focused network tests. A three-node test must sh
 - Observation: a live external peer can advertise many stale ports for one public IP, allowing distinct endpoint records for that IP to occupy every bounded opportunistic dial slot.
   Evidence: the `hegemon-ovh` canary remained healthy and in sync, but its logs showed concurrent learned dials to multiple ports on `42.116.135.181`; endpoint-only in-flight deduplication did not prevent this resource concentration.
 
+- Observation: endpoint records previously marked as successful can enter persistent startup reconnect loops, bypassing opportunistic-dial admission and backoff.
+  Evidence: after deploying `9347123b` to `hegemon-dev`, the node stayed synced and mining but repeatedly timed out four cached ports on `42.116.135.181` in parallel while new opportunistic attempts correctly stayed at one port per IP.
+
+- Observation: deduplicating every startup target by IP breaks valid explicit topologies with multiple nodes or ports on the same host.
+  Evidence: the first startup-selector revision passed focused unit tests but failed all three TCP integration tests, whose explicitly configured test nodes intentionally share `127.0.0.1`. The policy was narrowed to cached reconnect records before publication.
+
 ## Decision Log
 
 - Decision: keep the existing `CoordinationMessage::RelayRegistration` wire shape and interpret an unspecified address only as a listening-port hint.
@@ -68,6 +75,10 @@ The behavior is visible through focused network tests. A three-node test must sh
 
 - Decision: allow at most one in-flight opportunistic dial per public IP, while retaining endpoint-specific success and failure backoff.
   Rationale: distinct ports on one stale or adversarial address record must not consume all 16 learned-dial slots. Per-IP in-flight admission preserves room for independent peers without collapsing persistent configured seed behavior or discarding valid alternate endpoints for later retries.
+  Date/Author: 2026-07-10 / Codex
+
+- Decision: deduplicate only cached persistent startup targets by IP and reserve explicit peer and configured seed IPs before selecting cached endpoints.
+  Rationale: old cached ports must not create parallel permanent reconnect loops or suppress an operator endpoint on the same host. Imported targets retain first priority, distinct recent cached peer IPs retain second priority, and configured seeds remain present at their canonical ports. Explicit endpoints remain endpoint-addressed to support multiple legitimate nodes behind one address.
   Date/Author: 2026-07-10 / Codex
 
 ## Outcomes & Retrospective
@@ -116,7 +127,7 @@ Acceptance requires all focused network tests to pass with no ignored new failur
 
 With `max_peers = 0`, learned-peer dialing must remain enabled because zero means unlimited admission. Multiple address announcements for the same unreachable endpoint must create at most one active one-off dial attempt, and different ports on one IP must still create at most one concurrent opportunistic dial to that IP. Failed endpoints must back off and must not starve later candidates in the bounded dial pool. TCP connect and handshake attempts must terminate within their configured bounds. Periodic discovery must rotate across connected peers instead of querying the same map prefix forever.
 
-After a peer connects and then disconnects, `last_connected` must retain the successful connection time rather than the disconnect time. Startup reconnect selection must remain capped and must prioritize imported peers, then recently successful cached peers, then configured seeds without duplicates.
+After a peer connects and then disconnects, `last_connected` must retain the successful connection time rather than the disconnect time. Startup reconnect selection must remain capped and must prioritize imported peers, then distinct recently successful cached peer IPs, then configured seeds without duplicate endpoints. A configured seed must replace stale cached ports on the same IP, while explicit imported and seed endpoints on the same IP must remain supported.
 
 The final `cargo test -p network`, clippy command, formatting check, and `git diff --check` must pass.
 
@@ -170,3 +181,5 @@ Revision note (2026-07-09 19:31Z): Added and validated stale advertised-address 
 Revision note (2026-07-09 19:51Z): Extended the plan for a user-approved rolling deployment. The laptop and `hegemon-dev` are canaries; `hegemon-ovh` remains live until both pass. Roll back on mismatched genesis or tip hash, a closed mining sync gate, persistent zero-peer state, or failed required CI.
 
 Revision note (2026-07-10 05:23Z): Recorded the first live three-host canary and added per-IP learned-dial admission after stale multi-port advertisements on an external peer exposed a bounded but concentrated dial-amplification path.
+
+Revision note (2026-07-10 05:53Z): Held the OVH rollout when the dev canary showed cached startup reconnect loops bypassing opportunistic admission. Extended per-IP selection to cached persistent startup targets, made configured seed ports authoritative over cached ports on the same IP, and kept explicit same-host endpoints compatible after the full TCP suite caught an over-broad first revision.
