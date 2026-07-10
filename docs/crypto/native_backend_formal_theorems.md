@@ -1,6 +1,19 @@
 # Native Backend Formal Theorems
 
-This note states the theorem-grade math for Hegemon's active native backend family. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript cap with an exact statement about the implemented five-challenge Fiat-Shamir schedule, proves the exact deterministic-commitment collision reduction the repo claims, proves the coefficient-space flattening step with zero in-repo loss, and records the concrete security arithmetic for the active conservative instance.
+This note records the mathematical argument and the exact machine-checked boundary for Hegemon's active native backend family. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript cap with checked arithmetic for the implemented five-challenge schedule, but it does not present every argument below as already mechanized.
+
+## Verification status
+
+`Hegemon.Native.NativeBackendAlgebra` now machine-checks:
+
+- the active reducer's positive bounded range and the nonzero degree-at-most-four challenge polynomial,
+- `3^5 / 2^320` supporting 312 bits but not 313, and the 128-leaf composition supporting 305 bits but not 306,
+- the `4104` conservative and `648` live coefficient dimensions plus the `16336` and `6492` Euclidean arithmetic,
+- canonical Goldilocks coefficient reduction and idempotence,
+- the centered difference bound for 8-bit digits,
+- and deterministic fold-data acceptance equivalence and uniqueness.
+
+Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. The following remain mathematical or cryptographic obligations rather than discharged Lean theorems: finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, random-oracle independence, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
 
 ## Scope
 
@@ -43,7 +56,7 @@ So in `F_q[X]`:
 X^54 + X^27 + 1 = (X^27 - ω)(X^27 - ω^2).
 ```
 
-### Lemma 1.1: `X^27 - ω` and `X^27 - ω^2` are irreducible over `F_q`
+### Open Lemma 1.1: `X^27 - ω` and `X^27 - ω^2` are irreducible over `F_q`
 
 Let `α` satisfy `α^27 = ω`. Then `α^81 = 1` and `α^27 != 1`, so `α` has multiplicative order `81`. The degree of the minimal polynomial of a primitive `81`st root over `F_q` is `ord_81(q)`. Here
 
@@ -54,7 +67,7 @@ ord_81(4) = 27.
 
 Therefore every root of `X^27 - ω` has degree `27` over `F_q`. Since the polynomial itself also has degree `27`, it is irreducible. The same argument applies to `X^27 - ω^2`.
 
-### Corollary 1.2: every nonzero polynomial of degree `< 27` is a unit in `R_q`
+### Conditional Corollary 1.2: every nonzero polynomial of degree `< 27` is a unit in `R_q`
 
 Let `g(X) ∈ F_q[X]` be nonzero with `deg g < 27`. A nonunit in `R_q` must share a nontrivial common factor with `X^54 + X^27 + 1`, hence with either `X^27 - ω` or `X^27 - ω^2`. By Lemma 1.1 each such factor has degree `27`, which is impossible for `g`. Hence `gcd(g, X^54 + X^27 + 1) = 1`, so the residue class of `g` is invertible in `R_q`.
 
@@ -80,7 +93,7 @@ and the associated challenge polynomial
 χ_c(X) = c_0 + c_1 X + c_2 X^2 + c_3 X^3 + c_4 X^4 ∈ R_q.
 ```
 
-Because each `c_i` is strictly positive, `χ_c(X)` is nonzero and has degree at most `4`. Corollary 1.2 therefore implies `χ_c(X) ∈ R_q^×`.
+Because each `c_i` is strictly positive, Lean proves that `χ_c(X)` is nonzero and has degree at most `4`. Its unit property is currently proved only under the named low-degree-unit assumption corresponding to Open Lemma 1.1.
 
 ### Theorem 2.1: the active fold verifier is an exact canonicalization check
 
@@ -166,7 +179,7 @@ ring elements after the implemented pack-then-digit-expand embedding.
 
 So the exact live deterministic commitment class is a strict sub-class of the manifest-owned conservative cap `M = 76`. The repo keeps `M = 76` in the exported claim because the manifest is allowed to zero-pad messages up to that length, but the current `TxLeafPublicRelation` occupies only `12` ring elements.
 
-### Theorem 3.2: accepted deterministic-commitment collisions reduce directly to BK-MSIS
+### Open Reduction 3.2: accepted deterministic-commitment collisions reduce directly to BK-MSIS
 
 Fix the live deterministic commitment matrix `A ∈ R_q^{11 x 76}` derived from the active parameter fingerprint. Let `M_live ⊂ R_q^76` be the exact set of zero-padded message vectors produced by the shipped public-witness reconstruction path. Suppose an adversary outputs distinct `m, m' ∈ M_live` with
 
@@ -236,7 +249,7 @@ For each `a ∈ R_q`, let `T_a ∈ F_q^{54 x 54}` be the matrix of the `F_q`-lin
 A_flat = (T_aij) ∈ F_q^{594 x 4104}.
 ```
 
-### Theorem 4.1: exact equivalence of the ring/module kernel and the flattened kernel
+### Open Theorem 4.1: exact equivalence of the ring/module kernel and the flattened kernel
 
 For every `z ∈ R_q^76`,
 
@@ -248,7 +261,7 @@ A_flat coeff(z) = 0 in F_q^594.
 
 This is immediate from the definition of `T_a` and block-matrix multiplication.
 
-### Theorem 4.2: the flattening is zero-loss on the claimed bounded class
+### Open Theorem 4.2: the flattening is zero-loss on the claimed bounded class
 
 Interpret each admissible coefficient in centered form in `[-(q-1)/2, (q-1)/2]`. For the bounded-kernel class above, every centered coefficient already lies in `[-255, 255]`, far below `q/2`. Therefore:
 
@@ -308,7 +321,7 @@ commitment_binding_bits = 872.
 
 ## 6. Consequence For The Exported Claim
 
-Combining Theorem 2.2 and Theorem 3.2 with the zero-loss flattening of Section 4 gives the active conservative repository floor:
+Combining the checked challenge arithmetic with the still-open Reduction 3.2, coefficient flattening, and estimator assumptions gives the active conservative candidate claim:
 
 ```text
 transcript_soundness_bits = 312
@@ -318,4 +331,4 @@ commitment_binding_bits = 872
 soundness_floor_bits = min(305, 872) = 305.
 ```
 
-This note does **not** prove Neo/SuperNeo CCS knowledge soundness. It proves the exact active GoldilocksFrog fold canonicalization law, the exact deterministic-commitment collision reduction the repo claims, the exact coefficient-space flattening, and the concrete arithmetic of the active conservative exported instance.
+The machine-checked result is the exact active GoldilocksFrog fold-data canonicalization model and the concrete arithmetic listed in the verification-status section. This note does **not** yet machine-check the collision reduction or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.

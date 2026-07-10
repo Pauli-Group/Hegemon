@@ -76,6 +76,45 @@ def deployedArithmetizationCaseJsons : List String :=
       case.2
       activeCaseStatement
 
+def profileMutationCaseJson
+    (testCase : String × ProfileBindingParameters) : String :=
+  let parameters := testCase.2
+  "    {\n"
+    ++ "      \"name\": \"" ++ testCase.1 ++ "\",\n"
+    ++ "      \"circuit_version\": "
+    ++ toString parameters.circuitVersion ++ ",\n"
+    ++ "      \"crypto_suite\": " ++ toString parameters.cryptoSuite ++ ",\n"
+    ++ "      \"arithmetization\": "
+    ++ toString parameters.arithmetization ++ ",\n"
+    ++ "      \"constraint_degree\": "
+    ++ toString parameters.constraintDegree ++ ",\n"
+    ++ "      \"rho\": " ++ toString parameters.profile.rho ++ ",\n"
+    ++ "      \"opened_evaluations\": "
+    ++ toString parameters.profile.nbOpenedEvals ++ ",\n"
+    ++ "      \"beta\": " ++ toString parameters.profile.beta ++ ",\n"
+    ++ "      \"opening_grinding_bits\": "
+    ++ toString parameters.profile.openingPowBits ++ ",\n"
+    ++ "      \"decs_evaluations\": "
+    ++ toString parameters.profile.decsNbEvals ++ ",\n"
+    ++ "      \"decs_opened_evaluations\": "
+    ++ toString parameters.profile.decsNbOpenedEvals ++ ",\n"
+    ++ "      \"decs_eta\": " ++ toString parameters.profile.decsEta ++ ",\n"
+    ++ "      \"decs_grinding_bits\": "
+    ++ toString parameters.profile.decsPowBits ++ ",\n"
+    ++ "      \"poseidon_width\": " ++ toString parameters.poseidonWidth ++ ",\n"
+    ++ "      \"poseidon_rate\": " ++ toString parameters.poseidonRate ++ ",\n"
+    ++ "      \"poseidon_steps\": " ++ toString parameters.poseidonSteps ++ ",\n"
+    ++ "      \"poseidon_rows_per_permutation\": "
+    ++ toString parameters.poseidonRowsPerPermutation ++ ",\n"
+    ++ "      \"expected_profile_material_hex\": \""
+    ++ hexBytes (profileMaterialWithParameters parameters) ++ "\"\n"
+    ++ "    }"
+
+def profileMutationCaseJsons : List String :=
+  (List.zip
+      activeProfileSingleFieldMutationNames
+      activeProfileSingleFieldMutations).map profileMutationCaseJson
+
 def vectorJson : String :=
   let coreCases :=
     [ transcriptCaseJson
@@ -119,6 +158,9 @@ def vectorJson : String :=
     ++ hexBytes smallwoodFieldXofDomain ++ "\",\n"
     ++ "  \"smallwood_transcript_binding_cases\": [\n"
     ++ String.intercalate ",\n" cases ++ "\n"
+    ++ "  ],\n"
+    ++ "  \"active_profile_single_field_mutations\": [\n"
+    ++ String.intercalate ",\n" profileMutationCaseJsons ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

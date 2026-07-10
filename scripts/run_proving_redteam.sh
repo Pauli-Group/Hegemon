@@ -118,6 +118,13 @@ if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
 fi
 EOF
       ;;
+    smallwood-lean-spec-hardening)
+      cat <<'EOF'
+cargo_test_filter transaction-circuit smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound -- --nocapture
+cargo_test_filter transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_ -- --nocapture
+cargo_test_filter transaction-circuit packed_smallwood_inline_merkle_rejects_ -- --nocapture
+EOF
+      ;;
     staged-proof-abuse)
       cat <<'EOF'
 cargo_test_filter hegemon-node submit_ciphertexts_rejects_ -- --nocapture
@@ -214,6 +221,7 @@ run_campaign() {
 
 run_campaign "parser-malleability"
 run_campaign "semantic-aliasing"
+run_campaign "smallwood-lean-spec-hardening"
 run_campaign "staged-proof-abuse"
 run_campaign "recursive-block-mismatch"
 run_campaign "receipt-root-tamper"

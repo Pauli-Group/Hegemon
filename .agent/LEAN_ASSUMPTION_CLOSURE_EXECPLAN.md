@@ -14,14 +14,15 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
 
 - [x] (2026-07-10 12:00Z) Created goal and branch `codex/lean-assumption-closure`; confirmed GitHub CLI authentication and preserved unrelated untracked app build directories without staging them.
 - [x] (2026-07-10 12:05Z) Reviewed `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, the formal claims ledger, completion matrix, residual-assumption roadmap, SmallWood soundness envelope, transaction soundness boundary, supply invariant, materialized native refinement, native backend theorem note, and formal-core gate.
-- [ ] Implement a concrete SmallWood semantic-constraint closure whose accepted constraint rows imply transaction spend authorization, balance conservation, output binding, and authorized per-asset deltas without taking those semantic conclusions as opaque soundness propositions.
-- [ ] Add a generated active-profile contract and adversarial mutation suite that binds arithmetization, statement shape, transcript material, opening counts, zero grinding bits, distinct opening requirements, and every security-relevant constraint family to the production Rust verifier.
-- [ ] Compose verified transaction claims, candidate/recursive artifact matching, coinbase accounting, fee/native-delta binding, and accepted-chain supply replay into one no-counterfeit certificate with every remaining primitive cryptographic premise explicit.
-- [ ] Replace the materialized transfer's broad parser/native-node residual with scoped raw-ingress, exact-decode, replay, atomic-persistence, reorg/startup, and canonical-publication refinement components, retaining only the components not mechanized by this branch.
-- [ ] Mechanize the active native backend's Goldilocks ring factorization consequences, nonzero low-degree challenge-unit condition, deterministic fold canonicalization contract, challenge min-entropy floor, and composition loss while explicitly excluding proof-of-knowledge claims.
-- [ ] Split the formal matrix into coverage and assumption-closure measurements; make formal-core reject regressions in either and stop counting explicit open mechanized tracks as discharged security work.
-- [ ] Update `DESIGN.md`, `METHODS.md`, formal README, claims, blueprint, and this plan with exact achieved and residual boundaries.
-- [ ] Run targeted Lean/Rust tests, the complete formal-core gate, formatting and metadata gates, runtime/node compatibility checks, and a Codex Security branch-diff scan; remediate every valid finding.
+- [x] (2026-07-10 16:20Z) Implemented `SmallWoodSemanticClosure`: exact active input, output, public-shape, and balance rows imply spend authorization, output binding, valid balance, and `AcceptedTransactionRelation`; the accepted-proof extraction premise concludes only existence of an exact satisfying row record.
+- [x] (2026-07-10 16:35Z) Added the generated active-profile contract and production Rust conformance suite for all 16 single-field mutations, including both zero-grinding fields, arithmetization, opening geometry, and Poseidon geometry; added targeted inline-Merkle mutation cases to the red-team campaign.
+- [x] (2026-07-10 16:45Z) Added `SmallWoodNoCounterfeit`, composing exact semantics, transaction-claim matching, proven-batch/recursive admission, fee/native-delta binding, and accepted-chain supply replay into one no-counterfeit certificate.
+- [x] (2026-07-10 16:55Z) Audited the native refinement boundary and recorded the existing scoped raw-ingress, exact-decode, canonical-publication, reorg, and startup row-equivalence modules as closed tracks; retained arbitrary parser internals and complete native-node equivalence as a distinct open track rather than duplicating the existing certificates.
+- [x] (2026-07-10 17:10Z) Added `NativeBackendAlgebra` and Lean-to-Rust vectors for reducer bounds, nonzero challenge polynomials, exact 312/305-bit arithmetic, dimensions, Euclidean bounds, coefficient canonicalization, digit bounds, and deterministic fold-data uniqueness. Kept finite-field irreducibility/unit discharge, collision reduction, flattening, external cryptanalysis, and proof-of-knowledge explicitly open.
+- [x] (2026-07-10 17:20Z) Split the formal matrix into 100% formal-surface coverage and 10/18 (`55.5556%`) equal-count mechanized assumption closure; formal-core recomputes both, rejects malformed/open-without-work tracks, and grants no closure credit for merely naming an assumption.
+- [x] (2026-07-10 17:32Z) Updated `DESIGN.md`, `METHODS.md`, formal README, SmallWood/native theorem notes, claims, blueprint, matrix, and this plan with exact achieved and residual boundaries.
+- [x] (2026-07-10 18:45Z) Ran targeted Lean/Rust mutation tests, aggregate `lake build Hegemon`, the complete formal-core gate, CI-mode proving red team, formatting and JSON/shell metadata checks, release node build, deterministic review-package parity, and an isolated release-node mining/RPC/SIGTERM smoke. The separate live testnet listener remained untouched.
+- [ ] Run a Codex Security branch-diff scan against `origin/main`; remediate every valid finding and rerun affected gates.
 - [ ] Commit only intended files, push the branch, open a draft PR against `main`, and keep iterating until every required GitHub check is green. Do not merge.
 
 ## Surprises & Discoveries
@@ -34,6 +35,15 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
 
 - Observation: the active native fold layer is intentionally a deterministic canonicalization and binding construction, not a general hidden-witness argument.
   Evidence: `docs/crypto/native_backend_formal_theorems.md` states that accepted folds have one deterministic recomputation path and explicitly disclaims a hidden-witness extractor and Neo/SuperNeo CCS soundness claim.
+
+- Observation: the requested scoped raw-ingress, reorg, startup, and canonical-publication refinement was already present and stronger than the broad residual wording suggested.
+  Evidence: `RawIngressFullBytePublicationSurface`, `NativePublicationRowEquivalence`, `CanonicalReorgChainAdmission`, and `CanonicalStateReload` already expose exact decoded/materialized/planned/canonical row equality on the covered paths. The honest remaining gap is arbitrary parser internals and complete Rust node refinement.
+
+- Observation: assuming all of `validPublicInputShape` inside the new semantic record would have made input/output validity circular, and requiring inactive private output rows to be zero would have been stronger than production.
+  Evidence: the final `smallwoodPublicShapeCoreValid` contains only independent shape/scalar/stablecoin facts, while input/output validity is derived from exact rows; inactive outputs constrain public commitment/hash fields only, matching the production relation.
+
+- Observation: artifact kind and acceptance alone did not establish recursive no-bypass behavior.
+  Evidence: the final certificate also requires exact transaction-claim matching plus `ProvenBatchBinding` route, proof-kind, and acceptance facts before deriving the recursive SmallWood no-counterfeit result.
 
 ## Decision Log
 
@@ -53,9 +63,33 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
   Rationale: a coverage score should reward explicit residual accounting, while a closure score must not grant credit for an unresolved mechanized-refinement proposition. Keeping both prevents misleading progress while preserving the useful coverage inventory.
   Date/Author: 2026-07-10 / Codex
 
+- Decision: Count mechanized closure tracks equally and require every open track to state concrete remaining work.
+  Rationale: the previous weighted surface rows answer a different question. An equal-count inventory is auditable, avoids subjective pseudo-precision, and makes additions/removals visible in review.
+  Date/Author: 2026-07-10 / Codex
+
+- Decision: Keep accepted-proof extraction and production AIR-row implementation equivalence as two separate open tracks.
+  Rationale: a sound proof system over the wrong relation and a correct relation behind an unsound extractor are independent failure classes. Combining them would recreate the opaque assumption this plan is intended to remove.
+  Date/Author: 2026-07-10 / Codex
+
+- Decision: Do not claim the native ring irreducibility, collision reduction, flattening, or proof-of-knowledge argument as mechanized.
+  Rationale: this branch checks the exact arithmetic and canonicalization model, but those deeper algebraic and cryptographic arguments are not present as Lean proofs. The documentation and matrix must preserve that boundary.
+  Date/Author: 2026-07-10 / Codex
+
 ## Outcomes & Retrospective
 
-Implementation is in progress. This section will record the exact assumptions removed or narrowed, the final validation evidence, security-scan result, runtime compatibility result, PR URL, and any residual work that remains external by design.
+Implementation and local acceptance validation are complete; security review and publication are in progress. The branch closes the exact SmallWood semantic implication, active profile drift/no-grinding contract, verified-claim/recursive admission composition, accepted-chain supply composition, scoped native publication/reorg/startup tracks, native challenge arithmetic, fold canonicalization model, digit/Euclidean arithmetic, and existing statement/wrapper binding. It deliberately leaves eight tracks open: accepted-proof extraction, complete SmallWood AIR-row implementation equivalence, arbitrary parser/full-node refinement, native irreducibility/unit discharge, collision reduction/flattening/proof-of-knowledge, cryptographic privacy games, positive external bridge receipt soundness, and DA/storage runtime semantics.
+
+Local acceptance evidence:
+
+    cargo fmt --all --check
+    cargo fmt --manifest-path scripts/hegemon_formal_core/Cargo.toml -- --check
+    git diff --check
+    lake build Hegemon
+    bash scripts/check_formal_core.sh
+    HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
+    make node
+
+The formal-core gate ended with `=== Hegemon formal-core gate passed ===`; the Lean axiom report found no temporary axioms, unwaived dependencies, or budget violations; and the CI-mode red team passed all nine campaigns. The release binary started on temporary dev state with no seeds or peers, answered RPC, mined to height 4, reported its mining sync gate open, and exited cleanly after SIGTERM. No changed path is under `consensus/`, `network/`, `node/`, runtime serialization, chain-spec, or genesis code. The regenerated native review package passed its SHA-256 check and deterministic package/claim parity. Security-scan results, final commit ids, and the draft PR URL will be appended after review and publication.
 
 ## Context and Orientation
 
@@ -77,7 +111,7 @@ Third, add an accepted-chain no-counterfeit composition module. It will consume 
 
 Fourth, split native refinement into named components. Define a scoped certificate for exact pending-action and block-action decode, semantic action-hash projection, proof verification and claim matching, replay planning, atomic commit/durability admission, canonical index publication, reorg replay, and startup reload. Existing theorems and blueprint order gates will provide most fields. The materialized transfer review will consume this scoped certificate and retain a smaller residual record for parser implementation internals, storage behavior below the admitted durability barrier, and any native path not covered by the certificate. No runtime behavior changes are expected.
 
-Fifth, add the native backend algebra module. Work over the concrete Goldilocks modulus and quotient factorization facts needed by the five-challenge schedule. Prove the exact nonzero low-degree challenge condition used to justify invertibility under a named irreducibility/factorization premise, define deterministic fold recomputation and prove accepted folds are unique, encode the `3^5 / 2^320` challenge-point bound and `128`-leaf composition loss as checked integer inequalities, and expose the exact boundary as canonicalization plus named BK-MSIS and random-oracle assumptions. Do not introduce a witness-extraction theorem.
+Fifth, add the native backend algebra module. Work over the concrete Goldilocks modulus and prove the exact nonzero low-degree challenge condition, retaining invertibility under a named irreducibility/low-degree-unit premise. Define deterministic fold-data recomputation and prove accepted data are unique, encode the `3^5 / 2^320` challenge-point bound and `128`-leaf composition loss as checked integer inequalities, and expose the exact boundary as canonicalization plus named irreducibility, BK-MSIS, random-oracle, estimator, and external-review assumptions. Do not introduce a witness-extraction theorem or describe the unmechanized factorization/reduction as closed.
 
 Sixth, change measurement and documentation. Keep the existing coverage percentage for compatibility, add a mechanized assumption-closure percentage and open-track inventory, and make the checker recompute both. Update the release certificate and roadmap only where needed to expose the narrower records. Update `DESIGN.md`, `METHODS.md`, `formal/lean/README.md`, claims, and blueprint with exact wording that cannot be mistaken for unconditional cryptographic security.
 
@@ -95,7 +129,7 @@ Generate and check the active SmallWood contract with commands that will be adde
 
 Build the native backend algebra and accepted-chain modules with:
 
-    lake build Hegemon.Native.NativeBackendAlgebra Hegemon.Consensus.AcceptedChainNoCounterfeit
+    lake build Hegemon.Native.NativeBackendAlgebra Hegemon.Transaction.SmallWoodNoCounterfeit
 
 Run the complete gate from the repository root with:
 

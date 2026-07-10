@@ -3730,6 +3730,7 @@ fn hex_nibble(value: u8) -> char {
 
 #[cfg(test)]
 mod tests {
+    use p3_field::PrimeField64;
     use p3_goldilocks::Goldilocks;
     use superneo_ccs::{
         digest_statement, Assignment, CcsShape, RelationId, ShapeDigest, SparseEntry, SparseMatrix,
@@ -3745,14 +3746,54 @@ mod tests {
 
     use super::{
         build_recursive_lcccs_instance, canonical_recursive_decider_transcript,
-        clear_prepared_matrix_cache, recursive_backend_v2, reset_kernel_cost_report,
-        review_fold_challenges, review_leaf_proof_digest, take_kernel_cost_report,
-        theorem_backed_transcript_soundness_bits, BackendManifest, CommitmentSecurityModel,
-        LatticeBackend, LatticeCommitment, NativeBackendParams, NativeCommitmentScheme,
-        PreparedCommitmentMatrix, PreparedMatrixCache, RecursiveLatticeDeciderProof,
-        RecursiveLatticeProofBundle, ReviewState, RingElem, RingProfile,
+        clear_prepared_matrix_cache, recursive_backend_v2, reduce_fold_challenge,
+        reset_kernel_cost_report, review_fold_challenges, review_leaf_proof_digest,
+        take_kernel_cost_report, theorem_backed_transcript_soundness_bits, BackendManifest,
+        CommitmentSecurityModel, LatticeBackend, LatticeCommitment, NativeBackendParams,
+        NativeCommitmentScheme, PreparedCommitmentMatrix, PreparedMatrixCache,
+        RecursiveLatticeDeciderProof, RecursiveLatticeProofBundle, ReviewState, RingElem,
+        RingProfile,
     };
     use std::sync::Arc;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanNativeBackendAlgebraVectors {
+        schema_version: u32,
+        goldilocks_modulus: String,
+        active_challenge_bits: u32,
+        active_challenge_value_count: String,
+        active_fold_challenge_count: u32,
+        active_ring_degree: usize,
+        active_digit_bound: u64,
+        active_matrix_rows: usize,
+        active_max_commitment_message_ring_elements: u32,
+        active_max_claimed_receipt_root_leaves: u32,
+        active_tuple_preimage_bound: u32,
+        active_transcript_soundness_bits: u32,
+        active_composition_loss_bits: u32,
+        active_transcript_floor_bits: u32,
+        active_ambient_coefficient_dimension: u32,
+        active_conservative_euclidean_bound: u32,
+        active_live_message_ring_elements: u32,
+        active_live_coefficient_dimension: u32,
+        active_live_euclidean_bound: u32,
+        challenge_reduction_cases: Vec<LeanChallengeReductionCase>,
+        canonical_coefficient_cases: Vec<LeanCanonicalCoefficientCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanChallengeReductionCase {
+        name: String,
+        raw: String,
+        expected_reduced: String,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanCanonicalCoefficientCase {
+        name: String,
+        value: String,
+        expected_canonical: String,
+    }
 
     fn shape() -> CcsShape<Goldilocks> {
         CcsShape {
@@ -3784,6 +3825,107 @@ mod tests {
                     },
                 ],
             },
+        }
+    }
+
+    #[test]
+    fn lean_generated_native_backend_algebra_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS") else {
+            eprintln!(
+                "HEGEMON_LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("read Lean native-backend algebra vectors {path}: {err}"));
+        let vectors: LeanNativeBackendAlgebraVectors =
+            serde_json::from_str(&raw).unwrap_or_else(|err| {
+                panic!("parse Lean native-backend algebra vectors {path}: {err}")
+            });
+
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(
+            vectors.goldilocks_modulus.parse::<u64>().unwrap(),
+            Goldilocks::ORDER_U64
+        );
+        let params = NativeBackendParams::default();
+        assert_eq!(vectors.active_challenge_bits, params.challenge_bits);
+        assert_eq!(
+            vectors.active_challenge_value_count.parse::<u64>().unwrap(),
+            (1u64 << params.challenge_bits.min(63)) - 1
+        );
+        assert_eq!(
+            vectors.active_fold_challenge_count,
+            params.fold_challenge_count
+        );
+        assert_eq!(vectors.active_ring_degree, params.ring_profile.degree());
+        assert_eq!(
+            vectors.active_digit_bound,
+            (1u64 << params.decomposition_bits) - 1
+        );
+        assert_eq!(vectors.active_matrix_rows, params.matrix_rows);
+        assert_eq!(
+            vectors.active_max_commitment_message_ring_elements,
+            params.max_commitment_message_ring_elems
+        );
+        assert_eq!(
+            vectors.active_max_claimed_receipt_root_leaves,
+            params.max_claimed_receipt_root_leaves
+        );
+        assert_eq!(vectors.active_tuple_preimage_bound, 3u32.pow(5));
+        assert_eq!(vectors.active_live_message_ring_elements, 12);
+        assert_eq!(vectors.active_live_coefficient_dimension, 12 * 54);
+        assert_eq!(vectors.active_live_euclidean_bound, 6_492);
+        let claim = params.security_claim().expect("active security claim");
+        assert_eq!(
+            vectors.active_transcript_soundness_bits,
+            theorem_backed_transcript_soundness_bits(
+                params.challenge_bits,
+                params.fold_challenge_count
+            )
+        );
+        assert_eq!(
+            vectors.active_transcript_soundness_bits,
+            claim.transcript_soundness_bits
+        );
+        assert_eq!(
+            vectors.active_composition_loss_bits,
+            claim.composition_loss_bits
+        );
+        assert_eq!(
+            vectors.active_transcript_floor_bits,
+            claim.soundness_floor_bits
+        );
+        assert_eq!(
+            vectors.active_ambient_coefficient_dimension,
+            claim.commitment_problem_dimension
+        );
+        assert_eq!(
+            vectors.active_conservative_euclidean_bound,
+            claim.commitment_problem_l2_bound
+        );
+        assert!(!vectors.challenge_reduction_cases.is_empty());
+        assert!(!vectors.canonical_coefficient_cases.is_empty());
+
+        for case in vectors.challenge_reduction_cases {
+            let raw = case.raw.parse::<u64>().unwrap();
+            let expected = case.expected_reduced.parse::<u64>().unwrap();
+            assert_eq!(
+                reduce_fold_challenge(vectors.active_challenge_bits, raw),
+                expected,
+                "{}: active fold challenge reduction drifted",
+                case.name
+            );
+        }
+        for case in vectors.canonical_coefficient_cases {
+            let value = case.value.parse::<u64>().unwrap();
+            let expected = case.expected_canonical.parse::<u64>().unwrap();
+            assert_eq!(
+                Goldilocks::new(value).as_canonical_u64(),
+                expected,
+                "{}: Goldilocks canonical coefficient drifted",
+                case.name
+            );
         }
     }
 

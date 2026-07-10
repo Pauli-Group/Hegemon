@@ -86,6 +86,14 @@ These values are bound in both:
 
 So the repo is not claiming a paper-default or grinding-assisted profile. It is claiming an exact no-grinding profile.
 
+## Machine-checked profile and semantic boundary
+
+`Hegemon.Transaction.SmallWoodTranscriptBinding` now treats the complete active verifier-profile material as one parameter record. Lean proves both grinding fields are zero and generates 16 named single-field mutations covering circuit version, crypto suite, arithmetization, effective constraint degree, `rho`, opened evaluations, `beta`, opening grinding, DECS evaluation count, DECS opening count, `eta`, DECS grinding, and the four Poseidon geometry fields. The production Rust test reconstructs every mutation, requires exact byte equality with Lean, rejects duplicate or missing mutation names, and requires every mutation to differ from the active profile. This is a profile-drift and transcript-binding gate, not a cryptographic proof of the Fiat-Shamir transform.
+
+`Hegemon.Transaction.SmallWoodSemanticClosure` defines exact accepted input, output, public-shape, and balance rows. Lean proves those rows imply active spend authorization, inactive-slot nullifier zeroing, output opening/public commitment binding, valid balance, and the existing `AcceptedTransactionRelation`. `Hegemon.Transaction.SmallWoodNoCounterfeit` composes that semantic relation with exact transaction-claim matching, proven-batch and recursive-block admission, fee/native-delta binding, and accepted-chain supply replay.
+
+Two distinct obligations remain open. First, an accepted deployed SmallWood proof must be shown to yield an exact satisfying semantic-row witness without assuming authorization or conservation in the premise. Second, the production Rust constraint builder and verifier execution must be completely refined to every field of that Lean row record. The existing generated vectors and mutation regressions are strong adversarial evidence for the second obligation, but they are not a full implementation-equivalence proof.
+
 ## Theorem surface used here
 
 This note follows the explicit CAPSS / SmallWood soundness terms given in the paper’s theorem for the Fiat-Shamir compiled argument.
@@ -184,24 +192,32 @@ What it proves:
 - the public statement is direct and code-derived,
 - the bound is instantiated against the exact implemented statement shape,
 - the current no-grinding profile clears a conservative `128-bit` floor for that exact statement.
+- the full active profile material is mutation-checked across Lean and production Rust,
+- and exact semantic rows imply the Hegemon accepted-transaction relation and accepted-chain supply certificate.
 
 What it does not prove:
 
 - that `SmallwoodCandidate` is now release-ready,
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
+- that accepted deployed proof bytes extract an exact satisfying semantic-row witness,
+- complete equivalence between every Rust constraint/verifier operation and the Lean row model,
+- or primitive PCS, random-oracle, Merkle/commitment, and hash security.
 
 Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now binds both output ciphertext hashes to public statement fields while staying under the native `tx_leaf` cap. The exact sampled release proof report and older bridge-baseline byte figures predate the latest row-growth and 25-opening legacy profile, so do not quote those sampled byte bands as current until the ignored release-size artifacts are refreshed. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
 
 ## Product conclusion
 
-This milestone is complete in the narrow sense the user asked for:
+This milestone is complete at the profile-binding and semantic-specification layers:
 
 - the candidate statement is now witness-free and public,
 - the active integrated backend now carries an exact no-grinding `128-bit` note for that exact statement,
+- all 16 security-relevant profile mutations are checked across Lean and Rust,
+- exact accepted semantic rows compose through recursive admission to accepted-chain supply conservation,
 - and the active proof bytes stay below both the shipped Plonky3 baseline and the native `tx_leaf` cap.
 
-The next milestone is different:
+The next formal milestones are:
 
-- reduce the packed relation geometry from the current `1447`-row bridge toward the frozen `64`-lane target,
-- while preserving the witness-free public statement shape and this no-grinding discipline.
+- prove accepted-proof-to-exact-row extraction for the deployed SmallWood verifier,
+- complete the Rust constraint-builder/verifier-to-Lean row refinement,
+- and preserve these bindings while reducing the packed relation geometry toward the frozen `64`-lane target.

@@ -97,6 +97,10 @@ pub struct ActiveGoalProgressReport {
     pub total_weight: u64,
     pub weighted_completion_percent: f64,
     pub overall_completion_percent: f64,
+    pub formal_surface_coverage_percent: f64,
+    pub mechanized_assumption_tracks: usize,
+    pub closed_mechanized_assumption_tracks: usize,
+    pub mechanized_assumption_closure_percent: f64,
     pub passed: bool,
 }
 
@@ -344,7 +348,28 @@ struct HighestStandardMatrix {
     goal: String,
     completion_method: String,
     overall_completion_percent: f64,
+    formal_surface_coverage_percent: f64,
+    mechanized_assumption_closure: MechanizedAssumptionClosure,
     properties: Vec<HighestStandardMatrixProperty>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MechanizedAssumptionClosure {
+    measurement_method: String,
+    total_tracks: usize,
+    closed_tracks: usize,
+    closure_percent: f64,
+    tracks: Vec<MechanizedAssumptionTrack>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MechanizedAssumptionTrack {
+    id: String,
+    status: String,
+    evidence_paths: Vec<String>,
+    remaining_work: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -692,6 +717,21 @@ fn validate_progress_against_matrix(
         !matrix.completion_method.trim().is_empty(),
         "matrix completion_method must be set"
     );
+    validate_percent(
+        "highest-standard matrix formal_surface_coverage_percent",
+        matrix.formal_surface_coverage_percent,
+    )?;
+    ensure!(
+        approx_percent_eq(
+            matrix.formal_surface_coverage_percent,
+            matrix.overall_completion_percent
+        ),
+        "matrix formal surface coverage {} does not match compatibility overall percent {}",
+        matrix.formal_surface_coverage_percent,
+        matrix.overall_completion_percent
+    );
+    let assumption_closure =
+        validate_mechanized_assumption_closure(&matrix.mechanized_assumption_closure)?;
     ensure!(
         ledger.total_property_count == matrix.properties.len(),
         "active-goal progress total_property_count {} does not match matrix property count {}",
@@ -886,8 +926,98 @@ fn validate_progress_against_matrix(
         total_weight,
         weighted_completion_percent,
         overall_completion_percent: ledger.overall_completion_percent,
+        formal_surface_coverage_percent: matrix.formal_surface_coverage_percent,
+        mechanized_assumption_tracks: assumption_closure.0,
+        closed_mechanized_assumption_tracks: assumption_closure.1,
+        mechanized_assumption_closure_percent: assumption_closure.2,
         passed: true,
     })
+}
+
+fn validate_mechanized_assumption_closure(
+    closure: &MechanizedAssumptionClosure,
+) -> Result<(usize, usize, f64)> {
+    ensure!(
+        !closure.measurement_method.trim().is_empty(),
+        "mechanized assumption closure measurement_method must be set"
+    );
+    ensure!(
+        !closure.tracks.is_empty(),
+        "mechanized assumption closure must list tracks"
+    );
+    ensure!(
+        closure.total_tracks == closure.tracks.len(),
+        "mechanized assumption closure total_tracks {} does not match track count {}",
+        closure.total_tracks,
+        closure.tracks.len()
+    );
+    let mut ids = BTreeSet::new();
+    let mut closed_tracks = 0usize;
+    for track in &closure.tracks {
+        validate_id("mechanized assumption track id", &track.id)?;
+        ensure!(
+            ids.insert(track.id.as_str()),
+            "duplicate mechanized assumption track {}",
+            track.id
+        );
+        ensure!(
+            matches!(track.status.as_str(), "closed" | "open"),
+            "mechanized assumption track {} has unsupported status {}",
+            track.id,
+            track.status
+        );
+        ensure!(
+            !track.evidence_paths.is_empty(),
+            "mechanized assumption track {} must list evidence_paths",
+            track.id
+        );
+        for evidence in &track.evidence_paths {
+            ensure!(
+                !evidence.trim().is_empty(),
+                "mechanized assumption track {} has an empty evidence path",
+                track.id
+            );
+        }
+        if track.status == "closed" {
+            closed_tracks += 1;
+            ensure!(
+                track.remaining_work.is_empty(),
+                "closed mechanized assumption track {} still lists remaining_work",
+                track.id
+            );
+        } else {
+            ensure!(
+                !track.remaining_work.is_empty(),
+                "open mechanized assumption track {} must list remaining_work",
+                track.id
+            );
+            for remaining in &track.remaining_work {
+                ensure!(
+                    !remaining.trim().is_empty(),
+                    "mechanized assumption track {} has empty remaining_work",
+                    track.id
+                );
+            }
+        }
+    }
+    ensure!(
+        closure.closed_tracks == closed_tracks,
+        "mechanized assumption closure closed_tracks {} does not match recomputed {}",
+        closure.closed_tracks,
+        closed_tracks
+    );
+    let recomputed = closed_tracks as f64 * 100.0 / closure.total_tracks as f64;
+    validate_percent(
+        "mechanized assumption closure closure_percent",
+        closure.closure_percent,
+    )?;
+    ensure!(
+        approx_percent_eq(closure.closure_percent, recomputed),
+        "mechanized assumption closure percent {} does not match recomputed {}",
+        closure.closure_percent,
+        recomputed
+    );
+    Ok((closure.total_tracks, closed_tracks, recomputed))
 }
 
 fn validate_percent(label: &str, value: f64) -> Result<()> {
@@ -1036,6 +1166,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Native/GenerateRisc0ReleaseVerifierVectors.lean",
         "formal/lean/Hegemon/Native/NativeBackendReviewPolicy.lean",
         "formal/lean/Hegemon/Native/GenerateNativeBackendReviewPolicyVectors.lean",
+        "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+        "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean",
         "formal/lean/Hegemon/Native/NativeBackendReleasePosture.lean",
         "formal/lean/Hegemon/Native/GenerateNativeBackendReleasePostureVectors.lean",
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean",
@@ -1172,6 +1304,8 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Transaction/SmallWoodRecursiveEnvelopeWire.lean",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodRecursiveEnvelopeWireVectors.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean",
         "formal/lean/Hegemon/Transaction/StatementHash.lean",
@@ -9530,6 +9664,27 @@ mod tests {
             "goal": "Highest-standard Lean formal verification for Hegemon.",
             "completion_method": "Weighted average of property completion percentages.",
             "overall_completion_percent": 100.0,
+            "formal_surface_coverage_percent": 100.0,
+            "mechanized_assumption_closure": {
+                "measurement_method": "Count explicit mechanized tracks independently from formal surface coverage.",
+                "total_tracks": 2,
+                "closed_tracks": 1,
+                "closure_percent": 50.0,
+                "tracks": [
+                    {
+                        "id": "test.closed-track",
+                        "status": "closed",
+                        "evidence_paths": ["formal evidence"],
+                        "remaining_work": []
+                    },
+                    {
+                        "id": "test.open-track",
+                        "status": "open",
+                        "evidence_paths": ["formal evidence"],
+                        "remaining_work": ["discharge test assumption"]
+                    }
+                ]
+            },
             "properties": properties
         })
     }
