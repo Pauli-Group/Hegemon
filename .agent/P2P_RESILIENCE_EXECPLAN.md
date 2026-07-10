@@ -24,7 +24,7 @@ The behavior is visible through focused network tests. A three-node test must sh
 - [x] (2026-07-10 05:08Z) Deployed `e52dbde8` to the packaged laptop app, `hegemon-dev`, and `hegemon-ovh`; verified exact shared block hashes, active mining on both VPS hosts, NTP, and direct non-star TCP links.
 - [x] (2026-07-10 05:23Z) Hardened learned dialing after the live OVH canary exposed multi-port records for one public IP: at most one opportunistic dial per IP may now be in flight.
 - [x] (2026-07-10 05:53Z) Extended the per-IP rule to cached persistent startup reconnect targets after the dev canary proved old cached ports use that separate path; configured seeds now supersede stale cached ports on their IP while explicit same-host endpoints remain supported.
-- [ ] Publish and deploy the final per-IP revision, verify the three-node chain and topology again, and require all GitHub checks to pass on the final PR head.
+- [x] (2026-07-10 06:34Z) Published final revision `fb81d636`, deployed it to the packaged laptop app, `hegemon-dev`, and `hegemon-ovh`, and reverified direct laptop-to-both-miner and miner-to-miner sessions, matching canonical hashes, active mining, NTP, and zero service restarts. PR #198 remains unmerged while its final GitHub suite runs as the required merge gate.
 
 ## Surprises & Discoveries
 
@@ -85,7 +85,9 @@ The behavior is visible through focused network tests. A three-node test must sh
 
 The implementation now propagates public self-registrations beyond the seed, refreshes address knowledge across rotating connected peers, rotates learned endpoints, limits one-off connection concurrency globally and per public IP, backs failed endpoints off from 30 seconds to 15 minutes, preserves only actual successful-connect recency for persistent startup targets, and clears per-session advertised addresses when a peer is pruned. The existing three-node TCP integration confirms that a node learns another public endpoint through address exchange and that block gossip crosses a non-origin peer.
 
-Validation is green: `cargo test -p network` passed all 108 tests, including 89 unit tests, adversarial transport checks, handshake checks, three-node TCP discovery/gossip, and the PQ timing lane. The two timing assertions initially failed at host load average 48.44, then passed both in isolation and in the complete target after load fell to 4.30, confirming an environmental timing artifact rather than a branch regression. Network clippy passes with warnings denied, formatting passes, `cargo check -p hegemon-node` passes, the approved-seeded-profile and live-mining seed-policy node tests pass, and all 128 `hegemon-formal-core` unit tests pass. Automatic router mapping, DHT discovery, a relay data plane, peer bans, and full NAT hole punching remain explicit residuals.
+Validation is green: `cargo test -p network` passed all 109 tests, including 90 unit tests, adversarial transport checks, handshake checks, three-node TCP discovery/gossip, and the PQ timing lane. The two timing assertions initially failed at host load average 48.44, then passed both in isolation and in the complete target after load fell to 4.30, confirming an environmental timing artifact rather than a branch regression. Network clippy passes with warnings denied, formatting passes, `cargo check -p hegemon-node` passes, the approved-seeded-profile and live-mining seed-policy node tests pass, and all 128 `hegemon-formal-core` unit tests pass. Automatic router mapping, DHT discovery, a relay data plane, peer bans, and full NAT hole punching remain explicit residuals.
+
+The final rolling canary used the same source revision on all three machines without touching chain or wallet state. The packaged laptop app connected directly to the exact `hegemon-ovh` and `hegemon-dev` peer identities. Both VPS miners also held a direct link to each other and a public external peer, so the observed topology was not a seed-centered star. Five chain samples matched across all three hosts except for the expected brief interval immediately after one miner authored the next block; six seconds later both miners agreed at height 8,396 on hash `0x00000023b1ab9331f20465c76e7bcc859b5afa5451bcdbb1f4d5337b268bf31a`. Both miners reported an open sync gate, two effective mining threads, newly authored blocks, synchronized time, and zero systemd restarts. After restart, the noisy external IP retained only one cached endpoint and opportunistic retries rotated one port at a time, closing the concentrated reconnect behavior found by the first canary. Rollback binaries and systemd drop-ins remain on both VPS hosts.
 
 ## Context and Orientation
 
@@ -147,7 +149,7 @@ The final evidence transcript is:
 
     cargo fmt --all --check
     cargo test -p network
-    test result: 108 passed; 0 failed across all network targets
+    test result: 109 passed; 0 failed across all network targets
     cargo clippy -p network --all-targets -- -D warnings
     cargo check -p hegemon-node
     cargo test -p hegemon-node approved_seeded_dev_profile_reports_public_testnet_identity --lib
@@ -183,3 +185,5 @@ Revision note (2026-07-09 19:51Z): Extended the plan for a user-approved rolling
 Revision note (2026-07-10 05:23Z): Recorded the first live three-host canary and added per-IP learned-dial admission after stale multi-port advertisements on an external peer exposed a bounded but concentrated dial-amplification path.
 
 Revision note (2026-07-10 05:53Z): Held the OVH rollout when the dev canary showed cached startup reconnect loops bypassing opportunistic admission. Extended per-IP selection to cached persistent startup targets, made configured seed ports authoritative over cached ports on the same IP, and kept explicit same-host endpoints compatible after the full TCP suite caught an over-broad first revision.
+
+Revision note (2026-07-10 06:34Z): Recorded the final `fb81d636` deployment on the packaged laptop app and both Linux miners. The three-host chain, direct non-star topology, mining gates, NTP, process stability, and bounded noisy-peer reconnect behavior all passed; rollback artifacts were retained and PR #198 was deliberately left unmerged pending its final required checks.
