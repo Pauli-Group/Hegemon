@@ -1166,10 +1166,21 @@ impl P2PService {
 
         let count = available.min(candidates.len());
         let start = self.dial_candidate_cursor % candidates.len();
-        let selected: Vec<_> = (0..count)
-            .map(|offset| candidates[(start + offset) % candidates.len()])
+        let mut selected = Vec::with_capacity(count);
+        let mut reserved_ips: HashSet<_> = self
+            .inflight_dial_addresses
+            .iter()
+            .map(|addr| addr.ip())
             .collect();
-        self.dial_candidate_cursor = (start + count) % candidates.len();
+        let mut scanned = 0;
+        while scanned < candidates.len() && selected.len() < count {
+            let addr = candidates[(start + scanned) % candidates.len()];
+            scanned += 1;
+            if reserved_ips.insert(addr.ip()) {
+                selected.push(addr);
+            }
+        }
+        self.dial_candidate_cursor = (start + scanned) % candidates.len();
         self.inflight_dial_addresses
             .extend(selected.iter().copied());
         selected
@@ -1218,6 +1229,10 @@ impl P2PService {
             || addr == self.addr
             || self.persistent_dial_addresses.contains(&addr)
             || self.inflight_dial_addresses.contains(&addr)
+            || self
+                .inflight_dial_addresses
+                .iter()
+                .any(|candidate| candidate.ip() == addr.ip())
             || self.peer_manager.connected_addresses().contains(&addr)
             || self
                 .dial_retry
@@ -2181,7 +2196,7 @@ mod tests {
     fn failed_dial_batch_backs_off_and_does_not_starve_other_candidates() {
         let mut service = test_service("failed-dial-rotation", 0);
         let candidates: Vec<SocketAddr> = (1..=6u16)
-            .map(|port| format!("8.8.8.8:{}", 30_000 + port).parse().unwrap())
+            .map(|octet| format!("8.8.8.{octet}:30333").parse().unwrap())
             .collect();
         service.learned_addresses.extend(candidates.iter().copied());
 
@@ -2200,6 +2215,35 @@ mod tests {
                 .get(addr)
                 .is_some_and(|state| state.failures == 1 && state.retry_after > Instant::now())
         }));
+    }
+
+    #[test]
+    fn opportunistic_dials_allow_only_one_inflight_attempt_per_ip() {
+        let mut service = test_service("one-dial-per-ip", 0);
+        let noisy_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let mut candidates: Vec<SocketAddr> = (1..=8u16)
+            .map(|offset| SocketAddr::new(noisy_ip, 30_000 + offset))
+            .collect();
+        candidates.extend([
+            "1.1.1.1:30333".parse::<SocketAddr>().unwrap(),
+            "9.9.9.9:30333".parse::<SocketAddr>().unwrap(),
+        ]);
+        service.learned_addresses.extend(candidates);
+
+        let reserved = service.reserve_dial_candidates(MAX_INFLIGHT_OPPORTUNISTIC_DIALS);
+        let reserved_ips: HashSet<_> = reserved.iter().map(|addr| addr.ip()).collect();
+        assert_eq!(reserved.len(), 3);
+        assert_eq!(reserved_ips.len(), reserved.len());
+        assert_eq!(
+            reserved.iter().filter(|addr| addr.ip() == noisy_ip).count(),
+            1
+        );
+        assert!(
+            service
+                .reserve_dial_candidates(MAX_INFLIGHT_OPPORTUNISTIC_DIALS)
+                .is_empty(),
+            "ports sharing an IP must not consume additional in-flight slots"
+        );
     }
 
     #[tokio::test]

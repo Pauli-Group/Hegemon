@@ -20,9 +20,10 @@ The behavior is visible through focused network tests. A three-node test must sh
 - [x] (2026-07-09 19:03Z) Added focused unit and three-node TCP integration regressions.
 - [x] (2026-07-09 19:03Z) Updated `DESIGN.md`, `METHODS.md`, the functionality evaluation, and testnet join skills with implemented behavior and the residual NAT boundary.
 - [x] (2026-07-09 19:22Z) Ran formatting, the complete network target, clippy, native-node compile/configuration checks, formal-core unit tests, and final diff review.
-- [ ] Commit and publish the immutable canary revision, open the pull request, and require all GitHub checks to pass.
-- [ ] Deploy the canary to the laptop and `hegemon-dev`; verify chain identity, tip convergence, mining, peer discovery, and reconnect behavior.
-- [ ] Deploy the validated revision to `hegemon-ovh`; verify both miners and external peers reconverge without a fork.
+- [x] (2026-07-10 04:32Z) Published revision `e52dbde8`, opened PR #198, and obtained a fully green GitHub check suite.
+- [x] (2026-07-10 05:08Z) Deployed `e52dbde8` to the packaged laptop app, `hegemon-dev`, and `hegemon-ovh`; verified exact shared block hashes, active mining on both VPS hosts, NTP, and direct non-star TCP links.
+- [x] (2026-07-10 05:23Z) Hardened learned dialing after the live OVH canary exposed multi-port records for one public IP: at most one opportunistic dial per IP may now be in flight.
+- [ ] Publish and deploy the final per-IP revision, verify the three-node chain and topology again, and require all GitHub checks to pass on the final PR head.
 
 ## Surprises & Discoveries
 
@@ -44,6 +45,9 @@ The behavior is visible through focused network tests. A three-node test must sh
 - Observation: the full network test target contains strict debug-build PQ handshake wall-clock assertions that are invalid under heavy unrelated host load.
   Evidence: all functional lanes passed, while the two timing assertions failed at a host load average above 48; the branch does not modify PQ handshake code.
 
+- Observation: a live external peer can advertise many stale ports for one public IP, allowing distinct endpoint records for that IP to occupy every bounded opportunistic dial slot.
+  Evidence: the `hegemon-ovh` canary remained healthy and in sync, but its logs showed concurrent learned dials to multiple ports on `42.116.135.181`; endpoint-only in-flight deduplication did not prevent this resource concentration.
+
 ## Decision Log
 
 - Decision: keep the existing `CoordinationMessage::RelayRegistration` wire shape and interpret an unspecified address only as a listening-port hint.
@@ -62,11 +66,15 @@ The behavior is visible through focused network tests. A three-node test must sh
   Rationale: silently opening a router port changes the user's external attack surface. Public operators can expose the configured P2P port, while outbound-only nodes still gain multi-seed and learned-public-peer redundancy.
   Date/Author: 2026-07-09 / Codex
 
+- Decision: allow at most one in-flight opportunistic dial per public IP, while retaining endpoint-specific success and failure backoff.
+  Rationale: distinct ports on one stale or adversarial address record must not consume all 16 learned-dial slots. Per-IP in-flight admission preserves room for independent peers without collapsing persistent configured seed behavior or discarding valid alternate endpoints for later retries.
+  Date/Author: 2026-07-10 / Codex
+
 ## Outcomes & Retrospective
 
-The implementation now propagates public self-registrations beyond the seed, refreshes address knowledge across rotating connected peers, rotates learned endpoints, limits one-off connection concurrency, backs failed endpoints off from 30 seconds to 15 minutes, preserves only actual successful-connect recency for persistent startup targets, and clears per-session advertised addresses when a peer is pruned. The existing three-node TCP integration confirms that a node learns another public endpoint through address exchange and that block gossip crosses a non-origin peer.
+The implementation now propagates public self-registrations beyond the seed, refreshes address knowledge across rotating connected peers, rotates learned endpoints, limits one-off connection concurrency globally and per public IP, backs failed endpoints off from 30 seconds to 15 minutes, preserves only actual successful-connect recency for persistent startup targets, and clears per-session advertised addresses when a peer is pruned. The existing three-node TCP integration confirms that a node learns another public endpoint through address exchange and that block gossip crosses a non-origin peer.
 
-Validation is green: `cargo test -p network` passed all 107 tests, including 88 unit tests, adversarial transport checks, handshake checks, three-node TCP discovery/gossip, and the PQ timing lane. The two timing assertions initially failed at host load average 48.44, then passed both in isolation and in the complete target after load fell to 4.30, confirming an environmental timing artifact rather than a branch regression. Network clippy passes with warnings denied, formatting passes, `cargo check -p hegemon-node` passes, the approved-seeded-profile and live-mining seed-policy node tests pass, and all 128 `hegemon-formal-core` unit tests pass. Automatic router mapping, DHT discovery, a relay data plane, peer bans, and full NAT hole punching remain explicit residuals.
+Validation is green: `cargo test -p network` passed all 108 tests, including 89 unit tests, adversarial transport checks, handshake checks, three-node TCP discovery/gossip, and the PQ timing lane. The two timing assertions initially failed at host load average 48.44, then passed both in isolation and in the complete target after load fell to 4.30, confirming an environmental timing artifact rather than a branch regression. Network clippy passes with warnings denied, formatting passes, `cargo check -p hegemon-node` passes, the approved-seeded-profile and live-mining seed-policy node tests pass, and all 128 `hegemon-formal-core` unit tests pass. Automatic router mapping, DHT discovery, a relay data plane, peer bans, and full NAT hole punching remain explicit residuals.
 
 ## Context and Orientation
 
@@ -106,7 +114,7 @@ Inspect the final patch with:
 
 Acceptance requires all focused network tests to pass with no ignored new failures. A registration containing `0.0.0.0:30333` from a peer observed at `203.0.113.10:49152` must derive only `203.0.113.10:30333`; a registration cannot cause an unrelated IP to be derived. Non-public derived endpoints must still be rejected by the existing sanitizer.
 
-With `max_peers = 0`, learned-peer dialing must remain enabled because zero means unlimited admission. Multiple address announcements for the same unreachable endpoint must create at most one active one-off dial attempt. Failed endpoints must back off and must not starve later candidates in the bounded dial pool. TCP connect and handshake attempts must terminate within their configured bounds. Periodic discovery must rotate across connected peers instead of querying the same map prefix forever.
+With `max_peers = 0`, learned-peer dialing must remain enabled because zero means unlimited admission. Multiple address announcements for the same unreachable endpoint must create at most one active one-off dial attempt, and different ports on one IP must still create at most one concurrent opportunistic dial to that IP. Failed endpoints must back off and must not starve later candidates in the bounded dial pool. TCP connect and handshake attempts must terminate within their configured bounds. Periodic discovery must rotate across connected peers instead of querying the same map prefix forever.
 
 After a peer connects and then disconnects, `last_connected` must retain the successful connection time rather than the disconnect time. Startup reconnect selection must remain capped and must prioritize imported peers, then recently successful cached peers, then configured seeds without duplicates.
 
@@ -128,7 +136,7 @@ The final evidence transcript is:
 
     cargo fmt --all --check
     cargo test -p network
-    test result: 107 passed; 0 failed across all network targets
+    test result: 108 passed; 0 failed across all network targets
     cargo clippy -p network --all-targets -- -D warnings
     cargo check -p hegemon-node
     cargo test -p hegemon-node approved_seeded_dev_profile_reports_public_testnet_identity --lib
@@ -160,3 +168,5 @@ Revision note (2026-07-09 19:22Z): Closed the plan after complete network, clipp
 Revision note (2026-07-09 19:31Z): Added and validated stale advertised-address cleanup when heartbeat pruning removes a peer; the final network count is 107 tests.
 
 Revision note (2026-07-09 19:51Z): Extended the plan for a user-approved rolling deployment. The laptop and `hegemon-dev` are canaries; `hegemon-ovh` remains live until both pass. Roll back on mismatched genesis or tip hash, a closed mining sync gate, persistent zero-peer state, or failed required CI.
+
+Revision note (2026-07-10 05:23Z): Recorded the first live three-host canary and added per-IP learned-dial admission after stale multi-port advertisements on an external peer exposed a bounded but concentrated dial-amplification path.
