@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import tarfile
+import unicodedata
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import BinaryIO
 
@@ -24,6 +25,21 @@ SOURCE_EXCLUSIONS = {
     "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
     "audits/native-backend-128b/package.sha256",
 }
+WINDOWS_RESERVED_COMPONENTS = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "CONIN$",
+    "CONOUT$",
+    "CLOCK$",
+    *(f"COM{index}" for index in range(1, 10)),
+    *(f"LPT{index}" for index in range(1, 10)),
+}
+WINDOWS_INVALID_COMPONENT_CHARACTERS = frozenset('<>:"\\|?*')
+WINDOWS_DEVICE_DIGIT_TRANSLATION = str.maketrans(
+    {"\u00b9": "1", "\u00b2": "2", "\u00b3": "3"}
+)
 DIRECT_SOURCE_EVIDENCE_PATHS = (
     "docs/crypto/native_backend_spec.md",
     "docs/crypto/native_backend_formal_theorems.md",
@@ -150,6 +166,33 @@ def verify_archive_hash(archive_path: Path, sha_path: Path) -> None:
         )
 
 
+def _portable_archive_path_identity(relative: PurePosixPath) -> str:
+    identity_parts: list[str] = []
+    for part in relative.parts:
+        windows_part = PureWindowsPath(part)
+        windows_basename = (
+            part.split(".", 1)[0]
+            .rstrip(" .")
+            .upper()
+            .translate(WINDOWS_DEVICE_DIGIT_TRANSLATION)
+        )
+        if (
+            part in {"", ".", ".."}
+            or "\\" in part
+            or any(character in WINDOWS_INVALID_COMPONENT_CHARACTERS for character in part)
+            or any(ord(character) < 32 for character in part)
+            or part.endswith((".", " "))
+            or windows_part.drive
+            or windows_part.root
+            or windows_basename in WINDOWS_RESERVED_COMPONENTS
+        ):
+            raise ReviewPackageError(
+                f"non-portable package member path component: {part!r}"
+            )
+        identity_parts.append(unicodedata.normalize("NFC", part).casefold())
+    return "/".join(identity_parts)
+
+
 def safe_extract(archive_path: Path, destination: Path) -> Path:
     compressed_size = _bounded_regular_file_size(
         archive_path, "package compressed", MAX_COMPRESSED_BYTES
@@ -184,19 +227,12 @@ def safe_extract(archive_path: Path, destination: Path) -> Path:
                         raise ReviewPackageError(
                             f"unsafe package member path: {member.name}"
                         )
-                    for part in relative.parts:
-                        windows_part = PureWindowsPath(part)
-                        if (
-                            "\\" in part
-                            or ":" in part
-                            or "\x00" in part
-                            or windows_part.drive
-                            or windows_part.root
-                        ):
-                            raise ReviewPackageError(
-                                f"non-portable package member path: {member.name}"
-                            )
-                    normalized = str(relative)
+                    try:
+                        normalized = _portable_archive_path_identity(relative)
+                    except ReviewPackageError as exc:
+                        raise ReviewPackageError(
+                            f"non-portable package member path: {member.name}"
+                        ) from exc
                     if normalized in names:
                         raise ReviewPackageError(
                             f"duplicate package member: {member.name}"
@@ -266,13 +302,35 @@ def _git_output(checkout: Path, *args: str) -> bytes:
         ) from exc
 
 
+def tracked_source_entries(checkout: Path) -> dict[str, tuple[str, str]]:
+    raw = _git_output(checkout, "ls-tree", "-r", "-z", "HEAD")
+    entries: dict[str, tuple[str, str]] = {}
+    for record in raw.split(b"\0"):
+        if not record:
+            continue
+        try:
+            metadata, raw_path = record.split(b"\t", 1)
+            raw_mode, raw_type, raw_object_id = metadata.split(b" ", 2)
+            path = raw_path.decode("utf-8", "strict")
+            mode = raw_mode.decode("ascii", "strict")
+            object_type = raw_type.decode("ascii", "strict")
+            object_id = raw_object_id.decode("ascii", "strict")
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise ReviewPackageError(f"invalid Git tree entry: {record!r}") from exc
+        if path in SOURCE_EXCLUSIONS:
+            continue
+        if object_type != "blob" or mode not in {"100644", "100755"}:
+            raise ReviewPackageError(
+                f"unsupported Git source entry for {path}: mode={mode} type={object_type}"
+            )
+        if path in entries:
+            raise ReviewPackageError(f"duplicate Git source entry: {path}")
+        entries[path] = (mode, object_id)
+    return dict(sorted(entries.items()))
+
+
 def tracked_source_paths(checkout: Path) -> list[str]:
-    raw = _git_output(checkout, "ls-tree", "-r", "-z", "--name-only", "HEAD")
-    return sorted(
-        path
-        for path in raw.decode("utf-8", "strict").split("\0")
-        if path and path not in SOURCE_EXCLUSIONS
-    )
+    return list(tracked_source_entries(checkout))
 
 
 def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
@@ -286,12 +344,18 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
             "source snapshot verification requires a clean tracked checkout"
         )
 
-    expected = tracked_source_paths(checkout)
-    actual = sorted(
-        str(path.relative_to(source_root))
-        for path in source_root.rglob("*")
-        if path.is_file()
-    )
+    expected_entries = tracked_source_entries(checkout)
+    expected = list(expected_entries)
+    actual = []
+    for path in source_root.rglob("*"):
+        if path.is_symlink():
+            raise ReviewPackageError(f"package source tree contains symlink: {path}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ReviewPackageError(f"package source tree contains special file: {path}")
+        actual.append(str(path.relative_to(source_root)))
+    actual.sort()
     if actual != expected:
         missing = sorted(set(expected) - set(actual))
         extra = sorted(set(actual) - set(expected))
@@ -300,12 +364,8 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
         )
 
     for relative in expected:
-        expected_path = checkout / relative
-        if not expected_path.is_file() or expected_path.is_symlink():
-            raise ReviewPackageError(
-                f"tracked checkout source is missing or not a regular file: {relative}"
-            )
-        expected_bytes = expected_path.read_bytes()
+        expected_mode, object_id = expected_entries[relative]
+        expected_bytes = _git_output(checkout, "cat-file", "blob", object_id)
         actual_bytes = (source_root / relative).read_bytes()
         if actual_bytes != expected_bytes:
             raise ReviewPackageError(
@@ -313,7 +373,7 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
                 f"{hashlib.sha256(expected_bytes).hexdigest()} != "
                 f"{hashlib.sha256(actual_bytes).hexdigest()}"
             )
-        expected_executable = bool(expected_path.stat().st_mode & 0o111)
+        expected_executable = expected_mode == "100755"
         actual_executable = bool((source_root / relative).stat().st_mode & 0o111)
         if actual_executable != expected_executable:
             raise ReviewPackageError(

@@ -149,6 +149,49 @@ def main() -> None:
         mutation.chmod(original_mode)
         mutation.write_bytes(original_mutation + b"\n// parity mutation\n")
 
+        immutable_checkout = temp / "immutable-git-checkout"
+        immutable_checkout.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=immutable_checkout, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "review-package-test@invalid"],
+            cwd=immutable_checkout,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Review Package Test"],
+            cwd=immutable_checkout,
+            check=True,
+        )
+        tracked = immutable_checkout / "tracked.txt"
+        tracked.write_bytes(b"committed\n")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=immutable_checkout, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "fixture"],
+            cwd=immutable_checkout,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "update-index", "--assume-unchanged", "tracked.txt"],
+            cwd=immutable_checkout,
+            check=True,
+        )
+        tracked.write_bytes(b"forged but hidden from git diff\n")
+        immutable_package = temp / "immutable-package"
+        immutable_source = immutable_package / "source"
+        immutable_source.mkdir(parents=True)
+        (immutable_source / "tracked.txt").write_bytes(tracked.read_bytes())
+        try:
+            review.verify_source_snapshot(immutable_checkout, immutable_package)
+        except review.ReviewPackageError as exc:
+            if "Git/package source content mismatch" not in str(exc):
+                raise SystemExit(
+                    f"assume-unchanged source forgery rejected for wrong reason: {exc}"
+                ) from exc
+        else:
+            raise SystemExit(
+                "assume-unchanged source forgery unexpectedly matched immutable Git HEAD"
+            )
+
         traversal = temp / "traversal.tar.gz"
         write_archive(traversal, [regular_member("../escape", b"x")])
         expect_extract_rejection(traversal, temp / "traversal", "unsafe package member path")
@@ -179,6 +222,27 @@ def main() -> None:
                 "non-portable package member path",
             )
 
+        for label, component in [
+            ("windows-reserved-nul", "NUL"),
+            ("windows-reserved-com", "COM1.txt"),
+            ("windows-reserved-com-superscript", "COM\u00b9.txt"),
+            ("windows-reserved-space-before-extension", "CON .txt"),
+            ("windows-trailing-dot", "claim.json."),
+            ("windows-trailing-space", "claim.json "),
+            ("windows-wildcard", "claim?.json"),
+            ("windows-pipe", "claim|json"),
+        ]:
+            non_portable = temp / f"{label}.tar.gz"
+            write_archive(
+                non_portable,
+                [regular_member(f"{review.PACKAGE_ROOT_NAME}/{component}", b"x")],
+            )
+            expect_extract_rejection(
+                non_portable,
+                temp / label,
+                "non-portable package member path",
+            )
+
         duplicate = temp / "duplicate.tar.gz"
         duplicate_name = f"{review.PACKAGE_ROOT_NAME}/duplicate"
         write_archive(
@@ -189,6 +253,42 @@ def main() -> None:
             ],
         )
         expect_extract_rejection(duplicate, temp / "duplicate", "duplicate package member")
+
+        portable_alias = temp / "portable-alias.tar.gz"
+        write_archive(
+            portable_alias,
+            [
+                regular_member(
+                    f"{review.PACKAGE_ROOT_NAME}/current_claim.json", b"a"
+                ),
+                regular_member(
+                    f"{review.PACKAGE_ROOT_NAME}/CURRENT_CLAIM.JSON", b"b"
+                ),
+            ],
+        )
+        expect_extract_rejection(
+            portable_alias,
+            temp / "portable-alias",
+            "duplicate package member",
+        )
+
+        unicode_alias = temp / "unicode-alias.tar.gz"
+        write_archive(
+            unicode_alias,
+            [
+                regular_member(
+                    f"{review.PACKAGE_ROOT_NAME}/caf\u00e9.json", b"a"
+                ),
+                regular_member(
+                    f"{review.PACKAGE_ROOT_NAME}/cafe\u0301.json", b"b"
+                ),
+            ],
+        )
+        expect_extract_rejection(
+            unicode_alias,
+            temp / "unicode-alias",
+            "duplicate package member",
+        )
 
         symlink = temp / "symlink.tar.gz"
         link = tarfile.TarInfo(f"{review.PACKAGE_ROOT_NAME}/link")

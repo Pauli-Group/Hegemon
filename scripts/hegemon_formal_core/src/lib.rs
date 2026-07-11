@@ -2,7 +2,7 @@ use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -31,6 +31,7 @@ const BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS: &[&str] = &[
     "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
     "audits/native-backend-128b/package.sha256",
 ];
+const MAX_BLUEPRINT_REVIEW_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 const TARGET_REVIEW_STATUSES: &[&str] = &["needs_review", "blocked"];
 const STABLE_GOAL_MEASUREMENT_STATUSES: &[&str] = &["paused", "blocked", "complete"];
 const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
@@ -2713,6 +2714,7 @@ fn validate_rust_implementation_binding(
         );
         for function in non_test_callers {
             let body = &sanitized[function.body_start..function.body_end];
+            let closure_bodies = rust_closure_body_spans(body);
             ensure!(
                 !rust_body_has_local_shadow_of_callee(body, &binding.callee),
                 "{} implementation binding caller {} in {} locally shadows bound callee {}",
@@ -2733,6 +2735,11 @@ fn validate_rust_implementation_binding(
                 !call_sites.is_empty()
                     && call_sites.iter().all(|call| {
                         call_satisfies_result_obligation(body, call, result_obligation)
+                            && (matches!(
+                                result_obligation,
+                                ResultObligation::None | ResultObligation::MustFilterOkResult
+                            )
+                                || !rust_call_is_inside_closure(call, &closure_bodies))
                     }),
                 "{} implementation binding caller {} in {} does not call {}{} in non-test Rust code",
                 claim_id,
@@ -2799,6 +2806,7 @@ fn validate_rust_implementation_order(
     );
     for function in matching_callers {
         let body = &source[function.body_start..function.body_end];
+        let closure_bodies = rust_closure_body_spans(body);
         let callee_calls = rust_bound_callee_call_sites(
             body,
             &binding.callee,
@@ -2808,6 +2816,7 @@ fn validate_rust_implementation_order(
             functions,
         )
         .into_iter()
+        .filter(|call| !rust_call_is_inside_closure(call, &closure_bodies))
         .filter(|call| call_satisfies_result_obligation(body, call, constraint_result_obligation))
         .collect::<Vec<_>>();
         if callee_calls.is_empty() {
@@ -2838,7 +2847,14 @@ fn validate_rust_implementation_order(
                     ensure!(
                         callee_calls
                             .iter()
-                            .any(|call| rust_call_dominates_successor(body, call, successor_call)),
+                            .any(|call| {
+                                rust_call_dominates_successor(
+                                    body,
+                                    call,
+                                    successor_call,
+                                    &closure_bodies,
+                                )
+                            }),
                         "{} implementation binding order caller {} in {} does not dominate {} before {}",
                         claim_id,
                         constraint.caller,
@@ -4160,6 +4176,191 @@ struct RustClosureBody {
     kind: RustClosureBodyKind,
 }
 
+fn rust_call_is_inside_closure(call: &RustCallSite, closures: &[RustClosureBody]) -> bool {
+    closures
+        .iter()
+        .any(|closure| closure.start <= call.start && call.start < closure.end)
+}
+
+fn rust_closure_body_spans(source: &str) -> Vec<RustClosureBody> {
+    let bytes = source.as_bytes();
+    let mut closures = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        let Some(relative) = source[cursor..].find('|') else {
+            break;
+        };
+        let first_bar = cursor + relative;
+        if !rust_closure_can_start(source, first_bar) {
+            cursor = first_bar + 1;
+            continue;
+        }
+        let after_parameters = if bytes.get(first_bar + 1) == Some(&b'|') {
+            first_bar + 2
+        } else {
+            let Some(second_bar) = rust_closure_parameter_end(source, first_bar + 1) else {
+                cursor = first_bar + 1;
+                continue;
+            };
+            if second_bar - first_bar > 4096 {
+                cursor = first_bar + 1;
+                continue;
+            }
+            second_bar + 1
+        };
+        let body_start = skip_ascii_whitespace(source, after_parameters);
+        let Some(first_body_byte) = bytes.get(body_start).copied() else {
+            break;
+        };
+        let (start, end, kind) = if first_body_byte == b'{' {
+            let Ok(body_end) = match_rust_brace(source, body_start) else {
+                cursor = first_bar + 1;
+                continue;
+            };
+            (body_start + 1, body_end, RustClosureBodyKind::Block)
+        } else if source[body_start..].starts_with("->") {
+            let Some(relative_open) = source[body_start + 2..].find('{') else {
+                cursor = first_bar + 1;
+                continue;
+            };
+            let body_open = body_start + 2 + relative_open;
+            let Ok(body_end) = match_rust_brace(source, body_open) else {
+                cursor = first_bar + 1;
+                continue;
+            };
+            (body_open + 1, body_end, RustClosureBodyKind::Block)
+        } else {
+            (
+                body_start,
+                rust_closure_expression_end(source, body_start),
+                RustClosureBodyKind::Expression,
+            )
+        };
+        if start < end {
+            closures.push(RustClosureBody { start, end, kind });
+        }
+        cursor = first_bar + 1;
+    }
+    closures
+}
+
+fn rust_closure_parameter_end(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut index = from;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth = angle_depth.saturating_sub(1),
+            b'|' if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0 =>
+            {
+                return Some(index);
+            }
+            b';' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => return None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn rust_closure_can_start(source: &str, first_bar: usize) -> bool {
+    let prefix = source[..first_bar].trim_end();
+    if prefix.is_empty() {
+        return true;
+    }
+    if [
+        "move", "async", "return", "mut", "else", "break", "yield", "const",
+    ]
+    .iter()
+    .any(|token| rust_prefix_ends_with_token(prefix, token))
+    {
+        return true;
+    }
+    if prefix.ends_with("=>") {
+        return true;
+    }
+    matches!(
+        prefix.as_bytes().last(),
+        Some(b'=')
+            | Some(b'(')
+            | Some(b'[')
+            | Some(b'{')
+            | Some(b',')
+            | Some(b';')
+            | Some(b':')
+            | Some(b'!')
+            | Some(b'?')
+            | Some(b'&')
+            | Some(b'+')
+            | Some(b'-')
+            | Some(b'*')
+            | Some(b'/')
+            | Some(b'%')
+            | Some(b'^')
+    )
+}
+
+fn rust_prefix_ends_with_token(prefix: &str, token: &str) -> bool {
+    if !prefix.ends_with(token) {
+        return false;
+    }
+    prefix
+        .len()
+        .checked_sub(token.len() + 1)
+        .and_then(|index| prefix.as_bytes().get(index).copied())
+        .map_or(true, |byte| !is_rust_identifier_byte(byte))
+}
+
+fn rust_closure_expression_end(source: &str, from: usize) -> usize {
+    let bytes = source.as_bytes();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut index = from;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' if paren_depth == 0 => return index,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' if bracket_depth == 0 => return index,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' if brace_depth == 0 => return index,
+            b'}' => brace_depth -= 1,
+            b'<' if angle_depth > 0 || source[..index].trim_end().ends_with("::") => {
+                angle_depth += 1;
+            }
+            b'>' if angle_depth > 0 => angle_depth -= 1,
+            b',' | b';'
+                if paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+            {
+                return index;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    source.len()
+}
+
 fn filter_closure_body(source: &str, filter_call: &RustCallSite) -> Option<RustClosureBody> {
     let open_paren = rust_call_open_paren(source, filter_call, "filter")?;
     let first_bar = find_top_level_byte(source, open_paren + 1, filter_call.close_paren, b'|')?;
@@ -5388,8 +5589,9 @@ fn rust_call_dominates_successor(
     source: &str,
     callee: &RustCallSite,
     successor: &RustCallSite,
+    closure_bodies: &[RustClosureBody],
 ) -> bool {
-    if callee.start >= successor.start {
+    if callee.start >= successor.start || rust_call_is_inside_closure(callee, closure_bodies) {
         return false;
     }
     let callee_context = rust_statement_context(source, callee.start);
@@ -5498,9 +5700,12 @@ fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<St
         .cloned()
         .collect::<BTreeSet<_>>();
     for relative in source_paths {
-        ensure_repo_relative_existing(root, &relative, &format!("{} review source", node.id))?;
-        let bytes = fs::read(root.join(&relative))
-            .with_context(|| format!("read source-bound review path {}", relative))?;
+        let bytes = read_repo_relative_regular_file_bounded(
+            root,
+            &relative,
+            &format!("{} review source", node.id),
+            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+        )?;
         hasher.update(&(relative.len() as u64).to_le_bytes());
         hasher.update(relative.as_bytes());
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -5690,6 +5895,53 @@ fn ensure_repo_relative_existing_file(root: &Path, raw: &str, context: &str) -> 
         raw
     );
     Ok(())
+}
+
+fn read_repo_relative_regular_file_bounded(
+    root: &Path,
+    raw: &str,
+    context: &str,
+    maximum: u64,
+) -> Result<Vec<u8>> {
+    ensure_repo_relative_existing_file(root, raw, context)?;
+    let root_path = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
+    let path = root_path.join(raw);
+    let mut file = fs::File::open(&path)
+        .with_context(|| format!("open bounded {context}: {}", path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect opened {context}: {}", path.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "{} must remain a regular file after open: {}",
+        context,
+        raw
+    );
+    ensure!(
+        metadata.len() <= maximum,
+        "{} exceeds byte bound {}: {} has {} bytes",
+        context,
+        maximum,
+        raw,
+        metadata.len()
+    );
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    Read::by_ref(&mut file)
+        .take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .with_context(|| format!("read bounded {context}: {}", path.display()))?;
+    ensure!(
+        bytes.len() as u64 <= maximum,
+        "{} exceeds byte bound {} while reading: {}",
+        context,
+        maximum,
+        raw
+    );
+    Ok(bytes)
 }
 
 fn production_claim_checks(claim: &SecurityClaim) -> Result<()> {
@@ -6504,6 +6756,74 @@ mod tests {
         assert!(err
             .to_string()
             .contains("target_review content_blake3 mismatch"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blueprint_review_digest_rejects_symlink_source() {
+        let root = test_root("symlink-blueprint-review-source");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(&root, "outside.txt", "outside");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
+        );
+        std::fs::remove_file(root.join("evidence/target.txt")).expect("remove target");
+        std::os::unix::fs::symlink(root.join("outside.txt"), root.join("evidence/target.txt"))
+            .expect("create target symlink");
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("non-symlink regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blueprint_review_digest_rejects_fifo_source_without_opening_it() {
+        let root = test_root("fifo-blueprint-review-source");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
+        );
+        let target = root.join("evidence/target.txt");
+        std::fs::remove_file(&target).expect("remove target");
+        let status = Command::new("mkfifo")
+            .arg(&target)
+            .status()
+            .expect("run mkfifo");
+        assert!(status.success(), "mkfifo failed: {status}");
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("non-symlink regular file"));
+    }
+
+    #[test]
+    fn blueprint_review_digest_rejects_oversized_source() {
+        let root = test_root("oversized-blueprint-review-source");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
+        );
+        std::fs::File::create(root.join("evidence/target.txt"))
+            .expect("open target")
+            .set_len(MAX_BLUEPRINT_REVIEW_SOURCE_BYTES + 1)
+            .expect("extend target");
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(format!("{err:#}").contains("exceeds byte bound"));
     }
 
     #[test]
@@ -10226,6 +10546,127 @@ mod tests {
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_constraints, 1);
         assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_guard_call_inside_uninvoked_expression_closure() {
+        let root = test_root("expression-closure-dominance-bypass");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn publish_state() {}\n\
+             fn import_announced_block() {\n\
+                 let deferred = || Ok::<_, ()>(verified_helper()?);\n\
+                 publish_state();\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_announced_block"],
+                "import_announced_block",
+                &["publish_state"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an uninvoked expression closure must not satisfy a guard binding");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with propagated result"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_guard_call_inside_uninvoked_block_closure() {
+        let root = test_root("block-closure-dominance-bypass");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn publish_state() {}\n\
+             fn import_announced_block() {\n\
+                 let deferred = || { verified_helper()?; Ok::<_, ()>(()) };\n\
+                 publish_state();\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_announced_block"],
+                "import_announced_block",
+                &["publish_state"],
+                Some("must_propagate_result"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an uninvoked block closure must not satisfy a guard binding");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with propagated result"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn rust_closure_spans_cover_adversarial_guard_wrappers() {
+        for (name, source) in [
+            (
+                "moved-zero-argument",
+                "let deferred = move || verified_helper()?; publish_state();",
+            ),
+            (
+                "nested-or-pattern",
+                "let deferred = |value @ (Some(_) | None)| verified_helper()?; publish_state();",
+            ),
+            (
+                "explicit-return-type",
+                "let deferred = || -> Result<(), ()> { verified_helper()?; Ok(()) }; publish_state();",
+            ),
+            (
+                "else-expression",
+                "let deferred = if flag { || Ok::<_, ()>(()) } else || verified_helper()?; publish_state();",
+            ),
+            (
+                "async-closure",
+                "let deferred = async || verified_helper().await; publish_state();",
+            ),
+        ] {
+            let calls = rust_call_sites(source, "verified_helper");
+            assert_eq!(calls.len(), 1, "{name}: expected one helper call");
+            let closures = rust_closure_body_spans(source);
+            assert!(
+                rust_call_is_inside_closure(&calls[0], &closures),
+                "{name}: closure-contained helper call escaped detection"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_closure_spans_do_not_treat_logical_or_rhs_as_closure() {
+        let source = "let accepted = left() || verified_helper(); publish_state();";
+        let calls = rust_call_sites(source, "verified_helper");
+        assert_eq!(calls.len(), 1);
+        assert!(!rust_call_is_inside_closure(
+            &calls[0],
+            &rust_closure_body_spans(source)
+        ));
     }
 
     #[test]
