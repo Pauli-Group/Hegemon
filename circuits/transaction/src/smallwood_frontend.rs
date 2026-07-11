@@ -7072,6 +7072,28 @@ mod tests {
             "poseidon-rows-per-permutation",
         ]);
         let mut observed_mutation_names = std::collections::BTreeSet::new();
+        let active_parameters = smallwood_verifier_profile_binding_parameters(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        let active_field_values = [
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit as u64,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+            active_parameters.effective_constraint_degree,
+            active_parameters.profile.rho as u64,
+            active_parameters.profile.nb_opened_evals as u64,
+            active_parameters.profile.beta as u64,
+            active_parameters.profile.opening_pow_bits as u64,
+            active_parameters.profile.decs_nb_evals as u64,
+            active_parameters.profile.decs_nb_opened_evals as u64,
+            active_parameters.profile.decs_eta as u64,
+            active_parameters.profile.decs_pow_bits as u64,
+            active_parameters.poseidon_width,
+            active_parameters.poseidon_rate,
+            active_parameters.poseidon_steps,
+            active_parameters.poseidon_rows_per_permutation,
+        ];
         for case in &vectors.active_profile_single_field_mutations {
             assert!(
                 observed_mutation_names.insert(case.name.as_str()),
@@ -7113,6 +7135,55 @@ mod tests {
             assert_ne!(
                 active_profile, mutated_material,
                 "{} mutation must alter verifier profile material",
+                case.name
+            );
+            let mutated_field_values = [
+                case.circuit_version as u64,
+                case.crypto_suite as u64,
+                case.arithmetization,
+                case.constraint_degree,
+                case.rho as u64,
+                case.opened_evaluations as u64,
+                case.beta as u64,
+                case.opening_grinding_bits as u64,
+                case.decs_evaluations as u64,
+                case.decs_opened_evaluations as u64,
+                case.decs_eta as u64,
+                case.decs_grinding_bits as u64,
+                case.poseidon_width,
+                case.poseidon_rate,
+                case.poseidon_steps,
+                case.poseidon_rows_per_permutation,
+            ];
+            let changed_fields = active_field_values
+                .iter()
+                .zip(mutated_field_values.iter())
+                .enumerate()
+                .filter_map(|(index, (active, mutated))| (active != mutated).then_some(index))
+                .collect::<Vec<_>>();
+            let expected_changed_field = match case.name.as_str() {
+                "circuit-version" => 0,
+                "crypto-suite" => 1,
+                "arithmetization" => 2,
+                "constraint-degree" => 3,
+                "rho" => 4,
+                "opened-evaluations" => 5,
+                "beta" => 6,
+                "opening-grinding-bits" => 7,
+                "decs-evaluations" => 8,
+                "decs-opened-evaluations" => 9,
+                "decs-eta" => 10,
+                "decs-grinding-bits" => 11,
+                "poseidon-width" => 12,
+                "poseidon-rate" => 13,
+                "poseidon-steps" => 14,
+                "poseidon-rows-per-permutation" => 15,
+                other => panic!("unexpected Lean profile mutation name {other}"),
+            };
+            assert_eq!(
+                changed_fields,
+                vec![expected_changed_field],
+                "{} must mutate exactly its named profile field",
                 case.name
             );
         }

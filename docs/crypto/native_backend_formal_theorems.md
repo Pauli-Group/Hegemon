@@ -6,14 +6,14 @@ This note records the mathematical argument and the exact machine-checked bounda
 
 `Hegemon.Native.NativeBackendAlgebra` now machine-checks:
 
-- the active reducer's positive bounded range and the nonzero degree-at-most-four challenge polynomial,
+- the active reducer's positive bounded range, a complete three-representative classification for every `64`-bit reducer input, and the nonzero challenge polynomial with support confined to coefficients `0..4`,
 - `3^5 / 2^320` supporting 312 bits but not 313, and the 128-leaf composition supporting 305 bits but not 306,
 - the `4104` conservative and `648` live coefficient dimensions plus the `16336` and `6492` Euclidean arithmetic,
 - canonical Goldilocks coefficient reduction and idempotence,
 - the centered difference bound for 8-bit digits,
 - and equality and uniqueness of two supplied fold-output records.
 
-Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the production recomputation algorithm and proving `verify_fold` equivalent to that model remain open. Other open mathematical or cryptographic obligations include finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, random-oracle independence, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
+Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the production recomputation algorithm and proving `verify_fold` equivalent to that model remain open. The reducer theorems classify bounded `64`-bit inputs arithmetically, but interpreting five indexed BLAKE3 XOF outputs as independent uniform words remains an explicit random-oracle assumption. Other open mathematical or cryptographic obligations include finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
 
 ## Scope
 
@@ -93,7 +93,7 @@ and the associated challenge polynomial
 χ_c(X) = c_0 + c_1 X + c_2 X^2 + c_3 X^3 + c_4 X^4 ∈ R_q.
 ```
 
-Because each `c_i` is strictly positive, Lean proves that `χ_c(X)` is nonzero and has degree at most `4`. Its unit property is currently proved only under the named low-degree-unit assumption corresponding to Open Lemma 1.1.
+Because each `c_i` is strictly positive, Lean proves that `χ_c(X)` is nonzero and that every coefficient at index `5` or above is zero. The unit theorem now consumes both facts explicitly through `PolynomialSupportedBelowActiveFoldDegree`; its conclusion still depends on the named low-degree-unit assumption corresponding to Open Lemma 1.1.
 
 ### Open Theorem Target 2.1: the active fold verifier is an exact canonicalization check
 
@@ -114,9 +114,9 @@ Proof sketch:
 
 If the implementation-refinement target is discharged, acceptance is equivalent to equality with one deterministic recomputation path. The current Lean theorem proves only that equality to an already supplied recomputed record is exact and unique; it does not model steps 1-5. There is no hidden-witness extractor and no Neo/SuperNeo CCS soundness claim here.
 
-### Theorem 2.2: exact random-oracle bound for the implemented five-challenge rule
+### Conditional Theorem 2.2: exact random-oracle bound for the implemented five-challenge rule
 
-Model each indexed BLAKE3 XOF call as an independent uniform `64`-bit word. Since
+Model each indexed BLAKE3 XOF call as an independent uniform `64`-bit word. Lean proves that every bounded input has quotient at most two under division by `2^63 - 1` and is therefore its residue plus zero, one, or two multiples of that modulus. Since
 
 ```text
 2^64 = 2(2^63 - 1) + 2,
@@ -159,7 +159,7 @@ composition_loss_bits = ceil(log2 128) = 7,
 transcript_floor_bits = 312 - 7 = 305.
 ```
 
-This is the mathematically correct replacement for the old blanket `/2` halving rule. It is a theorem-backed bound on the exact indexed challenge-tuple distribution of the implemented schedule, not a claim that the fold layer is a CCS soundness protocol.
+This is the mathematically correct replacement for the old blanket `/2` halving rule. The bounded reducer classification and the `3^5`, 312/313, and 305/306 integer inequalities are machine-checked. The probability interpretation remains conditional on independent uniform indexed XOF words; it is not a proof of BLAKE3 random-oracle behavior and not a claim that the fold layer is a CCS soundness protocol.
 
 ## 3. Exact Deterministic-Commitment Reduction
 
@@ -331,4 +331,4 @@ commitment_binding_bits = 872
 soundness_floor_bits = min(305, 872) = 305.
 ```
 
-The machine-checked result is the supplied-record fold-output equality model and the concrete arithmetic listed in the verification-status section. Production fold recomputation and verifier implementation equivalence are not yet machine-checked. This note also does **not** machine-check the collision reduction or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.
+The machine-checked result is the supplied-record fold-output equality model, bounded reducer/preimage classification, low-degree support predicate, and the concrete arithmetic listed in the verification-status section. Production fold recomputation and verifier implementation equivalence are not yet machine-checked. This note also does **not** machine-check BLAKE3 random-oracle behavior, the collision reduction, or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.

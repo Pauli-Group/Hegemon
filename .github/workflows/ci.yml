@@ -225,7 +225,13 @@ jobs:
           bash scripts/verify_native_receipt_root_scalability.sh
           cargo +nightly-2026-06-23 fuzz run native_tx_leaf_artifact -- -max_total_time=30
           cargo +nightly-2026-06-23 fuzz run receipt_root_artifact -- -max_total_time=30
+          ./scripts/verify_native_backend_review_package.sh
+          python3 scripts/test_verify_native_backend_review_package.py
+          cp audits/native-backend-128b/native-backend-128b-review-package.tar.gz /tmp/native-backend-review-package.tar.gz
+          cp audits/native-backend-128b/package.sha256 /tmp/native-backend-review-package.sha256
           ./scripts/package_native_backend_review.sh
+          cmp /tmp/native-backend-review-package.tar.gz audits/native-backend-128b/native-backend-128b-review-package.tar.gz
+          cmp /tmp/native-backend-review-package.sha256 audits/native-backend-128b/package.sha256
           ./scripts/verify_native_backend_review_package.sh
           ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
 

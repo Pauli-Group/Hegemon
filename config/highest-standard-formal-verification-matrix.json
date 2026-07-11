@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
-  "branch": "codex/superneo-formal-verification",
-  "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
+  "branch": "codex/lean-assumption-closure",
+  "baseline_commit": "53cad173b3b78295f75d58010d92c7646e1312a7",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
-  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
+  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap. The active-goal release ledger separately binds the complete Lean source tree and authenticates the fixed closure theorem set through aggregate elaboration and axiom audit.",
   "overall_completion_percent": 100.0,
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
-    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
     "total_tracks": 20,
-    "closed_tracks": 10,
-    "closure_percent": 50.0,
+    "closed_tracks": 9,
+    "closure_percent": 45.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
@@ -32,7 +32,7 @@
           "circuits/transaction/src/smallwood_frontend.rs"
         ],
         "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_every_single_field_mutation"
+          "Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_all_named_in_range_single_field_mutations"
         ],
         "remaining_work": []
       },
@@ -60,20 +60,20 @@
           "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
         ],
         "remaining_work": [
-        "Refine concrete canonical statement bytes, ordered transaction count, statement commitment, public replay, and DA identity from the production artifact, claim, batch, transaction, and supply objects into RecursiveSmallWoodCrossObjectIdentityRefinementAssumption; local acceptance booleans alone do not establish this cross-object identity."
+          "Extend the artifact, claim, batch, transaction, and supply models with concrete canonical statement bytes, ordered transaction count, statement commitment, public replay commitment, and DA identity projections, then prove those projections identify the same accepted object. The current models expose local acceptance booleans only, so no cross-object composition theorem is credited."
         ]
       },
       {
         "id": "consensus.accepted-chain-supply-composition",
-        "status": "closed",
+        "status": "open",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
           "formal/lean/Hegemon/Consensus/SupplyInvariant.lean"
         ],
-        "lean_theorems": [
-          "Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_accepted_chain_yields_supply_conservation_certificate"
-        ],
-        "remaining_work": []
+        "remaining_work": [
+          "Bind each claimed supply step's minted amount to the accepted block's one-coinbase subsidy or zero-coinbase case, bind burns to accepted burn actions, bind fees to the complete ordered accepted transaction list, and prove the supply step and transaction list belong to the same accepted block artifact.",
+          "Add a production-refined note-opening commitment binding or cryptographic hash assumption before lifting the toy digest model to a no-counterfeit claim; modulo-65537 commitment arithmetic is not collision resistant."
+        ]
       },
       {
         "id": "native.raw-ingress-canonical-publication",
@@ -117,6 +117,8 @@
           "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
           "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
           "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+          "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_quotient_at_most_two",
+          "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_has_one_of_three_representatives",
           "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero"
         ],
         "remaining_work": []

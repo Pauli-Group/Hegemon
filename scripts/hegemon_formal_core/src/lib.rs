@@ -25,7 +25,8 @@ const CLAIM_CLASSES: &[&str] = &[
 ];
 const CONJECTURAL_MODELS: &[&str] = &["conjectural_research", "heuristic_only"];
 const BLUEPRINT_NODE_KINDS: &[&str] = &["target_claim", "supporting_claim", "residual_risk"];
-const TARGET_REVIEW_STATUSES: &[&str] = &["accepted", "needs_review", "blocked"];
+const TARGET_REVIEW_STATUSES: &[&str] = &["needs_review", "blocked"];
+const STABLE_GOAL_MEASUREMENT_STATUSES: &[&str] = &["paused", "blocked", "complete"];
 const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
     "da-retention",
     "storage-durability",
@@ -62,7 +63,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ),
     (
         "transaction.smallwood-profile-drift-binding",
-        &["Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_every_single_field_mutation"],
+        &["Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_all_named_in_range_single_field_mutations"],
     ),
     (
         "transaction.recursive-admission-local-facts",
@@ -73,10 +74,7 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
         ],
     ),
     ("transaction.recursive-cross-object-identity-refinement", &[]),
-    (
-        "consensus.accepted-chain-supply-composition",
-        &["Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_accepted_chain_yields_supply_conservation_certificate"],
-    ),
+    ("consensus.accepted-chain-supply-composition", &[]),
     (
         "native.raw-ingress-canonical-publication",
         &["Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"],
@@ -96,6 +94,8 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
             "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
             "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
             "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+            "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_quotient_at_most_two",
+            "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_has_one_of_three_representatives",
             "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero",
         ],
     ),
@@ -195,6 +195,7 @@ pub struct BlueprintReport {
     pub implementation_theorem_indexed_dominance_constraints: usize,
     pub implementation_theorem_indexed_dominance_edges: usize,
     pub falsification_cases: usize,
+    pub pending_external_review_nodes: usize,
     pub passed: bool,
 }
 
@@ -277,7 +278,7 @@ struct BlueprintMethodology {
     gate: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct BlueprintNode {
     id: String,
@@ -295,7 +296,7 @@ struct BlueprintNode {
     scope_boundary: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ImplementationBinding {
     path: String,
@@ -307,7 +308,7 @@ struct ImplementationBinding {
     call_order_constraints: Vec<ImplementationCallOrderConstraint>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ImplementationCallOrderConstraint {
     caller: String,
@@ -320,16 +321,18 @@ struct ImplementationCallOrderConstraint {
     lean_theorems: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct TargetReview {
     status: String,
     reviewer: String,
     reviewed_at: String,
     notes: String,
+    #[serde(default)]
+    content_blake3: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct FalsificationCase {
     id: String,
@@ -391,6 +394,7 @@ struct ActiveGoalProgressLedger {
     goal_thread_id: String,
     goal_status_when_measured: String,
     measurement_timestamp: String,
+    formal_source_tree_blake3: String,
     objective: String,
     objective_must_contain: Vec<String>,
     source_matrix_path: String,
@@ -475,6 +479,18 @@ pub fn check_blueprint_file(path: &Path, claims_path: &Path) -> Result<Blueprint
     let blueprint: FormalBlueprint =
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
     validate_blueprint(&root, &blueprint, &claim_index)
+}
+
+pub fn blueprint_review_digests_file(path: &Path) -> Result<BTreeMap<String, String>> {
+    let root = repository_root_from(path);
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let blueprint: FormalBlueprint =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    blueprint
+        .nodes
+        .iter()
+        .map(|node| Ok((node.id.clone(), blueprint_node_content_blake3(&root, node)?)))
+        .collect()
 }
 
 fn read_claims_ledger(path: &Path) -> Result<ClaimsLedger> {
@@ -581,10 +597,81 @@ pub fn check_system_model_gates_file(path: &Path) -> Result<SystemModelGateRepor
 }
 
 pub fn check_active_goal_progress_file(path: &Path) -> Result<ActiveGoalProgressReport> {
+    verify_formal_source_tree_digest(path)?;
     let report =
         check_active_goal_progress_file_with_policy(path, REQUIRED_MECHANIZED_ASSUMPTION_TRACKS)?;
     verify_mechanized_assumption_theorems_with_lean(&repository_root_from(path))?;
     Ok(report)
+}
+
+fn collect_lean_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    let mut entries = fs::read_dir(directory)
+        .with_context(|| format!("read Lean source directory {}", directory.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("enumerate Lean source directory {}", directory.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("read file type for {}", path.display()))?;
+        if file_type.is_dir() {
+            collect_lean_files(&path, files)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "lean") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn formal_source_tree_blake3(root: &Path) -> Result<String> {
+    let formal_root = root.join("formal/lean");
+    let mut files = Vec::new();
+    collect_lean_files(&formal_root, &mut files)?;
+    ensure!(
+        !files.is_empty(),
+        "formal Lean source tree must not be empty"
+    );
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.formal-lean-source-tree.v1\0");
+    for path in files {
+        let relative = path
+            .strip_prefix(root)
+            .with_context(|| format!("relativize Lean source {}", path.display()))?;
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| anyhow!("Lean source path is not UTF-8: {}", path.display()))?;
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        hasher.update(&(relative.len() as u64).to_le_bytes());
+        hasher.update(relative.as_bytes());
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn verify_formal_source_tree_digest(path: &Path) -> Result<()> {
+    let root = repository_root_from(path);
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let ledger: ActiveGoalProgressLedger =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    ensure!(
+        ledger.formal_source_tree_blake3.len() == 64
+            && ledger
+                .formal_source_tree_blake3
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "formal_source_tree_blake3 must be a lowercase 64-character BLAKE3 digest"
+    );
+    let actual = formal_source_tree_blake3(&root)?;
+    ensure!(
+        ledger.formal_source_tree_blake3 == actual,
+        "formal Lean source tree changed without renewing the active-goal digest: recorded {}, current {}",
+        ledger.formal_source_tree_blake3,
+        actual
+    );
+    Ok(())
 }
 
 fn check_active_goal_progress_file_with_policy(
@@ -752,8 +839,8 @@ fn validate_active_goal_progress(
         "goal_thread_id must be set"
     );
     ensure!(
-        ledger.goal_status_when_measured == "paused",
-        "active goal progress must be measured while the goal is paused"
+        STABLE_GOAL_MEASUREMENT_STATUSES.contains(&ledger.goal_status_when_measured.as_str()),
+        "active goal progress must be measured while the goal is paused, blocked, or complete"
     );
     ensure!(
         ledger.measurement_timestamp.ends_with('Z') && ledger.measurement_timestamp.contains('T'),
@@ -1927,6 +2014,7 @@ fn validate_blueprint(
     let mut implementation_theorem_indexed_dominance_constraints = 0usize;
     let mut implementation_theorem_indexed_dominance_edges = 0usize;
     let mut falsification_cases = 0usize;
+    let mut pending_external_review_nodes = 0usize;
     let mut dependents: BTreeMap<String, usize> =
         node_ids.iter().map(|id| (id.clone(), 0usize)).collect();
 
@@ -1959,6 +2047,9 @@ fn validate_blueprint(
         }
         if claim.production_eligible {
             production_nodes += 1;
+        }
+        if node.target_review.status == "needs_review" {
+            pending_external_review_nodes += 1;
         }
         implementation_bindings += node.implementation_bindings.len();
         for binding in &node.implementation_bindings {
@@ -2031,6 +2122,7 @@ fn validate_blueprint(
         implementation_theorem_indexed_dominance_constraints,
         implementation_theorem_indexed_dominance_edges,
         falsification_cases,
+        pending_external_review_nodes,
         passed: true,
     })
 }
@@ -2124,7 +2216,7 @@ fn validate_blueprint_node(
         "{} scope_boundary missing",
         node.id
     );
-    validate_target_review(&node.id, &node.target_review)?;
+    validate_target_review(root, node)?;
     ensure!(
         !node.implementation_paths.is_empty(),
         "{} implementation_paths must not be empty",
@@ -2158,11 +2250,6 @@ fn validate_blueprint_node(
         ensure!(
             node.kind != "residual_risk",
             "{} production claim cannot be a residual_risk blueprint node",
-            node.id
-        );
-        ensure!(
-            node.target_review.status == "accepted",
-            "{} production claim must have accepted target review",
             node.id
         );
         ensure!(
@@ -5239,7 +5326,56 @@ fn is_rust_identifier_byte(byte: u8) -> bool {
     byte == b'_' || byte.is_ascii_alphanumeric()
 }
 
-fn validate_target_review(claim_id: &str, review: &TargetReview) -> Result<()> {
+fn reviewable_node_value_bytes(mut value: serde_json::Value) -> Result<Vec<u8>> {
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| anyhow!("blueprint review content must be a JSON object"))?;
+    let review = object
+        .get_mut("target_review")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or_else(|| anyhow!("blueprint review content must include target_review"))?;
+    review.remove("content_blake3");
+    serde_json::to_vec(&value).context("serialize blueprint review content")
+}
+
+#[cfg(test)]
+fn reviewable_node_value_blake3(value: serde_json::Value) -> Result<String> {
+    Ok(blake3::hash(&reviewable_node_value_bytes(value)?)
+        .to_hex()
+        .to_string())
+}
+
+fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<String> {
+    let canonical = reviewable_node_value_bytes(
+        serde_json::to_value(node).context("serialize blueprint node for target review")?,
+    )?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.formal-blueprint-source-bound-review.v1\0");
+    hasher.update(&(canonical.len() as u64).to_le_bytes());
+    hasher.update(&canonical);
+
+    let source_paths = node
+        .implementation_paths
+        .iter()
+        .chain(node.evidence_paths.iter())
+        .filter(|path| path.as_str() != "config/formal-security-blueprint.json")
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    for relative in source_paths {
+        ensure_repo_relative_existing(root, &relative, &format!("{} review source", node.id))?;
+        let bytes = fs::read(root.join(&relative))
+            .with_context(|| format!("read source-bound review path {}", relative))?;
+        hasher.update(&(relative.len() as u64).to_le_bytes());
+        hasher.update(relative.as_bytes());
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(&bytes);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn validate_target_review(root: &Path, node: &BlueprintNode) -> Result<()> {
+    let claim_id = &node.id;
+    let review = &node.target_review;
     ensure!(
         TARGET_REVIEW_STATUSES.contains(&review.status.as_str()),
         "{} has unknown target_review status {}",
@@ -5260,6 +5396,23 @@ fn validate_target_review(claim_id: &str, review: &TargetReview) -> Result<()> {
         !review.notes.trim().is_empty(),
         "{} target_review notes missing",
         claim_id
+    );
+    ensure!(
+        review.content_blake3.len() == 64
+            && review
+                .content_blake3
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "{} target_review content_blake3 must be a lowercase 64-character BLAKE3 digest",
+        claim_id
+    );
+    let expected = blueprint_node_content_blake3(root, node)?;
+    ensure!(
+        review.content_blake3 == expected,
+        "{} target_review content_blake3 mismatch: reviewed {}, current {}",
+        claim_id,
+        review.content_blake3,
+        expected
     );
     Ok(())
 }
@@ -5786,6 +5939,8 @@ mod tests {
             "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
             "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
             "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+            "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_quotient_at_most_two",
+            "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_has_one_of_three_representatives",
             "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero",
         ]
         .into_iter()
@@ -5843,7 +5998,9 @@ mod tests {
             TEST_MECHANIZED_ASSUMPTION_TRACKS,
         )
         .unwrap_err();
-        assert!(err.to_string().contains("while the goal is paused"));
+        assert!(err
+            .to_string()
+            .contains("while the goal is paused, blocked, or complete"));
     }
 
     #[test]
@@ -6074,7 +6231,7 @@ mod tests {
         write_json(&claims_path, claims_fixture());
         write_json(
             &blueprint_path,
-            blueprint_fixture("accepted", &[], &["support.dep"]),
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
         );
 
         let report = check_blueprint_file(&blueprint_path, &claims_path).expect("valid blueprint");
@@ -6082,6 +6239,27 @@ mod tests {
         assert_eq!(report.edges, 1);
         assert_eq!(report.production_nodes, 2);
         assert_eq!(report.falsification_cases, 2);
+        assert_eq!(report.pending_external_review_nodes, 2);
+    }
+
+    #[test]
+    fn blueprint_rejects_content_changed_after_target_review() {
+        let root = test_root("stale-blueprint-review");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        let mut blueprint = blueprint_fixture("needs_review", &[], &["support.dep"]);
+        refresh_blueprint_review_digests(&root, &mut blueprint);
+        blueprint["nodes"][1]["formal_statement"] =
+            json!("Target production claim changed after review.");
+        write_json_without_review_refresh(&blueprint_path, blueprint);
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("target_review content_blake3 mismatch"));
     }
 
     #[test]
@@ -6094,7 +6272,7 @@ mod tests {
         write_json(&claims_path, claims_fixture());
         write_json(
             &blueprint_path,
-            blueprint_fixture("accepted", &["target.prod"], &["support.dep"]),
+            blueprint_fixture("needs_review", &["target.prod"], &["support.dep"]),
         );
 
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
@@ -6102,7 +6280,7 @@ mod tests {
     }
 
     #[test]
-    fn blueprint_requires_accepted_review_for_production_claims() {
+    fn blueprint_accepts_pending_external_review_for_production_claims() {
         let root = test_root("review-blueprint");
         write_repo_file(&root, "evidence/support.txt", "support");
         write_repo_file(&root, "evidence/target.txt", "target");
@@ -6114,8 +6292,48 @@ mod tests {
             blueprint_fixture("needs_review", &[], &["support.dep"]),
         );
 
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("pending review is explicit");
+        assert_eq!(report.pending_external_review_nodes, 2);
+    }
+
+    #[test]
+    fn blueprint_rejects_self_asserted_accepted_review() {
+        let root = test_root("self-asserted-review-blueprint");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("accepted", &[], &["support.dep"]),
+        );
+
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
-        assert!(err.to_string().contains("accepted target review"));
+        assert!(err
+            .to_string()
+            .contains("unknown target_review status accepted"));
+    }
+
+    #[test]
+    fn blueprint_rejects_source_changed_after_review_digest() {
+        let root = test_root("source-stale-blueprint-review");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
+        );
+        write_repo_file(&root, "evidence/target.txt", "weakened target");
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("target_review content_blake3 mismatch"));
     }
 
     #[test]
@@ -6130,7 +6348,7 @@ mod tests {
         write_json(&claims_path, claims);
         write_json(
             &blueprint_path,
-            blueprint_fixture("accepted", &[], &["support.dep"]),
+            blueprint_fixture("needs_review", &[], &["support.dep"]),
         );
 
         let err = check_blueprint_file(&blueprint_path, &claims_path).unwrap_err();
@@ -10122,7 +10340,30 @@ mod tests {
         std::fs::write(path, contents).expect("write test file");
     }
 
-    fn write_json(path: &Path, value: Value) {
+    fn refresh_blueprint_review_digests(root: &Path, value: &mut Value) {
+        let Some(nodes) = value.get_mut("nodes").and_then(Value::as_array_mut) else {
+            return;
+        };
+        for node in nodes {
+            let digest = match serde_json::from_value::<BlueprintNode>(node.clone()) {
+                Ok(node) => blueprint_node_content_blake3(root, &node)
+                    .expect("hash typed blueprint fixture node"),
+                Err(_) => reviewable_node_value_blake3(node.clone())
+                    .expect("hash malformed blueprint fixture node"),
+            };
+            if let Some(review) = node.get_mut("target_review").and_then(Value::as_object_mut) {
+                review.insert("content_blake3".to_owned(), json!(digest));
+            }
+        }
+    }
+
+    fn write_json(path: &Path, mut value: Value) {
+        let root = repository_root_from(path);
+        refresh_blueprint_review_digests(&root, &mut value);
+        write_json_without_review_refresh(path, value);
+    }
+
+    fn write_json_without_review_refresh(path: &Path, value: Value) {
         std::fs::write(
             path,
             serde_json::to_string_pretty(&value).expect("serialize json"),
@@ -10205,6 +10446,7 @@ mod tests {
             "goal_thread_id": "019e6319-afca-7233-988d-63f8830fbc7a",
             "goal_status_when_measured": "paused",
             "measurement_timestamp": "2026-06-19T08:09:02Z",
+            "formal_source_tree_blake3": "0000000000000000000000000000000000000000000000000000000000000000",
             "objective": "On branch codex/superneo-formal-verification, execute all remaining highest-standard Lean formal verification work for Hegemon and maintain checked-in theorem matrix and living ExecPlans with completion percentage.",
             "objective_must_contain": [
                 "codex/superneo-formal-verification",
@@ -10419,7 +10661,7 @@ mod tests {
                     "implementation_paths": ["evidence/support.txt"],
                     "evidence_paths": ["evidence/support.txt"],
                     "target_review": {
-                        "status": "accepted",
+                        "status": "needs_review",
                         "reviewer": "test",
                         "reviewed_at": "2026-06-06",
                         "notes": "reviewed"
@@ -10466,7 +10708,7 @@ mod tests {
     }
 
     fn blueprint_fixture_with_binding_at(path: &str, callee: &str, callers: &[&str]) -> Value {
-        let mut blueprint = blueprint_fixture("accepted", &[], &["support.dep"]);
+        let mut blueprint = blueprint_fixture("needs_review", &[], &["support.dep"]);
         let nodes = blueprint["nodes"].as_array_mut().expect("nodes array");
         let target = nodes[1].as_object_mut().expect("target object");
         target.insert(

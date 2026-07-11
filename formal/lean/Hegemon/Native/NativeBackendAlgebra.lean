@@ -80,6 +80,26 @@ theorem active_live_euclidean_bound_is_sound :
 def reduceActiveFoldChallenge (raw : Nat) : Nat :=
   raw % activeChallengeValueCount + 1
 
+theorem active_reducer_preimage_quotient_at_most_two
+    {raw : Nat}
+    (rawBound : raw < 2 ^ 64) :
+    raw / activeChallengeValueCount ≤ 2 := by
+  unfold activeChallengeValueCount
+  omega
+
+theorem active_reducer_preimage_has_one_of_three_representatives
+    {raw : Nat}
+    (rawBound : raw < 2 ^ 64) :
+    raw = raw % activeChallengeValueCount
+      ∨ raw = raw % activeChallengeValueCount + activeChallengeValueCount
+      ∨ raw = raw % activeChallengeValueCount + 2 * activeChallengeValueCount := by
+  have quotientBound :=
+    active_reducer_preimage_quotient_at_most_two rawBound
+  have decomposition :=
+    Nat.mod_add_div raw activeChallengeValueCount
+  unfold activeChallengeValueCount at quotientBound decomposition ⊢
+  omega
+
 theorem reduced_active_fold_challenge_positive (raw : Nat) :
     0 < reduceActiveFoldChallenge raw := by
   unfold reduceActiveFoldChallenge
@@ -110,9 +130,29 @@ theorem active_challenge_polynomial_is_nonzero
   unfold activeChallengePolynomial
   exact Nat.ne_of_gt (reduced_active_fold_challenge_positive raw0)
 
+def PolynomialSupportedBelowActiveFoldDegree
+    (polynomial : Nat -> Nat) : Prop :=
+  ∀ coefficientIndex,
+    activeFoldChallengeCount ≤ coefficientIndex ->
+      polynomial coefficientIndex = 0
+
+theorem active_challenge_polynomial_supported_below_active_fold_degree
+    (raw0 raw1 raw2 raw3 raw4 : Nat) :
+    PolynomialSupportedBelowActiveFoldDegree
+      (activeChallengePolynomial raw0 raw1 raw2 raw3 raw4) := by
+  intro coefficientIndex outsideSupport
+  unfold activeFoldChallengeCount at outsideSupport
+  have notZero : coefficientIndex ≠ 0 := by omega
+  have notOne : coefficientIndex ≠ 1 := by omega
+  have notTwo : coefficientIndex ≠ 2 := by omega
+  have notThree : coefficientIndex ≠ 3 := by omega
+  have notFour : coefficientIndex ≠ 4 := by omega
+  simp [activeChallengePolynomial]
+
 def ActiveLowDegreeUnitAssumption
     (isUnit : (Nat -> Nat) -> Prop) : Prop :=
   ∀ polynomial,
+    PolynomialSupportedBelowActiveFoldDegree polynomial ->
     (∃ coefficientIndex,
       coefficientIndex < activeFoldChallengeCount
         ∧ polynomial coefficientIndex ≠ 0) ->
@@ -125,6 +165,8 @@ theorem active_challenge_polynomial_is_unit_under_low_degree_unit_assumption
     isUnit (activeChallengePolynomial raw0 raw1 raw2 raw3 raw4) :=
   lowDegreeUnits
     (activeChallengePolynomial raw0 raw1 raw2 raw3 raw4)
+    (active_challenge_polynomial_supported_below_active_fold_degree
+      raw0 raw1 raw2 raw3 raw4)
     (active_challenge_polynomial_is_nonzero raw0 raw1 raw2 raw3 raw4)
 
 def canonicalGoldilocksCoefficient (value : Nat) : Nat :=

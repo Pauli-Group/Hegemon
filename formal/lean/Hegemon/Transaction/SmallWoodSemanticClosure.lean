@@ -37,6 +37,12 @@ structure SmallWoodActiveInputConstraintFacts
   publicNullifierNonzero : publicNullifier ≠ 0
   merkleRootBound :
     row.merkleRootRow = merkleRoot
+  deployedMerkleDepth :
+    witness.merkleDepth = 32
+  deployedMerkleSiblingCount :
+    witness.merkleSiblings.length = 32
+  canonicalNotePosition :
+    witness.notePosition < 2 ^ 32
   merklePathAccepted :
     verifyPathWithDepth
       mockMerkleNode
@@ -45,6 +51,24 @@ structure SmallWoodActiveInputConstraintFacts
       witness.notePosition
       witness.merkleSiblings
       row.merkleRootRow = true
+
+theorem active_input_constraint_facts_bind_deployed_merkle_geometry
+    {merkleRoot publicNullifier : Digest}
+    {witness : InputSpendWitness}
+    {row : SmallWoodInputConstraintRow}
+    (facts :
+      SmallWoodActiveInputConstraintFacts
+        merkleRoot
+        publicNullifier
+        witness
+        row) :
+    witness.merkleDepth = 32
+      ∧ witness.merkleSiblings.length = 32
+      ∧ witness.notePosition < 2 ^ 32 := by
+  exact
+    ⟨facts.deployedMerkleDepth,
+      facts.deployedMerkleSiblingCount,
+      facts.canonicalNotePosition⟩
 
 def SmallWoodInputConstraintRowSatisfied
     (merkleRoot : Digest)

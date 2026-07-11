@@ -70,7 +70,11 @@ trap cleanup EXIT
 
 if [[ -n "$PACKAGE_TAR" ]]; then
   TMPDIR="$(mktemp -d)"
-  tar -xzf "$PACKAGE_TAR" -C "$TMPDIR"
+  PACKAGE_SHA="$(dirname "$PACKAGE_TAR")/package.sha256"
+  python3 "$ROOT/scripts/native_backend_review_package.py" extract \
+    --archive "$PACKAGE_TAR" \
+    --sha "$PACKAGE_SHA" \
+    --destination "$TMPDIR" >/dev/null
   CLAIM_JSON="$TMPDIR/native-backend-128b-review-package/current_claim.json"
   REVIEW_MANIFEST="$TMPDIR/native-backend-128b-review-package/review_manifest.json"
 fi

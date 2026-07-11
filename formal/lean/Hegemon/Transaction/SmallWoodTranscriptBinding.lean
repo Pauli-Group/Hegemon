@@ -140,6 +140,28 @@ structure ProfileBindingParameters where
   poseidonRowsPerPermutation : Nat
 deriving DecidableEq, Repr
 
+abbrev NoGrindingProfile.wellFormed (profile : NoGrindingProfile) : Prop :=
+  profile.rho < 2 ^ 64
+    ∧ profile.nbOpenedEvals < 2 ^ 64
+    ∧ profile.beta < 2 ^ 64
+    ∧ profile.openingPowBits < 2 ^ 64
+    ∧ profile.decsNbEvals < 2 ^ 64
+    ∧ profile.decsNbOpenedEvals < 2 ^ 64
+    ∧ profile.decsEta < 2 ^ 64
+    ∧ profile.decsPowBits < 2 ^ 64
+
+abbrev ProfileBindingParameters.wellFormed
+    (parameters : ProfileBindingParameters) : Prop :=
+  parameters.circuitVersion < 2 ^ 16
+    ∧ parameters.cryptoSuite < 2 ^ 16
+    ∧ parameters.arithmetization < 2 ^ 64
+    ∧ parameters.constraintDegree < 2 ^ 64
+    ∧ parameters.profile.wellFormed
+    ∧ parameters.poseidonWidth < 2 ^ 64
+    ∧ parameters.poseidonRate < 2 ^ 64
+    ∧ parameters.poseidonSteps < 2 ^ 64
+    ∧ parameters.poseidonRowsPerPermutation < 2 ^ 64
+
 def activeProfileBindingParameters : ProfileBindingParameters :=
   { circuitVersion := activeCircuitVersion,
     cryptoSuite := activeCryptoSuite,
@@ -171,77 +193,165 @@ def profileMaterialWithParameters
     ++ smallwoodFieldXofDomain
     ++ profileBindingParameterBytes parameters
 
+inductive ProfileBindingField
+  | circuitVersion
+  | cryptoSuite
+  | arithmetization
+  | constraintDegree
+  | rho
+  | openedEvaluations
+  | beta
+  | openingGrindingBits
+  | decsEvaluations
+  | decsOpenedEvaluations
+  | decsEta
+  | decsGrindingBits
+  | poseidonWidth
+  | poseidonRate
+  | poseidonSteps
+  | poseidonRowsPerPermutation
+deriving DecidableEq, Repr
+
+def activeProfileMutationFields : List ProfileBindingField :=
+  [ .circuitVersion,
+    .cryptoSuite,
+    .arithmetization,
+    .constraintDegree,
+    .rho,
+    .openedEvaluations,
+    .beta,
+    .openingGrindingBits,
+    .decsEvaluations,
+    .decsOpenedEvaluations,
+    .decsEta,
+    .decsGrindingBits,
+    .poseidonWidth,
+    .poseidonRate,
+    .poseidonSteps,
+    .poseidonRowsPerPermutation ]
+
+def ProfileBindingField.label : ProfileBindingField -> String
+  | .circuitVersion => "circuit-version"
+  | .cryptoSuite => "crypto-suite"
+  | .arithmetization => "arithmetization"
+  | .constraintDegree => "constraint-degree"
+  | .rho => "rho"
+  | .openedEvaluations => "opened-evaluations"
+  | .beta => "beta"
+  | .openingGrindingBits => "opening-grinding-bits"
+  | .decsEvaluations => "decs-evaluations"
+  | .decsOpenedEvaluations => "decs-opened-evaluations"
+  | .decsEta => "decs-eta"
+  | .decsGrindingBits => "decs-grinding-bits"
+  | .poseidonWidth => "poseidon-width"
+  | .poseidonRate => "poseidon-rate"
+  | .poseidonSteps => "poseidon-steps"
+  | .poseidonRowsPerPermutation => "poseidon-rows-per-permutation"
+
+def ProfileBindingField.mutate
+    (field : ProfileBindingField) : ProfileBindingParameters :=
+  match field with
+  | .circuitVersion =>
+      { activeProfileBindingParameters with
+          circuitVersion := activeCircuitVersion + 1 }
+  | .cryptoSuite =>
+      { activeProfileBindingParameters with
+          cryptoSuite := activeCryptoSuite + 1 }
+  | .arithmetization =>
+      { activeProfileBindingParameters with
+          arithmetization := arithDirectPacked64V1 }
+  | .constraintDegree =>
+      { activeProfileBindingParameters with
+          constraintDegree := effectiveConstraintDegree + 1 }
+  | .rho =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with rho := activeProfile.rho + 1 } }
+  | .openedEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with
+              nbOpenedEvals := activeProfile.nbOpenedEvals + 1 } }
+  | .beta =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with beta := activeProfile.beta + 1 } }
+  | .openingGrindingBits =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with openingPowBits := 1 } }
+  | .decsEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with decsNbEvals := activeProfile.decsNbEvals + 1 } }
+  | .decsOpenedEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with
+              decsNbOpenedEvals := activeProfile.decsNbOpenedEvals + 1 } }
+  | .decsEta =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with decsEta := activeProfile.decsEta + 1 } }
+  | .decsGrindingBits =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with decsPowBits := 1 } }
+  | .poseidonWidth =>
+      { activeProfileBindingParameters with
+          poseidonWidth := SmallWoodTranscriptBinding.poseidonWidth + 1 }
+  | .poseidonRate =>
+      { activeProfileBindingParameters with
+          poseidonRate := SmallWoodTranscriptBinding.poseidonRate + 1 }
+  | .poseidonSteps =>
+      { activeProfileBindingParameters with
+          poseidonSteps := SmallWoodTranscriptBinding.poseidonSteps + 1 }
+  | .poseidonRowsPerPermutation =>
+      { activeProfileBindingParameters with
+          poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation + 1 }
+
+def activeProfileSingleFieldMutationCases :
+    List (String × ProfileBindingParameters) :=
+  activeProfileMutationFields.map fun field => (field.label, field.mutate)
+
 def activeProfileSingleFieldMutationNames : List String :=
-  [ "circuit-version",
-    "crypto-suite",
-    "arithmetization",
-    "constraint-degree",
-    "rho",
-    "opened-evaluations",
-    "beta",
-    "opening-grinding-bits",
-    "decs-evaluations",
-    "decs-opened-evaluations",
-    "decs-eta",
-    "decs-grinding-bits",
-    "poseidon-width",
-    "poseidon-rate",
-    "poseidon-steps",
-    "poseidon-rows-per-permutation" ]
+  activeProfileMutationFields.map ProfileBindingField.label
 
 def activeProfileSingleFieldMutations : List ProfileBindingParameters :=
-  [ { activeProfileBindingParameters with
-        circuitVersion := activeCircuitVersion + 1 },
-    { activeProfileBindingParameters with
-        cryptoSuite := activeCryptoSuite + 1 },
-    { activeProfileBindingParameters with
-        arithmetization := arithDirectPacked64V1 },
-    { activeProfileBindingParameters with
-        constraintDegree := effectiveConstraintDegree + 1 },
-    { activeProfileBindingParameters with
-        profile := { activeProfile with rho := activeProfile.rho + 1 } },
-    { activeProfileBindingParameters with
-        profile :=
-          { activeProfile with
-            nbOpenedEvals := activeProfile.nbOpenedEvals + 1 } },
-    { activeProfileBindingParameters with
-        profile := { activeProfile with beta := activeProfile.beta + 1 } },
-    { activeProfileBindingParameters with
-        profile := { activeProfile with openingPowBits := 1 } },
-    { activeProfileBindingParameters with
-        profile :=
-          { activeProfile with decsNbEvals := activeProfile.decsNbEvals + 1 } },
-    { activeProfileBindingParameters with
-        profile :=
-          { activeProfile with
-            decsNbOpenedEvals := activeProfile.decsNbOpenedEvals + 1 } },
-    { activeProfileBindingParameters with
-        profile := { activeProfile with decsEta := activeProfile.decsEta + 1 } },
-    { activeProfileBindingParameters with
-        profile := { activeProfile with decsPowBits := 1 } },
-    { activeProfileBindingParameters with
-        poseidonWidth := poseidonWidth + 1 },
-    { activeProfileBindingParameters with
-        poseidonRate := poseidonRate + 1 },
-    { activeProfileBindingParameters with
-        poseidonSteps := poseidonSteps + 1 },
-    { activeProfileBindingParameters with
-        poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation + 1 } ]
+  activeProfileMutationFields.map ProfileBindingField.mutate
+
+def circuitVersionWraparoundMutation : ProfileBindingParameters :=
+  { activeProfileBindingParameters with
+      circuitVersion := activeCircuitVersion + 2 ^ 16 }
 
 theorem active_profile_is_no_grinding :
     activeProfile.openingPowBits = 0
       ∧ activeProfile.decsPowBits = 0 := by
   decide
 
-theorem active_profile_binding_rejects_every_single_field_mutation :
+theorem active_profile_binding_parameters_well_formed :
+    activeProfileBindingParameters.wellFormed := by
+  decide
+
+theorem active_profile_binding_rejects_all_named_in_range_single_field_mutations :
     ∀ mutation ∈ activeProfileSingleFieldMutations,
-      profileMaterialWithParameters mutation ≠
-        profileMaterialWithParameters activeProfileBindingParameters := by
+      mutation.wellFormed
+        ∧ profileMaterialWithParameters mutation ≠
+          profileMaterialWithParameters activeProfileBindingParameters := by
+  decide
+
+theorem circuit_version_wraparound_mutation_is_not_well_formed :
+    ¬ circuitVersionWraparoundMutation.wellFormed := by
+  decide
+
+theorem circuit_version_wraparound_collision_is_outside_production_domain :
+    profileMaterialWithParameters circuitVersionWraparoundMutation =
+        profileMaterialWithParameters activeProfileBindingParameters
+      ∧ ¬ circuitVersionWraparoundMutation.wellFormed := by
   decide
 
 theorem active_profile_mutation_names_cover_every_mutation :
     activeProfileSingleFieldMutationNames.length =
       activeProfileSingleFieldMutations.length := by
+  decide
+
+theorem active_profile_mutation_fields_are_unique :
+    activeProfileMutationFields.Nodup := by
   decide
 
 def smallwoodProfileMaterial

@@ -111,9 +111,7 @@ def profileMutationCaseJson
     ++ "    }"
 
 def profileMutationCaseJsons : List String :=
-  (List.zip
-      activeProfileSingleFieldMutationNames
-      activeProfileSingleFieldMutations).map profileMutationCaseJson
+  activeProfileSingleFieldMutationCases.map profileMutationCaseJson
 
 def vectorJson : String :=
   let coreCases :=

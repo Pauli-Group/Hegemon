@@ -18,6 +18,8 @@ run_exact_lib_test() {
   local package="$1"
   local test_name="$2"
   local match_count
+  local ignored_count
+  local output
 
   match_count="$(cargo test -p "$package" --lib -- --list \
     | awk -v expected="${test_name}: test" '$0 == expected { count += 1 } END { print count + 0 }')"
@@ -26,7 +28,24 @@ run_exact_lib_test() {
       "$test_name" "$package" "$match_count" >&2
     exit 1
   fi
-  cargo test -p "$package" --lib "$test_name" -- --exact --nocapture
+  ignored_count="$(cargo test -p "$package" --lib -- --ignored --list \
+    | awk -v expected="${test_name}: test" '$0 == expected { count += 1 } END { print count + 0 }')"
+  if [ "$ignored_count" -ne 0 ]; then
+    printf 'required Rust lib test %s in package %s is ignored\n' \
+      "$test_name" "$package" >&2
+    exit 1
+  fi
+  if ! output="$(CARGO_TERM_COLOR=never cargo test -p "$package" --lib "$test_name" \
+      -- --exact --nocapture 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    exit 1
+  fi
+  printf '%s\n' "$output"
+  if ! grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' <<<"$output"; then
+    printf 'required Rust lib test %s in package %s did not execute exactly once\n' \
+      "$test_name" "$package" >&2
+    exit 1
+  fi
 }
 
 sha256_file() {

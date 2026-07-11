@@ -88,11 +88,11 @@ So the repo is not claiming a paper-default or grinding-assisted profile. It is 
 
 ## Machine-checked profile and semantic boundary
 
-`Hegemon.Transaction.SmallWoodTranscriptBinding` now treats the complete active verifier-profile material as one parameter record. Lean proves both grinding fields are zero and generates 16 named single-field mutations covering circuit version, crypto suite, arithmetization, effective constraint degree, `rho`, opened evaluations, `beta`, opening grinding, DECS evaluation count, DECS opening count, `eta`, DECS grinding, and the four Poseidon geometry fields. The production Rust test reconstructs every mutation, requires exact byte equality with Lean, rejects duplicate or missing mutation names, and requires every mutation to differ from the active profile. This is a profile-drift and transcript-binding gate, not a cryptographic proof of the Fiat-Shamir transform.
+`Hegemon.Transaction.SmallWoodTranscriptBinding` now treats the complete active verifier-profile material as one parameter record. A typed 16-constructor field inventory derives both the mutation labels and mutation functions, covering circuit version, crypto suite, arithmetization, effective constraint degree, `rho`, opened evaluations, `beta`, opening grinding, DECS evaluation count, DECS opening count, `eta`, DECS grinding, and the four Poseidon geometry fields. Lean proves both grinding fields are zero, proves the active parameters fit the production `u16`/`u64` serialization domain, and proves the field constructors and labels are unique. The production Rust test reconstructs every mutation, requires exact byte equality with Lean, proves that its 16-field profile array differs at exactly the named field index, rejects duplicate or missing mutation names, and requires every mutation to differ from the active profile. Lean also exhibits the out-of-range mutation `circuitVersion + 2^16`, proves that it aliases the serialized active profile, and proves that it is excluded by the well-formed production-domain predicate. The rejection theorem is deliberately quantified over named in-range mutations; it is not a false injectivity claim over unrestricted `Nat`, and it does not assert that the runtime rejects supported legacy profiles. This is a profile-drift and transcript-binding gate, not a cryptographic proof of the Fiat-Shamir transform.
 
-`Hegemon.Transaction.SmallWoodSemanticClosure` defines exact accepted input and output openings, public-shape rows, and balance rows. Lean requires the balance witness to use the active openings' exact value/asset summaries, recomputes active output commitments from those openings, binds materialized balance-slot assets to the public shape, and proves the combined rows imply active spend authorization, inactive-slot nullifier zeroing, valid balance, and the existing `AcceptedTransactionRelation`. `Hegemon.Transaction.SmallWoodNoCounterfeit` packages local transaction-claim, proven-batch, recursive-block, transaction, and supply facts only under an explicit cross-object identity-refinement premise. The premise binds exact canonical statement bytes; production derivation of those bytes, ordered transaction count, statement commitment, public replay, and DA identity into that premise remains open.
+`Hegemon.Transaction.SmallWoodSemanticClosure` defines exact accepted input and output openings, public-shape rows, and balance rows. Lean fixes each active input to the deployed depth-32 Merkle tree, requires exactly 32 siblings and a canonical position below `2^32`, requires the balance witness to use the active openings' exact value/asset summaries, recomputes active output commitments from those openings, binds materialized balance-slot assets to the public shape, and proves the combined rows imply active spend authorization, inactive-slot nullifier zeroing, valid balance, and the existing `AcceptedTransactionRelation`. `Hegemon.Transaction.SmallWoodNoCounterfeit` deliberately proves only the valid semantic-to-no-theft implication and the local fact that an accepted recursive-block-v2 artifact still requires semantic replay. It contains no cross-object or accepted-chain supply-composition theorem because the current artifact, claim, batch, transaction, and supply records do not expose common identity projections.
 
-Three distinct obligations remain open. First, an accepted deployed SmallWood proof must be shown to yield an exact satisfying semantic-row witness without assuming authorization or conservation in the premise. Second, the production Rust constraint builder and verifier execution must be completely refined to every field of that Lean row record. Third, recursive artifact, claim, batch, transaction, and supply objects must be refined to one concrete ordered identity. The existing generated vectors and mutation regressions are strong adversarial evidence for implementation equivalence, but they are not full refinement proofs.
+Four distinct obligations remain open. First, an accepted deployed SmallWood proof must be shown to yield an exact satisfying semantic-row witness without assuming authorization or conservation in the premise. Second, the production Rust constraint builder and verifier execution must be completely refined to every field of that Lean row record. Third, recursive artifact, claim, batch, transaction, and supply objects must be refined to one concrete ordered identity. Fourth, mint, burns, the complete fee source, ordered transactions, the supply step, and a production-refined note-commitment binding must be tied to that same accepted block artifact before the result can be lifted to no-counterfeit supply composition. The existing generated vectors and mutation regressions are strong adversarial evidence for implementation equivalence, but they are not full refinement proofs.
 
 ## Theorem surface used here
 
@@ -193,7 +193,7 @@ What it proves:
 - the bound is instantiated against the exact implemented statement shape,
 - the current no-grinding profile clears a conservative `128-bit` floor for that exact statement.
 - the full active profile material is mutation-checked across Lean and production Rust,
-- and exact semantic rows imply the Hegemon accepted-transaction relation and accepted-chain supply certificate.
+- and exact semantic rows imply the Hegemon accepted-transaction relation and canonical no-theft facts.
 
 What it does not prove:
 
@@ -202,6 +202,7 @@ What it does not prove:
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 - that accepted deployed proof bytes extract an exact satisfying semantic-row witness,
 - complete equivalence between every Rust constraint/verifier operation and the Lean row model,
+- cross-object identity or accepted-chain supply composition,
 - or primitive PCS, random-oracle, Merkle/commitment, and hash security.
 
 Today the Rust engine proves the real packed semantic relation over the live `64`-lane row-aligned geometry, and the shipped `DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1` path now binds both output ciphertext hashes to public statement fields while staying under the native `tx_leaf` cap. The exact sampled release proof report and older bridge-baseline byte figures predate the latest row-growth and 25-opening legacy profile, so do not quote those sampled byte bands as current until the ignored release-size artifacts are refreshed. The remaining structural research gap is still the distance between the current direct bridge statement and the much smaller semantic LPPC frontier, but the live direct lane no longer cheats with a witness side payload. So this note is exact on the security surface and honest about the current shipped backend floor.
@@ -212,12 +213,13 @@ This milestone is complete at the profile-binding and semantic-specification lay
 
 - the candidate statement is now witness-free and public,
 - the active integrated backend now carries an exact no-grinding `128-bit` note for that exact statement,
-- all 16 security-relevant profile mutations are checked across Lean and Rust,
-- exact accepted semantic rows compose through recursive admission to accepted-chain supply conservation,
+- all 16 typed security-relevant profile mutations are checked across Lean and Rust with an exact named-field delta assertion,
+- exact accepted semantic rows imply the local accepted-transaction and no-theft relations,
 - and the active proof bytes stay below both the shipped Plonky3 baseline and the native `tx_leaf` cap.
 
 The next formal milestones are:
 
 - prove accepted-proof-to-exact-row extraction for the deployed SmallWood verifier,
 - complete the Rust constraint-builder/verifier-to-Lean row refinement,
+- add common identity projections and bind complete mint/burn/fee/transaction/supply accounting to one accepted block artifact,
 - and preserve these bindings while reducing the packed relation geometry toward the frozen `64`-lane target.
