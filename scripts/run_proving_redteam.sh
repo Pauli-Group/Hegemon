@@ -5,6 +5,14 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
+if [[ -d "${HOME:-}/.elan/bin" ]]; then
+  export PATH="${HOME}/.elan/bin:$PATH"
+fi
+if ! command -v lake >/dev/null 2>&1; then
+  echo "Lean lake is required for the SmallWood adversarial conformance campaign" >&2
+  exit 2
+fi
+
 MODE="${HEGEMON_REDTEAM_MODE:-full}"
 HEGEMON_FUZZ_TOOLCHAIN="${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}"
 if [[ "$MODE" != "ci" && "$MODE" != "full" ]]; then

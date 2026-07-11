@@ -186,6 +186,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
       - name: Setup Rust toolchain
         run: rustup show
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
+          printf '%s  elan-init.sh\n' "$ELAN_INIT_SHA256" | sha256sum -c -
+          sh elan-init.sh -y --default-toolchain none
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "security-adversarial"
