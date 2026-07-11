@@ -14604,7 +14604,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Pending independent review of the 64-bit reducer preimage classification, degree-support predicate, and package parity gate. This is arithmetic, vector, and byte-grammar evidence only; random-oracle independence, irreducibility, collision reduction, proof of knowledge, and production fold equivalence remain open.",
-        "content_blake3": "d79513a13032a06dc8f4a1c3daf8d62a474ebe959c5db76deca64de19c197854"
+        "content_blake3": "64300a8fe1928ab86c36fcd8015e33bbec3bab7ae0de703ef7ab80d2dd7705ed"
       },
       "falsification_cases": [
         {
