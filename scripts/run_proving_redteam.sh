@@ -120,6 +120,7 @@ EOF
       ;;
     smallwood-lean-spec-hardening)
       cat <<'EOF'
+cargo_test_lib_filter transaction-circuit smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production -- --exact --nocapture
 cargo_test_filter transaction-circuit smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound -- --nocapture
 cargo_test_filter transaction-circuit packed_smallwood_frontend_inline_merkle_rejects_ -- --nocapture
 cargo_test_filter transaction-circuit packed_smallwood_inline_merkle_rejects_ -- --nocapture

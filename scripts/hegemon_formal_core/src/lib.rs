@@ -87,7 +87,17 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ),
     (
         "native.challenge-reduction-entropy-arithmetic",
-        &["Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count"],
+        &[
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_preimage_bound_is_243",
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_supports_312_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_does_not_support_313_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_receipt_root_composition_loss_is_exact",
+            "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_supports_305_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
+            "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
+            "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+            "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero",
+        ],
     ),
     (
         "native.fold-output-equality-model",
@@ -96,7 +106,13 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("native.fold-verifier-implementation-equivalence", &[]),
     (
         "native.digit-bound-euclidean-arithmetic",
-        &["Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference"],
+        &[
+            "Hegemon.Native.NativeBackendAlgebra.active_ambient_coefficient_dimension_is_4104",
+            "Hegemon.Native.NativeBackendAlgebra.active_conservative_euclidean_bound_is_sound",
+            "Hegemon.Native.NativeBackendAlgebra.active_live_coefficient_dimension_is_648",
+            "Hegemon.Native.NativeBackendAlgebra.active_live_euclidean_bound_is_sound",
+            "Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference",
+        ],
     ),
     (
         "proof.statement-wrapper-binding",
@@ -5748,6 +5764,48 @@ mod tests {
         assert_eq!(report.closed_mechanized_assumption_tracks, 1);
         assert_eq!(report.mechanized_assumption_closure_percent, 50.0);
         assert!(report.passed);
+    }
+
+    #[test]
+    fn required_native_compound_tracks_pin_every_component_theorem() {
+        let policy: BTreeMap<&str, &[&str]> = REQUIRED_MECHANIZED_ASSUMPTION_TRACKS
+            .iter()
+            .copied()
+            .collect();
+        let challenge_actual: BTreeSet<&str> = policy
+            ["native.challenge-reduction-entropy-arithmetic"]
+            .iter()
+            .copied()
+            .collect();
+        let challenge_expected: BTreeSet<&str> = [
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_preimage_bound_is_243",
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_supports_312_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_does_not_support_313_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_receipt_root_composition_loss_is_exact",
+            "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_supports_305_bits",
+            "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
+            "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
+            "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+            "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(challenge_actual, challenge_expected);
+
+        let digit_actual: BTreeSet<&str> = policy["native.digit-bound-euclidean-arithmetic"]
+            .iter()
+            .copied()
+            .collect();
+        let digit_expected: BTreeSet<&str> = [
+            "Hegemon.Native.NativeBackendAlgebra.active_ambient_coefficient_dimension_is_4104",
+            "Hegemon.Native.NativeBackendAlgebra.active_conservative_euclidean_bound_is_sound",
+            "Hegemon.Native.NativeBackendAlgebra.active_live_coefficient_dimension_is_648",
+            "Hegemon.Native.NativeBackendAlgebra.active_live_euclidean_bound_is_sound",
+            "Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(digit_actual, digit_expected);
     }
 
     #[test]

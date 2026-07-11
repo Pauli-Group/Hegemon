@@ -109,7 +109,15 @@
           "circuits/superneo-backend-lattice/src/lib.rs"
         ],
         "lean_theorems": [
-          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count"
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_preimage_bound_is_243",
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_supports_312_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_does_not_support_313_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_receipt_root_composition_loss_is_exact",
+          "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_supports_305_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
+          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
+          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+          "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero"
         ],
         "remaining_work": []
       },
@@ -145,6 +153,10 @@
           "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean"
         ],
         "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.active_ambient_coefficient_dimension_is_4104",
+          "Hegemon.Native.NativeBackendAlgebra.active_conservative_euclidean_bound_is_sound",
+          "Hegemon.Native.NativeBackendAlgebra.active_live_coefficient_dimension_is_648",
+          "Hegemon.Native.NativeBackendAlgebra.active_live_euclidean_bound_is_sound",
           "Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference"
         ],
         "remaining_work": []
