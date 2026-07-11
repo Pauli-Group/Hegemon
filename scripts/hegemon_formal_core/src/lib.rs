@@ -130,6 +130,8 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
     "7ac75c373061e05bc3131e336f2e20505dc1192cba4af2175595c6f5e705359a";
+const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
+    "d2c9b8c4f9c6a61f04b2b6d97656e922d150b67793bf3a3837b08b37b0c74163";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]
@@ -619,10 +621,20 @@ fn collect_lean_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<()> 
         let file_type = entry
             .file_type()
             .with_context(|| format!("read file type for {}", path.display()))?;
-        if file_type.is_dir() {
+        if file_type.is_symlink() {
+            return Err(anyhow!(
+                "formal Lean source tree contains symlink: {}",
+                path.display()
+            ));
+        } else if file_type.is_dir() {
             collect_lean_files(&path, files)?;
         } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "lean") {
             files.push(path);
+        } else if !file_type.is_file() {
+            return Err(anyhow!(
+                "formal Lean source tree contains special filesystem entry: {}",
+                path.display()
+            ));
         }
     }
     Ok(())
@@ -765,6 +777,12 @@ fn verify_formal_source_tree_digest(path: &Path) -> Result<()> {
         ledger.formal_source_tree_blake3 == actual,
         "formal Lean source tree changed without renewing the active-goal digest: recorded {}, current {}",
         ledger.formal_source_tree_blake3,
+        actual
+    );
+    ensure!(
+        actual == EXPECTED_FORMAL_SOURCE_TREE_BLAKE3,
+        "formal Lean source tree changed across the independent Rust policy boundary: expected {}, got {}; review all model and theorem-body changes before updating the Rust-held digest",
+        EXPECTED_FORMAL_SOURCE_TREE_BLAKE3,
         actual
     );
     Ok(())
@@ -6068,6 +6086,29 @@ mod tests {
             actual, EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3,
             "closed-track theorem types changed without an explicit Rust policy update"
         );
+    }
+
+    #[test]
+    fn formal_source_tree_matches_independent_rust_policy() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let actual = formal_source_tree_blake3(&root).expect("complete formal source tree digest");
+        assert_eq!(
+            actual, EXPECTED_FORMAL_SOURCE_TREE_BLAKE3,
+            "formal model or theorem bodies changed without an explicit Rust policy update"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn formal_source_tree_rejects_symlinked_source() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("formal-source-tree-symlink");
+        write_repo_file(&root, "formal/lean/Real.lean", "def real := true\n");
+        symlink("Real.lean", root.join("formal/lean/Alias.lean")).unwrap();
+
+        let err = formal_source_tree_blake3(&root).unwrap_err();
+        assert!(err.to_string().contains("contains symlink"));
     }
 
     #[test]

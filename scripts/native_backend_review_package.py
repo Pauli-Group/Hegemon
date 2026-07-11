@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tarfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
+from typing import BinaryIO
 
 
 PACKAGE_ROOT_NAME = "native-backend-128b-review-package"
@@ -60,6 +62,27 @@ GENERATED_EVIDENCE_PATHS = (
 
 class ReviewPackageError(RuntimeError):
     pass
+
+
+class _BoundedDecompressedReader:
+    def __init__(self, source: BinaryIO, maximum: int) -> None:
+        self._source = source
+        self._maximum = maximum
+        self.bytes_read = 0
+
+    def read(self, size: int = -1) -> bytes:
+        remaining = self._maximum - self.bytes_read
+        requested = remaining + 1
+        if size >= 0:
+            requested = min(size, requested)
+        data = self._source.read(requested)
+        self.bytes_read += len(data)
+        if self.bytes_read > self._maximum:
+            raise ReviewPackageError(
+                "package decompressed tar stream exceeds bound "
+                f"{self._maximum}"
+            )
+        return data
 
 
 def sha256_file(path: Path) -> str:
@@ -131,70 +154,97 @@ def safe_extract(archive_path: Path, destination: Path) -> Path:
     compressed_size = _bounded_regular_file_size(
         archive_path, "package compressed", MAX_COMPRESSED_BYTES
     )
+    if destination.is_symlink():
+        raise ReviewPackageError(f"package destination is a symlink: {destination}")
     destination.mkdir(parents=True, exist_ok=True)
+    destination = destination.resolve()
+    decompressed_limit = min(
+        MAX_EXPANDED_BYTES, compressed_size * MAX_COMPRESSION_RATIO
+    )
     names: set[str] = set()
     member_count = 0
     expanded_size = 0
-    with tarfile.open(archive_path, "r|gz") as archive:
-        for member in archive:
-            member_count += 1
-            if member_count > MAX_MEMBER_COUNT:
-                raise ReviewPackageError(
-                    f"package member count exceeds bound {MAX_MEMBER_COUNT}"
-                )
-            relative = PurePosixPath(member.name)
-            if (
-                relative.is_absolute()
-                or ".." in relative.parts
-                or not relative.parts
-                or relative.parts[0] != PACKAGE_ROOT_NAME
-            ):
-                raise ReviewPackageError(
-                    f"unsafe package member path: {member.name}"
-                )
-            normalized = str(relative)
-            if normalized in names:
-                raise ReviewPackageError(
-                    f"duplicate package member: {member.name}"
-                )
-            names.add(normalized)
-            if not (member.isdir() or member.isfile()):
-                raise ReviewPackageError(
-                    f"unsupported package member type: {member.name}"
-                )
-            if member.size < 0 or member.size > MAX_MEMBER_BYTES:
-                raise ReviewPackageError(
-                    f"package member {member.name} size {member.size} exceeds bound "
-                    f"{MAX_MEMBER_BYTES}"
-                )
-            if member.isfile():
-                expanded_size += member.size
-                if expanded_size > MAX_EXPANDED_BYTES:
-                    raise ReviewPackageError(
-                        f"package expanded size exceeds bound {MAX_EXPANDED_BYTES}"
-                    )
-                if expanded_size > compressed_size * MAX_COMPRESSION_RATIO:
-                    raise ReviewPackageError(
-                        "package compression ratio exceeds bound "
-                        f"{MAX_COMPRESSION_RATIO}"
-                    )
-            target = destination.joinpath(*relative.parts)
-            if member.isdir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            source = archive.extractfile(member)
-            if source is None:
-                raise ReviewPackageError(
-                    f"could not read package member {member.name}"
-                )
-            with source, target.open("wb") as output:
-                shutil.copyfileobj(source, output, length=1024 * 1024)
-            if target.stat().st_size != member.size:
-                raise ReviewPackageError(
-                    f"package member {member.name} extracted size mismatch"
-                )
-            target.chmod(0o755 if member.mode & 0o111 else 0o644)
+    with archive_path.open("rb") as compressed:
+        with gzip.GzipFile(fileobj=compressed, mode="rb") as decompressed:
+            bounded = _BoundedDecompressedReader(decompressed, decompressed_limit)
+            with tarfile.open(fileobj=bounded, mode="r|") as archive:
+                for member in archive:
+                    member_count += 1
+                    if member_count > MAX_MEMBER_COUNT:
+                        raise ReviewPackageError(
+                            f"package member count exceeds bound {MAX_MEMBER_COUNT}"
+                        )
+                    relative = PurePosixPath(member.name)
+                    if (
+                        relative.is_absolute()
+                        or ".." in relative.parts
+                        or not relative.parts
+                        or relative.parts[0] != PACKAGE_ROOT_NAME
+                    ):
+                        raise ReviewPackageError(
+                            f"unsafe package member path: {member.name}"
+                        )
+                    for part in relative.parts:
+                        windows_part = PureWindowsPath(part)
+                        if (
+                            "\\" in part
+                            or ":" in part
+                            or "\x00" in part
+                            or windows_part.drive
+                            or windows_part.root
+                        ):
+                            raise ReviewPackageError(
+                                f"non-portable package member path: {member.name}"
+                            )
+                    normalized = str(relative)
+                    if normalized in names:
+                        raise ReviewPackageError(
+                            f"duplicate package member: {member.name}"
+                        )
+                    names.add(normalized)
+                    if not (member.isdir() or member.isfile()):
+                        raise ReviewPackageError(
+                            f"unsupported package member type: {member.name}"
+                        )
+                    if member.size < 0 or member.size > MAX_MEMBER_BYTES:
+                        raise ReviewPackageError(
+                            f"package member {member.name} size {member.size} exceeds bound "
+                            f"{MAX_MEMBER_BYTES}"
+                        )
+                    if member.isfile():
+                        expanded_size += member.size
+                        if expanded_size > MAX_EXPANDED_BYTES:
+                            raise ReviewPackageError(
+                                f"package expanded size exceeds bound {MAX_EXPANDED_BYTES}"
+                            )
+                        if expanded_size > compressed_size * MAX_COMPRESSION_RATIO:
+                            raise ReviewPackageError(
+                                "package compression ratio exceeds bound "
+                                f"{MAX_COMPRESSION_RATIO}"
+                            )
+                    target = destination.joinpath(*relative.parts)
+                    try:
+                        target.relative_to(destination)
+                    except ValueError as exc:
+                        raise ReviewPackageError(
+                            f"package member escapes destination: {member.name}"
+                        ) from exc
+                    if member.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise ReviewPackageError(
+                            f"could not read package member {member.name}"
+                        )
+                    with source, target.open("wb") as output:
+                        shutil.copyfileobj(source, output, length=1024 * 1024)
+                    if target.stat().st_size != member.size:
+                        raise ReviewPackageError(
+                            f"package member {member.name} extracted size mismatch"
+                        )
+                    target.chmod(0o755 if member.mode & 0o111 else 0o644)
     if member_count == 0:
         raise ReviewPackageError("package archive contains no members")
     package_root = destination / PACKAGE_ROOT_NAME

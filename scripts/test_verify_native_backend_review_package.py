@@ -34,6 +34,26 @@ def write_archive(path: Path, members: list[tuple[tarfile.TarInfo, bytes]]) -> N
             archive.addfile(info, io.BytesIO(body) if info.isfile() else None)
 
 
+def write_pax_metadata_archive(path: Path, metadata_size: int) -> None:
+    with tarfile.open(
+        path,
+        "w:gz",
+        format=tarfile.PAX_FORMAT,
+        pax_headers={"comment": "x" * metadata_size},
+    ) as archive:
+        info, body = regular_member(f"{review.PACKAGE_ROOT_NAME}/pax", b"")
+        archive.addfile(info, io.BytesIO(body))
+
+
+def write_gnu_longname_archive(path: Path, name_size: int) -> None:
+    with tarfile.open(path, "w:gz", format=tarfile.GNU_FORMAT) as archive:
+        info, body = regular_member(
+            f"{review.PACKAGE_ROOT_NAME}/" + ("a" * name_size),
+            b"",
+        )
+        archive.addfile(info, io.BytesIO(body))
+
+
 def regular_member(name: str, body: bytes) -> tuple[tarfile.TarInfo, bytes]:
     info = tarfile.TarInfo(name)
     info.size = len(body)
@@ -133,6 +153,32 @@ def main() -> None:
         write_archive(traversal, [regular_member("../escape", b"x")])
         expect_extract_rejection(traversal, temp / "traversal", "unsafe package member path")
 
+        for label, name in [
+            (
+                "windows-drive",
+                f"{review.PACKAGE_ROOT_NAME}/C:\\outside\\escape.txt",
+            ),
+            (
+                "windows-unc",
+                f"{review.PACKAGE_ROOT_NAME}/\\\\server\\share\\escape.txt",
+            ),
+            (
+                "windows-parent",
+                f"{review.PACKAGE_ROOT_NAME}/..\\escape.txt",
+            ),
+            (
+                "windows-ads",
+                f"{review.PACKAGE_ROOT_NAME}/evidence.txt:stream",
+            ),
+        ]:
+            cross_flavor = temp / f"{label}.tar.gz"
+            write_archive(cross_flavor, [regular_member(name, b"x")])
+            expect_extract_rejection(
+                cross_flavor,
+                temp / label,
+                "non-portable package member path",
+            )
+
         duplicate = temp / "duplicate.tar.gz"
         duplicate_name = f"{review.PACKAGE_ROOT_NAME}/duplicate"
         write_archive(
@@ -167,6 +213,27 @@ def main() -> None:
             )
         finally:
             review.MAX_MEMBER_COUNT = original_limit
+
+        original_expanded_limit = review.MAX_EXPANDED_BYTES
+        review.MAX_EXPANDED_BYTES = 2 * 1024
+        try:
+            pax_metadata = temp / "pax-metadata.tar.gz"
+            write_pax_metadata_archive(pax_metadata, 16 * 1024)
+            expect_extract_rejection(
+                pax_metadata,
+                temp / "pax-metadata",
+                "package decompressed tar stream",
+            )
+
+            gnu_longname = temp / "gnu-longname.tar.gz"
+            write_gnu_longname_archive(gnu_longname, 16 * 1024)
+            expect_extract_rejection(
+                gnu_longname,
+                temp / "gnu-longname",
+                "package decompressed tar stream",
+            )
+        finally:
+            review.MAX_EXPANDED_BYTES = original_expanded_limit
 
         getmembers = tarfile.TarFile.getmembers
         tarfile.TarFile.getmembers = lambda _archive: (_ for _ in ()).throw(
