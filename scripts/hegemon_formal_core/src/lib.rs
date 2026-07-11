@@ -702,6 +702,23 @@ pub fn mechanized_assumption_proposition_blake3(root: &Path) -> Result<String> {
     }
 
     let lean_root = root.join("formal/lean");
+    let build = Command::new("lake")
+        .args(["build", "Hegemon"])
+        .current_dir(&lean_root)
+        .output()
+        .with_context(|| {
+            format!(
+                "build the pinned Lean library before proposition query from {}",
+                lean_root.display()
+            )
+        })?;
+    ensure!(
+        build.status.success(),
+        "pinned Lean library build failed before proposition query (status {}):\nstdout:\n{}\nstderr:\n{}",
+        build.status,
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
     let mut child = Command::new("lake")
         .args(["env", "lean", "--stdin"])
         .current_dir(&lean_root)
