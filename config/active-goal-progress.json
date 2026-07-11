@@ -15,7 +15,7 @@
     "native-devnet-host"
   ],
   "source_matrix_path": "config/highest-standard-formal-verification-matrix.json",
-  "measurement_method": "Recompute the weighted average of config/highest-standard-formal-verification-matrix.json property completion percentages. The active-goal percent is valid only if the measured goal status is paused, every required property id and weight matches the fixed highest-standard theorem set, completed properties have no missing_work or remaining_work, completed properties list current evidence and explicit external assumptions, the matrix overall percent equals the recomputed weighted percent, and this ledger matches both.",
+  "measurement_method": "Recompute the weighted average of config/highest-standard-formal-verification-matrix.json property completion percentages. The active-goal percent is valid only if the measured goal status is paused, every required property id and weight matches the fixed highest-standard theorem set, completed properties have no missing_work or remaining_work, completed properties list current evidence and explicit external assumptions, the matrix overall percent equals the recomputed weighted percent, and this ledger matches both. Mechanized assumption closure is recomputed separately against the checker's fixed track and closed-theorem policy; the public active-goal command also requires every credited theorem in the formal security claims set and runs aggregate Hegemon elaboration plus the axiom audit before emitting a passing result.",
   "overall_completion_percent": 100.0,
   "weighted_completion_percent": 100.0,
   "total_property_count": 18,
@@ -28,6 +28,7 @@
   ],
   "evidence_paths": [
     "config/highest-standard-formal-verification-matrix.json",
+    "config/formal-security-claims.json",
     ".agent/RESIDUAL_ASSUMPTION_CLOSURE_EXECPLAN.md",
     "scripts/check_formal_core.sh",
     "DESIGN.md",

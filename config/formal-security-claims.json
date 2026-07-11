@@ -3092,6 +3092,7 @@
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_yields_supply_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_one_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
+        "Hegemon.Transaction.SmallWoodNoCounterfeit.accepted_recursive_v2_artifact_still_requires_semantic_replay",
         "Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_accepted_chain_yields_supply_conservation_certificate",
         "Hegemon.Transaction.SmallWoodNoCounterfeit.exact_constraint_extraction_canonical_surface_implies_no_theft_boundary",
         "Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_constraints_yield_production_supply_conservation"
@@ -3103,6 +3104,7 @@
         "The theorem covers executable supply-chain replay and claimed supply matching. It does not prove transaction proof soundness, privacy, hash implementation equivalence, monetary policy economics beyond the current subsidy/delta helpers, production block construction, or complete native-node equivalence.",
         "The production supply conservation certificates keep the fee/native-delta binding and remaining block construction equivalence explicit while proving claimed supply replay follows accepted native deltas and canonical no-theft/public-field facts.",
         "The cross-layer coinbase/canonical supply-integrity theorems bind accepted coinbase accounting and canonical no-theft/public-balance facts in one package, while still leaving the production block-construction witness and fee/native-delta equality as explicit premises.",
+        "The recursive-v2 local-admission theorem proves only that accepted recursive-block-v2 artifacts retain the recursive envelope kind and require semantic replay; it does not discharge the open cross-object identity-refinement premise.",
         "The conditional recursive SmallWood composition boundary is not part of this production-eligible supply claim. It retains an explicit cross-object identity-refinement premise until production artifact, claim, batch, transaction, and supply identities are proven to coincide."
       ],
       "evidence_paths": [

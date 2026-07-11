@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::process::Command;
 
 const CLAIM_STATUSES: &[&str] = &[
     "enforced",
@@ -53,6 +54,62 @@ const REQUIRED_HIGHEST_STANDARD_PROPERTIES: &[(&str, u64)] = &[
     ("network.pq-channel-safety", 3),
     ("resource.dos-bounds", 2),
     ("release.dependency-posture", 2),
+];
+const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
+    (
+        "transaction.smallwood-semantic-implication",
+        &["Hegemon.Transaction.SmallWoodSemanticClosure.accepted_proof_and_semantic_constraints_imply_transaction_relation"],
+    ),
+    (
+        "transaction.smallwood-profile-drift-binding",
+        &["Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_every_single_field_mutation"],
+    ),
+    (
+        "transaction.recursive-admission-local-facts",
+        &[
+            "Hegemon.Transaction.SmallWoodNoCounterfeit.accepted_recursive_v2_artifact_still_requires_semantic_replay",
+            "Hegemon.Transaction.TxValidityClaimMatching.claimMatchAccepts_implies_exact_surface",
+            "Hegemon.Consensus.ProvenBatchBinding.accepts_iff_binding_preconditions",
+        ],
+    ),
+    ("transaction.recursive-cross-object-identity-refinement", &[]),
+    (
+        "consensus.accepted-chain-supply-composition",
+        &["Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_accepted_chain_yields_supply_conservation_certificate"],
+    ),
+    (
+        "native.raw-ingress-canonical-publication",
+        &["Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"],
+    ),
+    (
+        "native.reorg-startup-row-equivalence",
+        &["Hegemon.Native.NativePublicationRowEquivalence.accepted_native_publication_path_family_binds_native_publication_rows"],
+    ),
+    (
+        "native.challenge-reduction-entropy-arithmetic",
+        &["Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count"],
+    ),
+    (
+        "native.fold-output-equality-model",
+        &["Hegemon.Native.NativeBackendAlgebra.fold_output_matches_recomputed_iff_equality"],
+    ),
+    ("native.fold-verifier-implementation-equivalence", &[]),
+    (
+        "native.digit-bound-euclidean-arithmetic",
+        &["Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference"],
+    ),
+    (
+        "proof.statement-wrapper-binding",
+        &["Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension"],
+    ),
+    ("transaction.accepted-proof-exact-constraint-extraction", &[]),
+    ("transaction.smallwood-air-row-implementation-equivalence", &[]),
+    ("native.complete-parser-node-refinement", &[]),
+    ("native.low-degree-unit-irreducibility", &[]),
+    ("native.backend-collision-reduction-and-pok", &[]),
+    ("privacy.zero-knowledge-unlinkability-game", &[]),
+    ("bridge.external-receipt-soundness", &[]),
+    ("system.da-storage-runtime-semantics", &[]),
 ];
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
@@ -508,11 +565,49 @@ pub fn check_system_model_gates_file(path: &Path) -> Result<SystemModelGateRepor
 }
 
 pub fn check_active_goal_progress_file(path: &Path) -> Result<ActiveGoalProgressReport> {
+    let report =
+        check_active_goal_progress_file_with_policy(path, REQUIRED_MECHANIZED_ASSUMPTION_TRACKS)?;
+    verify_mechanized_assumption_theorems_with_lean(&repository_root_from(path))?;
+    Ok(report)
+}
+
+fn check_active_goal_progress_file_with_policy(
+    path: &Path,
+    required_tracks: &[(&str, &[&str])],
+) -> Result<ActiveGoalProgressReport> {
     let root = repository_root_from(path);
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let ledger: ActiveGoalProgressLedger =
         serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    validate_active_goal_progress(&root, &ledger)
+    let claims_path = root.join("config/formal-security-claims.json");
+    let claims = read_claims_ledger(&claims_path)?;
+    validate_active_goal_progress(&root, &ledger, &claims, required_tracks)
+}
+
+fn verify_mechanized_assumption_theorems_with_lean(root: &Path) -> Result<()> {
+    let script = root.join("scripts/check_lean_claim_axioms.py");
+    let claims = root.join("config/formal-security-claims.json");
+    let matrix = root.join("config/highest-standard-formal-verification-matrix.json");
+    let waivers = root.join("config/lean-axiom-waivers.json");
+    let output = Command::new("python3")
+        .arg(&script)
+        .arg("--claims")
+        .arg(&claims)
+        .arg("--matrix")
+        .arg(&matrix)
+        .arg("--waivers")
+        .arg(&waivers)
+        .current_dir(root)
+        .output()
+        .with_context(|| format!("run aggregate Lean closure audit via {}", script.display()))?;
+    ensure!(
+        output.status.success(),
+        "aggregate Lean closure audit rejected mechanized assumption evidence (status {}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
 }
 
 fn validate_system_model_gates(
@@ -625,6 +720,8 @@ fn validate_system_model_gates(
 fn validate_active_goal_progress(
     root: &Path,
     ledger: &ActiveGoalProgressLedger,
+    claims: &ClaimsLedger,
+    required_tracks: &[(&str, &[&str])],
 ) -> Result<ActiveGoalProgressReport> {
     ensure!(
         ledger.schema_version == 1,
@@ -667,6 +764,10 @@ fn validate_active_goal_progress(
         "measurement_method must be set"
     );
     ensure!(
+        ledger.source_matrix_path == "config/highest-standard-formal-verification-matrix.json",
+        "active-goal progress source_matrix_path must be config/highest-standard-formal-verification-matrix.json"
+    );
+    ensure!(
         ledger.external_assumption_boundary.contains("explicit")
             || ledger.external_assumption_boundary.contains("named"),
         "external_assumption_boundary must state the explicit/named assumption boundary"
@@ -692,7 +793,7 @@ fn validate_active_goal_progress(
     )?;
     let matrix_path = root.join(&ledger.source_matrix_path);
     let matrix = read_highest_standard_matrix(&matrix_path)?;
-    validate_progress_against_matrix(root, ledger, &matrix)
+    validate_progress_against_matrix(root, ledger, &matrix, claims, required_tracks)
 }
 
 fn read_highest_standard_matrix(path: &Path) -> Result<HighestStandardMatrix> {
@@ -704,6 +805,8 @@ fn validate_progress_against_matrix(
     root: &Path,
     ledger: &ActiveGoalProgressLedger,
     matrix: &HighestStandardMatrix,
+    claims: &ClaimsLedger,
+    required_tracks: &[(&str, &[&str])],
 ) -> Result<ActiveGoalProgressReport> {
     ensure!(
         matrix.schema_version == 1,
@@ -713,6 +816,16 @@ fn validate_progress_against_matrix(
         matrix.branch == ledger.generated_for_branch,
         "active-goal progress branch {} does not match matrix branch {}",
         ledger.generated_for_branch,
+        matrix.branch
+    );
+    ensure!(
+        claims.schema_version == 1,
+        "unsupported formal security claims schema version"
+    );
+    ensure!(
+        claims.generated_for_branch == matrix.branch,
+        "formal security claims branch {} does not match matrix branch {}",
+        claims.generated_for_branch,
         matrix.branch
     );
     ensure!(!matrix.goal.trim().is_empty(), "matrix goal must be set");
@@ -733,8 +846,13 @@ fn validate_progress_against_matrix(
         matrix.formal_surface_coverage_percent,
         matrix.overall_completion_percent
     );
-    let assumption_closure =
-        validate_mechanized_assumption_closure(root, &matrix.mechanized_assumption_closure)?;
+    let claimed_lean_theorems = claimed_lean_theorem_names(claims)?;
+    let assumption_closure = validate_mechanized_assumption_closure(
+        root,
+        &matrix.mechanized_assumption_closure,
+        required_tracks,
+        &claimed_lean_theorems,
+    )?;
     ensure!(
         ledger.total_property_count == matrix.properties.len(),
         "active-goal progress total_property_count {} does not match matrix property count {}",
@@ -940,20 +1058,29 @@ fn validate_progress_against_matrix(
 fn validate_mechanized_assumption_closure(
     root: &Path,
     closure: &MechanizedAssumptionClosure,
+    required_tracks: &[(&str, &[&str])],
+    claimed_lean_theorems: &BTreeSet<String>,
 ) -> Result<(usize, usize, f64)> {
     ensure!(
         !closure.measurement_method.trim().is_empty(),
         "mechanized assumption closure measurement_method must be set"
     );
+    let required: BTreeMap<&str, &[&str]> = required_tracks.iter().copied().collect();
     ensure!(
-        !closure.tracks.is_empty(),
-        "mechanized assumption closure must list tracks"
+        required.len() == required_tracks.len(),
+        "required mechanized assumption track policy contains duplicate ids"
     );
     ensure!(
-        closure.total_tracks == closure.tracks.len(),
-        "mechanized assumption closure total_tracks {} does not match track count {}",
+        closure.total_tracks == required.len(),
+        "mechanized assumption closure total_tracks {} does not match required track count {}",
         closure.total_tracks,
-        closure.tracks.len()
+        required.len()
+    );
+    ensure!(
+        closure.tracks.len() == required.len(),
+        "mechanized assumption closure lists {} tracks, expected the required {}",
+        closure.tracks.len(),
+        required.len()
     );
     let mut ids = BTreeSet::new();
     let mut closed_tracks = 0usize;
@@ -964,11 +1091,23 @@ fn validate_mechanized_assumption_closure(
             "duplicate mechanized assumption track {}",
             track.id
         );
+        let expected_theorems = required.get(track.id.as_str()).ok_or_else(|| {
+            anyhow!(
+                "unknown mechanized assumption track {}; update the independent required-track policy before changing the matrix",
+                track.id
+            )
+        })?;
+        let expected_status = if expected_theorems.is_empty() {
+            "open"
+        } else {
+            "closed"
+        };
         ensure!(
-            matches!(track.status.as_str(), "closed" | "open"),
-            "mechanized assumption track {} has unsupported status {}",
+            track.status == expected_status,
+            "mechanized assumption track {} has status {}, expected {} from the independent closure policy",
             track.id,
-            track.status
+            track.status,
+            expected_status
         );
         ensure!(
             !track.evidence_paths.is_empty(),
@@ -982,14 +1121,30 @@ fn validate_mechanized_assumption_closure(
                 &format!("mechanized assumption track {} evidence path", track.id),
             )?;
         }
+        let actual_theorems: BTreeSet<&str> =
+            track.lean_theorems.iter().map(String::as_str).collect();
+        ensure!(
+            actual_theorems.len() == track.lean_theorems.len(),
+            "mechanized assumption track {} lists duplicate Lean theorem identities",
+            track.id
+        );
+        let expected_theorems: BTreeSet<&str> = expected_theorems.iter().copied().collect();
+        ensure!(
+            actual_theorems == expected_theorems,
+            "mechanized assumption track {} theorem identities do not match the independent closure policy; expected {:?}, got {:?}",
+            track.id,
+            expected_theorems,
+            actual_theorems
+        );
         if track.status == "closed" {
             closed_tracks += 1;
-            ensure!(
-                !track.lean_theorems.is_empty(),
-                "closed mechanized assumption track {} must list lean_theorems",
-                track.id
-            );
             for theorem in &track.lean_theorems {
+                ensure!(
+                    claimed_lean_theorems.contains(theorem),
+                    "closed mechanized assumption track {} theorem {} is not covered by the formal security claims Lean theorem set",
+                    track.id,
+                    theorem
+                );
                 ensure_lean_theorem_declared_in_evidence(root, theorem, &track.evidence_paths)
                     .with_context(|| {
                         format!(
@@ -1018,6 +1173,13 @@ fn validate_mechanized_assumption_closure(
             }
         }
     }
+    for id in required.keys() {
+        ensure!(
+            ids.contains(id),
+            "mechanized assumption closure is missing required track {}",
+            id
+        );
+    }
     ensure!(
         closure.closed_tracks == closed_tracks,
         "mechanized assumption closure closed_tracks {} does not match recomputed {}",
@@ -1036,6 +1198,24 @@ fn validate_mechanized_assumption_closure(
         recomputed
     );
     Ok((closure.total_tracks, closed_tracks, recomputed))
+}
+
+fn claimed_lean_theorem_names(claims: &ClaimsLedger) -> Result<BTreeSet<String>> {
+    let mut theorems = BTreeSet::new();
+    for claim in &claims.claims {
+        if claim.claim_class != "lean_theorem" {
+            continue;
+        }
+        for theorem in &claim.lean_theorems {
+            validate_lean_theorem_name("formal security claims closure coverage", theorem)?;
+            theorems.insert(theorem.clone());
+        }
+    }
+    ensure!(
+        !theorems.is_empty(),
+        "formal security claims must contain Lean theorem identities"
+    );
+    Ok(theorems)
 }
 
 fn ensure_lean_theorem_declared_in_evidence(
@@ -1095,6 +1275,7 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bytes.lean",
         "formal/lean/Hegemon.lean",
         "scripts/check_lean_claim_axioms.py",
+        "scripts/test_check_lean_claim_axioms.py",
         "scripts/check_ci_release_gate_policy.py",
         "config/lean-axiom-waivers.json",
         "config/active-goal-progress.json",
@@ -5427,7 +5608,11 @@ fn repository_root_from(path: &Path) -> PathBuf {
     };
     loop {
         if current.join("Cargo.toml").is_file() && current.join(".git").exists() {
-            return current;
+            return if current.as_os_str().is_empty() {
+                PathBuf::from(".")
+            } else {
+                current
+            };
         }
         if !current.pop() {
             return PathBuf::from(".");
@@ -5445,6 +5630,13 @@ mod tests {
     const TARGET_ORDER_THEOREM_TWO: &str =
         "Hegemon.Native.ActionOrder.order_gate_precedes_publication";
     const TARGET_ORDER_THEOREM_PATH: &str = "formal/lean/Hegemon/Native/ActionOrder.lean";
+    const TEST_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
+        (
+            "test.closed-track",
+            &["Hegemon.TestEvidence.test_closed_track"],
+        ),
+        ("test.open-track", &[]),
+    ];
 
     #[test]
     fn compact_lengths_match_scale_shape() {
@@ -5536,8 +5728,11 @@ mod tests {
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let report =
-            check_active_goal_progress_file(&progress_path).expect("valid active-goal progress");
+        let report = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .expect("valid active-goal progress");
         assert_eq!(report.goal_status_when_measured, "paused");
         assert_eq!(
             report.matrix_properties,
@@ -5549,6 +5744,9 @@ mod tests {
         );
         assert_eq!(report.total_weight, 100);
         assert_eq!(report.weighted_completion_percent, 100.0);
+        assert_eq!(report.mechanized_assumption_tracks, 2);
+        assert_eq!(report.closed_mechanized_assumption_tracks, 1);
+        assert_eq!(report.mechanized_assumption_closure_percent, 50.0);
         assert!(report.passed);
     }
 
@@ -5563,7 +5761,11 @@ mod tests {
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, fixture);
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("weighted percent"));
     }
 
@@ -5578,8 +5780,31 @@ mod tests {
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, fixture);
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("while the goal is paused"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_alternate_matrix_path() {
+        let root = test_root("active-goal-progress-alternate-matrix");
+        write_active_goal_progress_evidence(&root);
+        let matrix_path = root.join("config/alternate-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let mut fixture = active_goal_progress_fixture();
+        fixture["source_matrix_path"] = json!("config/alternate-matrix.json");
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, fixture);
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("source_matrix_path must be"));
     }
 
     #[test]
@@ -5594,55 +5819,80 @@ mod tests {
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("DoesNotExist.lean"));
     }
 
     #[test]
     fn active_goal_progress_rejects_commented_closed_track_theorem() {
+        const POLICY: &[(&str, &[&str])] = &[
+            ("test.closed-track", &["Hegemon.TestEvidence.comment_spoof"]),
+            ("test.open-track", &[]),
+        ];
         let root = test_root("active-goal-progress-commented-track-theorem");
         write_active_goal_progress_evidence(&root);
         let mut matrix = highest_standard_matrix_fixture();
         matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
             json!(["Hegemon.TestEvidence.comment_spoof"]);
+        let mut claims = active_goal_claims_fixture();
+        claims["claims"][0]["lean_theorems"] = json!(["Hegemon.TestEvidence.comment_spoof"]);
+        write_json(&root.join("config/formal-security-claims.json"), claims);
         let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
         write_json(&matrix_path, matrix);
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(&progress_path, POLICY).unwrap_err();
         assert!(format!("{err:#}").contains("not declared"));
     }
 
     #[test]
     fn active_goal_progress_rejects_string_literal_closed_track_theorem() {
+        const POLICY: &[(&str, &[&str])] = &[
+            ("test.closed-track", &["Hegemon.TestEvidence.string_spoof"]),
+            ("test.open-track", &[]),
+        ];
         let root = test_root("active-goal-progress-string-track-theorem");
         write_active_goal_progress_evidence(&root);
         let mut matrix = highest_standard_matrix_fixture();
         matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
             json!(["Hegemon.TestEvidence.string_spoof"]);
+        let mut claims = active_goal_claims_fixture();
+        claims["claims"][0]["lean_theorems"] = json!(["Hegemon.TestEvidence.string_spoof"]);
+        write_json(&root.join("config/formal-security-claims.json"), claims);
         let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
         write_json(&matrix_path, matrix);
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(&progress_path, POLICY).unwrap_err();
         assert!(format!("{err:#}").contains("not declared"));
     }
 
     #[test]
     fn active_goal_progress_rejects_private_closed_track_theorem() {
+        const POLICY: &[(&str, &[&str])] = &[
+            ("test.closed-track", &["Hegemon.TestEvidence.private_spoof"]),
+            ("test.open-track", &[]),
+        ];
         let root = test_root("active-goal-progress-private-track-theorem");
         write_active_goal_progress_evidence(&root);
         let mut matrix = highest_standard_matrix_fixture();
         matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
             json!(["Hegemon.TestEvidence.private_spoof"]);
+        let mut claims = active_goal_claims_fixture();
+        claims["claims"][0]["lean_theorems"] = json!(["Hegemon.TestEvidence.private_spoof"]);
+        write_json(&root.join("config/formal-security-claims.json"), claims);
         let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
         write_json(&matrix_path, matrix);
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(&progress_path, POLICY).unwrap_err();
         assert!(format!("{err:#}").contains("not declared"));
     }
 
@@ -5662,8 +5912,98 @@ mod tests {
         let progress_path = root.join("config/active-goal-progress.json");
         write_json(&progress_path, active_goal_progress_fixture());
 
-        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
         assert!(format!("{err:#}").contains("non-symlink regular file"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_deleted_required_track_with_recomputed_total() {
+        let root = test_root("active-goal-progress-deleted-required-track");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"]
+            .as_array_mut()
+            .expect("tracks array")
+            .pop();
+        matrix["mechanized_assumption_closure"]["total_tracks"] = json!(1);
+        matrix["mechanized_assumption_closure"]["closed_tracks"] = json!(1);
+        matrix["mechanized_assumption_closure"]["closure_percent"] = json!(100.0);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("required track count 2"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_unknown_replacement_track() {
+        let root = test_root("active-goal-progress-unknown-track");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][1]["id"] = json!("test.unknown-track");
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("unknown mechanized assumption track"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_unrelated_declared_theorem_substitution() {
+        let root = test_root("active-goal-progress-theorem-substitution");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.unrelated_closed_track"]);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("independent closure policy"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_closed_theorem_missing_from_claims() {
+        let root = test_root("active-goal-progress-theorem-missing-claims");
+        write_active_goal_progress_evidence(&root);
+        let claims_path = root.join("config/formal-security-claims.json");
+        let mut claims = active_goal_claims_fixture();
+        claims["claims"][0]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.unrelated_closed_track"]);
+        write_json(&claims_path, claims);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file_with_policy(
+            &progress_path,
+            TEST_MECHANIZED_ASSUMPTION_TRACKS,
+        )
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("not covered by the formal security claims"));
     }
 
     #[test]
@@ -9759,8 +10099,35 @@ mod tests {
         write_repo_file(
             root,
             "formal/lean/TestEvidence.lean",
-            "namespace Hegemon\nnamespace TestEvidence\n-- theorem comment_spoof : True := by trivial\ndef theoremNameString := \"\"\"\ntheorem string_spoof : True := by trivial\n\"\"\"\nprivate theorem private_spoof : True := by trivial\ntheorem test_closed_track : True := by trivial\nend TestEvidence\nend Hegemon\n",
+            "namespace Hegemon\nnamespace TestEvidence\n-- theorem comment_spoof : True := by trivial\ndef theoremNameString := \"\"\"\ntheorem string_spoof : True := by trivial\n\"\"\"\nprivate theorem private_spoof : True := by trivial\ntheorem test_closed_track : True := by trivial\ntheorem unrelated_closed_track : True := by trivial\nend TestEvidence\nend Hegemon\n",
         );
+        write_json(
+            &root.join("config/formal-security-claims.json"),
+            active_goal_claims_fixture(),
+        );
+    }
+
+    fn active_goal_claims_fixture() -> Value {
+        json!({
+            "schema_version": 1,
+            "generated_for_branch": "codex/superneo-formal-verification",
+            "claims": [
+                {
+                    "id": "formal.test-closure",
+                    "component": "test closure",
+                    "claim_class": "lean_theorem",
+                    "summary": "Test closure theorem.",
+                    "status": "enforced",
+                    "proof_model": "lean4_theorem_no_sorry",
+                    "production_eligible": true,
+                    "lean_theorems": ["Hegemon.TestEvidence.test_closed_track"],
+                    "assumptions": ["test assumption"],
+                    "evidence_paths": ["formal/lean/TestEvidence.lean"],
+                    "gates": ["test gate"],
+                    "residual_risks": []
+                }
+            ]
+        })
     }
 
     fn active_goal_progress_fixture() -> Value {

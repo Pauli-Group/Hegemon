@@ -7,7 +7,7 @@
   "overall_completion_percent": 100.0,
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
-    "measurement_method": "Equal-count inventory of explicit mechanized security tracks. A closed track requires a Lean theorem or checked refinement gate for the stated narrow obligation; merely naming an assumption does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
     "total_tracks": 20,
     "closed_tracks": 10,
     "closure_percent": 50.0,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit Lean axiom dependencies for theorem-backed security claims."""
+"""Audit Lean axiom dependencies for claims and closed assumption tracks."""
 
 from __future__ import annotations
 
@@ -30,6 +30,55 @@ def load_claimed_theorems(claims_path: Path) -> list[str]:
     if not theorems:
         raise SystemExit("no Lean theorem-backed claims found")
     return sorted(theorems)
+
+
+def load_closure_theorems(matrix_path: Path) -> list[str]:
+    matrix = json.loads(matrix_path.read_text())
+    closure = matrix.get("mechanized_assumption_closure")
+    if not isinstance(closure, dict):
+        raise SystemExit("matrix does not contain mechanized_assumption_closure")
+    tracks = closure.get("tracks")
+    if not isinstance(tracks, list) or not tracks:
+        raise SystemExit("mechanized assumption closure must contain tracks")
+
+    theorems: set[str] = set()
+    for track in tracks:
+        if not isinstance(track, dict):
+            raise SystemExit("mechanized assumption closure track must be an object")
+        track_id = track.get("id")
+        status = track.get("status")
+        if not isinstance(track_id, str) or not track_id:
+            raise SystemExit("mechanized assumption closure track must have an id")
+        if status not in {"open", "closed"}:
+            raise SystemExit(f"track {track_id} has unsupported status {status!r}")
+        names = track.get("lean_theorems", [])
+        if not isinstance(names, list) or any(
+            not isinstance(name, str) or not name for name in names
+        ):
+            raise SystemExit(f"track {track_id} has malformed lean_theorems")
+        if status == "closed" and not names:
+            raise SystemExit(f"closed track {track_id} has no Lean theorem identities")
+        if status == "open" and names:
+            raise SystemExit(f"open track {track_id} must not claim closure theorems")
+        theorems.update(names)
+
+    if not theorems:
+        raise SystemExit("no closed-track Lean theorems found")
+    return sorted(theorems)
+
+
+def audited_theorem_union(
+    claimed_theorems: list[str], closure_theorems: list[str]
+) -> list[str]:
+    claimed = set(claimed_theorems)
+    closure = set(closure_theorems)
+    missing = sorted(closure - claimed)
+    if missing:
+        raise SystemExit(
+            "closed-track Lean theorems are missing from formal security claims: "
+            f"{missing}"
+        )
+    return sorted(claimed | closure)
 
 
 def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
@@ -213,9 +262,17 @@ def main() -> int:
         default=root / "config" / "lean-axiom-waivers.json",
         help="Lean axiom waiver policy JSON path",
     )
+    parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=root / "config" / "highest-standard-formal-verification-matrix.json",
+        help="highest-standard formal verification matrix JSON path",
+    )
     args = parser.parse_args()
 
-    theorems = load_claimed_theorems(args.claims)
+    claimed_theorems = load_claimed_theorems(args.claims)
+    closure_theorems = load_closure_theorems(args.matrix)
+    theorems = audited_theorem_union(claimed_theorems, closure_theorems)
     output = run_lean_axiom_query(root, theorems)
     theorem_axioms = parse_axiom_output(output)
     missing = sorted(set(theorems) - set(theorem_axioms))
@@ -224,6 +281,9 @@ def main() -> int:
 
     waivers = json.loads(args.waivers.read_text())
     report = audit_axioms(theorem_axioms, waivers)
+    report["claimed_theorems"] = len(claimed_theorems)
+    report["closed_track_theorems"] = len(closure_theorems)
+    report["closed_track_theorems_missing_from_claims"] = []
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["passed"] else 1
 

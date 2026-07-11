@@ -25,7 +25,11 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
 - [x] (2026-07-10 20:05Z) Ran the first Codex Security branch-diff scan against `origin/main`. It found that the semantic record could conserve values/assets unrelated to committed note openings, recursive composition did not bind object identity, native fold closure overstated a supplied-record equality theorem, closure evidence paths were not resolved, and one filtered Cargo gate could pass with zero tests.
 - [x] (2026-07-10 20:35Z) Bound balance summaries to active input/output openings, recomputed output commitments, added public balance-slot asset binding, converted recursive composition to an explicit cross-object identity-refinement boundary, split fold equality from open production refinement, made closure evidence/theorem resolution fail closed, and required the native algebra Rust test to resolve exactly once before execution.
 - [x] (2026-07-11 01:50Z) Re-ran the corrected branch through `scripts/check_formal_core.sh`, all nine CI-mode proving red-team campaigns, and `scripts/check-core.sh all`; all completed successfully, including release builds. A second isolated release-node smoke answered health/header/config RPC, mined from height `0x19` to `0x1d`, and exited cleanly on SIGTERM while the existing testnet process and listeners remained unchanged.
-- [ ] Run the corrected branch through full validation and a fresh Codex Security diff scan against `origin/main`; remediate every remaining valid finding.
+- [x] (2026-07-11 03:02Z) Sealed a fresh pre-fix Codex Security branch-diff scan against `origin/main`. Adversarial validation showed that lexical source scanning could award closure credit to an invalid, unimported theorem and that a coordinated matrix edit could delete required open tracks while recomputing an inflated percentage.
+- [x] (2026-07-11 03:45Z) Replaced the permissive closure inventory with a fixed 20-track policy and exact 12-theorem identity set, required every closed theorem to appear in the formal claims ledger, and made the standalone active-goal checker invoke the aggregate Lean elaboration and axiom audit before it can emit `passed: true`.
+- [x] (2026-07-11 04:05Z) Added four Python parser/policy tests and expanded the Rust active-goal suite to 13 adversarial cases. The patched checker rejected the original invalid theorem, required all open tracks, rejected theorem substitution, and still rejected a fake theorem when Rust policy, matrix, and claims were mutated together. The complete checker suite passed 138 tests and `scripts/check_lean_formal.sh` completed successfully.
+- [x] (2026-07-11 05:00Z) Ran the corrected branch through `scripts/check_formal_core.sh`, all nine CI-mode proving red-team campaigns, `scripts/check-core.sh all`, both Rust format checks, the Python closure-policy tests, shell/JSON validation, and `git diff --check`; every gate completed successfully.
+- [ ] Run a fresh final Codex Security diff scan against `origin/main`; remediate every remaining valid finding and seal the final report.
 - [ ] Commit only intended files, push the branch, open a draft PR against `main`, and keep iterating until every required GitHub check is green. Do not merge.
 
 ## Surprises & Discoveries
@@ -53,6 +57,15 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
 
 - Observation: a successful Cargo filter is not evidence that a test ran.
   Evidence: the initial command exited zero for a nonexistent filter. `run_exact_lib_test` now requires one fully qualified listed test and executes it with `--exact`.
+
+- Observation: source text that resembles a theorem declaration is not authenticated Lean evidence.
+  Evidence: the pre-fix checker accepted an invalid theorem placed in an unimported file, while Lean rejected the proposition. The patched public checker now validates the fixed theorem identities through the aggregate `import Hegemon` environment and its axiom audit before reporting success.
+
+- Observation: recomputing a percentage does not make a maintainer-editable denominator trustworthy.
+  Evidence: deleting all ten open tracks and changing the reported fraction to `10 / 10` passed the earlier structural arithmetic. The checker now requires the exact 20-track inventory, statuses, and theorem sets, so deletion, replacement, duplication, and unknown additions fail closed.
+
+- Observation: adversarial source mutations can leave a stale executable in a shared Cargo target directory after the source tree is restored.
+  Evidence: a disposable fake-theorem build reused `scripts/hegemon_formal_core/target`, so the next gate invoked the older malicious checker binary even though `src/lib.rs` was correct. Cleaning and rebuilding that package restored the expected checker; subsequent adversarial builds must use an isolated `CARGO_TARGET_DIR`.
 
 ## Decision Log
 
@@ -92,9 +105,23 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
   Rationale: this branch checks the exact arithmetic and canonicalization model, but those deeper algebraic and cryptographic arguments are not present as Lean proofs. The documentation and matrix must preserve that boundary.
   Date/Author: 2026-07-10 / Codex
 
+- Decision: Treat mechanized-closure track identities, statuses, and supporting theorem names as release policy rather than trusting the matrix to define its own denominator.
+  Rationale: a score file cannot authenticate itself. A fixed independent policy makes removal of open work and substitution of supporting theorems review-visible and test-failing.
+  Date/Author: 2026-07-11 / Codex
+
+- Decision: The standalone active-goal command must not report success before Lean authenticates every claimed closure theorem in the aggregate project environment.
+  Rationale: a later aggregate gate is useful defense in depth but does not repair a public command that independently emits a false success result. Direct invocation closes the demonstrated source-text forgery path at its decision point.
+  Date/Author: 2026-07-11 / Codex
+
+- Decision: Build every adversarially mutated checker in an isolated Cargo target directory.
+  Rationale: source restoration does not invalidate a previously built executable. Target isolation prevents a deliberately malformed experiment from contaminating the normal acceptance-gate binary.
+  Date/Author: 2026-07-11 / Codex
+
 ## Outcomes & Retrospective
 
-Remediation is complete and the fresh final security scan is pending. The branch closes the exact SmallWood semantic implication, active profile drift/no-grinding contract, recursive local-admission facts, accepted-chain supply composition, scoped native publication/reorg/startup tracks, native challenge arithmetic, supplied fold-output equality, digit/Euclidean arithmetic, and existing statement/wrapper binding. It reports `10 / 20` mechanized tracks (`50.0%`) as closed. Ten tracks remain open: recursive cross-object identity refinement, accepted-proof extraction, complete SmallWood AIR-row implementation equivalence, arbitrary parser/full-node refinement, production fold-verifier implementation equivalence, native irreducibility/unit discharge, collision reduction/flattening/proof-of-knowledge, cryptographic privacy games, positive external bridge receipt soundness, and DA/storage runtime semantics.
+Implementation, security remediation, and local acceptance are complete; the final clean security scan, review-package regeneration, and draft PR checks are pending. The branch closes the exact SmallWood semantic implication, active profile drift/no-grinding contract, recursive local-admission facts, accepted-chain supply composition, scoped native publication/reorg/startup tracks, native challenge arithmetic, supplied fold-output equality, digit/Euclidean arithmetic, and existing statement/wrapper binding. It reports `10 / 20` mechanized tracks (`50.0%`) as closed. Ten tracks remain open: recursive cross-object identity refinement, accepted-proof extraction, complete SmallWood AIR-row implementation equivalence, arbitrary parser/full-node refinement, production fold-verifier implementation equivalence, native irreducibility/unit discharge, collision reduction/flattening/proof-of-knowledge, cryptographic privacy games, positive external bridge receipt soundness, and DA/storage runtime semantics.
+
+The closure score is now authenticated in layers: Rust pins the required track inventory and exact supporting theorem identities, the claims ledger must include each closed-track theorem, lexical source provenance still rejects generated/local/private lookalikes, and the public active-goal command runs aggregate Lean elaboration plus the axiom policy before reporting success. This closes the demonstrated invalid-unimported-theorem exploit and the open-track-deletion denominator exploit. Proposition-level review remains a human and typed-model responsibility; changing the intended theorem statements and all policy files together is not represented as cryptographically impossible.
 
 Local acceptance evidence:
 
