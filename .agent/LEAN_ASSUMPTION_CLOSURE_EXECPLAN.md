@@ -16,13 +16,16 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
 - [x] (2026-07-10 12:05Z) Reviewed `.agent/PLANS.md`, `DESIGN.md`, `METHODS.md`, the formal claims ledger, completion matrix, residual-assumption roadmap, SmallWood soundness envelope, transaction soundness boundary, supply invariant, materialized native refinement, native backend theorem note, and formal-core gate.
 - [x] (2026-07-10 16:20Z) Implemented `SmallWoodSemanticClosure`: exact active input, output, public-shape, and balance rows imply spend authorization, output binding, valid balance, and `AcceptedTransactionRelation`; the accepted-proof extraction premise concludes only existence of an exact satisfying row record.
 - [x] (2026-07-10 16:35Z) Added the generated active-profile contract and production Rust conformance suite for all 16 single-field mutations, including both zero-grinding fields, arithmetization, opening geometry, and Poseidon geometry; added targeted inline-Merkle mutation cases to the red-team campaign.
-- [x] (2026-07-10 16:45Z) Added `SmallWoodNoCounterfeit`, composing exact semantics, transaction-claim matching, proven-batch/recursive admission, fee/native-delta binding, and accepted-chain supply replay into one no-counterfeit certificate.
+- [x] (2026-07-10 16:45Z) Added `SmallWoodNoCounterfeit`, packaging exact semantics, transaction-claim matching, proven-batch/recursive admission, fee/native-delta binding, and accepted-chain supply replay into one initial composition boundary.
 - [x] (2026-07-10 16:55Z) Audited the native refinement boundary and recorded the existing scoped raw-ingress, exact-decode, canonical-publication, reorg, and startup row-equivalence modules as closed tracks; retained arbitrary parser internals and complete native-node equivalence as a distinct open track rather than duplicating the existing certificates.
 - [x] (2026-07-10 17:10Z) Added `NativeBackendAlgebra` and Lean-to-Rust vectors for reducer bounds, nonzero challenge polynomials, exact 312/305-bit arithmetic, dimensions, Euclidean bounds, coefficient canonicalization, digit bounds, and deterministic fold-data uniqueness. Kept finite-field irreducibility/unit discharge, collision reduction, flattening, external cryptanalysis, and proof-of-knowledge explicitly open.
-- [x] (2026-07-10 17:20Z) Split the formal matrix into 100% formal-surface coverage and 10/18 (`55.5556%`) equal-count mechanized assumption closure; formal-core recomputes both, rejects malformed/open-without-work tracks, and grants no closure credit for merely naming an assumption.
+- [x] (2026-07-10 17:20Z) Split the formal matrix into 100% formal-surface coverage and an independent equal-count mechanized assumption-closure inventory; formal-core recomputes both, rejects malformed/open-without-work tracks, and grants no closure credit for merely naming an assumption.
 - [x] (2026-07-10 17:32Z) Updated `DESIGN.md`, `METHODS.md`, formal README, SmallWood/native theorem notes, claims, blueprint, matrix, and this plan with exact achieved and residual boundaries.
 - [x] (2026-07-10 18:45Z) Ran targeted Lean/Rust mutation tests, aggregate `lake build Hegemon`, the complete formal-core gate, CI-mode proving red team, formatting and JSON/shell metadata checks, release node build, deterministic review-package parity, and an isolated release-node mining/RPC/SIGTERM smoke. The separate live testnet listener remained untouched.
-- [ ] Run a Codex Security branch-diff scan against `origin/main`; remediate every valid finding and rerun affected gates.
+- [x] (2026-07-10 20:05Z) Ran the first Codex Security branch-diff scan against `origin/main`. It found that the semantic record could conserve values/assets unrelated to committed note openings, recursive composition did not bind object identity, native fold closure overstated a supplied-record equality theorem, closure evidence paths were not resolved, and one filtered Cargo gate could pass with zero tests.
+- [x] (2026-07-10 20:35Z) Bound balance summaries to active input/output openings, recomputed output commitments, added public balance-slot asset binding, converted recursive composition to an explicit cross-object identity-refinement boundary, split fold equality from open production refinement, made closure evidence/theorem resolution fail closed, and required the native algebra Rust test to resolve exactly once before execution.
+- [x] (2026-07-11 01:50Z) Re-ran the corrected branch through `scripts/check_formal_core.sh`, all nine CI-mode proving red-team campaigns, and `scripts/check-core.sh all`; all completed successfully, including release builds. A second isolated release-node smoke answered health/header/config RPC, mined from height `0x19` to `0x1d`, and exited cleanly on SIGTERM while the existing testnet process and listeners remained unchanged.
+- [ ] Run the corrected branch through full validation and a fresh Codex Security diff scan against `origin/main`; remediate every remaining valid finding.
 - [ ] Commit only intended files, push the branch, open a draft PR against `main`, and keep iterating until every required GitHub check is green. Do not merge.
 
 ## Surprises & Discoveries
@@ -43,7 +46,13 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
   Evidence: the final `smallwoodPublicShapeCoreValid` contains only independent shape/scalar/stablecoin facts, while input/output validity is derived from exact rows; inactive outputs constrain public commitment/hash fields only, matching the production relation.
 
 - Observation: artifact kind and acceptance alone did not establish recursive no-bypass behavior.
-  Evidence: the final certificate also requires exact transaction-claim matching plus `ProvenBatchBinding` route, proof-kind, and acceptance facts before deriving the recursive SmallWood no-counterfeit result.
+  Evidence: adversarial grinding constructed accepted artifact/claim/batch object A and semantic/supply object B because the initial theorem carried no shared identity. The corrected boundary requires `RecursiveSmallWoodCrossObjectIdentityRefinementAssumption`, and the production refinement remains open.
+
+- Observation: equality with a caller-supplied fold record is not a model of production fold recomputation.
+  Evidence: `NativeBackendAlgebra` now names only supplied-record equality and uniqueness; the matrix separately tracks production fold-verifier implementation equivalence as open.
+
+- Observation: a successful Cargo filter is not evidence that a test ran.
+  Evidence: the initial command exited zero for a nonexistent filter. `run_exact_lib_test` now requires one fully qualified listed test and executes it with `--exact`.
 
 ## Decision Log
 
@@ -71,13 +80,21 @@ The result is observable by running `bash scripts/check_formal_core.sh`. The gat
   Rationale: a sound proof system over the wrong relation and a correct relation behind an unsound extractor are independent failure classes. Combining them would recreate the opaque assumption this plan is intended to remove.
   Date/Author: 2026-07-10 / Codex
 
+- Decision: Keep recursive local-admission facts closed but cross-object identity refinement open.
+  Rationale: boolean acceptance facts for artifact, claim, and batch objects do not prove that they describe the same ordered transaction object consumed by semantic and supply accounting.
+  Date/Author: 2026-07-10 / Codex
+
+- Decision: Require existing evidence files and resolvable Lean theorem declarations for every closed closure track.
+  Rationale: labels and nonexistent paths cannot support a release assurance score.
+  Date/Author: 2026-07-10 / Codex
+
 - Decision: Do not claim the native ring irreducibility, collision reduction, flattening, or proof-of-knowledge argument as mechanized.
   Rationale: this branch checks the exact arithmetic and canonicalization model, but those deeper algebraic and cryptographic arguments are not present as Lean proofs. The documentation and matrix must preserve that boundary.
   Date/Author: 2026-07-10 / Codex
 
 ## Outcomes & Retrospective
 
-Implementation and local acceptance validation are complete; security review and publication are in progress. The branch closes the exact SmallWood semantic implication, active profile drift/no-grinding contract, verified-claim/recursive admission composition, accepted-chain supply composition, scoped native publication/reorg/startup tracks, native challenge arithmetic, fold canonicalization model, digit/Euclidean arithmetic, and existing statement/wrapper binding. It deliberately leaves eight tracks open: accepted-proof extraction, complete SmallWood AIR-row implementation equivalence, arbitrary parser/full-node refinement, native irreducibility/unit discharge, collision reduction/flattening/proof-of-knowledge, cryptographic privacy games, positive external bridge receipt soundness, and DA/storage runtime semantics.
+Remediation is complete and the fresh final security scan is pending. The branch closes the exact SmallWood semantic implication, active profile drift/no-grinding contract, recursive local-admission facts, accepted-chain supply composition, scoped native publication/reorg/startup tracks, native challenge arithmetic, supplied fold-output equality, digit/Euclidean arithmetic, and existing statement/wrapper binding. It reports `10 / 20` mechanized tracks (`50.0%`) as closed. Ten tracks remain open: recursive cross-object identity refinement, accepted-proof extraction, complete SmallWood AIR-row implementation equivalence, arbitrary parser/full-node refinement, production fold-verifier implementation equivalence, native irreducibility/unit discharge, collision reduction/flattening/proof-of-knowledge, cryptographic privacy games, positive external bridge receipt soundness, and DA/storage runtime semantics.
 
 Local acceptance evidence:
 
@@ -89,7 +106,7 @@ Local acceptance evidence:
     HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh
     make node
 
-The formal-core gate ended with `=== Hegemon formal-core gate passed ===`; the Lean axiom report found no temporary axioms, unwaived dependencies, or budget violations; and the CI-mode red team passed all nine campaigns. The release binary started on temporary dev state with no seeds or peers, answered RPC, mined to height 4, reported its mining sync gate open, and exited cleanly after SIGTERM. No changed path is under `consensus/`, `network/`, `node/`, runtime serialization, chain-spec, or genesis code. The regenerated native review package passed its SHA-256 check and deterministic package/claim parity. Security-scan results, final commit ids, and the draft PR URL will be appended after review and publication.
+The formal-core gate ended with `=== Hegemon formal-core gate passed ===`; the Lean axiom report found no temporary axioms, unwaived dependencies, or budget violations; the CI-mode red team passed all nine campaigns; and `scripts/check-core.sh all` completed successfully through its release builds. The release binary started on process-specific temporary dev state with empty seeds and no peers, answered health/header/config RPC, mined from height `0x19` to `0x1d`, and exited cleanly after SIGTERM. The pre-existing testnet process remained PID `32086` with its RPC `9955` and P2P `30333` listeners unchanged. No changed path is under `consensus/`, `network/`, `node/`, runtime serialization, chain-spec, or genesis code. The regenerated native review package passed its SHA-256 check and deterministic package/claim parity. Fresh security-scan results, final commit ids, and the draft PR URL will be appended after review and publication.
 
 ## Context and Orientation
 

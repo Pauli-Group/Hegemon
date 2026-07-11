@@ -11,9 +11,9 @@ This note records the mathematical argument and the exact machine-checked bounda
 - the `4104` conservative and `648` live coefficient dimensions plus the `16336` and `6492` Euclidean arithmetic,
 - canonical Goldilocks coefficient reduction and idempotence,
 - the centered difference bound for 8-bit digits,
-- and deterministic fold-data acceptance equivalence and uniqueness.
+- and equality and uniqueness of two supplied fold-output records.
 
-Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. The following remain mathematical or cryptographic obligations rather than discharged Lean theorems: finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, random-oracle independence, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
+Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the production recomputation algorithm and proving `verify_fold` equivalent to that model remain open. Other open mathematical or cryptographic obligations include finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, random-oracle independence, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
 
 ## Scope
 
@@ -95,9 +95,9 @@ and the associated challenge polynomial
 
 Because each `c_i` is strictly positive, Lean proves that `χ_c(X)` is nonzero and has degree at most `4`. Its unit property is currently proved only under the named low-degree-unit assumption corresponding to Open Lemma 1.1.
 
-### Theorem 2.1: the active fold verifier is an exact canonicalization check
+### Open Theorem Target 2.1: the active fold verifier is an exact canonicalization check
 
-For fixed `(vk, left, right)`, there is at most one accepted tuple
+The following is the production argument to be mechanized, not the theorem currently proved by `NativeBackendAlgebra`. For fixed `(vk, left, right)`, there is at most one accepted tuple
 
 ```text
 (proof.challenges, proof.parent_rows, proof.parent_commitment_digest,
@@ -112,7 +112,7 @@ Proof sketch:
 4. It recomputes the folded statement digest from the child statement digests, `c`, and the parent commitment digest, and rejects unless both `parent.statement_digest` and `proof.parent_statement_digest` match it.
 5. It recomputes `fold_proof_digest` from the full public transcript and rejects unless `proof.proof_digest` matches.
 
-So acceptance is equivalent to equality with one deterministic recomputation path. There is no hidden-witness extractor and no Neo/SuperNeo CCS soundness claim here. The exact theorem for the active fold layer is canonicality plus the random-oracle challenge law below.
+If the implementation-refinement target is discharged, acceptance is equivalent to equality with one deterministic recomputation path. The current Lean theorem proves only that equality to an already supplied recomputed record is exact and unique; it does not model steps 1-5. There is no hidden-witness extractor and no Neo/SuperNeo CCS soundness claim here.
 
 ### Theorem 2.2: exact random-oracle bound for the implemented five-challenge rule
 
@@ -331,4 +331,4 @@ commitment_binding_bits = 872
 soundness_floor_bits = min(305, 872) = 305.
 ```
 
-The machine-checked result is the exact active GoldilocksFrog fold-data canonicalization model and the concrete arithmetic listed in the verification-status section. This note does **not** yet machine-check the collision reduction or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.
+The machine-checked result is the supplied-record fold-output equality model and the concrete arithmetic listed in the verification-status section. Production fold recomputation and verifier implementation equivalence are not yet machine-checked. This note also does **not** machine-check the collision reduction or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.

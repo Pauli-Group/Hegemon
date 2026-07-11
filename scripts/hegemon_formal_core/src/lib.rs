@@ -369,6 +369,8 @@ struct MechanizedAssumptionTrack {
     id: String,
     status: String,
     evidence_paths: Vec<String>,
+    #[serde(default)]
+    lean_theorems: Vec<String>,
     remaining_work: Vec<String>,
 }
 
@@ -690,7 +692,7 @@ fn validate_active_goal_progress(
     )?;
     let matrix_path = root.join(&ledger.source_matrix_path);
     let matrix = read_highest_standard_matrix(&matrix_path)?;
-    validate_progress_against_matrix(ledger, &matrix)
+    validate_progress_against_matrix(root, ledger, &matrix)
 }
 
 fn read_highest_standard_matrix(path: &Path) -> Result<HighestStandardMatrix> {
@@ -699,6 +701,7 @@ fn read_highest_standard_matrix(path: &Path) -> Result<HighestStandardMatrix> {
 }
 
 fn validate_progress_against_matrix(
+    root: &Path,
     ledger: &ActiveGoalProgressLedger,
     matrix: &HighestStandardMatrix,
 ) -> Result<ActiveGoalProgressReport> {
@@ -731,7 +734,7 @@ fn validate_progress_against_matrix(
         matrix.overall_completion_percent
     );
     let assumption_closure =
-        validate_mechanized_assumption_closure(&matrix.mechanized_assumption_closure)?;
+        validate_mechanized_assumption_closure(root, &matrix.mechanized_assumption_closure)?;
     ensure!(
         ledger.total_property_count == matrix.properties.len(),
         "active-goal progress total_property_count {} does not match matrix property count {}",
@@ -935,6 +938,7 @@ fn validate_progress_against_matrix(
 }
 
 fn validate_mechanized_assumption_closure(
+    root: &Path,
     closure: &MechanizedAssumptionClosure,
 ) -> Result<(usize, usize, f64)> {
     ensure!(
@@ -972,14 +976,28 @@ fn validate_mechanized_assumption_closure(
             track.id
         );
         for evidence in &track.evidence_paths {
-            ensure!(
-                !evidence.trim().is_empty(),
-                "mechanized assumption track {} has an empty evidence path",
-                track.id
-            );
+            ensure_repo_relative_existing_file(
+                root,
+                evidence,
+                &format!("mechanized assumption track {} evidence path", track.id),
+            )?;
         }
         if track.status == "closed" {
             closed_tracks += 1;
+            ensure!(
+                !track.lean_theorems.is_empty(),
+                "closed mechanized assumption track {} must list lean_theorems",
+                track.id
+            );
+            for theorem in &track.lean_theorems {
+                ensure_lean_theorem_declared_in_evidence(root, theorem, &track.evidence_paths)
+                    .with_context(|| {
+                        format!(
+                            "closed mechanized assumption track {} theorem evidence",
+                            track.id
+                        )
+                    })?;
+            }
             ensure!(
                 track.remaining_work.is_empty(),
                 "closed mechanized assumption track {} still lists remaining_work",
@@ -1018,6 +1036,34 @@ fn validate_mechanized_assumption_closure(
         recomputed
     );
     Ok((closure.total_tracks, closed_tracks, recomputed))
+}
+
+fn ensure_lean_theorem_declared_in_evidence(
+    root: &Path,
+    theorem: &str,
+    evidence_paths: &[String],
+) -> Result<()> {
+    validate_lean_theorem_name("mechanized assumption closure", theorem)?;
+    let mut lean_evidence = 0usize;
+    let mut declared_theorems = BTreeSet::new();
+    for evidence in evidence_paths
+        .iter()
+        .filter(|path| is_non_generator_lean_evidence(path))
+    {
+        lean_evidence += 1;
+        declared_theorems.extend(lean_theorem_names(&root.join(evidence))?);
+    }
+    ensure!(
+        lean_evidence > 0,
+        "Lean theorem {} has no non-generator .lean evidence path",
+        theorem
+    );
+    ensure!(
+        declared_theorems.contains(theorem),
+        "Lean theorem {} is not declared in the listed evidence paths",
+        theorem
+    );
+    Ok(())
 }
 
 fn validate_percent(label: &str, value: f64) -> Result<()> {
@@ -1494,13 +1540,9 @@ fn lean_theorem_names(path: &Path) -> Result<Vec<String>> {
             }
             continue;
         }
-        let name = if first == "theorem" {
-            tokens.get(1).copied()
-        } else if first == "private" && tokens.get(1).copied() == Some("theorem") {
-            tokens.get(2).copied()
-        } else {
-            None
-        };
+        let name = (first == "theorem")
+            .then(|| tokens.get(1).copied())
+            .flatten();
         let Some(raw_name) = name else {
             continue;
         };
@@ -1549,7 +1591,11 @@ fn strip_lean_comments(source: &str) -> String {
         }
 
         if in_string {
-            stripped.push(current);
+            if current == '\n' {
+                stripped.push('\n');
+            } else {
+                stripped.push(' ');
+            }
             if escaped {
                 escaped = false;
             } else if current == '\\' {
@@ -1563,7 +1609,7 @@ fn strip_lean_comments(source: &str) -> String {
 
         if current == '"' {
             in_string = true;
-            stripped.push(current);
+            stripped.push(' ');
             index += 1;
             continue;
         }
@@ -5129,6 +5175,37 @@ fn ensure_repo_relative_existing(root: &Path, raw: &str, context: &str) -> Resul
     Ok(())
 }
 
+fn ensure_repo_relative_existing_file(root: &Path, raw: &str, context: &str) -> Result<()> {
+    ensure_repo_relative_existing(root, raw, context)?;
+    let root_path = if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    };
+    let root = root_path
+        .canonicalize()
+        .with_context(|| format!("canonicalize repository root for {context}"))?;
+    let path = root.join(raw);
+    let metadata = fs::symlink_metadata(&path)
+        .with_context(|| format!("inspect {context} metadata: {}", path.display()))?;
+    ensure!(
+        metadata.file_type().is_file(),
+        "{} must be a non-symlink regular file: {}",
+        context,
+        raw
+    );
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("canonicalize {context}: {}", path.display()))?;
+    ensure!(
+        canonical.starts_with(&root),
+        "{} resolves outside the repository: {}",
+        context,
+        raw
+    );
+    Ok(())
+}
+
 fn production_claim_checks(claim: &SecurityClaim) -> Result<()> {
     ensure!(
         claim.status == "enforced" || claim.status == "model_checked",
@@ -5503,6 +5580,90 @@ mod tests {
 
         let err = check_active_goal_progress_file(&progress_path).unwrap_err();
         assert!(err.to_string().contains("while the goal is paused"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_missing_mechanized_track_evidence() {
+        let root = test_root("active-goal-progress-missing-track-evidence");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][0]["evidence_paths"] =
+            json!(["formal/lean/DoesNotExist.lean"]);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(err.to_string().contains("DoesNotExist.lean"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_commented_closed_track_theorem() {
+        let root = test_root("active-goal-progress-commented-track-theorem");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.comment_spoof"]);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(format!("{err:#}").contains("not declared"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_string_literal_closed_track_theorem() {
+        let root = test_root("active-goal-progress-string-track-theorem");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.string_spoof"]);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(format!("{err:#}").contains("not declared"));
+    }
+
+    #[test]
+    fn active_goal_progress_rejects_private_closed_track_theorem() {
+        let root = test_root("active-goal-progress-private-track-theorem");
+        write_active_goal_progress_evidence(&root);
+        let mut matrix = highest_standard_matrix_fixture();
+        matrix["mechanized_assumption_closure"]["tracks"][0]["lean_theorems"] =
+            json!(["Hegemon.TestEvidence.private_spoof"]);
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, matrix);
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(format!("{err:#}").contains("not declared"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_goal_progress_rejects_symlinked_track_evidence() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_root("active-goal-progress-symlink-track-evidence");
+        write_active_goal_progress_evidence(&root);
+        let evidence = root.join("formal/lean/TestEvidence.lean");
+        let target = root.join("formal/lean/RealEvidence.lean");
+        fs::rename(&evidence, &target).unwrap();
+        symlink("RealEvidence.lean", &evidence).unwrap();
+        let matrix_path = root.join("config/highest-standard-formal-verification-matrix.json");
+        write_json(&matrix_path, highest_standard_matrix_fixture());
+        let progress_path = root.join("config/active-goal-progress.json");
+        write_json(&progress_path, active_goal_progress_fixture());
+
+        let err = check_active_goal_progress_file(&progress_path).unwrap_err();
+        assert!(format!("{err:#}").contains("non-symlink regular file"));
     }
 
     #[test]
@@ -9595,6 +9756,11 @@ mod tests {
             "scripts/check_formal_core.sh",
             "#!/usr/bin/env bash\n",
         );
+        write_repo_file(
+            root,
+            "formal/lean/TestEvidence.lean",
+            "namespace Hegemon\nnamespace TestEvidence\n-- theorem comment_spoof : True := by trivial\ndef theoremNameString := \"\"\"\ntheorem string_spoof : True := by trivial\n\"\"\"\nprivate theorem private_spoof : True := by trivial\ntheorem test_closed_track : True := by trivial\nend TestEvidence\nend Hegemon\n",
+        );
     }
 
     fn active_goal_progress_fixture() -> Value {
@@ -9674,13 +9840,15 @@ mod tests {
                     {
                         "id": "test.closed-track",
                         "status": "closed",
-                        "evidence_paths": ["formal evidence"],
+                        "evidence_paths": ["formal/lean/TestEvidence.lean"],
+                        "lean_theorems": ["Hegemon.TestEvidence.test_closed_track"],
                         "remaining_work": []
                     },
                     {
                         "id": "test.open-track",
                         "status": "open",
-                        "evidence_paths": ["formal evidence"],
+                        "evidence_paths": ["formal/lean/TestEvidence.lean"],
+                        "lean_theorems": [],
                         "remaining_work": ["discharge test assumption"]
                     }
                 ]

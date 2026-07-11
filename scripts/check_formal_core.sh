@@ -14,6 +14,21 @@ run_formal_core() {
   cargo run --quiet --manifest-path "$FORMAL_MANIFEST" -- "$@"
 }
 
+run_exact_lib_test() {
+  local package="$1"
+  local test_name="$2"
+  local match_count
+
+  match_count="$(cargo test -p "$package" --lib -- --list \
+    | awk -v expected="${test_name}: test" '$0 == expected { count += 1 } END { print count + 0 }')"
+  if [ "$match_count" -ne 1 ]; then
+    printf 'expected exactly one Rust lib test named %s in package %s, found %s\n' \
+      "$test_name" "$package" "$match_count" >&2
+    exit 1
+  fi
+  cargo test -p "$package" --lib "$test_name" -- --exact --nocapture
+}
+
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$1" | awk '{print $1}'
@@ -469,7 +484,9 @@ cargo test -p hegemon-node inbound_bridge_receipt_confirmation_count_overflow_fa
 HEGEMON_LEAN_RISC0_RELEASE_VERIFIER_VECTORS="$LEAN_RISC0_RELEASE_VERIFIER_VECTORS" \
   cargo test -p hegemon-node lean_generated_risc0_release_verifier_vectors_match_production --lib --no-default-features -- --nocapture
 HEGEMON_LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS="$LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS" \
-  cargo test -p superneo-backend-lattice lean_generated_native_backend_algebra_vectors_match_production --lib -- --nocapture
+  run_exact_lib_test \
+    superneo-backend-lattice \
+    tests::lean_generated_native_backend_algebra_vectors_match_production
 python3 "$ROOT/scripts/check_native_backend_review_policy_vectors.py" \
   "$LEAN_NATIVE_BACKEND_REVIEW_POLICY_VECTORS" \
   "$ROOT/testdata/native_backend_vectors/bundle.json"

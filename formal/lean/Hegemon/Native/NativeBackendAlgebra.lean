@@ -156,7 +156,7 @@ theorem bounded_digits_have_bounded_centered_difference
     Int.ofNat_le.mpr rightBound
   omega
 
-structure FoldCanonicalData where
+structure FoldOutputData where
   challenges : List Nat
   parentRows : List (List Nat)
   parentCommitmentDigest : List Nat
@@ -164,24 +164,24 @@ structure FoldCanonicalData where
   proofDigest : List Nat
 deriving DecidableEq, Repr
 
-def foldCanonicalAccepts
-    (recomputed candidate : FoldCanonicalData) : Bool :=
+def foldOutputMatchesRecomputed
+    (recomputed candidate : FoldOutputData) : Bool :=
   decide (candidate = recomputed)
 
-theorem fold_canonical_accepts_iff_exact_recomputation
-    (recomputed candidate : FoldCanonicalData) :
-    foldCanonicalAccepts recomputed candidate = true ↔ candidate = recomputed := by
-  simp [foldCanonicalAccepts]
+theorem fold_output_matches_recomputed_iff_equality
+    (recomputed candidate : FoldOutputData) :
+    foldOutputMatchesRecomputed recomputed candidate = true ↔ candidate = recomputed := by
+  simp [foldOutputMatchesRecomputed]
 
-theorem accepted_fold_candidate_is_unique
-    {recomputed first second : FoldCanonicalData}
-    (firstAccepted : foldCanonicalAccepts recomputed first = true)
-    (secondAccepted : foldCanonicalAccepts recomputed second = true) :
+theorem matching_fold_outputs_are_unique
+    {recomputed first second : FoldOutputData}
+    (firstAccepted : foldOutputMatchesRecomputed recomputed first = true)
+    (secondAccepted : foldOutputMatchesRecomputed recomputed second = true) :
     first = second := by
   have firstEq :=
-    (fold_canonical_accepts_iff_exact_recomputation recomputed first).mp firstAccepted
+    (fold_output_matches_recomputed_iff_equality recomputed first).mp firstAccepted
   have secondEq :=
-    (fold_canonical_accepts_iff_exact_recomputation recomputed second).mp secondAccepted
+    (fold_output_matches_recomputed_iff_equality recomputed second).mp secondAccepted
   rw [firstEq, secondEq]
 
 structure ChallengeReductionCase where

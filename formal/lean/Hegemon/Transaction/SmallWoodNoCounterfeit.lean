@@ -36,6 +36,7 @@ structure ExactSmallWoodAcceptedTransition where
   merkleRoot : Digest
   spendWitnesses : List InputSpendWitness
   inputRows : List SmallWoodInputConstraintRow
+  outputWitnesses : List SmallWoodOutputWitness
   outputRows : List SmallWoodOutputConstraintRow
   balanceWitness : BalanceWitness
   slots : List BalanceSlot
@@ -46,6 +47,7 @@ structure ExactSmallWoodAcceptedTransition where
       merkleRoot
       spendWitnesses
       inputRows
+      outputWitnesses
       outputRows
       balanceWitness
       slots
@@ -102,6 +104,7 @@ theorem semantic_constraints_canonical_surface_imply_no_theft_boundary
     {merkleRoot : Digest}
     {spendWitnesses : List InputSpendWitness}
     {inputRows : List SmallWoodInputConstraintRow}
+    {outputWitnesses : List SmallWoodOutputWitness}
     {outputRows : List SmallWoodOutputConstraintRow}
     {balanceWitness : BalanceWitness}
     {slots : List BalanceSlot}
@@ -123,6 +126,7 @@ theorem semantic_constraints_canonical_surface_imply_no_theft_boundary
         merkleRoot
         spendWitnesses
         inputRows
+        outputWitnesses
         outputRows
         balanceWitness
         slots)
@@ -200,6 +204,7 @@ theorem exact_constraint_extraction_canonical_surface_implies_no_theft_boundary
     {merkleRoot : Digest}
     {spendWitnesses : List InputSpendWitness}
     {inputRows : List SmallWoodInputConstraintRow}
+    {outputWitnesses : List SmallWoodOutputWitness}
     {outputRows : List SmallWoodOutputConstraintRow}
     {balanceWitness : BalanceWitness}
     {slots : List BalanceSlot}
@@ -222,6 +227,7 @@ theorem exact_constraint_extraction_canonical_surface_implies_no_theft_boundary
         merkleRoot
         spendWitnesses
         inputRows
+        outputWitnesses
         outputRows
         balanceWitness
         slots)
@@ -261,6 +267,7 @@ theorem exact_smallwood_constraints_yield_production_supply_conservation
     {merkleRoot : Digest}
     {spendWitnesses : List InputSpendWitness}
     {inputRows : List SmallWoodInputConstraintRow}
+    {outputWitnesses : List SmallWoodOutputWitness}
     {outputRows : List SmallWoodOutputConstraintRow}
     {balanceWitness : BalanceWitness}
     {slots : List BalanceSlot}
@@ -283,6 +290,7 @@ theorem exact_smallwood_constraints_yield_production_supply_conservation
         merkleRoot
         spendWitnesses
         inputRows
+        outputWitnesses
         outputRows
         balanceWitness
         slots)
@@ -337,10 +345,64 @@ theorem accepted_recursive_v2_artifact_still_requires_semantic_replay
   · rw [recursiveKind]
     exact direct_v2_requires_semantic_replay
 
-structure AcceptedRecursiveSmallWoodNoCounterfeitCertificate
+structure RecursiveSmallWoodObjectIdentity where
+  canonicalStatementBytes : List Byte
+  statementCommitment : Digest
+  publicReplayCommitment : Digest
+  transactionCount : Nat
+  daRoot : Digest
+deriving DecidableEq, Repr
+
+structure RecursiveSmallWoodCrossObjectIdentityRefinementAssumption
+    (statementBytes : List Byte)
+    (artifactIdentity claimIdentity batchIdentity transactionIdentity
+      supplyIdentity : RecursiveSmallWoodObjectIdentity) : Prop where
+  transactionBindsCanonicalStatement :
+    transactionIdentity.canonicalStatementBytes = statementBytes
+  artifactMatchesClaim : artifactIdentity = claimIdentity
+  claimMatchesBatch : claimIdentity = batchIdentity
+  batchMatchesTransaction : batchIdentity = transactionIdentity
+  transactionMatchesSupply : transactionIdentity = supplyIdentity
+
+theorem cross_object_identity_mismatch_rejects
+    {statementBytes : List Byte}
+    {artifactIdentity claimIdentity batchIdentity transactionIdentity
+      supplyIdentity : RecursiveSmallWoodObjectIdentity}
+    (mismatch : artifactIdentity ≠ transactionIdentity) :
+    ¬ RecursiveSmallWoodCrossObjectIdentityRefinementAssumption
+      statementBytes
+      artifactIdentity
+      claimIdentity
+      batchIdentity
+      transactionIdentity
+      supplyIdentity := by
+  intro binding
+  apply mismatch
+  exact
+    binding.artifactMatchesClaim.trans
+      (binding.claimMatchesBatch.trans binding.batchMatchesTransaction)
+
+theorem canonical_statement_bytes_mismatch_rejects
+    {statementBytes : List Byte}
+    {artifactIdentity claimIdentity batchIdentity transactionIdentity
+      supplyIdentity : RecursiveSmallWoodObjectIdentity}
+    (mismatch : transactionIdentity.canonicalStatementBytes ≠ statementBytes) :
+    ¬ RecursiveSmallWoodCrossObjectIdentityRefinementAssumption
+      statementBytes
+      artifactIdentity
+      claimIdentity
+      batchIdentity
+      transactionIdentity
+      supplyIdentity := by
+  intro binding
+  exact mismatch binding.transactionBindsCanonicalStatement
+
+structure AcceptedRecursiveSmallWoodCompositionBoundary
     (artifact : ArtifactAdmissionInput)
     (claimMatch : TxValidityClaimMatching.ClaimMatchInput)
     (batchBinding : Hegemon.Consensus.ProvenBatchBinding.BindingInput)
+    (artifactIdentity claimIdentity batchIdentity transactionIdentity
+      supplyIdentity : RecursiveSmallWoodObjectIdentity)
     (parent next : Nat)
     (step : ClaimedSupplyStep)
     (wrapper : ProofWrapperInput)
@@ -356,6 +418,14 @@ structure AcceptedRecursiveSmallWoodNoCounterfeitCertificate
     (spendWitnesses : List InputSpendWitness)
     (balanceWitness : BalanceWitness)
     (slots : List BalanceSlot) : Prop where
+  crossObjectIdentityRefinement :
+    RecursiveSmallWoodCrossObjectIdentityRefinementAssumption
+      statementBytes
+      artifactIdentity
+      claimIdentity
+      batchIdentity
+      transactionIdentity
+      supplyIdentity
   recursiveArtifactAccepted : artifactAccepts artifact = true
   recursiveArtifactKind : artifact.envelopeKind = ArtifactKind.recursiveBlockV2
   recursiveArtifactStatementCommitmentMatches :
@@ -401,10 +471,12 @@ structure AcceptedRecursiveSmallWoodNoCounterfeitCertificate
       balanceWitness
       slots
 
-theorem accepted_recursive_smallwood_transaction_yields_no_counterfeit_certificate
+theorem accepted_recursive_smallwood_transaction_yields_conditional_composition_boundary
     {artifact : ArtifactAdmissionInput}
     {claimMatch : TxValidityClaimMatching.ClaimMatchInput}
     {batchBinding : Hegemon.Consensus.ProvenBatchBinding.BindingInput}
+    {artifactIdentity claimIdentity batchIdentity transactionIdentity
+      supplyIdentity : RecursiveSmallWoodObjectIdentity}
     {parent next : Nat}
     {step : ClaimedSupplyStep}
     {wrapper : ProofWrapperInput}
@@ -419,9 +491,18 @@ theorem accepted_recursive_smallwood_transaction_yields_no_counterfeit_certifica
     {merkleRoot : Digest}
     {spendWitnesses : List InputSpendWitness}
     {inputRows : List SmallWoodInputConstraintRow}
+    {outputWitnesses : List SmallWoodOutputWitness}
     {outputRows : List SmallWoodOutputConstraintRow}
     {balanceWitness : BalanceWitness}
     {slots : List BalanceSlot}
+    (crossObjectIdentityRefinement :
+      RecursiveSmallWoodCrossObjectIdentityRefinementAssumption
+        statementBytes
+        artifactIdentity
+        claimIdentity
+        batchIdentity
+        transactionIdentity
+        supplyIdentity)
     (expectedKind : artifact.expectedKind = ArtifactKind.recursiveBlockV2)
     (artifactAccepted : artifactAccepts artifact = true)
     (claimMatchAccepted :
@@ -453,6 +534,7 @@ theorem accepted_recursive_smallwood_transaction_yields_no_counterfeit_certifica
         merkleRoot
         spendWitnesses
         inputRows
+        outputWitnesses
         outputRows
         balanceWitness
         slots)
@@ -462,10 +544,15 @@ theorem accepted_recursive_smallwood_transaction_yields_no_counterfeit_certifica
       step.fees =
         publicAuthorizedAssetDeltaValue publicFields Transaction.nativeAsset)
     (acceptedSupply : validateClaimedSupplyStep parent step = some next) :
-    AcceptedRecursiveSmallWoodNoCounterfeitCertificate
+    AcceptedRecursiveSmallWoodCompositionBoundary
       artifact
       claimMatch
       batchBinding
+      artifactIdentity
+      claimIdentity
+      batchIdentity
+      transactionIdentity
+      supplyIdentity
       parent
       next
       step
@@ -491,6 +578,7 @@ theorem accepted_recursive_smallwood_transaction_yields_no_counterfeit_certifica
       artifactAccepted
   exact
     {
+      crossObjectIdentityRefinement := crossObjectIdentityRefinement,
       recursiveArtifactAccepted := artifactAccepted,
       recursiveArtifactKind := recursiveFacts.left,
       recursiveArtifactStatementCommitmentMatches := artifactBinding.left,

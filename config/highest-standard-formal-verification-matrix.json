@@ -8,15 +8,18 @@
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
     "measurement_method": "Equal-count inventory of explicit mechanized security tracks. A closed track requires a Lean theorem or checked refinement gate for the stated narrow obligation; merely naming an assumption does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
-    "total_tracks": 18,
+    "total_tracks": 20,
     "closed_tracks": 10,
-    "closure_percent": 55.5556,
+    "closure_percent": 50.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
         "status": "closed",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodSemanticClosure.accepted_proof_and_semantic_constraints_imply_transaction_relation"
         ],
         "remaining_work": []
       },
@@ -28,17 +31,37 @@
           "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
           "circuits/transaction/src/smallwood_frontend.rs"
         ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_every_single_field_mutation"
+        ],
         "remaining_work": []
       },
       {
-        "id": "transaction.verified-claim-recursive-admission",
+        "id": "transaction.recursive-admission-local-facts",
         "status": "closed",
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
           "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
           "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
         ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodNoCounterfeit.accepted_recursive_v2_artifact_still_requires_semantic_replay",
+          "Hegemon.Transaction.TxValidityClaimMatching.claimMatchAccepts_implies_exact_surface",
+          "Hegemon.Consensus.ProvenBatchBinding.accepts_iff_binding_preconditions"
+        ],
         "remaining_work": []
+      },
+      {
+        "id": "transaction.recursive-cross-object-identity-refinement",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
+          "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+          "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
+        ],
+        "remaining_work": [
+        "Refine concrete canonical statement bytes, ordered transaction count, statement commitment, public replay, and DA identity from the production artifact, claim, batch, transaction, and supply objects into RecursiveSmallWoodCrossObjectIdentityRefinementAssumption; local acceptance booleans alone do not establish this cross-object identity."
+        ]
       },
       {
         "id": "consensus.accepted-chain-supply-composition",
@@ -46,6 +69,9 @@
         "evidence_paths": [
           "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
           "formal/lean/Hegemon/Consensus/SupplyInvariant.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodNoCounterfeit.exact_smallwood_accepted_chain_yields_supply_conservation_certificate"
         ],
         "remaining_work": []
       },
@@ -55,6 +81,9 @@
         "evidence_paths": [
           "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
           "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"
         ],
         "remaining_work": []
       },
@@ -66,6 +95,9 @@
           "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
           "formal/lean/Hegemon/Native/CanonicalReorgChainAdmission.lean"
         ],
+        "lean_theorems": [
+          "Hegemon.Native.NativePublicationRowEquivalence.accepted_native_publication_path_family_binds_native_publication_rows"
+        ],
         "remaining_work": []
       },
       {
@@ -76,16 +108,34 @@
           "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean",
           "circuits/superneo-backend-lattice/src/lib.rs"
         ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count"
+        ],
         "remaining_work": []
       },
       {
-        "id": "native.fold-canonicalization-model",
+        "id": "native.fold-output-equality-model",
         "status": "closed",
         "evidence_paths": [
           "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
           "circuits/superneo-backend-lattice/src/lib.rs"
         ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.fold_output_matches_recomputed_iff_equality"
+        ],
         "remaining_work": []
+      },
+      {
+        "id": "native.fold-verifier-implementation-equivalence",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "circuits/superneo-backend-lattice/src/lib.rs",
+          "docs/crypto/native_backend_formal_theorems.md"
+        ],
+        "remaining_work": [
+          "Model the production fold recomputation algorithm and prove its Rust verifier implementation equivalent to that model. Equality with a caller-supplied recomputed record proves only output equality and uniqueness, not production fold canonicalization."
+        ]
       },
       {
         "id": "native.digit-bound-euclidean-arithmetic",
@@ -93,6 +143,9 @@
         "evidence_paths": [
           "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
           "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference"
         ],
         "remaining_work": []
       },
@@ -103,6 +156,9 @@
           "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
           "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
           "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension"
         ],
         "remaining_work": []
       },
