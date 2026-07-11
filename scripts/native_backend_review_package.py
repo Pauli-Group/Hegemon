@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -11,6 +13,7 @@ from pathlib import Path, PurePosixPath
 
 PACKAGE_ROOT_NAME = "native-backend-128b-review-package"
 MAX_COMPRESSED_BYTES = 128 * 1024 * 1024
+MAX_CHECKSUM_BYTES = 1024
 MAX_MEMBER_COUNT = 20_000
 MAX_MEMBER_BYTES = 128 * 1024 * 1024
 MAX_EXPANDED_BYTES = 512 * 1024 * 1024
@@ -19,6 +22,40 @@ SOURCE_EXCLUSIONS = {
     "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
     "audits/native-backend-128b/package.sha256",
 }
+DIRECT_SOURCE_EVIDENCE_PATHS = (
+    "docs/crypto/native_backend_spec.md",
+    "docs/crypto/native_backend_formal_theorems.md",
+    "docs/crypto/native_backend_commitment_reduction.md",
+    "docs/crypto/native_backend_security_analysis.md",
+    "docs/crypto/native_backend_cryptanalysis_note.md",
+    "docs/crypto/native_backend_verified_aggregation.md",
+    "docs/crypto/native_backend_attack_worksheet.md",
+    "docs/crypto/native_backend_constant_time.md",
+    "docs/SECURITY_REVIEWS.md",
+    "testdata/native_backend_vectors/bundle.json",
+    "audits/native-backend-128b/CLAIMS.md",
+    "audits/native-backend-128b/THREAT_MODEL.md",
+    "audits/native-backend-128b/REVIEW_QUESTIONS.md",
+    "audits/native-backend-128b/REPORT_TEMPLATE.md",
+    "audits/native-backend-128b/KNOWN_GAPS.md",
+    "audits/native-backend-128b/BREAKIT_RULES.md",
+)
+GENERATED_EVIDENCE_PATHS = (
+    "current_claim.json",
+    "review_manifest.json",
+    "attack_model.json",
+    "message_class.json",
+    "claim_sweep.json",
+    "structured_lattice_model.json",
+    "reduced_cryptanalysis_spikes.json",
+    "structured_lattice_export_report.json",
+    "structured_lattice/matrix_metadata.json",
+    "structured_lattice/ring_commitment_matrix_u64_le.bin",
+    "structured_lattice/flat_commitment_matrix_u64_le.bin",
+    "reference_verifier_report.json",
+    "reference_claim_verifier_report.json",
+    "production_verifier_report.json",
+)
 
 
 class ReviewPackageError(RuntimeError):
@@ -31,6 +68,15 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _bounded_regular_file_size(path: Path, label: str, maximum: int) -> int:
+    if path.is_symlink() or not path.is_file():
+        raise ReviewPackageError(f"{label} is not a regular file: {path}")
+    size = path.stat().st_size
+    if size <= 0 or size > maximum:
+        raise ReviewPackageError(f"{label} size {size} exceeds bound {maximum}")
+    return size
 
 
 def source_tree_sha256(source_root: Path) -> str:
@@ -56,6 +102,10 @@ def source_tree_sha256(source_root: Path) -> str:
 
 
 def verify_archive_hash(archive_path: Path, sha_path: Path) -> None:
+    _bounded_regular_file_size(
+        archive_path, "package compressed", MAX_COMPRESSED_BYTES
+    )
+    _bounded_regular_file_size(sha_path, "package checksum", MAX_CHECKSUM_BYTES)
     try:
         line = sha_path.read_text(encoding="utf-8").strip()
         expected_hash, expected_name = line.split("  ", 1)
@@ -77,64 +127,57 @@ def verify_archive_hash(archive_path: Path, sha_path: Path) -> None:
         )
 
 
-def _validated_members(
-    archive_path: Path, archive: tarfile.TarFile
-) -> list[tarfile.TarInfo]:
-    compressed_size = archive_path.stat().st_size
-    if compressed_size <= 0 or compressed_size > MAX_COMPRESSED_BYTES:
-        raise ReviewPackageError(
-            f"package compressed size {compressed_size} exceeds bound "
-            f"{MAX_COMPRESSED_BYTES}"
-        )
-    members = archive.getmembers()
-    if not members or len(members) > MAX_MEMBER_COUNT:
-        raise ReviewPackageError(
-            f"package member count {len(members)} exceeds bound {MAX_MEMBER_COUNT}"
-        )
-
-    names: set[str] = set()
-    expanded_size = 0
-    for member in members:
-        path = PurePosixPath(member.name)
-        if (
-            path.is_absolute()
-            or ".." in path.parts
-            or not path.parts
-            or path.parts[0] != PACKAGE_ROOT_NAME
-        ):
-            raise ReviewPackageError(f"unsafe package member path: {member.name}")
-        normalized = str(path)
-        if normalized in names:
-            raise ReviewPackageError(f"duplicate package member: {member.name}")
-        names.add(normalized)
-        if not (member.isdir() or member.isfile()):
-            raise ReviewPackageError(
-                f"unsupported package member type: {member.name}"
-            )
-        if member.size < 0 or member.size > MAX_MEMBER_BYTES:
-            raise ReviewPackageError(
-                f"package member {member.name} size {member.size} exceeds bound "
-                f"{MAX_MEMBER_BYTES}"
-            )
-        if member.isfile():
-            expanded_size += member.size
-            if expanded_size > MAX_EXPANDED_BYTES:
-                raise ReviewPackageError(
-                    f"package expanded size exceeds bound {MAX_EXPANDED_BYTES}"
-                )
-    if expanded_size > max(compressed_size, 1) * MAX_COMPRESSION_RATIO:
-        raise ReviewPackageError(
-            f"package compression ratio exceeds bound {MAX_COMPRESSION_RATIO}"
-        )
-    return members
-
-
 def safe_extract(archive_path: Path, destination: Path) -> Path:
+    compressed_size = _bounded_regular_file_size(
+        archive_path, "package compressed", MAX_COMPRESSED_BYTES
+    )
     destination.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive_path, "r:gz") as archive:
-        members = _validated_members(archive_path, archive)
-        for member in members:
+    names: set[str] = set()
+    member_count = 0
+    expanded_size = 0
+    with tarfile.open(archive_path, "r|gz") as archive:
+        for member in archive:
+            member_count += 1
+            if member_count > MAX_MEMBER_COUNT:
+                raise ReviewPackageError(
+                    f"package member count exceeds bound {MAX_MEMBER_COUNT}"
+                )
             relative = PurePosixPath(member.name)
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != PACKAGE_ROOT_NAME
+            ):
+                raise ReviewPackageError(
+                    f"unsafe package member path: {member.name}"
+                )
+            normalized = str(relative)
+            if normalized in names:
+                raise ReviewPackageError(
+                    f"duplicate package member: {member.name}"
+                )
+            names.add(normalized)
+            if not (member.isdir() or member.isfile()):
+                raise ReviewPackageError(
+                    f"unsupported package member type: {member.name}"
+                )
+            if member.size < 0 or member.size > MAX_MEMBER_BYTES:
+                raise ReviewPackageError(
+                    f"package member {member.name} size {member.size} exceeds bound "
+                    f"{MAX_MEMBER_BYTES}"
+                )
+            if member.isfile():
+                expanded_size += member.size
+                if expanded_size > MAX_EXPANDED_BYTES:
+                    raise ReviewPackageError(
+                        f"package expanded size exceeds bound {MAX_EXPANDED_BYTES}"
+                    )
+                if expanded_size > compressed_size * MAX_COMPRESSION_RATIO:
+                    raise ReviewPackageError(
+                        "package compression ratio exceeds bound "
+                        f"{MAX_COMPRESSION_RATIO}"
+                    )
             target = destination.joinpath(*relative.parts)
             if member.isdir():
                 target.mkdir(parents=True, exist_ok=True)
@@ -147,7 +190,13 @@ def safe_extract(archive_path: Path, destination: Path) -> Path:
                 )
             with source, target.open("wb") as output:
                 shutil.copyfileobj(source, output, length=1024 * 1024)
+            if target.stat().st_size != member.size:
+                raise ReviewPackageError(
+                    f"package member {member.name} extracted size mismatch"
+                )
             target.chmod(0o755 if member.mode & 0o111 else 0o644)
+    if member_count == 0:
+        raise ReviewPackageError("package archive contains no members")
     package_root = destination / PACKAGE_ROOT_NAME
     if not package_root.is_dir():
         raise ReviewPackageError(f"missing package root {PACKAGE_ROOT_NAME}")
@@ -223,6 +272,102 @@ def verify_source_snapshot(checkout: Path, package_root: Path) -> None:
             )
 
 
+def verify_package_layout(package_root: Path) -> None:
+    if package_root.is_symlink() or not package_root.is_dir():
+        raise ReviewPackageError(f"package root is not a directory: {package_root}")
+    expected = set(DIRECT_SOURCE_EVIDENCE_PATHS)
+    expected.update(GENERATED_EVIDENCE_PATHS)
+    expected.add("code_fingerprint.json")
+    actual: set[str] = set()
+    for path in sorted(package_root.rglob("*")):
+        if path.is_symlink():
+            raise ReviewPackageError(f"package layout contains symlink: {path}")
+        relative = path.relative_to(package_root)
+        if relative.parts and relative.parts[0] == "source":
+            continue
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise ReviewPackageError(f"package layout contains special file: {path}")
+        actual.add(relative.as_posix())
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise ReviewPackageError(
+            f"package non-source file-set mismatch: missing={missing}, extra={extra}"
+        )
+
+    source_root = package_root / "source"
+    for relative in DIRECT_SOURCE_EVIDENCE_PATHS:
+        direct = package_root / relative
+        source = source_root / relative
+        direct_hash = sha256_file(direct)
+        source_hash = sha256_file(source)
+        if direct_hash != source_hash:
+            raise ReviewPackageError(
+                f"package direct/source evidence mismatch for {relative}: "
+                f"{direct_hash} != {source_hash}"
+            )
+        direct_executable = bool(direct.stat().st_mode & 0o111)
+        source_executable = bool(source.stat().st_mode & 0o111)
+        if direct_executable != source_executable:
+            raise ReviewPackageError(
+                f"package direct/source executable-mode mismatch for {relative}"
+            )
+
+
+def _normalize_json_value(value: object, prefixes: list[str]) -> object:
+    if isinstance(value, dict):
+        return {
+            key: _normalize_json_value(item, prefixes)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalize_json_value(item, prefixes) for item in value]
+    if isinstance(value, str):
+        for prefix in prefixes:
+            if value == prefix:
+                return "."
+            if value.startswith(prefix + os.sep):
+                return Path(value[len(prefix) + 1 :]).as_posix()
+    return value
+
+
+def normalize_json_reports(root: Path) -> None:
+    if root.is_symlink() or not root.is_dir():
+        raise ReviewPackageError(f"JSON report root is not a directory: {root}")
+    prefixes = sorted({str(root), str(root.resolve())}, key=len, reverse=True)
+    for report in sorted(root.glob("*.json")):
+        if report.is_symlink() or not report.is_file():
+            raise ReviewPackageError(f"JSON report is not a regular file: {report}")
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        report.write_text(
+            json.dumps(_normalize_json_value(payload, prefixes), indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+
+def verify_generated_evidence(package_root: Path, regenerated_root: Path) -> None:
+    for relative in GENERATED_EVIDENCE_PATHS:
+        packaged = package_root / relative
+        regenerated = regenerated_root / relative
+        for label, path in (("packaged", packaged), ("regenerated", regenerated)):
+            if path.is_symlink() or not path.is_file():
+                raise ReviewPackageError(
+                    f"{label} generated evidence is not a regular file: {relative}"
+                )
+        packaged_size = packaged.stat().st_size
+        regenerated_size = regenerated.stat().st_size
+        packaged_hash = sha256_file(packaged)
+        regenerated_hash = sha256_file(regenerated)
+        if packaged_size != regenerated_size or packaged_hash != regenerated_hash:
+            raise ReviewPackageError(
+                f"generated evidence mismatch for {relative}: "
+                f"packaged(size={packaged_size},sha256={packaged_hash}) != "
+                f"regenerated(size={regenerated_size},sha256={regenerated_hash})"
+            )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -236,8 +381,18 @@ def parse_args() -> argparse.Namespace:
     verify_source.add_argument("--checkout", type=Path, required=True)
     verify_source.add_argument("--package-root", type=Path, required=True)
 
+    verify_layout = subcommands.add_parser("verify-package-layout")
+    verify_layout.add_argument("--package-root", type=Path, required=True)
+
     source_digest = subcommands.add_parser("source-digest")
     source_digest.add_argument("--source", type=Path, required=True)
+
+    normalize_json = subcommands.add_parser("normalize-json-reports")
+    normalize_json.add_argument("--root", type=Path, required=True)
+
+    verify_generated = subcommands.add_parser("verify-generated-evidence")
+    verify_generated.add_argument("--package-root", type=Path, required=True)
+    verify_generated.add_argument("--regenerated-root", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -250,9 +405,18 @@ def main() -> None:
         elif args.command == "verify-source":
             verify_source_snapshot(args.checkout, args.package_root)
             print("native backend review package matches the complete Git source tree")
+        elif args.command == "verify-package-layout":
+            verify_package_layout(args.package_root)
+            print("native backend review package has the exact non-source layout")
         elif args.command == "source-digest":
             print(source_tree_sha256(args.source))
-    except (OSError, tarfile.TarError, ReviewPackageError) as exc:
+        elif args.command == "normalize-json-reports":
+            normalize_json_reports(args.root)
+            print(f"normalized generated JSON reports under {args.root}")
+        elif args.command == "verify-generated-evidence":
+            verify_generated_evidence(args.package_root, args.regenerated_root)
+            print("generated review evidence matches packaged-source regeneration")
+    except (OSError, ValueError, tarfile.TarError, ReviewPackageError) as exc:
         raise SystemExit(str(exc)) from exc
 
 

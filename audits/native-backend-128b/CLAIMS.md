@@ -72,7 +72,7 @@ Current packaged source snapshot:
 
 - `source/` contains every regular file tracked by the checked-out Git tree, excluding only the review archive and its adjacent checksum to avoid recursive packaging. Verification requires exact file-set, byte, and executable-mode equality with a clean checkout before any packaged vectors are trusted. `code_fingerprint.json` binds the same path/content/mode tree with a deterministic SHA-256 rather than a checkout-specific commit id, so a GitHub synthetic merge commit can reproduce identical bytes when its source tree is identical.
 
-The adjacent checksum, bounded extractor, complete-source parity gate, optimized-Python regression, and deterministic CI regeneration protect package transport and provenance. They do not prove the native backend's cryptographic assumptions.
+The adjacent checksum, pre-hash compressed-size cap, streaming bounded extractor, complete-source parity gate, exact non-source layout, isolated-Python regression, and deterministic CI regeneration protect package transport and provenance. After parity succeeds, verification copies the source snapshot outside the attacker-controlled package directory before invoking Cargo, so extra package-local configuration cannot affect compilation. Complete verification regenerates every claim, manifest, model, reduced-search report, structured-lattice metadata and binary, and verifier report from that source, normalizes generated paths, and requires byte-for-byte equality with the supplied evidence. These controls do not prove the native backend's cryptographic assumptions.
 
 Current packaged machine-readable review artifacts:
 

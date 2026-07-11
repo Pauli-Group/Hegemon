@@ -19,58 +19,19 @@ done
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 
-python3 "$PACKAGE_HELPER" extract \
+python3 -I "$PACKAGE_HELPER" extract \
   --archive "$PACKAGE_TAR" \
   --sha "$PACKAGE_SHA" \
   --destination "$WORKDIR"
 PACKAGE_ROOT="$WORKDIR/native-backend-128b-review-package"
 SOURCE_ROOT="$PACKAGE_ROOT/source"
 
-python3 "$PACKAGE_HELPER" verify-source \
+python3 -I "$PACKAGE_HELPER" verify-source \
   --checkout "$ROOT" \
   --package-root "$PACKAGE_ROOT"
-SOURCE_TREE_SHA256="$(python3 "$PACKAGE_HELPER" source-digest --source "$SOURCE_ROOT")"
-
-python3 - "$PACKAGE_ROOT" <<'PY'
-from __future__ import annotations
-
-import hashlib
-from pathlib import Path
-import sys
-
-package = Path(sys.argv[1])
-direct_paths = [
-    "docs/crypto/native_backend_spec.md",
-    "docs/crypto/native_backend_formal_theorems.md",
-    "docs/crypto/native_backend_commitment_reduction.md",
-    "docs/crypto/native_backend_security_analysis.md",
-    "docs/crypto/native_backend_cryptanalysis_note.md",
-    "docs/crypto/native_backend_verified_aggregation.md",
-    "docs/crypto/native_backend_attack_worksheet.md",
-    "docs/crypto/native_backend_constant_time.md",
-    "docs/SECURITY_REVIEWS.md",
-    "testdata/native_backend_vectors/bundle.json",
-    "audits/native-backend-128b/CLAIMS.md",
-    "audits/native-backend-128b/THREAT_MODEL.md",
-    "audits/native-backend-128b/REVIEW_QUESTIONS.md",
-    "audits/native-backend-128b/REPORT_TEMPLATE.md",
-    "audits/native-backend-128b/KNOWN_GAPS.md",
-    "audits/native-backend-128b/BREAKIT_RULES.md",
-]
-
-for relative in direct_paths:
-    direct = package / relative
-    source = package / "source" / relative
-    if not direct.is_file() or not source.is_file():
-        raise SystemExit(f"package direct/source evidence missing: {relative}")
-    direct_hash = hashlib.sha256(direct.read_bytes()).hexdigest()
-    source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-    if direct_hash != source_hash:
-        raise SystemExit(
-            f"package direct/source evidence mismatch for {relative}: "
-            f"{direct_hash} != {source_hash}"
-        )
-PY
+python3 -I "$PACKAGE_HELPER" verify-package-layout \
+  --package-root "$PACKAGE_ROOT"
+SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$SOURCE_ROOT")"
 
 required_files=(
   "docs/crypto/native_backend_commitment_reduction.md"
@@ -104,7 +65,7 @@ for relative in "${required_files[@]}"; do
   test -f "$PACKAGE_ROOT/$relative"
 done
 
-python3 - <<'PY' \
+python3 -I - \
   "$PACKAGE_ROOT/review_manifest.json" \
   "$PACKAGE_ROOT/current_claim.json" \
   "$PACKAGE_ROOT/attack_model.json" \
@@ -118,7 +79,7 @@ python3 - <<'PY' \
   "$PACKAGE_ROOT/reference_claim_verifier_report.json" \
   "$PACKAGE_ROOT/production_verifier_report.json" \
   "$PACKAGE_ROOT/code_fingerprint.json" \
-  "$SOURCE_TREE_SHA256"
+  "$SOURCE_TREE_SHA256" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -225,15 +186,51 @@ require(
 )
 PY
 
+REGENERATED_ROOT="$WORKDIR/regenerated"
+VERIFIED_SOURCE_ROOT="$WORKDIR/verified-source"
+mkdir -p \
+  "$REGENERATED_ROOT/structured_lattice" \
+  "$REGENERATED_ROOT/testdata/native_backend_vectors" \
+  "$VERIFIED_SOURCE_ROOT"
+cp -a "$SOURCE_ROOT/." "$VERIFIED_SOURCE_ROOT/"
+cp \
+  "$PACKAGE_ROOT/testdata/native_backend_vectors/bundle.json" \
+  "$REGENERATED_ROOT/testdata/native_backend_vectors/bundle.json"
+
 (
-  cd "$SOURCE_ROOT"
+  cd "$VERIFIED_SOURCE_ROOT"
   export CARGO_TARGET_DIR="$WORKDIR/cargo-target"
+  cargo run --locked -p superneo-bench -- --print-native-security-claim \
+    > "$REGENERATED_ROOT/current_claim.json"
+  cargo run --locked -p superneo-bench -- --print-native-review-manifest \
+    > "$REGENERATED_ROOT/review_manifest.json"
+  cargo run --locked -p superneo-bench -- --print-native-attack-model \
+    > "$REGENERATED_ROOT/attack_model.json"
+  cargo run --locked -p superneo-bench -- --print-native-message-class \
+    > "$REGENERATED_ROOT/message_class.json"
+  cargo run --locked -p superneo-bench -- --print-native-claim-sweep \
+    > "$REGENERATED_ROOT/claim_sweep.json"
+  cargo run --locked -p superneo-bench -- --print-native-structured-lattice-model \
+    > "$REGENERATED_ROOT/structured_lattice_model.json"
+  cargo run --locked -p superneo-bench -- --run-native-reduced-cryptanalysis-spikes \
+    > "$REGENERATED_ROOT/reduced_cryptanalysis_spikes.json"
+  cargo run --locked -p superneo-bench -- \
+    --export-native-flattened-sis-instance "$REGENERATED_ROOT/structured_lattice" \
+    > "$REGENERATED_ROOT/structured_lattice_export_report.json"
   cargo run --locked -p native-backend-ref -- verify-vectors \
-    "$PACKAGE_ROOT/testdata/native_backend_vectors"
+    "$REGENERATED_ROOT/testdata/native_backend_vectors" \
+    > "$REGENERATED_ROOT/reference_verifier_report.json"
   cargo run --locked -p native-backend-ref -- verify-claim \
-    --package-dir "$PACKAGE_ROOT"
+    --package-dir "$REGENERATED_ROOT" \
+    > "$REGENERATED_ROOT/reference_claim_verifier_report.json"
   cargo run --locked -p superneo-bench -- --verify-review-bundle-production \
-    "$PACKAGE_ROOT/testdata/native_backend_vectors"
+    "$REGENERATED_ROOT/testdata/native_backend_vectors" \
+    > "$REGENERATED_ROOT/production_verifier_report.json"
 )
+
+python3 -I "$PACKAGE_HELPER" normalize-json-reports --root "$REGENERATED_ROOT"
+python3 -I "$PACKAGE_HELPER" verify-generated-evidence \
+  --package-root "$PACKAGE_ROOT" \
+  --regenerated-root "$REGENERATED_ROOT"
 
 printf 'native backend review package verified from packaged source\n'

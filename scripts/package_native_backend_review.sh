@@ -40,9 +40,9 @@ git -C "$ROOT" archive --format=tar HEAD | tar -xf - -C "$STAGE/source"
 rm -f \
   "$STAGE/source/audits/native-backend-128b/native-backend-128b-review-package.tar.gz" \
   "$STAGE/source/audits/native-backend-128b/package.sha256"
-SOURCE_TREE_SHA256="$(python3 "$PACKAGE_HELPER" source-digest --source "$STAGE/source")"
+SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$STAGE/source")"
 
-python3 - <<'PY' "$ROOT" "$STAGE/code_fingerprint.json" "$SOURCE_TREE_SHA256"
+python3 -I - "$ROOT" "$STAGE/code_fingerprint.json" "$SOURCE_TREE_SHA256" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -126,39 +126,7 @@ cargo run --locked -p native-backend-ref -- verify-claim --package-dir "$STAGE" 
 cargo run --locked -p superneo-bench -- --verify-review-bundle-production "$STAGE/testdata/native_backend_vectors" \
   > "$STAGE/production_verifier_report.json"
 
-python3 - <<'PY' "$STAGE"
-from __future__ import annotations
-
-import json
-import os
-from pathlib import Path
-import sys
-
-stage = Path(sys.argv[1])
-prefixes = sorted({str(stage), str(stage.resolve())}, key=len, reverse=True)
-
-
-def normalize(value: object) -> object:
-    if isinstance(value, dict):
-        return {key: normalize(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [normalize(item) for item in value]
-    if isinstance(value, str):
-        for prefix in prefixes:
-            if value == prefix:
-                return "."
-            if value.startswith(prefix + os.sep):
-                return Path(value[len(prefix) + 1 :]).as_posix()
-    return value
-
-
-for report in sorted(stage.glob("*.json")):
-    payload = json.loads(report.read_text(encoding="utf-8"))
-    report.write_text(
-        json.dumps(normalize(payload), indent=2) + "\n",
-        encoding="utf-8",
-    )
-PY
+python3 -I "$PACKAGE_HELPER" normalize-json-reports --root "$STAGE"
 
 if ! git -C "$ROOT" diff --quiet HEAD -- \
     || ! git -C "$ROOT" diff --cached --quiet -- \
@@ -167,7 +135,7 @@ if ! git -C "$ROOT" diff --quiet HEAD -- \
   exit 1
 fi
 
-python3 - <<'PY' "$STAGE" "$PACKAGE_TAR" "$PACKAGE_SHA"
+python3 -I - "$STAGE" "$PACKAGE_TAR" "$PACKAGE_SHA" <<'PY'
 import gzip
 import hashlib
 import tarfile

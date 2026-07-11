@@ -71,7 +71,7 @@ trap cleanup EXIT
 if [[ -n "$PACKAGE_TAR" ]]; then
   TMPDIR="$(mktemp -d)"
   PACKAGE_SHA="$(dirname "$PACKAGE_TAR")/package.sha256"
-  python3 "$ROOT/scripts/native_backend_review_package.py" extract \
+  python3 -I "$ROOT/scripts/native_backend_review_package.py" extract \
     --archive "$PACKAGE_TAR" \
     --sha "$PACKAGE_SHA" \
     --destination "$TMPDIR" >/dev/null

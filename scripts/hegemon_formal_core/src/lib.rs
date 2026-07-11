@@ -2,8 +2,9 @@ use anyhow::{anyhow, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const CLAIM_STATUSES: &[&str] = &[
     "enforced",
@@ -127,6 +128,8 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("bridge.external-receipt-soundness", &[]),
     ("system.da-storage-runtime-semantics", &[]),
 ];
+const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
+    "7ac75c373061e05bc3131e336f2e20505dc1192cba4af2175595c6f5e705359a";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]
@@ -598,6 +601,7 @@ pub fn check_system_model_gates_file(path: &Path) -> Result<SystemModelGateRepor
 
 pub fn check_active_goal_progress_file(path: &Path) -> Result<ActiveGoalProgressReport> {
     verify_formal_source_tree_digest(path)?;
+    verify_mechanized_assumption_proposition_digest(&repository_root_from(path))?;
     let report =
         check_active_goal_progress_file_with_policy(path, REQUIRED_MECHANIZED_ASSUMPTION_TRACKS)?;
     verify_mechanized_assumption_theorems_with_lean(&repository_root_from(path))?;
@@ -649,6 +653,98 @@ fn formal_source_tree_blake3(root: &Path) -> Result<String> {
         hasher.update(&bytes);
     }
     Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn required_mechanized_assumption_theorems() -> Result<Vec<&'static str>> {
+    let mut names = BTreeSet::new();
+    let mut listed = 0usize;
+    for (_, track_theorems) in REQUIRED_MECHANIZED_ASSUMPTION_TRACKS {
+        for theorem in *track_theorems {
+            listed += 1;
+            ensure!(
+                names.insert(*theorem),
+                "independent mechanized-assumption policy repeats theorem {}",
+                theorem
+            );
+        }
+    }
+    ensure!(
+        names.len() == listed && !names.is_empty(),
+        "independent mechanized-assumption proposition policy must be nonempty and duplicate-free"
+    );
+    Ok(names.into_iter().collect())
+}
+
+pub fn mechanized_assumption_proposition_blake3(root: &Path) -> Result<String> {
+    let names = required_mechanized_assumption_theorems()?;
+    let mut query = String::from("import Hegemon\nset_option pp.all true\n");
+    for theorem in &names {
+        query.push_str("#check @");
+        query.push_str(theorem);
+        query.push('\n');
+    }
+
+    let lean_root = root.join("formal/lean");
+    let mut child = Command::new("lake")
+        .args(["env", "lean", "--stdin"])
+        .current_dir(&lean_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| {
+            format!(
+                "start aggregate Lean proposition query from {}",
+                lean_root.display()
+            )
+        })?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("aggregate Lean proposition query stdin was not piped"))?
+        .write_all(query.as_bytes())
+        .context("write aggregate Lean proposition query")?;
+    let output = child
+        .wait_with_output()
+        .context("wait for aggregate Lean proposition query")?;
+    ensure!(
+        output.status.success(),
+        "aggregate Lean proposition query failed (status {}):\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let proposition_report = String::from_utf8(output.stdout)
+        .context("aggregate Lean proposition query emitted non-UTF-8 output")?
+        .replace("\r\n", "\n");
+    ensure!(
+        !proposition_report.trim().is_empty(),
+        "aggregate Lean proposition query emitted no theorem types"
+    );
+    let toolchain = fs::read(lean_root.join("lean-toolchain"))
+        .context("read pinned Lean toolchain for proposition policy")?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"hegemon.mechanized-assumption-propositions.v1\0");
+    for bytes in [
+        toolchain.as_slice(),
+        query.as_bytes(),
+        proposition_report.as_bytes(),
+    ] {
+        hasher.update(&(bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+fn verify_mechanized_assumption_proposition_digest(root: &Path) -> Result<()> {
+    let actual = mechanized_assumption_proposition_blake3(root)?;
+    ensure!(
+        actual == EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3,
+        "elaborated closed-track theorem propositions changed: expected {}, got {}; review the exact proposition diff before updating the independent Rust policy",
+        EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3,
+        actual
+    );
+    Ok(())
 }
 
 fn verify_formal_source_tree_digest(path: &Path) -> Result<()> {
@@ -5961,6 +6057,17 @@ mod tests {
         .into_iter()
         .collect();
         assert_eq!(digit_actual, digit_expected);
+    }
+
+    #[test]
+    fn closed_track_propositions_match_independent_rust_policy() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let actual = mechanized_assumption_proposition_blake3(&root)
+            .expect("elaborated closed-track proposition digest");
+        assert_eq!(
+            actual, EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3,
+            "closed-track theorem types changed without an explicit Rust policy update"
+        );
     }
 
     #[test]

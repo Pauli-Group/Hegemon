@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -22,6 +23,9 @@ PACKAGE = (
 )
 PACKAGE_SHA = ROOT / "audits/native-backend-128b/package.sha256"
 HELPER = ROOT / "scripts/native_backend_review_package.py"
+VERIFY_WRAPPER = ROOT / "scripts/verify_native_backend_review_package.sh"
+PACKAGE_WRAPPER = ROOT / "scripts/package_native_backend_review.sh"
+POSTURE_WRAPPER = ROOT / "scripts/check_native_backend_release_posture.sh"
 
 
 def write_archive(path: Path, members: list[tuple[tarfile.TarInfo, bytes]]) -> None:
@@ -52,12 +56,51 @@ def expect_extract_rejection(
         raise SystemExit(f"unsafe archive unexpectedly extracted: {archive}")
 
 
+def expect_generated_evidence_rejection(
+    package_root: Path, regenerated_root: Path, expected_path: str
+) -> None:
+    try:
+        review.verify_generated_evidence(package_root, regenerated_root)
+    except review.ReviewPackageError as exc:
+        if expected_path not in str(exc):
+            raise SystemExit(
+                f"generated evidence rejected for wrong reason: {exc}; "
+                f"expected path {expected_path!r}"
+            ) from exc
+    else:
+        raise SystemExit(
+            f"mutated generated evidence unexpectedly matched: {expected_path}"
+        )
+
+
+def expect_layout_rejection(package_root: Path, expected_message: str) -> None:
+    try:
+        review.verify_package_layout(package_root)
+    except review.ReviewPackageError as exc:
+        if expected_message not in str(exc):
+            raise SystemExit(
+                f"package layout rejected for wrong reason: {exc}; "
+                f"expected {expected_message!r}"
+            ) from exc
+    else:
+        raise SystemExit("invalid package layout unexpectedly accepted")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="hegemon-native-review-package-") as raw:
         temp = Path(raw)
         review.verify_archive_hash(PACKAGE, PACKAGE_SHA)
         package_root = review.safe_extract(PACKAGE, temp / "current")
         review.verify_source_snapshot(ROOT, package_root)
+        review.verify_package_layout(package_root)
+
+        cargo_config = package_root / ".cargo/config.toml"
+        cargo_config.parent.mkdir(parents=True)
+        cargo_config.write_text("[build]\nrustc-wrapper = 'false'\n", encoding="utf-8")
+        expect_layout_rejection(package_root, "package non-source file-set mismatch")
+        cargo_config.unlink()
+        cargo_config.parent.rmdir()
+        review.verify_package_layout(package_root)
 
         mutation = (
             package_root
@@ -125,9 +168,136 @@ def main() -> None:
         finally:
             review.MAX_MEMBER_COUNT = original_limit
 
+        getmembers = tarfile.TarFile.getmembers
+        tarfile.TarFile.getmembers = lambda _archive: (_ for _ in ()).throw(
+            AssertionError("streaming extraction must not call getmembers")
+        )
+        try:
+            streamed_root = review.safe_extract(bounded, temp / "streamed")
+            if not streamed_root.is_dir():
+                raise SystemExit("streamed archive did not create its package root")
+        finally:
+            tarfile.TarFile.getmembers = getmembers
+
+        original_compressed_limit = review.MAX_COMPRESSED_BYTES
+        sha256_file = review.sha256_file
+        hash_called = False
+
+        def unexpected_hash(_path: Path) -> str:
+            nonlocal hash_called
+            hash_called = True
+            raise AssertionError("oversized archives must reject before hashing")
+
+        review.MAX_COMPRESSED_BYTES = 1
+        review.sha256_file = unexpected_hash
+        try:
+            try:
+                review.verify_archive_hash(PACKAGE, PACKAGE_SHA)
+            except review.ReviewPackageError as exc:
+                if "package compressed size" not in str(exc):
+                    raise SystemExit(
+                        f"oversized package rejected for wrong reason: {exc}"
+                    ) from exc
+            else:
+                raise SystemExit("oversized package unexpectedly reached hashing")
+            if hash_called:
+                raise SystemExit("oversized package was hashed before size rejection")
+        finally:
+            review.MAX_COMPRESSED_BYTES = original_compressed_limit
+            review.sha256_file = sha256_file
+
+        packaged_generated = temp / "packaged-generated"
+        regenerated = temp / "regenerated"
+        for relative in review.GENERATED_EVIDENCE_PATHS:
+            body = f"generated:{relative}\n".encode()
+            for root in (packaged_generated, regenerated):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(body)
+        review.verify_generated_evidence(packaged_generated, regenerated)
+        matrix_relative = "structured_lattice/flat_commitment_matrix_u64_le.bin"
+        (packaged_generated / matrix_relative).write_bytes(b"forged matrix\n")
+        expect_generated_evidence_rejection(
+            packaged_generated, regenerated, matrix_relative
+        )
+        shutil.copyfile(
+            regenerated / matrix_relative, packaged_generated / matrix_relative
+        )
+        spikes_relative = "reduced_cryptanalysis_spikes.json"
+        (packaged_generated / spikes_relative).write_text(
+            '{"forged": true}\n', encoding="utf-8"
+        )
+        expect_generated_evidence_rejection(
+            packaged_generated, regenerated, spikes_relative
+        )
+
+        isolated = temp / "isolated-helper"
+        isolated.mkdir()
+        isolated_helper = isolated / HELPER.name
+        shutil.copyfile(HELPER, isolated_helper)
+        marker = isolated / "shadow-imported"
+        (isolated / "tarfile.py").write_text(
+            f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n",
+            encoding="utf-8",
+        )
+        unisolated = subprocess.run(
+            [sys.executable, str(isolated_helper), "--help"],
+            cwd=isolated,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if unisolated.returncode != 0 or not marker.is_file():
+            raise SystemExit(
+                "shadow-import control did not establish the unisolated vulnerability:\n"
+                + unisolated.stdout
+            )
+        marker.unlink()
+        isolated_run = subprocess.run(
+            [sys.executable, "-I", str(isolated_helper), "--help"],
+            cwd=isolated,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        if isolated_run.returncode != 0 or marker.exists():
+            raise SystemExit(
+                "isolated helper execution imported an untracked sibling module:\n"
+                + isolated_run.stdout
+            )
+
+        isolated_invocations = {
+            VERIFY_WRAPPER: (
+                'python3 -I "$PACKAGE_HELPER" extract',
+                'python3 -I "$PACKAGE_HELPER" verify-source',
+                'python3 -I "$PACKAGE_HELPER" verify-package-layout',
+                'python3 -I "$PACKAGE_HELPER" source-digest',
+                'python3 -I "$PACKAGE_HELPER" normalize-json-reports',
+                'python3 -I "$PACKAGE_HELPER" verify-generated-evidence',
+            ),
+            PACKAGE_WRAPPER: (
+                'python3 -I "$PACKAGE_HELPER" source-digest',
+                'python3 -I "$PACKAGE_HELPER" normalize-json-reports',
+            ),
+            POSTURE_WRAPPER: (
+                'python3 -I "$ROOT/scripts/native_backend_review_package.py" extract',
+            ),
+        }
+        for wrapper, invocations in isolated_invocations.items():
+            wrapper_text = wrapper.read_text(encoding="utf-8")
+            for invocation in invocations:
+                if invocation not in wrapper_text:
+                    raise SystemExit(
+                        f"review helper invocation is not isolated in {wrapper}: "
+                        f"missing {invocation!r}"
+                    )
+
         optimized = subprocess.run(
             [
                 sys.executable,
+                "-I",
                 str(HELPER),
                 "verify-source",
                 "--checkout",
