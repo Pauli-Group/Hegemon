@@ -26,6 +26,11 @@ const CLAIM_CLASSES: &[&str] = &[
 ];
 const CONJECTURAL_MODELS: &[&str] = &["conjectural_research", "heuristic_only"];
 const BLUEPRINT_NODE_KINDS: &[&str] = &["target_claim", "supporting_claim", "residual_risk"];
+const BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS: &[&str] = &[
+    "config/formal-security-blueprint.json",
+    "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
+    "audits/native-backend-128b/package.sha256",
+];
 const TARGET_REVIEW_STATUSES: &[&str] = &["needs_review", "blocked"];
 const STABLE_GOAL_MEASUREMENT_STATUSES: &[&str] = &["paused", "blocked", "complete"];
 const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
@@ -5472,7 +5477,7 @@ fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<St
         .implementation_paths
         .iter()
         .chain(node.evidence_paths.iter())
-        .filter(|path| path.as_str() != "config/formal-security-blueprint.json")
+        .filter(|path| !BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS.contains(&path.as_str()))
         .cloned()
         .collect::<BTreeSet<_>>();
     for relative in source_paths {
@@ -6482,6 +6487,45 @@ mod tests {
         assert!(err
             .to_string()
             .contains("target_review content_blake3 mismatch"));
+    }
+
+    #[test]
+    fn blueprint_review_digest_excludes_self_referential_package_outputs() {
+        let root = test_root("blueprint-package-cycle");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
+            "package-v1",
+        );
+        write_repo_file(
+            &root,
+            "audits/native-backend-128b/package.sha256",
+            "checksum-v1",
+        );
+        let mut blueprint = blueprint_fixture("needs_review", &[], &["support.dep"]);
+        blueprint["nodes"][1]["evidence_paths"] = json!([
+            "evidence/target.txt",
+            "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
+            "audits/native-backend-128b/package.sha256"
+        ]);
+        let node: BlueprintNode = serde_json::from_value(blueprint["nodes"][1].clone()).unwrap();
+        let before = blueprint_node_content_blake3(&root, &node).unwrap();
+
+        write_repo_file(
+            &root,
+            "audits/native-backend-128b/native-backend-128b-review-package.tar.gz",
+            "package-v2",
+        );
+        write_repo_file(
+            &root,
+            "audits/native-backend-128b/package.sha256",
+            "checksum-v2",
+        );
+        assert_eq!(before, blueprint_node_content_blake3(&root, &node).unwrap());
+
+        write_repo_file(&root, "evidence/target.txt", "changed target");
+        assert_ne!(before, blueprint_node_content_blake3(&root, &node).unwrap());
     }
 
     #[test]
