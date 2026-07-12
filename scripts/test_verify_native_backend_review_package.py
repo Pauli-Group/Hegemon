@@ -365,6 +365,51 @@ def main() -> None:
         write_archive(symlink, [(link, b"")])
         expect_extract_rejection(symlink, temp / "symlink", "unsupported package member type")
 
+        planted_link_archive = temp / "planted-link.tar.gz"
+        planted_payload = b"archive-controlled-bytes"
+        write_archive(
+            planted_link_archive,
+            [
+                regular_member(
+                    f"{review.PACKAGE_ROOT_NAME}/nested/victim.txt",
+                    planted_payload,
+                )
+            ],
+        )
+
+        symlink_destination = temp / "planted-symlink-destination"
+        symlink_package_root = symlink_destination / review.PACKAGE_ROOT_NAME
+        symlink_outside = temp / "planted-symlink-outside"
+        symlink_package_root.mkdir(parents=True)
+        symlink_outside.mkdir()
+        (symlink_package_root / "nested").symlink_to(
+            symlink_outside, target_is_directory=True
+        )
+        expect_extract_rejection(
+            planted_link_archive,
+            symlink_destination,
+            "unsafe package extraction path",
+        )
+        if (symlink_outside / "victim.txt").exists():
+            raise SystemExit("extraction followed a planted directory symlink")
+
+        hardlink_destination = temp / "planted-hardlink-destination"
+        hardlink_parent = (
+            hardlink_destination / review.PACKAGE_ROOT_NAME / "nested"
+        )
+        hardlink_parent.mkdir(parents=True)
+        hardlink_outside = temp / "planted-hardlink-outside.txt"
+        original_hardlink_bytes = b"outside-must-not-change"
+        hardlink_outside.write_bytes(original_hardlink_bytes)
+        os.link(hardlink_outside, hardlink_parent / "victim.txt")
+        expect_extract_rejection(
+            planted_link_archive,
+            hardlink_destination,
+            "unsafe package extraction target",
+        )
+        if hardlink_outside.read_bytes() != original_hardlink_bytes:
+            raise SystemExit("extraction overwrote a planted hard-link target")
+
         bounded = temp / "bounded.tar.gz"
         write_archive(
             bounded,

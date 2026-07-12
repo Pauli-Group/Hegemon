@@ -2591,37 +2591,223 @@ fn rust_caller_symbol_leaf(symbol: &str) -> &str {
         .map_or(symbol, |(_, method)| method)
 }
 
-/// Collect the names of non-test file submodules declared in a `mod.rs`
-/// source, in declaration order. Only declaration-form modules (`mod x;`)
-/// count; inline modules (`mod x { .. }`) already live in the same source
-/// text. Modules named `tests` or annotated with a non-production `cfg`
-/// attribute are excluded so test-only code cannot satisfy bindings.
-fn rust_non_test_file_submodules(sanitized: &str) -> Vec<String> {
+fn rust_module_is_exactly_test_only(
+    attrs: &[syn::Attribute],
+    source_path: &Path,
+    module_name: &str,
+) -> Result<bool> {
+    let mut test_only = false;
+    for attr in attrs {
+        if attr.path().is_ident("path") || attr.path().is_ident("cfg_attr") {
+            let attr_name = if attr.path().is_ident("path") {
+                "path"
+            } else {
+                "cfg_attr"
+            };
+            return Err(anyhow!(
+                "implementation binding module {module_name} in {} uses unsupported compiler-selected attribute {}",
+                source_path.display(),
+                attr_name
+            ));
+        }
+        if attr.path().is_ident("cfg") {
+            let is_exact_test = matches!(
+                &attr.meta,
+                syn::Meta::List(list) if list.tokens.to_string() == "test"
+            );
+            ensure!(
+                is_exact_test,
+                "implementation binding module {module_name} in {} uses unsupported production cfg; only #[cfg(test)] file modules may be excluded",
+                source_path.display()
+            );
+            test_only = true;
+        }
+    }
+    Ok(test_only)
+}
+
+/// Collect ordinary non-test file-module declarations in source order.
+#[cfg(test)]
+fn rust_non_test_file_submodules(source: &str, source_path: &Path) -> Result<Vec<String>> {
+    let parsed = syn::parse_file(source).with_context(|| {
+        format!(
+            "parse {} implementation binding module source",
+            source_path.display()
+        )
+    })?;
     let mut submodules = Vec::new();
-    let mut cursor = 0usize;
-    while let Some(mod_start) = find_rust_token(sanitized, "mod", cursor) {
-        cursor = mod_start + 3;
-        let Some((module_name, after_name)) = parse_rust_identifier_after(sanitized, mod_start + 3)
-        else {
+    for item in parsed.items {
+        let syn::Item::Mod(module) = item else {
             continue;
         };
-        // Declaration form only: the next non-identifier byte must be `;`.
-        if find_rust_body_start(sanitized, after_name).is_some() {
-            continue;
-        }
-        if module_name == "tests"
-            || preceding_rust_attrs_contain_non_production_cfg(sanitized, mod_start)
+        if module.content.is_some()
+            || rust_module_is_exactly_test_only(
+                &module.attrs,
+                source_path,
+                &module.ident.to_string(),
+            )?
         {
             continue;
         }
-        submodules.push(module_name);
+        submodules.push(module.ident.to_string());
     }
-    submodules
+    Ok(submodules)
 }
 
-/// Load every source file denoted by a Rust binding path. Module-root bindings
-/// include declared non-test siblings, and callers reuse this exact file set
-/// for semantic analysis and target-review hashing.
+fn rust_child_module_directory(source_path: &Path) -> Result<PathBuf> {
+    let parent = source_path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            anyhow!(
+                "implementation binding module path is not UTF-8: {}",
+                source_path.display()
+            )
+        })?;
+    if matches!(file_name, "lib.rs" | "main.rs" | "mod.rs") {
+        return Ok(parent.to_path_buf());
+    }
+    let stem = source_path.file_stem().ok_or_else(|| {
+        anyhow!(
+            "implementation binding module path has no file stem: {}",
+            source_path.display()
+        )
+    })?;
+    Ok(parent.join(stem))
+}
+
+fn rust_module_candidate_exists(root: &Path, relative: &Path) -> Result<bool> {
+    match fs::symlink_metadata(root.join(relative)) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "inspect implementation binding module candidate {}",
+                relative.display()
+            )
+        }),
+    }
+}
+
+fn parse_rust_binding_module_source(source: &str, source_path: &Path) -> Result<syn::File> {
+    let sanitized = sanitize_rust_source(source);
+    let mut cursor = 0usize;
+    while let Some(include_start) = find_rust_token(&sanitized, "include", cursor) {
+        let bang = skip_ascii_whitespace(&sanitized, include_start + "include".len());
+        ensure!(
+            sanitized.as_bytes().get(bang) != Some(&b'!'),
+            "implementation binding source {} uses unsupported include! source injection",
+            source_path.display()
+        );
+        cursor = include_start + "include".len();
+    }
+    syn::parse_file(source).with_context(|| {
+        format!(
+            "parse {} implementation binding module source",
+            source_path.display()
+        )
+    })
+}
+
+fn collect_rust_external_module_sources(
+    root: &Path,
+    source_path: &Path,
+    items: &[syn::Item],
+    module_dir: &Path,
+    seen: &mut BTreeSet<PathBuf>,
+    expanded_bytes: &mut u64,
+    sources: &mut Vec<(String, String)>,
+) -> Result<()> {
+    for item in items {
+        let syn::Item::Mod(module) = item else {
+            continue;
+        };
+        let module_name = module.ident.to_string();
+        if rust_module_is_exactly_test_only(&module.attrs, source_path, &module_name)? {
+            continue;
+        }
+        if let Some((_, inline_items)) = &module.content {
+            collect_rust_external_module_sources(
+                root,
+                source_path,
+                inline_items,
+                &module_dir.join(&module_name),
+                seen,
+                expanded_bytes,
+                sources,
+            )?;
+            continue;
+        }
+
+        let flat = module_dir.join(format!("{module_name}.rs"));
+        let directory = module_dir.join(&module_name).join("mod.rs");
+        let mut candidates = Vec::new();
+        for candidate in [flat, directory] {
+            if rust_module_candidate_exists(root, &candidate)? {
+                candidates.push(candidate);
+            }
+        }
+        ensure!(
+            candidates.len() == 1,
+            "implementation binding module {module_name} declared in {} must resolve to exactly one ordinary source file; found {}",
+            source_path.display(),
+            candidates.len()
+        );
+        let relative = candidates.pop().expect("one candidate established");
+        ensure!(
+            seen.insert(relative.clone()),
+            "implementation binding module source is selected more than once: {}",
+            relative.display()
+        );
+        ensure!(
+            sources.len() < 4096,
+            "implementation binding module expansion exceeds file bound 4096"
+        );
+        let relative_raw = relative.to_str().ok_or_else(|| {
+            anyhow!(
+                "implementation binding module path is not UTF-8: {}",
+                relative.display()
+            )
+        })?;
+        let bytes = read_repo_relative_regular_file_bounded(
+            root,
+            relative_raw,
+            "implementation binding module member",
+            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+        )?;
+        let child_source = String::from_utf8(bytes).with_context(|| {
+            format!("decode {relative_raw} implementation binding module member as UTF-8")
+        })?;
+        *expanded_bytes = expanded_bytes
+            .checked_add(child_source.len() as u64)
+            .ok_or_else(|| anyhow!("implementation binding expanded source size overflow"))?;
+        ensure!(
+            *expanded_bytes <= MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
+            "implementation binding expanded source exceeds byte bound {} at {}",
+            MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
+            relative_raw
+        );
+        let parsed = parse_rust_binding_module_source(&child_source, &relative)?;
+        let child_module_dir = rust_child_module_directory(&relative)?;
+        sources.push((relative_raw.to_owned(), child_source));
+        collect_rust_external_module_sources(
+            root,
+            &relative,
+            &parsed.items,
+            &child_module_dir,
+            seen,
+            expanded_bytes,
+            sources,
+        )?;
+    }
+    Ok(())
+}
+
+/// Load every compiler-selected ordinary source file denoted by a Rust binding
+/// path. Compiler-selection attributes are rejected because this checker does
+/// not evaluate Cargo/rustc cfg state. Callers reuse this exact file set for
+/// semantic analysis and target-review hashing.
 fn rust_binding_module_sources(root: &Path, raw_path: &str) -> Result<Vec<(String, String)>> {
     let source_bytes = read_repo_relative_regular_file_bounded(
         root,
@@ -2631,50 +2817,21 @@ fn rust_binding_module_sources(root: &Path, raw_path: &str) -> Result<Vec<(Strin
     )?;
     let source = String::from_utf8(source_bytes)
         .with_context(|| format!("decode {raw_path} implementation binding source as UTF-8"))?;
+    let source_path = Path::new(raw_path);
+    let parsed = parse_rust_binding_module_source(&source, source_path)?;
+    let module_dir = rust_child_module_directory(source_path)?;
     let mut expanded_bytes = source.len() as u64;
+    let mut seen = BTreeSet::from([source_path.to_path_buf()]);
     let mut sources = vec![(raw_path.to_owned(), source)];
-    let is_module_root = Path::new(raw_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("mod.rs");
-    if !is_module_root {
-        return Ok(sources);
-    }
-    let Some(relative_dir) = Path::new(raw_path).parent() else {
-        return Ok(sources);
-    };
-    let sanitized_root = sanitize_rust_source(&sources[0].1);
-    for submodule in rust_non_test_file_submodules(&sanitized_root) {
-        let sibling_relative = relative_dir.join(format!("{submodule}.rs"));
-        if !root.join(&sibling_relative).exists() {
-            continue;
-        }
-        let sibling_raw = sibling_relative.to_str().ok_or_else(|| {
-            anyhow!(
-                "implementation binding sibling path is not UTF-8: {}",
-                sibling_relative.display()
-            )
-        })?;
-        let sibling_bytes = read_repo_relative_regular_file_bounded(
-            root,
-            sibling_raw,
-            "implementation binding module member",
-            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
-        )?;
-        let sibling_source = String::from_utf8(sibling_bytes).with_context(|| {
-            format!("decode {sibling_raw} implementation binding module member as UTF-8")
-        })?;
-        expanded_bytes = expanded_bytes
-            .checked_add(sibling_source.len() as u64)
-            .ok_or_else(|| anyhow!("implementation binding expanded source size overflow"))?;
-        ensure!(
-            expanded_bytes <= MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
-            "implementation binding expanded source exceeds byte bound {} at {}",
-            MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
-            sibling_raw
-        );
-        sources.push((sibling_raw.to_owned(), sibling_source));
-    }
+    collect_rust_external_module_sources(
+        root,
+        source_path,
+        &parsed.items,
+        &module_dir,
+        &mut seen,
+        &mut expanded_bytes,
+        &mut sources,
+    )?;
     Ok(sources)
 }
 
@@ -3243,8 +3400,31 @@ fn rust_body_has_local_shadow_of_callee(source: &str, callee: &str) -> bool {
     rust_body_has_let_shadow(source, callee)
         || rust_body_has_for_shadow(source, callee)
         || rust_body_has_nested_fn_shadow(source, callee)
+        || rust_body_has_callable_value_item_shadow(source, callee)
         || rust_body_has_use_shadow(source, callee)
         || rust_body_has_closure_parameter_shadow(source, callee)
+}
+
+fn rust_body_has_callable_value_item_shadow(source: &str, callee: &str) -> bool {
+    for keyword in ["const", "static", "struct"] {
+        let mut cursor = 0usize;
+        while let Some(item_start) = find_rust_token(source, keyword, cursor) {
+            let mut name_start = item_start + keyword.len();
+            if keyword == "static" {
+                let after_space = skip_ascii_whitespace(source, name_start);
+                if let Some(after_mut) = rust_token_at(source, "mut", after_space) {
+                    name_start = after_mut;
+                }
+            }
+            if parse_rust_identifier_after(source, name_start)
+                .is_some_and(|(name, _)| name == callee)
+            {
+                return true;
+            }
+            cursor = item_start + keyword.len();
+        }
+    }
+    false
 }
 
 fn rust_body_has_let_shadow(source: &str, callee: &str) -> bool {
@@ -3485,7 +3665,7 @@ fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut cursor = 0usize;
     while let Some(mod_start) = find_rust_token(source, "mod", cursor) {
-        let Some((module_name, after_name)) = parse_rust_identifier_after(source, mod_start + 3)
+        let Some((_module_name, after_name)) = parse_rust_identifier_after(source, mod_start + 3)
         else {
             cursor = mod_start + 3;
             continue;
@@ -3498,9 +3678,7 @@ fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
             cursor = mod_start + 3;
             continue;
         };
-        if module_name == "tests"
-            && preceding_rust_attrs_contain_non_production_cfg(source, mod_start)
-        {
+        if preceding_rust_attrs_contain_non_production_cfg(source, mod_start) {
             spans.push((mod_start, body_end + 1));
         }
         cursor = body_end + 1;
@@ -6411,7 +6589,15 @@ fn terminal_return_expression_is_submit_action_rejection(
     debug_assert_eq!(source.len(), raw_source.len());
     let expression_start = skip_ascii_whitespace(source, start);
     let expression_end = skip_ascii_whitespace_back(source, end);
-    let Some(after_json) = rust_token_at(source, "json", expression_start) else {
+    let Some(after_serde_json) = rust_token_at(source, "serde_json", expression_start) else {
+        return false;
+    };
+    let first_colon = skip_ascii_whitespace(source, after_serde_json);
+    if source.as_bytes().get(first_colon..first_colon + 2) != Some(b"::") {
+        return false;
+    }
+    let json_start = skip_ascii_whitespace(source, first_colon + 2);
+    let Some(after_json) = rust_token_at(source, "json", json_start) else {
         return false;
     };
     let bang = skip_ascii_whitespace(source, after_json);
@@ -8299,7 +8485,7 @@ mod tests {
             "src/native/mod.rs",
             "mod admission;\n\
              #[cfg(test)]\n\
-             mod tests;\n",
+             mod test_support;\n",
         );
         write_repo_file(
             &root,
@@ -8310,7 +8496,7 @@ mod tests {
         // must not satisfy a module-root binding.
         write_repo_file(
             &root,
-            "src/native/tests.rs",
+            "src/native/test_support.rs",
             "fn import_mined_block() { verified_helper(); }\n",
         );
         let claims_path = root.join("claims.json");
@@ -8334,12 +8520,118 @@ mod tests {
 
     #[test]
     fn rust_non_test_file_submodules_skips_tests_and_inline_modules() {
-        let sanitized = sanitize_rust_source(
-            "mod admission;\npub(crate) mod util;\nmod inline_module { fn f() {} }\n#[cfg(test)]\nmod tests;\n",
-        );
+        let source = "mod admission;\npub(crate) mod util;\nmod inline_module { fn f() {} }\n#[cfg(test)]\nmod tests;\n";
         assert_eq!(
-            rust_non_test_file_submodules(&sanitized),
+            rust_non_test_file_submodules(source, Path::new("src/native/mod.rs")).unwrap(),
             vec!["admission".to_owned(), "util".to_owned()]
+        );
+    }
+
+    #[test]
+    fn module_root_binding_rejects_compiler_selected_module_attributes() {
+        for (name, declaration, expected) in [
+            (
+                "path-selected-module",
+                "#[path = \"adversarial.rs\"]\nmod admission;",
+                "unsupported compiler-selected attribute path",
+            ),
+            (
+                "production-cfg-module",
+                "#[cfg(not(test))]\nmod admission;",
+                "unsupported production cfg",
+            ),
+            (
+                "cfg-attr-selected-module",
+                "#[cfg_attr(not(test), path = \"adversarial.rs\")]\nmod admission;",
+                "unsupported compiler-selected attribute cfg_attr",
+            ),
+            (
+                "include-selected-source",
+                "include!(\"adversarial.rs\");\nmod admission;",
+                "unsupported include! source injection",
+            ),
+        ] {
+            let root = test_root(name);
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            let malicious_source =
+                format!("{declaration}\nfn import_mined_block() {{ verified_helper(); }}\n");
+            write_repo_file(
+                &root,
+                "src/native/mod.rs",
+                "mod admission;\nfn import_mined_block() { verified_helper(); }\n",
+            );
+            write_repo_file(
+                &root,
+                "src/native/admission.rs",
+                "fn verified_helper() {}\n",
+            );
+            write_repo_file(
+                &root,
+                "src/native/adversarial.rs",
+                "fn unrelated_runtime_helper() {}\n",
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_binding_at(
+                    "src/native/mod.rs",
+                    "verified_helper",
+                    &["import_mined_block"],
+                ),
+            );
+            write_repo_file(&root, "src/native/mod.rs", &malicious_source);
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("compiler-selected module source must fail closed");
+            assert!(err.to_string().contains(expected), "{name}: {err:#}");
+        }
+    }
+
+    #[test]
+    fn module_root_binding_resolves_directory_module_and_hashes_it() {
+        let root = test_root("directory-module-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod admission;\nfn import_mined_block() { verified_helper(); }\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/admission/mod.rs",
+            "fn verified_helper() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["import_mined_block"],
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("directory-form module must be analyzed");
+        assert_eq!(report.implementation_bindings, 1);
+
+        write_repo_file(
+            &root,
+            "src/native/admission/mod.rs",
+            "fn verified_helper() { let _changed = true; }\n",
+        );
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("directory-form module changes must stale target review");
+        assert!(
+            err.to_string()
+                .contains("target_review content_blake3 mismatch"),
+            "{err:#}"
         );
     }
 
@@ -8852,6 +9144,91 @@ mod tests {
 
         let err = check_blueprint_file(&blueprint_path, &claims_path)
             .expect_err("nested fn shadow must not satisfy ordered binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_callable_const_and_static_shadows_for_bound_callee() {
+        for (name, declaration) in [
+            (
+                "local-const-shadow-bound-callee",
+                "const verified_helper: fn() -> Result<(), ()> = bypass;",
+            ),
+            (
+                "local-static-shadow-bound-callee",
+                "static verified_helper: fn() -> Result<(), ()> = bypass;",
+            ),
+        ] {
+            let root = test_root(name);
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Err(()) }}\n\
+                     fn bypass() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn import_mined_block() -> Result<(), ()> {{\n\
+                         {declaration}\n\
+                         verified_helper()?;\n\
+                         persist_block();\n\
+                         Ok(())\n\
+                     }}\n\
+                     fn persist_block() {{}}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_dominating_ordered_binding(
+                    "verified_helper",
+                    &["import_mined_block"],
+                    "import_mined_block",
+                    &["persist_block"],
+                    Some("must_propagate_result"),
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("callable value-item shadow must not satisfy binding");
+            assert!(
+                err.to_string()
+                    .contains("locally shadows bound callee verified_helper"),
+                "{name}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_rejects_tuple_struct_constructor_shadow_for_bound_callee() {
+        let root = test_root("local-tuple-struct-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 struct verified_helper();\n\
+                 let _constructed = verified_helper();\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("tuple-struct constructor shadow must not satisfy binding");
         assert!(
             err.to_string()
                 .contains("locally shadows bound callee verified_helper"),
@@ -9800,7 +10177,7 @@ mod tests {
                  let action = match verified_helper() {\n\
                      Ok(action) => action,\n\
                      Err(err) => {\n\
-                         return json!({\n\
+                         return serde_json::json!({\n\
                              \"success\": false,\n\
                              \"tx_hash\": null,\n\
                              \"error\": err.to_string(),\n\
@@ -9832,6 +10209,52 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_bare_submit_action_json_macro() {
+        let root = test_root("bare-submit-action-json-macro");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn submit_action() {\n\
+                 let action = match verified_helper() {\n\
+                     Ok(action) => action,\n\
+                     Err(err) => {\n\
+                         macro_rules! json { ($($tt:tt)*) => { forged_success() }; }\n\
+                         return json!({\"success\": false, \"tx_hash\": null, \"error\": err.to_string()});\n\
+                     }\n\
+                 };\n\
+                 mutate(action);\n\
+             }\n\
+             fn forged_success() {}\n\
+             fn mutate<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["submit_action"],
+                "submit_action",
+                &["mutate"],
+                Some("must_return_submit_action_rejection"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("bare or locally shadowed json macro must fail closed");
+        assert!(
+            err.to_string().contains(
+                "does not call verified_helper with an exact submit-action rejection response"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn blueprint_rejects_success_shaped_submit_action_rejection_response() {
         for (name, fields) in [
             (
@@ -9858,7 +10281,7 @@ mod tests {
                      fn submit_action() {{\n\
                          let action = match verified_helper() {{\n\
                              Ok(action) => action,\n\
-                             Err(err) => {{ return json!({{{fields}}}); }}\n\
+                             Err(err) => {{ return serde_json::json!({{{fields}}}); }}\n\
                          }};\n\
                          mutate(action);\n\
                      }}\n\
