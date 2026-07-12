@@ -1600,10 +1600,8 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
     let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
     let note = &args.reward_bundle.miner_note.encrypted_note;
     let (ciphertext_bytes, ciphertext_metadata) = coinbase_ciphertext_metadata(note);
-    let commitment_matches = coinbase_note_commitment_matches(
-        &action.commitments[0],
-        &args.reward_bundle.miner_note,
-    );
+    let commitment_matches =
+        coinbase_note_commitment_matches(&action.commitments[0], &args.reward_bundle.miner_note);
     let input = NativeCoinbaseActionPayloadAdmissionInput {
         amount_nonzero: args.reward_bundle.miner_note.amount != 0,
         commitment_matches,
