@@ -13,7 +13,7 @@ An authenticated peer can currently supply many public ports for one IP address.
 - [x] (2026-07-12 22:06Z) Implemented learned-address admission, endpoint/shared-IP retry state, post-session cooldown, and desktop compatibility classification.
 - [x] (2026-07-12 22:14Z) Updated `DESIGN.md`, `METHODS.md`, the libp2p evaluation, and formal review ledgers with the resulting contract.
 - [x] (2026-07-12 23:10Z) Passed network, desktop, UI-guard, format, formal-ledger, blueprint, and the complete 14-stage formal-core validation after the final code correction.
-- [ ] Publish a draft pull request and drive every required check green without merging.
+- [x] (2026-07-12 23:17Z) Published draft pull request #200 without merging; required CI completion is tracked on the pull request.
 
 ## Surprises & Discoveries
 
@@ -27,6 +27,8 @@ An authenticated peer can currently supply many public ports for one IP address.
   Evidence: The shared `NewPeer` admission path previously cleared dial retry state for inbound and outbound sessions alike; retry clearing is now outbound-only.
 - Observation: Socket sorting during startup would let low attacker-chosen ports displace more recently useful endpoints under the new per-IP cap.
   Evidence: `PeerStore::addresses` now exposes the same success-or-learned recency rank used by store retention, with a socket-address tie break only for equal timestamps.
+- Observation: The first PR run stopped at the strict Clippy gate because two explicit returns ended the final coordination match arm.
+  Evidence: `rust-lints` reported `clippy::needless_return` at the two `PunchResponse` branches; replacing them with normal arm completion preserved behavior and made `./scripts/check-core.sh lint` pass locally.
 
 ## Decision Log
 

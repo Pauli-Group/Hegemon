@@ -1522,10 +1522,9 @@ impl P2PService {
                         Ok(admitted) if admitted.contains(&addr) => {
                             self.try_spawn_oneoff_connect(addr, cmd_tx);
                         }
-                        Ok(_) => return,
+                        Ok(_) => (),
                         Err(err) => {
                             warn!(?err, "failed to persist punch-response address");
-                            return;
                         }
                     }
                 } else if self.relay_config.allow_relay {
