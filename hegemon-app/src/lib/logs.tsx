@@ -12,8 +12,12 @@ export const logCategoryLabels: Record<LogCategory, string> = {
   other: 'Other'
 };
 
+const expectedPeerDisconnect =
+  /(?:failed to send to|error receiving from|peer disconnected while (?:sending to|receiving from)).*(?:broken pipe|connection reset|connection aborted|unexpected (?:eof|end of file)|not connected)/i;
+
 export const isRoutineNetworkRetryLog = (line: string) =>
-  /failed to connect to peer|handshake failed|rate-limited peer address announcement/i.test(line);
+  /failed to connect to peer|handshake failed|rate-limited peer address announcement/i.test(line) ||
+  expectedPeerDisconnect.test(line);
 
 export const classifyLogLevel = (line: string): LogLevel => {
   if (/\bWARN\b|\bWarning\b/i.test(line)) {

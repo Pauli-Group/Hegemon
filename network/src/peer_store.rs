@@ -55,7 +55,13 @@ impl PeerStore {
     }
 
     pub fn addresses(&self) -> Vec<SocketAddr> {
-        self.entries.keys().copied().collect()
+        let mut records: Vec<_> = self.entries.values().collect();
+        records.sort_by(|a, b| {
+            peer_record_rank(b)
+                .cmp(&peer_record_rank(a))
+                .then_with(|| a.addr.cmp(&b.addr))
+        });
+        records.into_iter().map(|record| record.addr).collect()
     }
 
     pub fn load(&mut self) -> Result<(), NetworkError> {
@@ -212,9 +218,9 @@ impl PeerStore {
             .collect();
 
         entries.sort_by(|a, b| {
-            let a_time = a.last_connected.unwrap_or(a.last_updated);
-            let b_time = b.last_connected.unwrap_or(b.last_updated);
-            b_time.cmp(&a_time)
+            peer_record_rank(b)
+                .cmp(&peer_record_rank(a))
+                .then_with(|| a.addr.cmp(&b.addr))
         });
 
         Ok(entries
@@ -245,9 +251,9 @@ impl PeerStore {
 
         let mut records: Vec<_> = self.entries.values().cloned().collect();
         records.sort_by(|a, b| {
-            let a_time = a.last_connected.unwrap_or(a.last_updated);
-            let b_time = b.last_connected.unwrap_or(b.last_updated);
-            b_time.cmp(&a_time)
+            peer_record_rank(b)
+                .cmp(&peer_record_rank(a))
+                .then_with(|| a.addr.cmp(&b.addr))
         });
 
         records.truncate(self.config.max_entries);
@@ -274,6 +280,10 @@ impl PeerStore {
     }
 }
 
+fn peer_record_rank(record: &PeerRecord) -> SystemTime {
+    record.last_connected.unwrap_or(record.last_updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +294,46 @@ mod tests {
         let mut path = std::env::temp_dir();
         path.push(format!("{}_{}", name, uuid()));
         path
+    }
+
+    #[test]
+    fn addresses_are_ordered_by_success_or_learned_recency() {
+        let mut store = PeerStore::new(PeerStoreConfig {
+            path: temp_path("ordered-addresses"),
+            ttl: Duration::from_secs(3600),
+            max_entries: 8,
+        });
+        let oldest: SocketAddr = "8.8.8.8:30001".parse().unwrap();
+        let connected: SocketAddr = "8.8.8.8:30002".parse().unwrap();
+        let newest: SocketAddr = "8.8.8.8:30003".parse().unwrap();
+        let base = SystemTime::UNIX_EPOCH;
+
+        store.entries.insert(
+            oldest,
+            PeerRecord {
+                addr: oldest,
+                last_updated: base + Duration::from_secs(1),
+                last_connected: None,
+            },
+        );
+        store.entries.insert(
+            connected,
+            PeerRecord {
+                addr: connected,
+                last_updated: base + Duration::from_secs(3),
+                last_connected: Some(base + Duration::from_secs(2)),
+            },
+        );
+        store.entries.insert(
+            newest,
+            PeerRecord {
+                addr: newest,
+                last_updated: base + Duration::from_secs(4),
+                last_connected: None,
+            },
+        );
+
+        assert_eq!(store.addresses(), vec![newest, connected, oldest]);
     }
 
     fn uuid() -> String {

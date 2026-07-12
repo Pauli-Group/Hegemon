@@ -252,7 +252,7 @@ enum P2PCommand {
         session_id: PeerSessionId,
         inbound: bool,
     },
-    DialFinished {
+    DialDisconnected {
         addr: SocketAddr,
     },
     DialFailed {
@@ -271,6 +271,33 @@ enum PeerRunOutcome {
 struct DialRetryState {
     failures: u32,
     retry_after: Instant,
+}
+
+fn next_dial_retry_state(previous: Option<&DialRetryState>, now: Instant) -> DialRetryState {
+    let failures = previous.map_or(1, |state| state.failures.saturating_add(1));
+    let exponent = failures.saturating_sub(1).min(8);
+    let delay = OPPORTUNISTIC_RETRY_BASE
+        .saturating_mul(1u32 << exponent)
+        .min(OPPORTUNISTIC_RETRY_MAX);
+    DialRetryState {
+        failures,
+        retry_after: now + delay,
+    }
+}
+
+fn is_expected_peer_disconnect(error: &NetworkError) -> bool {
+    matches!(
+        error,
+        NetworkError::Io(io_error)
+            if matches!(
+                io_error.kind(),
+                std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::UnexpectedEof
+                    | std::io::ErrorKind::NotConnected
+            )
+    )
 }
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -295,6 +322,7 @@ const DISCOVERY_QUERY_BATCH: usize = 8;
 const RECENT_RECONNECT_LIMIT: usize = 16;
 const SEEN_GOSSIP_LIMIT: usize = 4096;
 const MAX_LEARNED_ADDRESSES: usize = 1024;
+const MAX_LEARNED_ADDRESSES_PER_IP: usize = 4;
 const P2P_COMMAND_CHANNEL_CAPACITY: usize = 4096;
 const PROTOCOL_CHANNEL_CAPACITY: usize = 1024;
 const PROOF_PROTOCOL_QUEUE_FRAME_SLOTS: usize = 16;
@@ -374,6 +402,7 @@ pub struct P2PService {
     persistent_dial_addresses: HashSet<SocketAddr>,
     inflight_dial_addresses: HashSet<SocketAddr>,
     dial_retry: HashMap<SocketAddr, DialRetryState>,
+    dial_retry_by_ip: HashMap<IpAddr, DialRetryState>,
     dial_candidate_cursor: usize,
     discovery_cursor: usize,
     peer_count_observer: Option<Arc<AtomicUsize>>,
@@ -416,6 +445,7 @@ impl P2PService {
             persistent_dial_addresses: HashSet::new(),
             inflight_dial_addresses: HashSet::new(),
             dial_retry: HashMap::new(),
+            dial_retry_by_ip: HashMap::new(),
             dial_candidate_cursor: 0,
             discovery_cursor: 0,
             peer_count_observer: None,
@@ -485,16 +515,15 @@ impl P2PService {
         self.nat_result = Some(nat_result);
 
         self.peer_store.load()?;
-        self.learned_addresses
-            .extend(self.peer_store.addresses().into_iter());
-        if self.learned_addresses.len() > MAX_LEARNED_ADDRESSES {
-            self.learned_addresses = self
-                .learned_addresses
+        let loaded_addresses = self.peer_store.addresses();
+        let admitted_addresses = self.admit_learned_addresses(loaded_addresses.iter().copied());
+        let admitted_set: HashSet<_> = admitted_addresses.iter().copied().collect();
+        self.peer_store.remove_addresses(
+            loaded_addresses
                 .iter()
-                .take(MAX_LEARNED_ADDRESSES)
                 .copied()
-                .collect();
-        }
+                .filter(|addr| !admitted_set.contains(addr)),
+        )?;
         self.peer_manager
             .record_static_addresses(self.learned_addresses.iter().copied());
         let local_addrs: HashSet<_> = self.advertised_addrs.iter().copied().collect();
@@ -607,8 +636,7 @@ impl P2PService {
                             );
                             match admission {
                                 AddPeerResult::Accepted => {
-                                    self.inflight_dial_addresses.remove(&addr);
-                                    self.dial_retry.remove(&addr);
+                                    self.record_peer_admission(addr, inbound);
                                     let _ = admit.send(true);
                                 }
                                 AddPeerResult::Duplicate(active_session) => {
@@ -683,8 +711,8 @@ impl P2PService {
                             }
                             self.publish_peer_state();
                         }
-                        P2PCommand::DialFinished { addr } => {
-                            self.inflight_dial_addresses.remove(&addr);
+                        P2PCommand::DialDisconnected { addr } => {
+                            self.record_dial_failure(addr);
                         }
                         P2PCommand::DialFailed { addr } => {
                             self.record_dial_failure(addr);
@@ -731,7 +759,7 @@ impl P2PService {
                                     if let Some(addrs) =
                                         self.accept_peer_addresses(peer_id, addrs, "legacy addr-exchange")
                                     {
-                                        self.remember_peer_addresses(peer_id, addrs)?;
+                                        let _ = self.remember_peer_addresses(peer_id, addrs)?;
                                     }
                                 }
                                 WireMessage::Coordinate(msg) => {
@@ -954,7 +982,11 @@ impl P2PService {
                     match outbound {
                         Some(msg) => {
                             if let Err(e) = connection.send(msg.msg).await {
-                                error!("failed to send to {}: {}", addr, e);
+                                if is_expected_peer_disconnect(&e) {
+                                    warn!("peer disconnected while sending to {}: {}", addr, e);
+                                } else {
+                                    error!("failed to send to {}: {}", addr, e);
+                                }
                                 break;
                             }
                         }
@@ -986,7 +1018,11 @@ impl P2PService {
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            error!("error receiving from {}: {}", addr, e);
+                            if is_expected_peer_disconnect(&e) {
+                                warn!("peer disconnected while receiving from {}: {}", addr, e);
+                            } else {
+                                error!("error receiving from {}: {}", addr, e);
+                            }
                             break;
                         }
                     }
@@ -1051,9 +1087,17 @@ impl P2PService {
             return Ok(());
         }
 
-        if let GossipMessage::Addresses(addrs) = &msg {
-            self.remember_peer_addresses(origin, addrs.clone())?;
-        }
+        let msg = match msg {
+            GossipMessage::Addresses(addrs) => {
+                let admitted = self.remember_peer_addresses(origin, addrs)?;
+                if admitted.is_empty() {
+                    return Ok(());
+                }
+                GossipMessage::Addresses(admitted)
+            }
+            msg => msg,
+        };
+
         self.publish_gossip_locally(msg.clone());
         self.peer_manager
             .broadcast_except(Some(&origin), WireMessage::Gossip(msg))
@@ -1158,6 +1202,11 @@ impl P2PService {
                     .get(addr)
                     .is_none_or(|state| state.retry_after <= now)
             })
+            .filter(|addr| {
+                self.dial_retry_by_ip
+                    .get(&addr.ip())
+                    .is_none_or(|state| state.retry_after <= now)
+            })
             .collect();
         candidates.sort_unstable();
         if candidates.is_empty() {
@@ -1190,21 +1239,30 @@ impl P2PService {
         self.inflight_dial_addresses.remove(&addr);
         self.dial_retry
             .retain(|candidate, _| self.learned_addresses.contains(candidate));
-        let failures = self
-            .dial_retry
-            .get(&addr)
-            .map_or(1, |state| state.failures.saturating_add(1));
-        let exponent = failures.saturating_sub(1).min(8);
-        let delay = OPPORTUNISTIC_RETRY_BASE
-            .saturating_mul(1u32 << exponent)
-            .min(OPPORTUNISTIC_RETRY_MAX);
-        self.dial_retry.insert(
-            addr,
-            DialRetryState {
-                failures,
-                retry_after: Instant::now() + delay,
-            },
-        );
+        let learned_ips: HashSet<_> = self
+            .learned_addresses
+            .iter()
+            .map(|candidate| candidate.ip())
+            .collect();
+        self.dial_retry_by_ip
+            .retain(|candidate, _| learned_ips.contains(candidate));
+        let now = Instant::now();
+        let endpoint_retry = next_dial_retry_state(self.dial_retry.get(&addr), now);
+        let ip_retry = next_dial_retry_state(self.dial_retry_by_ip.get(&addr.ip()), now);
+        self.dial_retry.insert(addr, endpoint_retry);
+        self.dial_retry_by_ip.insert(addr.ip(), ip_retry);
+    }
+
+    fn record_dial_success(&mut self, addr: SocketAddr) {
+        self.inflight_dial_addresses.remove(&addr);
+        self.dial_retry.remove(&addr);
+        self.dial_retry_by_ip.remove(&addr.ip());
+    }
+
+    fn record_peer_admission(&mut self, addr: SocketAddr, inbound: bool) {
+        if !inbound {
+            self.record_dial_success(addr);
+        }
     }
 
     fn available_oneoff_dial_slots(&self) -> usize {
@@ -1237,6 +1295,10 @@ impl P2PService {
             || self
                 .dial_retry
                 .get(&addr)
+                .is_some_and(|state| state.retry_after > Instant::now())
+            || self
+                .dial_retry_by_ip
+                .get(&addr.ip())
                 .is_some_and(|state| state.retry_after > Instant::now())
         {
             return false;
@@ -1311,10 +1373,15 @@ impl P2PService {
         &mut self,
         peer_id: PeerId,
         addrs: Vec<SocketAddr>,
-    ) -> Result<(), NetworkError> {
+    ) -> Result<Vec<SocketAddr>, NetworkError> {
+        let admitted = self.admit_learned_addresses(addrs);
+        if admitted.is_empty() {
+            return Ok(admitted);
+        }
         self.peer_manager
-            .record_addresses(peer_id, addrs.iter().copied());
-        self.persist_learned_addresses(addrs)
+            .record_addresses(peer_id, admitted.iter().copied());
+        self.peer_store.record_learned(admitted.iter().copied())?;
+        Ok(admitted)
     }
 
     async fn handle_coordination(
@@ -1346,11 +1413,15 @@ impl P2PService {
                     .into_iter()
                     .map(|addr| addr.to_socket_addr())
                     .collect();
-                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "coordinate addr")
-                    && self.remember_peer_addresses(sender, addrs.clone()).is_ok()
-                {
-                    self.broadcast_addresses(sender, addrs).await;
-                    self.dial_learned_candidates(cmd_tx.clone());
+                if let Some(addrs) = self.accept_peer_addresses(sender, addrs, "coordinate addr") {
+                    match self.remember_peer_addresses(sender, addrs) {
+                        Ok(admitted) if !admitted.is_empty() => {
+                            self.broadcast_addresses(sender, admitted).await;
+                            self.dial_learned_candidates(cmd_tx.clone());
+                        }
+                        Ok(_) => {}
+                        Err(err) => warn!(?err, "failed to persist coordinate addresses"),
+                    }
                 }
             }
             CoordinationMessage::RelayRegistration { reachable } => {
@@ -1374,11 +1445,12 @@ impl P2PService {
                         .collect(),
                 );
                 if let Some(addrs) = self.accept_relay_registration(sender, addrs) {
-                    match self.remember_peer_addresses(sender, addrs.clone()) {
-                        Ok(()) => {
-                            self.broadcast_addresses(sender, addrs).await;
+                    match self.remember_peer_addresses(sender, addrs) {
+                        Ok(admitted) if !admitted.is_empty() => {
+                            self.broadcast_addresses(sender, admitted).await;
                             self.dial_learned_candidates(cmd_tx.clone());
                         }
+                        Ok(_) => {}
                         Err(err) => warn!(?err, "failed to persist relay registration addresses"),
                     }
                 }
@@ -1400,10 +1472,16 @@ impl P2PService {
                     let Some(addr) = addrs.first().copied() else {
                         return;
                     };
-                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
-                        warn!(?err, "failed to persist punch-request address");
+                    match self.remember_peer_addresses(sender, addrs) {
+                        Ok(admitted) if admitted.contains(&addr) => {
+                            self.try_spawn_oneoff_connect(addr, cmd_tx.clone());
+                        }
+                        Ok(_) => return,
+                        Err(err) => {
+                            warn!(?err, "failed to persist punch-request address");
+                            return;
+                        }
                     }
-                    self.try_spawn_oneoff_connect(addr, cmd_tx.clone());
                     let response = CoordinationMessage::PunchResponse {
                         target: sender,
                         responder_addr: CompactAddress::from(self.addr),
@@ -1440,10 +1518,16 @@ impl P2PService {
                     let Some(addr) = addrs.first().copied() else {
                         return;
                     };
-                    if let Err(err) = self.remember_peer_addresses(sender, addrs) {
-                        warn!(?err, "failed to persist punch-response address");
+                    match self.remember_peer_addresses(sender, addrs) {
+                        Ok(admitted) if admitted.contains(&addr) => {
+                            self.try_spawn_oneoff_connect(addr, cmd_tx);
+                        }
+                        Ok(_) => return,
+                        Err(err) => {
+                            warn!(?err, "failed to persist punch-response address");
+                            return;
+                        }
                     }
-                    self.try_spawn_oneoff_connect(addr, cmd_tx);
                 } else if self.relay_config.allow_relay {
                     self.peer_manager
                         .send_to(
@@ -1720,34 +1804,20 @@ impl P2PService {
         Ok(targets)
     }
 
-    fn persist_learned_addresses(
-        &mut self,
-        addrs: impl IntoIterator<Item = SocketAddr>,
-    ) -> Result<(), NetworkError> {
-        let local: HashSet<_> = self.advertised_addrs.iter().copied().collect();
-        let filtered: Vec<_> = addrs
-            .into_iter()
-            .filter(|addr| !local.contains(addr))
-            .filter(|addr| is_dialable_addr(*addr))
-            .collect();
-
-        if filtered.is_empty() {
-            return Ok(());
-        }
-
-        let admitted = self.admit_learned_addresses(filtered);
-        if admitted.is_empty() {
-            return Ok(());
-        }
-        self.peer_store.record_learned(admitted)
-    }
-
     fn admit_learned_addresses(
         &mut self,
         addrs: impl IntoIterator<Item = SocketAddr>,
     ) -> Vec<SocketAddr> {
+        let local: HashSet<_> = self.advertised_addrs.iter().copied().collect();
+        let mut per_ip_counts = HashMap::<IpAddr, usize>::new();
+        for addr in &self.learned_addresses {
+            *per_ip_counts.entry(addr.ip()).or_default() += 1;
+        }
         let mut admitted = Vec::new();
         for addr in addrs {
+            if local.contains(&addr) || !is_dialable_addr(addr) {
+                continue;
+            }
             if self.learned_addresses.contains(&addr) {
                 admitted.push(addr);
                 continue;
@@ -1755,7 +1825,12 @@ impl P2PService {
             if self.learned_addresses.len() >= MAX_LEARNED_ADDRESSES {
                 break;
             }
+            let per_ip_count = per_ip_counts.entry(addr.ip()).or_default();
+            if *per_ip_count >= MAX_LEARNED_ADDRESSES_PER_IP {
+                continue;
+            }
             self.learned_addresses.insert(addr);
+            *per_ip_count += 1;
             admitted.push(addr);
         }
         admitted
@@ -1834,7 +1909,7 @@ impl P2PService {
                 Err(_) => warn!("opportunistic dial to {} timed out", addr),
             }
             let completion = if connected {
-                P2PCommand::DialFinished { addr }
+                P2PCommand::DialDisconnected { addr }
             } else {
                 P2PCommand::DialFailed { addr }
             };
@@ -2235,6 +2310,136 @@ mod tests {
                 .get(addr)
                 .is_some_and(|state| state.failures == 1 && state.retry_after > Instant::now())
         }));
+    }
+
+    #[test]
+    fn failed_dial_backoff_cannot_be_bypassed_by_rotating_ports_on_one_ip() {
+        let mut service = test_service("failed-dial-per-ip-backoff", 0);
+        let noisy_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let failed = SocketAddr::new(noisy_ip, 30_001);
+        let alternate = SocketAddr::new(noisy_ip, 30_002);
+        let independent: SocketAddr = "1.1.1.1:30333".parse().unwrap();
+        service
+            .learned_addresses
+            .extend([failed, alternate, independent]);
+
+        service.record_dial_failure(failed);
+        let reserved = service.reserve_dial_candidates(OPPORTUNISTIC_BATCH);
+
+        assert_eq!(reserved, vec![independent]);
+        assert!(
+            reserved.iter().all(|addr| addr.ip() != noisy_ip),
+            "a new port on a failed IP must share the IP-level retry deadline"
+        );
+    }
+
+    #[test]
+    fn successful_dial_clears_shared_ip_backoff() {
+        let mut service = test_service("successful-dial-clears-ip-backoff", 0);
+        let noisy_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let failed = SocketAddr::new(noisy_ip, 30_001);
+        let recovered = SocketAddr::new(noisy_ip, 30_002);
+        service.learned_addresses.extend([failed, recovered]);
+
+        service.record_dial_failure(failed);
+        assert!(
+            service
+                .reserve_dial_candidates(OPPORTUNISTIC_BATCH)
+                .is_empty()
+        );
+
+        service.record_peer_admission(recovered, false);
+        assert_eq!(
+            service.reserve_dial_candidates(OPPORTUNISTIC_BATCH),
+            vec![recovered],
+            "a successful endpoint must restore learned discovery for its IP"
+        );
+    }
+
+    #[test]
+    fn inbound_admission_does_not_clear_outbound_shared_ip_backoff() {
+        let mut service = test_service("inbound-does-not-clear-ip-backoff", 0);
+        let peer_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let failed = SocketAddr::new(peer_ip, 30_001);
+        let alternate = SocketAddr::new(peer_ip, 30_002);
+        let inbound_transport = SocketAddr::new(peer_ip, 49_152);
+        service.learned_addresses.extend([failed, alternate]);
+
+        service.record_dial_failure(failed);
+        service.record_peer_admission(inbound_transport, true);
+
+        assert!(
+            service
+                .reserve_dial_candidates(OPPORTUNISTIC_BATCH)
+                .is_empty(),
+            "an inbound source port does not prove a learned listening port is reachable"
+        );
+    }
+
+    #[test]
+    fn disconnected_oneoff_dial_reestablishes_shared_ip_backoff() {
+        let mut service = test_service("disconnected-oneoff-restores-ip-backoff", 0);
+        let peer_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let connected = SocketAddr::new(peer_ip, 30_001);
+        let alternate = SocketAddr::new(peer_ip, 30_002);
+        service.learned_addresses.extend([connected, alternate]);
+
+        service.record_dial_success(connected);
+        service.record_dial_failure(connected);
+
+        assert!(
+            service
+                .reserve_dial_candidates(OPPORTUNISTIC_BATCH)
+                .is_empty()
+        );
+        assert!(
+            service
+                .dial_retry_by_ip
+                .get(&peer_ip)
+                .is_some_and(|state| state.failures == 1 && state.retry_after > Instant::now())
+        );
+    }
+
+    #[test]
+    fn learned_address_admission_caps_ports_per_ip_without_blocking_other_ips() {
+        let mut service = test_service("learned-address-per-ip-cap", 0);
+        let noisy_ip: IpAddr = "8.8.8.8".parse().unwrap();
+        let noisy: Vec<_> = (1..=12u16)
+            .map(|offset| SocketAddr::new(noisy_ip, 30_000 + offset))
+            .collect();
+        let independent: SocketAddr = "1.1.1.1:30333".parse().unwrap();
+
+        let admitted = service
+            .admit_learned_addresses(noisy.iter().copied().chain(std::iter::once(independent)));
+
+        assert_eq!(
+            admitted.iter().filter(|addr| addr.ip() == noisy_ip).count(),
+            MAX_LEARNED_ADDRESSES_PER_IP,
+            "one IP must not fill the learned-address pool by rotating ports"
+        );
+        assert!(admitted.contains(&independent));
+        assert!(service.learned_addresses.contains(&independent));
+    }
+
+    #[test]
+    fn expected_peer_disconnect_error_kinds_are_not_actionable_transport_failures() {
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::UnexpectedEof,
+            std::io::ErrorKind::NotConnected,
+        ] {
+            let error = NetworkError::Io(std::io::Error::new(kind, "peer closed"));
+            assert!(is_expected_peer_disconnect(&error), "{kind:?}");
+        }
+
+        let actionable = NetworkError::Io(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "local policy failure",
+        ));
+        assert!(!is_expected_peer_disconnect(&actionable));
+        assert!(!is_expected_peer_disconnect(&NetworkError::Encryption));
     }
 
     #[test]
