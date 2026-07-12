@@ -2664,6 +2664,7 @@ fn validate_rust_implementation_binding(
     let source = rust_binding_module_source(root, &binding.path)?;
     let sanitized = sanitize_rust_source(&source);
     let test_module_spans = rust_cfg_test_module_spans(&sanitized);
+    let macro_body_spans = rust_macro_body_spans(&sanitized);
     let functions = rust_function_spans(&sanitized)?;
     let result_obligation = parse_result_obligation(
         claim_id,
@@ -2675,6 +2676,7 @@ fn validate_rust_implementation_binding(
         .filter(|function| {
             function.name == binding.callee
                 && !function.is_test_only(&sanitized, &test_module_spans)
+                && !rust_position_is_inside_spans(function.start, &macro_body_spans)
         })
         .collect::<Vec<_>>();
     ensure!(
@@ -2703,6 +2705,7 @@ fn validate_rust_implementation_binding(
             .filter(|function| {
                 function.matches_caller(caller)
                     && !function.is_test_only(&sanitized, &test_module_spans)
+                    && !rust_position_is_inside_spans(function.start, &macro_body_spans)
             })
             .collect::<Vec<_>>();
         ensure!(
@@ -2715,8 +2718,11 @@ fn validate_rust_implementation_binding(
         for function in non_test_callers {
             let body = &sanitized[function.body_start..function.body_end];
             let closure_bodies = rust_closure_body_spans(body);
+            let async_block_bodies = rust_async_block_body_spans(body);
+            let macro_body_spans = rust_macro_body_spans(body);
             ensure!(
-                !rust_body_has_local_shadow_of_callee(body, &binding.callee),
+                !rust_function_parameter_binds_callee(&sanitized, function, &binding.callee)
+                    && !rust_body_has_local_shadow_of_callee(body, &binding.callee),
                 "{} implementation binding caller {} in {} locally shadows bound callee {}",
                 claim_id,
                 caller,
@@ -2734,12 +2740,14 @@ fn validate_rust_implementation_binding(
             ensure!(
                 !call_sites.is_empty()
                     && call_sites.iter().all(|call| {
-                        call_satisfies_result_obligation(body, call, result_obligation)
-                            && (matches!(
-                                result_obligation,
-                                ResultObligation::None | ResultObligation::MustFilterOkResult
-                            )
-                                || !rust_call_is_inside_closure(call, &closure_bodies))
+                        rust_call_is_direct_binding_evidence(
+                            body,
+                            call,
+                            result_obligation,
+                            &closure_bodies,
+                            &async_block_bodies,
+                            &macro_body_spans,
+                        ) && call_satisfies_result_obligation(body, call, result_obligation)
                     }),
                 "{} implementation binding caller {} in {} does not call {}{} in non-test Rust code",
                 claim_id,
@@ -2807,6 +2815,8 @@ fn validate_rust_implementation_order(
     for function in matching_callers {
         let body = &source[function.body_start..function.body_end];
         let closure_bodies = rust_closure_body_spans(body);
+        let async_block_bodies = rust_async_block_body_spans(body);
+        let macro_body_spans = rust_macro_body_spans(body);
         let callee_calls = rust_bound_callee_call_sites(
             body,
             &binding.callee,
@@ -2816,7 +2826,15 @@ fn validate_rust_implementation_order(
             functions,
         )
         .into_iter()
-        .filter(|call| !rust_call_is_inside_closure(call, &closure_bodies))
+        .filter(|call| {
+            rust_call_is_direct_order_evidence(
+                body,
+                call,
+                &closure_bodies,
+                &async_block_bodies,
+                &macro_body_spans,
+            )
+        })
         .filter(|call| call_satisfies_result_obligation(body, call, constraint_result_obligation))
         .collect::<Vec<_>>();
         if callee_calls.is_empty() {
@@ -2964,6 +2982,8 @@ struct RustFunctionSpan {
     qualified_name: Option<String>,
     start: usize,
     end: usize,
+    parameters_start: usize,
+    parameters_end: usize,
     body_start: usize,
     body_end: usize,
 }
@@ -2994,6 +3014,13 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
             cursor = fn_start + 2;
             continue;
         };
+        let Some(parameters_open) = find_rust_function_parameters_open(source, after_name) else {
+            cursor = fn_start + 2;
+            continue;
+        };
+        let parameters_close = match_rust_paren(source, parameters_open).with_context(|| {
+            format!("match Rust function parameters for {name} starting at byte {parameters_open}")
+        })?;
         let Some(body_start) = find_rust_body_start(source, after_name) else {
             cursor = fn_start + 2;
             continue;
@@ -3011,12 +3038,117 @@ fn rust_function_spans(source: &str) -> Result<Vec<RustFunctionSpan>> {
             qualified_name,
             start: fn_start,
             end: body_end + 1,
+            parameters_start: parameters_open + 1,
+            parameters_end: parameters_close,
             body_start,
             body_end: body_end + 1,
         });
         cursor = body_end + 1;
     }
     Ok(functions)
+}
+
+fn find_rust_function_parameters_open(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut angle_depth = 0usize;
+    let mut index = from;
+    while let Some(byte) = bytes.get(index).copied() {
+        match byte {
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth = angle_depth.saturating_sub(1),
+            b'(' if angle_depth == 0 => return Some(index),
+            b'{' | b';' if angle_depth == 0 => return None,
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn rust_function_parameter_binds_callee(
+    source: &str,
+    function: &RustFunctionSpan,
+    callee: &str,
+) -> bool {
+    rust_parameter_list_binds_identifier(
+        &source[function.parameters_start..function.parameters_end],
+        callee,
+    )
+}
+
+fn rust_parameter_list_binds_identifier(parameters: &str, ident: &str) -> bool {
+    let bytes = parameters.as_bytes();
+    let mut segment_start = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut index = 0usize;
+    while index <= bytes.len() {
+        let at_end = index == bytes.len();
+        if at_end
+            || (bytes[index] == b','
+                && paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0)
+        {
+            if rust_parameter_binds_identifier(&parameters[segment_start..index], ident) {
+                return true;
+            }
+            segment_start = index.saturating_add(1);
+            index += 1;
+            continue;
+        }
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth = angle_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+fn rust_parameter_binds_identifier(parameter: &str, ident: &str) -> bool {
+    let bytes = parameter.as_bytes();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut angle_depth = 0usize;
+    let mut pattern_end = bytes.len();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            b'<' => angle_depth += 1,
+            b'>' => angle_depth = angle_depth.saturating_sub(1),
+            b':' if paren_depth == 0
+                && bracket_depth == 0
+                && brace_depth == 0
+                && angle_depth == 0
+                && bytes.get(index.wrapping_sub(1)) != Some(&b':')
+                && bytes.get(index + 1) != Some(&b':') =>
+            {
+                pattern_end = index;
+                break;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    rust_pattern_binds_identifier(&parameter[..pattern_end], ident)
 }
 
 fn rust_body_has_local_shadow_of_callee(source: &str, callee: &str) -> bool {
@@ -3290,7 +3422,7 @@ fn rust_cfg_test_module_spans(source: &str) -> Vec<(usize, usize)> {
 
 fn sanitize_rust_source(source: &str) -> String {
     let bytes = source.as_bytes();
-    let mut out = String::with_capacity(source.len());
+    let mut out = bytes.to_vec();
     let mut index = 0usize;
     let mut block_depth = 0usize;
     let mut in_line_comment = false;
@@ -3305,9 +3437,8 @@ fn sanitize_rust_source(source: &str) -> String {
         if in_line_comment {
             if current == b'\n' {
                 in_line_comment = false;
-                out.push('\n');
             } else {
-                out.push(' ');
+                out[index] = b' ';
             }
             index += 1;
             continue;
@@ -3316,19 +3447,21 @@ fn sanitize_rust_source(source: &str) -> String {
         if block_depth > 0 {
             if current == b'/' && next == Some(b'*') {
                 block_depth += 1;
-                out.push(' ');
-                out.push(' ');
+                out[index] = b' ';
+                out[index + 1] = b' ';
                 index += 2;
                 continue;
             }
             if current == b'*' && next == Some(b'/') {
                 block_depth -= 1;
-                out.push(' ');
-                out.push(' ');
+                out[index] = b' ';
+                out[index + 1] = b' ';
                 index += 2;
                 continue;
             }
-            out.push(if current == b'\n' { '\n' } else { ' ' });
+            if current != b'\n' {
+                out[index] = b' ';
+            }
             index += 1;
             continue;
         }
@@ -3336,10 +3469,9 @@ fn sanitize_rust_source(source: &str) -> String {
         if in_string || in_char {
             let terminator = if in_string { b'"' } else { b'\'' };
             if current == b'\n' {
-                out.push('\n');
                 escaped = false;
             } else {
-                out.push(' ');
+                out[index] = b' ';
                 if escaped {
                     escaped = false;
                 } else if current == b'\\' {
@@ -3353,37 +3485,143 @@ fn sanitize_rust_source(source: &str) -> String {
             continue;
         }
 
+        if let Some(raw_end) = rust_raw_string_literal_end(bytes, index) {
+            for raw_index in index..raw_end {
+                if bytes[raw_index] != b'\n' {
+                    out[raw_index] = b' ';
+                }
+            }
+            index = raw_end;
+            continue;
+        }
+
         if current == b'/' && next == Some(b'/') {
             in_line_comment = true;
-            out.push(' ');
-            out.push(' ');
+            out[index] = b' ';
+            out[index + 1] = b' ';
             index += 2;
             continue;
         }
         if current == b'/' && next == Some(b'*') {
             block_depth = 1;
-            out.push(' ');
-            out.push(' ');
+            out[index] = b' ';
+            out[index + 1] = b' ';
             index += 2;
             continue;
         }
         if current == b'"' {
             in_string = true;
-            out.push(' ');
+            out[index] = b' ';
             index += 1;
             continue;
         }
         if current == b'\'' && looks_like_rust_char_literal_start(bytes, index) {
             in_char = true;
-            out.push(' ');
+            out[index] = b' ';
             index += 1;
             continue;
         }
 
-        out.push(current as char);
         index += 1;
     }
-    out
+    String::from_utf8(out).expect("sanitized Rust source preserves valid UTF-8")
+}
+
+fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let r_index = match (bytes.get(start), bytes.get(start + 1)) {
+        (Some(b'r'), _) => start,
+        (Some(b'b'), Some(b'r')) => start + 1,
+        _ => return None,
+    };
+    if start > 0 && is_rust_identifier_continuation_byte(bytes[start - 1]) {
+        return None;
+    }
+    let mut quote = r_index + 1;
+    while bytes.get(quote) == Some(&b'#') {
+        quote += 1;
+    }
+    if bytes.get(quote) != Some(&b'"') {
+        return None;
+    }
+    let hash_count = quote - (r_index + 1);
+    let mut cursor = quote + 1;
+    while cursor < bytes.len() {
+        if bytes[cursor] == b'"'
+            && bytes
+                .get(cursor + 1..cursor + 1 + hash_count)
+                .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#'))
+        {
+            return Some(cursor + 1 + hash_count);
+        }
+        cursor += 1;
+    }
+    Some(bytes.len())
+}
+
+fn rust_macro_body_spans(source: &str) -> Vec<RustSourceSpan> {
+    let bytes = source.as_bytes();
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(relative) = source[cursor..].find('!') {
+        let bang = cursor + relative;
+        let before = skip_ascii_whitespace_back(source, bang);
+        let Some(previous) = before
+            .checked_sub(1)
+            .and_then(|index| bytes.get(index))
+            .copied()
+        else {
+            cursor = bang + 1;
+            continue;
+        };
+        if !is_rust_identifier_continuation_byte(previous) {
+            cursor = bang + 1;
+            continue;
+        }
+        let mut open = skip_ascii_whitespace(source, bang + 1);
+        if !matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
+            let Some((_, after_name)) = parse_rust_identifier_after(source, open) else {
+                cursor = bang + 1;
+                continue;
+            };
+            open = skip_ascii_whitespace(source, after_name);
+        }
+        let Some(close) = (match bytes.get(open) {
+            Some(b'(') => match_rust_paren(source, open).ok(),
+            Some(b'{') => match_rust_brace(source, open).ok(),
+            Some(b'[') => match_rust_bracket(source, open).ok(),
+            _ => None,
+        }) else {
+            cursor = bang + 1;
+            continue;
+        };
+        spans.push(RustSourceSpan {
+            start: open + 1,
+            end: close,
+        });
+        cursor = close + 1;
+    }
+    spans
+}
+
+fn match_rust_bracket(source: &str, open: usize) -> Result<usize> {
+    ensure!(
+        source.as_bytes().get(open) == Some(&b'['),
+        "expected opening bracket at byte {open}"
+    );
+    let mut depth = 0usize;
+    for (offset, byte) in source.as_bytes()[open..].iter().copied().enumerate() {
+        match byte {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(open + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(anyhow!("unclosed Rust bracket at byte {open}"))
 }
 
 fn looks_like_rust_char_literal_start(bytes: &[u8], index: usize) -> bool {
@@ -3398,8 +3636,8 @@ fn looks_like_rust_char_literal_start(bytes: &[u8], index: usize) -> bool {
         && index
             .checked_sub(2)
             .and_then(|prev| bytes.get(prev).copied())
-            .map_or(true, |byte| !is_rust_identifier_byte(byte));
-    if is_rust_identifier_byte(prev) && !has_byte_literal_prefix {
+            .is_none_or(|byte| !is_rust_identifier_continuation_byte(byte));
+    if is_rust_identifier_continuation_byte(prev) && !has_byte_literal_prefix {
         return false;
     }
     let close = if next == b'\\' {
@@ -3423,8 +3661,8 @@ fn find_rust_token(source: &str, token: &str, from: usize) -> Option<usize> {
             .checked_sub(1)
             .and_then(|prev| source.as_bytes().get(prev).copied());
         let after = source.as_bytes().get(index + token.len()).copied();
-        if !before.is_some_and(is_rust_identifier_byte)
-            && !after.is_some_and(is_rust_identifier_byte)
+        if !before.is_some_and(is_rust_identifier_continuation_byte)
+            && !after.is_some_and(is_rust_identifier_continuation_byte)
         {
             return Some(index);
         }
@@ -3782,7 +4020,7 @@ fn rust_qualified_call_selector_start(
         let before = segment_start
             .checked_sub(1)
             .and_then(|prev| source.as_bytes().get(prev).copied());
-        if before.is_some_and(is_rust_identifier_byte) {
+        if before.is_some_and(is_rust_identifier_continuation_byte) {
             return None;
         }
         cursor = segment_start;
@@ -3790,7 +4028,9 @@ fn rust_qualified_call_selector_start(
     let before = cursor
         .checked_sub(1)
         .and_then(|prev| source.as_bytes().get(prev).copied());
-    if before.is_some_and(|byte| is_rust_identifier_byte(byte) || byte == b':' || byte == b'.') {
+    if before.is_some_and(|byte| {
+        is_rust_identifier_continuation_byte(byte) || byte == b':' || byte == b'.'
+    }) {
         return None;
     }
     Some(cursor)
@@ -3807,8 +4047,8 @@ fn find_rust_identifier_from(source: &str, ident: &str, from: usize) -> Option<u
             .checked_sub(1)
             .and_then(|prev| source.as_bytes().get(prev).copied());
         let after = source.as_bytes().get(index + ident.len()).copied();
-        if !before.is_some_and(is_rust_identifier_byte)
-            && !after.is_some_and(is_rust_identifier_byte)
+        if !before.is_some_and(is_rust_identifier_continuation_byte)
+            && !after.is_some_and(is_rust_identifier_continuation_byte)
         {
             return Some(index);
         }
@@ -4158,9 +4398,16 @@ fn enclosing_filter_call(source: &str, call: &RustCallSite) -> Option<RustCallSi
     rust_call_sites(source, "filter")
         .into_iter()
         .filter(|filter_call| {
-            filter_call.start < call.start && call.close_paren < filter_call.close_paren
+            rust_call_is_member_invocation(source, filter_call)
+                && filter_call.start < call.start
+                && call.close_paren < filter_call.close_paren
         })
         .min_by_key(|filter_call| filter_call.close_paren - filter_call.start)
+}
+
+fn rust_call_is_member_invocation(source: &str, call: &RustCallSite) -> bool {
+    let before = skip_ascii_whitespace_back(source, call.start);
+    before > 0 && source.as_bytes().get(before - 1) == Some(&b'.')
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4169,11 +4416,90 @@ enum RustClosureBodyKind {
     Expression,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct RustClosureBody {
     start: usize,
     end: usize,
     kind: RustClosureBodyKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RustSourceSpan {
+    start: usize,
+    end: usize,
+}
+
+fn rust_call_is_direct_binding_evidence(
+    source: &str,
+    call: &RustCallSite,
+    obligation: ResultObligation,
+    closures: &[RustClosureBody],
+    async_blocks: &[RustSourceSpan],
+    macro_bodies: &[RustSourceSpan],
+) -> bool {
+    if rust_position_is_inside_spans(call.start, async_blocks)
+        || rust_position_is_inside_spans(call.start, macro_bodies)
+        || rust_call_is_in_statically_dead_short_circuit_rhs(source, call)
+    {
+        return false;
+    }
+
+    let enclosing_closures = closures
+        .iter()
+        .filter(|closure| closure.start <= call.start && call.start < closure.end)
+        .collect::<Vec<_>>();
+    if enclosing_closures.is_empty() {
+        return true;
+    }
+    if obligation != ResultObligation::MustFilterOkResult || enclosing_closures.len() != 1 {
+        return obligation == ResultObligation::None
+            && enclosing_closures.len() == 1
+            && call_is_inside_known_eager_closure(source, call, enclosing_closures[0]);
+    }
+    let Some(filter_call) = enclosing_filter_call(source, call) else {
+        return false;
+    };
+    let Some(filter_body) = filter_closure_body(source, &filter_call) else {
+        return false;
+    };
+    *enclosing_closures[0] == filter_body && call_result_is_filter_ok_predicate(source, call)
+}
+
+fn call_is_inside_known_eager_closure(
+    source: &str,
+    call: &RustCallSite,
+    enclosing_closure: &RustClosureBody,
+) -> bool {
+    ["any", "retain"].iter().any(|method| {
+        rust_call_sites(source, method)
+            .into_iter()
+            .any(|outer_call| {
+                rust_call_is_member_invocation(source, &outer_call)
+                    && outer_call.start < call.start
+                    && call.close_paren < outer_call.close_paren
+                    && call_closure_body(source, &outer_call, method).as_ref()
+                        == Some(enclosing_closure)
+            })
+    })
+}
+
+fn rust_call_is_direct_order_evidence(
+    source: &str,
+    call: &RustCallSite,
+    closures: &[RustClosureBody],
+    async_blocks: &[RustSourceSpan],
+    macro_bodies: &[RustSourceSpan],
+) -> bool {
+    !rust_call_is_inside_closure(call, closures)
+        && !rust_position_is_inside_spans(call.start, async_blocks)
+        && !rust_position_is_inside_spans(call.start, macro_bodies)
+        && !rust_call_is_in_short_circuit_rhs(source, call)
+}
+
+fn rust_position_is_inside_spans(position: usize, spans: &[RustSourceSpan]) -> bool {
+    spans
+        .iter()
+        .any(|span| span.start <= position && position < span.end)
 }
 
 fn rust_call_is_inside_closure(call: &RustCallSite, closures: &[RustClosureBody]) -> bool {
@@ -4242,6 +4568,29 @@ fn rust_closure_body_spans(source: &str) -> Vec<RustClosureBody> {
         cursor = first_bar + 1;
     }
     closures
+}
+
+fn rust_async_block_body_spans(source: &str) -> Vec<RustSourceSpan> {
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(async_start) = find_rust_token(source, "async", cursor) {
+        let mut body_start = skip_ascii_whitespace(source, async_start + "async".len());
+        if let Some(after_move) = rust_token_at(source, "move", body_start) {
+            body_start = skip_ascii_whitespace(source, after_move);
+        }
+        if source.as_bytes().get(body_start) == Some(&b'{') {
+            if let Ok(body_end) = match_rust_brace(source, body_start) {
+                spans.push(RustSourceSpan {
+                    start: body_start + 1,
+                    end: body_end,
+                });
+                cursor = body_end + 1;
+                continue;
+            }
+        }
+        cursor = async_start + "async".len();
+    }
+    spans
 }
 
 fn rust_closure_parameter_end(source: &str, from: usize) -> Option<usize> {
@@ -4321,7 +4670,7 @@ fn rust_prefix_ends_with_token(prefix: &str, token: &str) -> bool {
         .len()
         .checked_sub(token.len() + 1)
         .and_then(|index| prefix.as_bytes().get(index).copied())
-        .map_or(true, |byte| !is_rust_identifier_byte(byte))
+        .is_none_or(|byte| !is_rust_identifier_continuation_byte(byte))
 }
 
 fn rust_closure_expression_end(source: &str, from: usize) -> usize {
@@ -4362,13 +4711,21 @@ fn rust_closure_expression_end(source: &str, from: usize) -> usize {
 }
 
 fn filter_closure_body(source: &str, filter_call: &RustCallSite) -> Option<RustClosureBody> {
-    let open_paren = rust_call_open_paren(source, filter_call, "filter")?;
-    let first_bar = find_top_level_byte(source, open_paren + 1, filter_call.close_paren, b'|')?;
-    let second_bar = find_top_level_byte(source, first_bar + 1, filter_call.close_paren, b'|')?;
+    call_closure_body(source, filter_call, "filter")
+}
+
+fn call_closure_body(
+    source: &str,
+    outer_call: &RustCallSite,
+    method: &str,
+) -> Option<RustClosureBody> {
+    let open_paren = rust_call_open_paren(source, outer_call, method)?;
+    let first_bar = find_top_level_byte(source, open_paren + 1, outer_call.close_paren, b'|')?;
+    let second_bar = find_top_level_byte(source, first_bar + 1, outer_call.close_paren, b'|')?;
     let body_start = skip_ascii_whitespace(source, second_bar + 1);
     if source.as_bytes().get(body_start) == Some(&b'{') {
         let body_end = match_rust_brace(source, body_start).ok()?;
-        if body_end > filter_call.close_paren {
+        if body_end > outer_call.close_paren {
             return None;
         }
         return Some(RustClosureBody {
@@ -4379,7 +4736,7 @@ fn filter_closure_body(source: &str, filter_call: &RustCallSite) -> Option<RustC
     }
     Some(RustClosureBody {
         start: body_start,
-        end: filter_call.close_paren,
+        end: outer_call.close_paren,
         kind: RustClosureBodyKind::Expression,
     })
 }
@@ -4526,10 +4883,10 @@ fn identifier_is_used_later_in_block(source: &str, ident: &str, from: usize, to:
         let before_is_ident = start
             .checked_sub(1)
             .and_then(|idx| bytes.get(idx))
-            .is_some_and(|byte| is_rust_identifier_byte(*byte));
+            .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte));
         let after_is_ident = bytes
             .get(end)
-            .is_some_and(|byte| is_rust_identifier_byte(*byte));
+            .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte));
         if !before_is_ident && !after_is_ident {
             return true;
         }
@@ -5563,7 +5920,9 @@ fn rust_token_at(source: &str, token: &str, index: usize) -> Option<usize> {
         .checked_sub(1)
         .and_then(|prev| source.as_bytes().get(prev).copied());
     let after = source.as_bytes().get(index + token.len()).copied();
-    if before.is_some_and(is_rust_identifier_byte) || after.is_some_and(is_rust_identifier_byte) {
+    if before.is_some_and(is_rust_identifier_continuation_byte)
+        || after.is_some_and(is_rust_identifier_continuation_byte)
+    {
         return None;
     }
     Some(index + token.len())
@@ -5585,13 +5944,159 @@ impl RustStatementContext {
     }
 }
 
+fn rust_call_is_in_statically_dead_short_circuit_rhs(source: &str, call: &RustCallSite) -> bool {
+    let bytes = source.as_bytes();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+    while index + 1 < call.start && index + 1 < bytes.len() {
+        let operator = (bytes[index], bytes[index + 1]);
+        if matches!(operator, (b'&', b'&') | (b'|', b'|'))
+            && rust_short_circuit_rhs_reaches_call(
+                source,
+                index + 2,
+                call.start,
+                paren_depth,
+                bracket_depth,
+                brace_depth,
+            )
+        {
+            let context = rust_statement_context(source, index);
+            let lhs_prefix = &source[context.current_statement_start()..index];
+            if (operator == (b'|', b'|') && rust_prefix_ends_with_token(lhs_prefix, "true"))
+                || (operator == (b'&', b'&') && rust_prefix_ends_with_token(lhs_prefix, "false"))
+            {
+                return true;
+            }
+        }
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+fn rust_call_is_in_short_circuit_rhs(source: &str, call: &RustCallSite) -> bool {
+    let bytes = source.as_bytes();
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    let mut index = 0usize;
+    while index + 1 < call.start && index + 1 < bytes.len() {
+        if matches!(
+            (bytes[index], bytes[index + 1]),
+            (b'&', b'&') | (b'|', b'|')
+        ) && rust_short_circuit_rhs_reaches_call(
+            source,
+            index + 2,
+            call.start,
+            paren_depth,
+            bracket_depth,
+            brace_depth,
+        ) {
+            return true;
+        }
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+fn rust_short_circuit_rhs_reaches_call(
+    source: &str,
+    from: usize,
+    call_start: usize,
+    base_paren_depth: usize,
+    base_bracket_depth: usize,
+    base_brace_depth: usize,
+) -> bool {
+    let bytes = source.as_bytes();
+    let operator_start = from.saturating_sub(2);
+    let operator_context = rust_statement_context(source, operator_start);
+    let operator_prefix = &source[operator_context.current_statement_start()..operator_start];
+    let operator_is_in_control_condition = find_rust_token(operator_prefix, "if", 0).is_some()
+        || find_rust_token(operator_prefix, "while", 0).is_some();
+    let mut paren_depth = base_paren_depth;
+    let mut bracket_depth = base_bracket_depth;
+    let mut brace_depth = base_brace_depth;
+    let mut index = from;
+    while index < call_start && index < bytes.len() {
+        match bytes[index] {
+            b',' | b';'
+                if paren_depth == base_paren_depth
+                    && bracket_depth == base_bracket_depth
+                    && brace_depth == base_brace_depth =>
+            {
+                return false;
+            }
+            b'=' if bytes.get(index + 1) == Some(&b'>')
+                && paren_depth == base_paren_depth
+                && bracket_depth == base_bracket_depth
+                && brace_depth == base_brace_depth =>
+            {
+                return false;
+            }
+            b'{' if operator_is_in_control_condition
+                && paren_depth == base_paren_depth
+                && bracket_depth == base_bracket_depth
+                && brace_depth == base_brace_depth
+                && !rust_rhs_prefix_expects_block_operand(&source[from..index]) =>
+            {
+                return false;
+            }
+            b')' if paren_depth <= base_paren_depth => return false,
+            b']' if bracket_depth <= base_bracket_depth => return false,
+            b'}' if brace_depth <= base_brace_depth => return false,
+            b'(' => paren_depth += 1,
+            b')' => paren_depth -= 1,
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth -= 1,
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth -= 1,
+            _ => {}
+        }
+        index += 1;
+    }
+    index == call_start
+}
+
+fn rust_rhs_prefix_expects_block_operand(prefix: &str) -> bool {
+    let prefix = prefix.trim_end();
+    prefix.is_empty()
+        || [
+            "&&", "||", "+", "-", "*", "/", "%", "^", "&", "|", "=", "==", "!=", "<", ">", "<=",
+            ">=", "=>", "(", "[", ",", ":",
+        ]
+        .iter()
+        .any(|operator| prefix.ends_with(operator))
+}
+
 fn rust_call_dominates_successor(
     source: &str,
     callee: &RustCallSite,
     successor: &RustCallSite,
     closure_bodies: &[RustClosureBody],
 ) -> bool {
-    if callee.start >= successor.start || rust_call_is_inside_closure(callee, closure_bodies) {
+    if callee.start >= successor.start
+        || rust_call_is_inside_closure(callee, closure_bodies)
+        || rust_call_is_in_short_circuit_rhs(source, callee)
+    {
         return false;
     }
     let callee_context = rust_statement_context(source, callee.start);
@@ -5662,6 +6167,10 @@ fn rust_statement_context(source: &str, target: usize) -> RustStatementContext {
 
 fn is_rust_identifier_byte(byte: u8) -> bool {
     byte == b'_' || byte.is_ascii_alphanumeric()
+}
+
+fn is_rust_identifier_continuation_byte(byte: u8) -> bool {
+    is_rust_identifier_byte(byte) || !byte.is_ascii()
 }
 
 fn reviewable_node_value_bytes(mut value: serde_json::Value) -> Result<Vec<u8>> {
@@ -7574,6 +8083,274 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_caller_parameter_shadow_for_bound_callee() {
+        let root = test_root("caller-parameter-shadow-bound-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             fn import_mined_block(verified_helper: impl Fn() -> Result<(), ()>) -> Result<(), ()> {\n\
+                 verified_helper()?;\n\
+                 Ok(())\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("caller parameter shadow must not satisfy binding");
+        assert!(
+            err.to_string()
+                .contains("locally shadows bound callee verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_uninvoked_closure_without_result_obligation() {
+        let root = test_root("uninvoked-closure-no-result-obligation");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn import_mined_block() {\n\
+                 let _deferred = || verified_helper();\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an uninvoked closure must not satisfy an ordinary binding");
+        assert!(
+            err.to_string().contains("does not call verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_accepts_eager_retain_closure_binding() {
+        let root = test_root("eager-retain-closure-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper(_value: &u8) -> bool { true }\n\
+             fn import_mined_block() {\n\
+                 let mut values = vec![1u8];\n\
+                 values.retain(|value| verified_helper(value));\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("Vec::retain synchronously invokes its predicate");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_eager_any_closure_binding() {
+        let root = test_root("eager-any-closure-binding");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper(_value: &u8) -> bool { true }\n\
+             fn import_mined_block(values: &[u8]) -> bool {\n\
+                 values.iter().any(|value| verified_helper(value))\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("Iterator::any synchronously invokes its predicate");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_bare_any_function_as_eager_closure_spoof() {
+        let root = test_root("bare-any-function-eager-closure-spoof");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn any<F>(_predicate: F) {}\n\
+             fn import_mined_block() { any(|| verified_helper()); }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("a bare same-named function cannot claim eager method semantics");
+        assert!(
+            err.to_string().contains("does not call verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_eager_method_nested_in_uninvoked_closure() {
+        let root = test_root("eager-method-nested-in-uninvoked-closure");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper(_value: &u8) -> bool { true }\n\
+             fn import_mined_block(values: &[u8]) {\n\
+                 let _deferred = || values.iter().any(|value| verified_helper(value));\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an eager method inside an uninvoked outer closure remains deferred");
+        assert!(
+            err.to_string().contains("does not call verified_helper"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_unpolled_async_block_with_propagated_result() {
+        let root = test_root("unpolled-async-block-propagated-result");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             async fn import_mined_block() -> Result<(), ()> {\n\
+                 let _deferred = async { verified_helper()?; Ok::<(), ()>(()) };\n\
+                 Ok(())\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an unpolled async block must not satisfy a propagated-result binding");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with propagated result"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_non_call_token_spoofs_for_bound_callee() {
+        for (name, spoof) in [
+            ("stringify-macro", "stringify!(verified_helper()?);"),
+            ("stringify-bracket-macro", "stringify![verified_helper()?];"),
+            ("raw-string", "let _text = r#\"verified_helper()?\"#;"),
+            (
+                "raw-byte-string",
+                "let _text = br##\"verified_helper()?\"##;",
+            ),
+            ("unicode-prefix-identifier", "alpha_verified_helper()?;"),
+            ("unicode-suffix-identifier", "verified_helper_alpha()?;"),
+        ] {
+            let root = test_root(&format!("non-call-token-spoof-{name}"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            let source = if name == "unicode-prefix-identifier" {
+                format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn alpha_verified_helper() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn import_mined_block() -> Result<(), ()> {{ {spoof} Ok(()) }}\n"
+                )
+                .replace("alpha_verified_helper", "\u{03b1}verified_helper")
+            } else if name == "unicode-suffix-identifier" {
+                format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn verified_helper_alpha() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn import_mined_block() -> Result<(), ()> {{ {spoof} Ok(()) }}\n"
+                )
+                .replace("verified_helper_alpha", "verified_helper\u{03b1}")
+            } else {
+                format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn import_mined_block() -> Result<(), ()> {{ {spoof} Ok(()) }}\n"
+                )
+            };
+            write_repo_file(&root, "src/native.rs", &source);
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_result_binding(
+                    "verified_helper",
+                    &["import_mined_block"],
+                    "must_propagate_result",
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("non-call tokens must not satisfy a propagated-result binding");
+            assert!(
+                err.to_string()
+                    .contains("does not call verified_helper with propagated result"),
+                "{name}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
     fn blueprint_accepts_tail_returned_result_implementation_call() {
         let root = test_root("tail-returned-result-implementation-call");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8902,6 +9679,43 @@ mod tests {
             .expect("filter Ok-result expression predicate implementation binding");
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_bare_filter_function_as_consumed_predicate_spoof() {
+        let root = test_root("bare-filter-function-consumed-predicate-spoof");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) -> Result<(), ()> { Ok(()) }\n\
+             fn filter<F>(_predicate: F) -> Vec<u8> { Vec::new() }\n\
+             fn select_mineable_actions() {\n\
+                 let selected = filter(|action| verified_helper(action).is_ok());\n\
+                 use_selected(selected);\n\
+             }\n\
+             fn use_selected<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("a bare same-named function cannot claim Iterator::filter semantics");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with filter Ok-result gating"),
+            "{err:#}"
+        );
     }
 
     #[test]
@@ -10667,6 +11481,52 @@ mod tests {
             &calls[0],
             &rust_closure_body_spans(source)
         ));
+    }
+
+    #[test]
+    fn blueprint_rejects_short_circuit_rhs_as_dominating_guard() {
+        for (name, expression) in [
+            ("or", "true || (verified_helper()?, true).1"),
+            ("and", "false && (verified_helper()?, true).1"),
+        ] {
+            let root = test_root(&format!("short-circuit-{name}-dominance-bypass"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Ok(()) }}\n\
+                     fn publish_state() {{}}\n\
+                     fn import_announced_block() -> Result<(), ()> {{\n\
+                         let _accepted = {expression};\n\
+                         publish_state();\n\
+                         Ok(())\n\
+                     }}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_dominating_ordered_binding(
+                    "verified_helper",
+                    &["import_announced_block"],
+                    "import_announced_block",
+                    &["publish_state"],
+                    Some("must_propagate_result"),
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("a short-circuited helper call must not satisfy a guard binding");
+            assert!(
+                err.to_string()
+                    .contains("does not call verified_helper with propagated result"),
+                "{name}: {err:#}"
+            );
+        }
     }
 
     #[test]
