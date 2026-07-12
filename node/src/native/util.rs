@@ -795,7 +795,13 @@ pub(crate) fn native_rpc_methods(policy: RpcMethodPolicy) -> Vec<&'static str> {
         "system_version",
     ];
     if policy != RpcMethodPolicy::Unsafe {
-        methods.retain(|method| !is_unsafe_rpc_method(method));
+        let mut safe_methods = Vec::with_capacity(methods.len());
+        for method in methods {
+            if !is_unsafe_rpc_method(method) {
+                safe_methods.push(method);
+            }
+        }
+        methods = safe_methods;
     }
     methods
 }

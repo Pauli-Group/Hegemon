@@ -4452,9 +4452,7 @@ fn rust_call_is_direct_binding_evidence(
         return true;
     }
     if obligation != ResultObligation::MustFilterOkResult || enclosing_closures.len() != 1 {
-        return obligation == ResultObligation::None
-            && enclosing_closures.len() == 1
-            && call_is_inside_known_eager_closure(source, call, enclosing_closures[0]);
+        return false;
     }
     let Some(filter_call) = enclosing_filter_call(source, call) else {
         return false;
@@ -4463,24 +4461,6 @@ fn rust_call_is_direct_binding_evidence(
         return false;
     };
     *enclosing_closures[0] == filter_body && call_result_is_filter_ok_predicate(source, call)
-}
-
-fn call_is_inside_known_eager_closure(
-    source: &str,
-    call: &RustCallSite,
-    enclosing_closure: &RustClosureBody,
-) -> bool {
-    ["any", "retain"].iter().any(|method| {
-        rust_call_sites(source, method)
-            .into_iter()
-            .any(|outer_call| {
-                rust_call_is_member_invocation(source, &outer_call)
-                    && outer_call.start < call.start
-                    && call.close_paren < outer_call.close_paren
-                    && call_closure_body(source, &outer_call, method).as_ref()
-                        == Some(enclosing_closure)
-            })
-    })
 }
 
 fn rust_call_is_direct_order_evidence(
@@ -8147,7 +8127,7 @@ mod tests {
     }
 
     #[test]
-    fn blueprint_accepts_eager_retain_closure_binding() {
+    fn blueprint_rejects_retain_closure_as_binding_evidence() {
         let root = test_root("eager-retain-closure-binding");
         write_repo_file(&root, "evidence/support.txt", "support");
         write_repo_file(&root, "evidence/target.txt", "target");
@@ -8168,13 +8148,16 @@ mod tests {
             blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
         );
 
-        let report = check_blueprint_file(&blueprint_path, &claims_path)
-            .expect("Vec::retain synchronously invokes its predicate");
-        assert_eq!(report.implementation_bindings, 1);
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("method-name trust cannot prove that retain invokes its predicate");
+        assert!(
+            err.to_string().contains("does not call verified_helper"),
+            "{err:#}"
+        );
     }
 
     #[test]
-    fn blueprint_accepts_eager_any_closure_binding() {
+    fn blueprint_rejects_any_closure_as_binding_evidence() {
         let root = test_root("eager-any-closure-binding");
         write_repo_file(&root, "evidence/support.txt", "support");
         write_repo_file(&root, "evidence/target.txt", "target");
@@ -8194,9 +8177,12 @@ mod tests {
             blueprint_fixture_with_binding("verified_helper", &["import_mined_block"]),
         );
 
-        let report = check_blueprint_file(&blueprint_path, &claims_path)
-            .expect("Iterator::any synchronously invokes its predicate");
-        assert_eq!(report.implementation_bindings, 1);
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("method-name trust cannot prove that any invokes its predicate");
+        assert!(
+            err.to_string().contains("does not call verified_helper"),
+            "{err:#}"
+        );
     }
 
     #[test]

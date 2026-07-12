@@ -776,19 +776,25 @@ pub(crate) fn native_stablecoin_policy_binding_authorized_by_entries(
     binding: &StablecoinPolicyBinding,
     entries: &[StablecoinPolicyManifestEntry],
 ) -> bool {
-    entries.iter().any(|entry| {
+    for entry in entries {
         let plausible_candidate = u64::from(entry.asset_id) == binding.asset_id
             || entry.policy_hash() == binding.policy_hash;
-        plausible_candidate
-            && evaluate_native_stablecoin_policy_authorization(
-                native_stablecoin_policy_authorization_input_for_entry(
-                    current_height,
-                    binding,
-                    Some(entry),
-                ),
-            )
-            .is_ok()
-    })
+        if !plausible_candidate {
+            continue;
+        }
+        if evaluate_native_stablecoin_policy_authorization(
+            native_stablecoin_policy_authorization_input_for_entry(
+                current_height,
+                binding,
+                Some(entry),
+            ),
+        )
+        .is_ok()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) fn native_stablecoin_policy_binding_authorized_by_protocol_manifest(
