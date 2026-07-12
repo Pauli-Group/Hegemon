@@ -32,6 +32,7 @@ const BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS: &[&str] = &[
     "audits/native-backend-128b/package.sha256",
 ];
 const MAX_BLUEPRINT_REVIEW_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 const TARGET_REVIEW_STATUSES: &[&str] = &["needs_review", "blocked"];
 const STABLE_GOAL_MEASUREMENT_STATUSES: &[&str] = &["paused", "blocked", "complete"];
 const REQUIRED_SYSTEM_MODEL_GATE_CATEGORIES: &[&str] = &[
@@ -526,7 +527,7 @@ fn validate_claims_ledger(root: &Path, ledger: &ClaimsLedger) -> Result<ClaimsRe
     let mut residual_risks = 0usize;
     let mut production_eligible = 0usize;
     for claim in &ledger.claims {
-        let theorem_names = validate_claim(&root, claim)?;
+        let theorem_names = validate_claim(root, claim)?;
         ensure!(ids.insert(&claim.id), "duplicate claim id {}", claim.id);
         if claim.claim_class == "lean_theorem" {
             lean_theorem_claims += 1;
@@ -2618,40 +2619,73 @@ fn rust_non_test_file_submodules(sanitized: &str) -> Vec<String> {
     submodules
 }
 
-/// Load the Rust source a binding path denotes. A binding on a module root
-/// (`.../mod.rs`) denotes the whole module namespace, exactly as Rust does:
-/// the root file is concatenated with each declared non-test sibling
-/// `<name>.rs` file so callee/caller resolution keeps working when a module
-/// is split into files without any semantic change.
-fn rust_binding_module_source(root: &Path, raw_path: &str) -> Result<String> {
-    let path = root.join(raw_path);
-    let source = fs::read_to_string(&path)
-        .with_context(|| format!("read {} implementation binding source", path.display()))?;
+/// Load every source file denoted by a Rust binding path. Module-root bindings
+/// include declared non-test siblings, and callers reuse this exact file set
+/// for semantic analysis and target-review hashing.
+fn rust_binding_module_sources(root: &Path, raw_path: &str) -> Result<Vec<(String, String)>> {
+    let source_bytes = read_repo_relative_regular_file_bounded(
+        root,
+        raw_path,
+        "implementation binding source",
+        MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+    )?;
+    let source = String::from_utf8(source_bytes)
+        .with_context(|| format!("decode {raw_path} implementation binding source as UTF-8"))?;
+    let mut expanded_bytes = source.len() as u64;
+    let mut sources = vec![(raw_path.to_owned(), source)];
     let is_module_root = Path::new(raw_path)
         .file_name()
         .and_then(|name| name.to_str())
         == Some("mod.rs");
     if !is_module_root {
-        return Ok(source);
+        return Ok(sources);
     }
-    let Some(dir) = path.parent() else {
-        return Ok(source);
+    let Some(relative_dir) = Path::new(raw_path).parent() else {
+        return Ok(sources);
     };
-    let sanitized_root = sanitize_rust_source(&source);
-    let mut combined = source;
+    let sanitized_root = sanitize_rust_source(&sources[0].1);
     for submodule in rust_non_test_file_submodules(&sanitized_root) {
-        let sibling = dir.join(format!("{submodule}.rs"));
-        if !sibling.exists() {
+        let sibling_relative = relative_dir.join(format!("{submodule}.rs"));
+        if !root.join(&sibling_relative).exists() {
             continue;
         }
-        let sibling_source = fs::read_to_string(&sibling).with_context(|| {
-            format!(
-                "read {} module member for implementation binding",
-                sibling.display()
+        let sibling_raw = sibling_relative.to_str().ok_or_else(|| {
+            anyhow!(
+                "implementation binding sibling path is not UTF-8: {}",
+                sibling_relative.display()
             )
         })?;
-        combined.push('\n');
-        combined.push_str(&sibling_source);
+        let sibling_bytes = read_repo_relative_regular_file_bounded(
+            root,
+            sibling_raw,
+            "implementation binding module member",
+            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+        )?;
+        let sibling_source = String::from_utf8(sibling_bytes).with_context(|| {
+            format!("decode {sibling_raw} implementation binding module member as UTF-8")
+        })?;
+        expanded_bytes = expanded_bytes
+            .checked_add(sibling_source.len() as u64)
+            .ok_or_else(|| anyhow!("implementation binding expanded source size overflow"))?;
+        ensure!(
+            expanded_bytes <= MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
+            "implementation binding expanded source exceeds byte bound {} at {}",
+            MAX_BLUEPRINT_REVIEW_EXPANDED_SOURCE_BYTES,
+            sibling_raw
+        );
+        sources.push((sibling_raw.to_owned(), sibling_source));
+    }
+    Ok(sources)
+}
+
+fn rust_binding_module_source(root: &Path, raw_path: &str) -> Result<String> {
+    let sources = rust_binding_module_sources(root, raw_path)?;
+    let mut combined = String::new();
+    for (_, source) in sources {
+        if !combined.is_empty() {
+            combined.push('\n');
+        }
+        combined.push_str(&source);
     }
     Ok(combined)
 }
@@ -2686,6 +2720,35 @@ fn validate_rust_implementation_binding(
         binding.callee,
         binding.path
     );
+    let free_callee_count = non_test_callees
+        .iter()
+        .filter(|function| function.impl_type.is_none())
+        .count();
+    ensure!(
+        free_callee_count <= 1,
+        "{} implementation binding callee {} is ambiguous across {} non-test free-function declarations in {}",
+        claim_id,
+        binding.callee,
+        free_callee_count,
+        binding.path
+    );
+    let mut method_counts = BTreeMap::<&str, usize>::new();
+    for function in &non_test_callees {
+        if let Some(impl_type) = function.impl_type.as_deref() {
+            *method_counts.entry(impl_type).or_default() += 1;
+        }
+    }
+    for (impl_type, count) in method_counts {
+        ensure!(
+            count <= 1,
+            "{} implementation binding callee {} is ambiguous across {} non-test {} method declarations in {}",
+            claim_id,
+            binding.callee,
+            count,
+            impl_type,
+            binding.path
+        );
+    }
     for function in &non_test_callees {
         let body = &sanitized[function.body_start..function.body_end];
         for caller in &binding.required_callers {
@@ -2717,6 +2780,7 @@ fn validate_rust_implementation_binding(
         );
         for function in non_test_callers {
             let body = &sanitized[function.body_start..function.body_end];
+            let raw_body = &source[function.body_start..function.body_end];
             let closure_bodies = rust_closure_body_spans(body);
             let async_block_bodies = rust_async_block_body_spans(body);
             let macro_body_spans = rust_macro_body_spans(body);
@@ -2747,7 +2811,12 @@ fn validate_rust_implementation_binding(
                             &closure_bodies,
                             &async_block_bodies,
                             &macro_body_spans,
-                        ) && call_satisfies_result_obligation(body, call, result_obligation)
+                        ) && call_satisfies_result_obligation(
+                            body,
+                            raw_body,
+                            call,
+                            result_obligation,
+                        )
                     }),
                 "{} implementation binding caller {} in {} does not call {}{} in non-test Rust code",
                 claim_id,
@@ -2764,6 +2833,7 @@ fn validate_rust_implementation_binding(
             binding,
             constraint,
             &sanitized,
+            &source,
             &test_module_spans,
             &functions,
         )?;
@@ -2781,6 +2851,7 @@ fn validate_rust_implementation_order(
     binding: &ImplementationBinding,
     constraint: &ImplementationCallOrderConstraint,
     source: &str,
+    raw_source: &str,
     test_module_spans: &[(usize, usize)],
     functions: &[RustFunctionSpan],
 ) -> Result<()> {
@@ -2814,6 +2885,7 @@ fn validate_rust_implementation_order(
     );
     for function in matching_callers {
         let body = &source[function.body_start..function.body_end];
+        let raw_body = &raw_source[function.body_start..function.body_end];
         let closure_bodies = rust_closure_body_spans(body);
         let async_block_bodies = rust_async_block_body_spans(body);
         let macro_body_spans = rust_macro_body_spans(body);
@@ -2835,7 +2907,9 @@ fn validate_rust_implementation_order(
                 &macro_body_spans,
             )
         })
-        .filter(|call| call_satisfies_result_obligation(body, call, constraint_result_obligation))
+        .filter(|call| {
+            call_satisfies_result_obligation(body, raw_body, call, constraint_result_obligation)
+        })
         .collect::<Vec<_>>();
         if callee_calls.is_empty() {
             return Err(anyhow!(
@@ -2912,8 +2986,10 @@ enum ResultObligation {
     None,
     MustPropagateResult,
     MustCheckResultFailClosed,
+    MustReturnSubmitActionRejection,
     MustCheckResultLoopSkipFailClosed,
     MustFilterOkResult,
+    MustContributeToMineableSelection,
     MustReturnTupleResultComponent,
     MustResetWorkTemplateOnErr,
     MustGuardFalseFailClosed,
@@ -2930,10 +3006,16 @@ fn parse_result_obligation(
         None => Ok(ResultObligation::None),
         Some("must_propagate_result") => Ok(ResultObligation::MustPropagateResult),
         Some("must_check_result_fail_closed") => Ok(ResultObligation::MustCheckResultFailClosed),
+        Some("must_return_submit_action_rejection") => {
+            Ok(ResultObligation::MustReturnSubmitActionRejection)
+        }
         Some("must_check_result_loop_skip_fail_closed") => {
             Ok(ResultObligation::MustCheckResultLoopSkipFailClosed)
         }
         Some("must_filter_ok_result") => Ok(ResultObligation::MustFilterOkResult),
+        Some("must_contribute_to_mineable_selection") => {
+            Ok(ResultObligation::MustContributeToMineableSelection)
+        }
         Some("must_return_tuple_result_component") => {
             Ok(ResultObligation::MustReturnTupleResultComponent)
         }
@@ -2959,10 +3041,16 @@ fn result_obligation_error_suffix(obligation: ResultObligation) -> &'static str 
         ResultObligation::None => "",
         ResultObligation::MustPropagateResult => " with propagated result",
         ResultObligation::MustCheckResultFailClosed => " with fail-closed result handling",
+        ResultObligation::MustReturnSubmitActionRejection => {
+            " with an exact submit-action rejection response"
+        }
         ResultObligation::MustCheckResultLoopSkipFailClosed => {
             " with loop-skip fail-closed result handling"
         }
         ResultObligation::MustFilterOkResult => " with filter Ok-result gating",
+        ResultObligation::MustContributeToMineableSelection => {
+            " with mineable-selection admission dataflow"
+        }
         ResultObligation::MustReturnTupleResultComponent => " with returned tuple result component",
         ResultObligation::MustResetWorkTemplateOnErr => " with empty work-template fallback",
         ResultObligation::MustGuardFalseFailClosed => " with fail-closed false guard handling",
@@ -3288,11 +3376,11 @@ fn rust_impl_spans(source: &str) -> Result<Vec<RustImplSpan>> {
     Ok(spans)
 }
 
-fn enclosing_impl_type<'a>(
-    impl_spans: &'a [RustImplSpan],
+fn enclosing_impl_type(
+    impl_spans: &[RustImplSpan],
     fn_start: usize,
     fn_end: usize,
-) -> Option<&'a str> {
+) -> Option<&str> {
     impl_spans
         .iter()
         .filter(|span| span.body_start < fn_start && fn_end <= span.body_end)
@@ -3531,6 +3619,7 @@ fn rust_raw_string_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
     let r_index = match (bytes.get(start), bytes.get(start + 1)) {
         (Some(b'r'), _) => start,
         (Some(b'b'), Some(b'r')) => start + 1,
+        (Some(b'c'), Some(b'r')) => start + 1,
         _ => return None,
     };
     if start > 0 && is_rust_identifier_continuation_byte(bytes[start - 1]) {
@@ -3685,7 +3774,7 @@ fn parse_rust_identifier_after(source: &str, from: usize) -> Option<(String, usi
     index += 1;
     while bytes
         .get(index)
-        .is_some_and(|byte| is_rust_identifier_byte(*byte))
+        .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte))
     {
         index += 1;
     }
@@ -4105,19 +4194,27 @@ fn skip_ascii_whitespace_back(source: &str, from: usize) -> usize {
 
 fn call_satisfies_result_obligation(
     source: &str,
+    raw_source: &str,
     call: &RustCallSite,
     obligation: ResultObligation,
 ) -> bool {
+    debug_assert_eq!(source.len(), raw_source.len());
     match obligation {
         ResultObligation::None => true,
         ResultObligation::MustPropagateResult => call_result_is_propagated(source, call),
         ResultObligation::MustCheckResultFailClosed => {
             call_result_is_propagated(source, call) || call_result_is_fail_closed(source, call)
         }
+        ResultObligation::MustReturnSubmitActionRejection => {
+            call_result_match_err_branch_returns_submit_action_rejection(source, raw_source, call)
+        }
         ResultObligation::MustCheckResultLoopSkipFailClosed => {
             call_result_is_loop_skip_fail_closed(source, call)
         }
         ResultObligation::MustFilterOkResult => call_result_is_filter_ok_predicate(source, call),
+        ResultObligation::MustContributeToMineableSelection => {
+            call_result_contributes_to_mineable_selection(source, call)
+        }
         ResultObligation::MustReturnTupleResultComponent => {
             call_tuple_result_component_is_tail_returned(source, call)
         }
@@ -4271,6 +4368,31 @@ fn call_result_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
         || call_result_bound_is_err_branch_return(source, call)
 }
 
+fn call_result_match_err_branch_returns_submit_action_rejection(
+    source: &str,
+    raw_source: &str,
+    call: &RustCallSite,
+) -> bool {
+    let context = rust_statement_context(source, call.start);
+    let prefix = source[context.current_statement_start()..call.start].trim();
+    if prefix != "match" && !prefix.ends_with("= match") {
+        return false;
+    }
+    let branch_start = skip_ascii_whitespace(source, call.close_paren + 1);
+    if source.as_bytes().get(branch_start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(branch_end) = match_rust_brace(source, branch_start) else {
+        return false;
+    };
+    match_body_has_only_submit_action_rejecting_err_arms(
+        source,
+        raw_source,
+        branch_start + 1,
+        branch_end,
+    )
+}
+
 fn call_bool_false_guard_is_fail_closed(source: &str, call: &RustCallSite) -> bool {
     let context = rust_statement_context(source, call.start);
     let prefix = source[context.current_statement_start()..call.start].trim();
@@ -4345,22 +4467,23 @@ fn call_result_match_err_branch_continues_loop(source: &str, call: &RustCallSite
 }
 
 fn call_result_is_filter_ok_predicate(source: &str, call: &RustCallSite) -> bool {
-    let Some(is_ok_end) = call_result_direct_is_ok_end(source, call) else {
+    let Some(filter_call) = call_result_direct_filter_ok_call(source, call) else {
         return false;
     };
-    let Some(filter_call) = enclosing_filter_call(source, call) else {
-        return false;
-    };
-    let Some(body) = filter_closure_body(source, &filter_call) else {
-        return false;
-    };
+    filter_call_result_is_used(source, &filter_call)
+}
+
+fn call_result_direct_filter_ok_call(source: &str, call: &RustCallSite) -> Option<RustCallSite> {
+    let is_ok_end = call_result_direct_is_ok_end(source, call)?;
+    let filter_call = enclosing_filter_call(source, call)?;
+    let body = filter_closure_body(source, &filter_call)?;
     if call.start < body.start || is_ok_end > body.end {
-        return false;
+        return None;
     }
 
     let expression_start = rust_call_expression_start(source, call.start);
     if expression_start < body.start {
-        return false;
+        return None;
     }
     let statement_start = match body.kind {
         RustClosureBodyKind::Block => {
@@ -4369,11 +4492,127 @@ fn call_result_is_filter_ok_predicate(source: &str, call: &RustCallSite) -> bool
         RustClosureBodyKind::Expression => body.start,
     };
     if !source[statement_start..expression_start].trim().is_empty() {
+        return None;
+    }
+
+    (skip_ascii_whitespace(source, is_ok_end) == body.end).then_some(filter_call)
+}
+
+fn call_result_contributes_to_mineable_selection(source: &str, call: &RustCallSite) -> bool {
+    let Some(filter_call) = call_result_direct_filter_ok_call(source, call) else {
+        return false;
+    };
+    let Some(filter_body) = filter_closure_body(source, &filter_call) else {
+        return false;
+    };
+    let compact_body = compact_ascii_whitespace(&source[filter_body.start..filter_body.end]);
+    let final_filter = "letinput=native_mineable_action_admission_input(state,action,selected_candidate_hash);evaluate_native_mineable_action_admission(input).is_ok()";
+    if compact_body == final_filter {
+        return filter_call_result_is_used(source, &filter_call);
+    }
+
+    let preliminary_filter = "letinput=native_mineable_action_admission_input(state,action,None);evaluate_native_mineable_action_admission(input).is_ok()";
+    if compact_body != preliminary_filter {
+        return false;
+    }
+    preliminary_mineable_filter_count_reaches_final_selection(source, call, &filter_call)
+}
+
+fn compact_ascii_whitespace(source: &str) -> String {
+    source
+        .chars()
+        .filter(|character| !character.is_ascii_whitespace())
+        .collect()
+}
+
+fn preliminary_mineable_filter_count_reaches_final_selection(
+    source: &str,
+    call: &RustCallSite,
+    filter_call: &RustCallSite,
+) -> bool {
+    let Some((terminal_method, terminal_end)) =
+        filter_chain_terminal_method_and_end(source, filter_call)
+    else {
+        return false;
+    };
+    if terminal_method != "count" {
+        return false;
+    }
+    let context = rust_statement_context(source, filter_call.start);
+    let Some(block_start) = context.block_path.last().copied() else {
+        return false;
+    };
+    let Ok(block_end) = match_rust_brace(source, block_start) else {
+        return false;
+    };
+    let Some((count_statement_end, true)) =
+        top_level_statement_end_after(source, terminal_end, block_end)
+    else {
+        return false;
+    };
+    if skip_ascii_whitespace(source, terminal_end) != count_statement_end {
+        return false;
+    }
+    let count_prefix = source[context.current_statement_start()..filter_call.start].trim();
+    if statement_prefix_named_let_binding(count_prefix).as_deref() != Some("transfer_count") {
         return false;
     }
 
-    skip_ascii_whitespace(source, is_ok_end) == body.end
-        && filter_call_result_is_used(source, &filter_call)
+    let mut selected_candidate_bound = false;
+    let mut cursor = skip_ascii_whitespace(source, count_statement_end + 1);
+    while cursor < block_end {
+        let statement_start = cursor;
+        let Some((statement_end, has_semicolon)) =
+            top_level_statement_end_after(source, statement_start, block_end)
+        else {
+            return false;
+        };
+        let statement = source[statement_start..statement_end].trim();
+        if statement_prefix_named_let_binding(statement).as_deref() == Some("transfer_count")
+            || statement_assigns_identifier(statement, "transfer_count")
+        {
+            return false;
+        }
+        if selected_candidate_bound
+            && (statement_prefix_named_let_binding(statement).as_deref()
+                == Some("selected_candidate_hash")
+                || statement_assigns_identifier(statement, "selected_candidate_hash"))
+        {
+            return false;
+        }
+
+        if statement_prefix_named_let_binding(statement).as_deref()
+            == Some("selected_candidate_hash")
+        {
+            let compact = compact_ascii_whitespace(statement);
+            if selected_candidate_bound
+                || !compact.starts_with("letselected_candidate_hash=iftransfer_count==0{None}else{")
+                || !compact.contains("artifact.tx_countasusize==transfer_count")
+                || !compact.contains(".map(|action|action.tx_hash)")
+            {
+                return false;
+            }
+            selected_candidate_bound = true;
+        }
+
+        if !has_semicolon {
+            if !selected_candidate_bound {
+                return false;
+            }
+            return rust_call_sites(source, "evaluate_native_mineable_action_admission")
+                .into_iter()
+                .filter(|final_call| {
+                    call.start < final_call.start
+                        && statement_start <= final_call.start
+                        && final_call.close_paren <= statement_end
+                })
+                .any(|final_call| {
+                    call_result_contributes_to_mineable_selection(source, &final_call)
+                });
+        }
+        cursor = skip_ascii_whitespace(source, statement_end + 1);
+    }
+    false
 }
 
 fn call_result_direct_is_ok_end(source: &str, call: &RustCallSite) -> Option<usize> {
@@ -4440,6 +4679,7 @@ fn rust_call_is_direct_binding_evidence(
     if rust_position_is_inside_spans(call.start, async_blocks)
         || rust_position_is_inside_spans(call.start, macro_bodies)
         || rust_call_is_in_statically_dead_short_circuit_rhs(source, call)
+        || rust_call_is_in_statically_dead_control_flow(source, call)
     {
         return false;
     }
@@ -4451,7 +4691,11 @@ fn rust_call_is_direct_binding_evidence(
     if enclosing_closures.is_empty() {
         return true;
     }
-    if obligation != ResultObligation::MustFilterOkResult || enclosing_closures.len() != 1 {
+    if !matches!(
+        obligation,
+        ResultObligation::MustFilterOkResult | ResultObligation::MustContributeToMineableSelection
+    ) || enclosing_closures.len() != 1
+    {
         return false;
     }
     let Some(filter_call) = enclosing_filter_call(source, call) else {
@@ -4460,7 +4704,8 @@ fn rust_call_is_direct_binding_evidence(
     let Some(filter_body) = filter_closure_body(source, &filter_call) else {
         return false;
     };
-    *enclosing_closures[0] == filter_body && call_result_is_filter_ok_predicate(source, call)
+    *enclosing_closures[0] == filter_body
+        && call_result_direct_filter_ok_call(source, call).is_some()
 }
 
 fn rust_call_is_direct_order_evidence(
@@ -4474,6 +4719,20 @@ fn rust_call_is_direct_order_evidence(
         && !rust_position_is_inside_spans(call.start, async_blocks)
         && !rust_position_is_inside_spans(call.start, macro_bodies)
         && !rust_call_is_in_short_circuit_rhs(source, call)
+        && !rust_call_is_in_statically_dead_control_flow(source, call)
+}
+
+fn rust_call_is_in_statically_dead_control_flow(source: &str, call: &RustCallSite) -> bool {
+    rust_statement_context(source, call.start)
+        .block_path
+        .into_iter()
+        .any(|block_start| {
+            let prefix_start = rust_control_prefix_start_before_block(source, block_start);
+            matches!(
+                source[prefix_start..block_start].trim(),
+                "if false" | "while false"
+            )
+        })
 }
 
 fn rust_position_is_inside_spans(position: usize, spans: &[RustSourceSpan]) -> bool {
@@ -4747,7 +5006,7 @@ fn filter_call_result_is_used(source: &str, filter_call: &RustCallSite) -> bool 
             return true;
         }
         if let Some(binding) = statement_prefix_named_let_binding(prefix) {
-            identifier_is_used_later_in_block(source, &binding, statement_end, block_end)
+            identifier_reaches_block_sink(source, &binding, statement_end, block_end)
         } else {
             false
         }
@@ -4757,6 +5016,13 @@ fn filter_call_result_is_used(source: &str, filter_call: &RustCallSite) -> bool 
 }
 
 fn filter_chain_terminal_end(source: &str, filter_call: &RustCallSite) -> Option<usize> {
+    filter_chain_terminal_method_and_end(source, filter_call).map(|(_, end)| end)
+}
+
+fn filter_chain_terminal_method_and_end<'a>(
+    source: &'a str,
+    filter_call: &RustCallSite,
+) -> Option<(&'a str, usize)> {
     let mut cursor = filter_call.close_paren + 1;
     loop {
         let method_dot = skip_ascii_whitespace(source, cursor);
@@ -4772,7 +5038,7 @@ fn filter_chain_terminal_end(source: &str, filter_call: &RustCallSite) -> Option
         let paren_end = match_rust_paren(source, paren_start).ok()?;
         cursor = paren_end + 1;
         if iterator_terminal_method_consumes_filtered_result(method) {
-            return Some(cursor);
+            return Some((method, cursor));
         }
         if !iterator_method_preserves_filtered_result(method) {
             return None;
@@ -4822,20 +5088,14 @@ fn iterator_method_preserves_filtered_result(method: &str) -> bool {
 }
 
 fn statement_prefix_named_let_binding(prefix: &str) -> Option<String> {
-    let Some(rest) = prefix.strip_prefix("let ") else {
-        return None;
-    };
-    let Some((lhs, _rhs_prefix)) = rest.split_once('=') else {
-        return None;
-    };
+    let rest = prefix.strip_prefix("let ")?;
+    let (lhs, _rhs_prefix) = rest.split_once('=')?;
     let mut lhs = lhs.trim_start();
     if let Some(after_mut) = lhs.strip_prefix("mut ") {
         lhs = after_mut.trim_start();
     }
     let bytes = lhs.as_bytes();
-    let Some(first) = bytes.first().copied() else {
-        return None;
-    };
+    let first = bytes.first().copied()?;
     if !first.is_ascii_alphabetic() {
         return None;
     }
@@ -4850,7 +5110,54 @@ fn statement_prefix_named_let_binding(prefix: &str) -> Option<String> {
     (!ident.starts_with('_')).then(|| ident.to_owned())
 }
 
-fn identifier_is_used_later_in_block(source: &str, ident: &str, from: usize, to: usize) -> bool {
+fn identifier_reaches_block_sink(source: &str, ident: &str, from: usize, to: usize) -> bool {
+    let mut cursor = skip_ascii_whitespace(source, from);
+    while cursor < to {
+        let statement_start = cursor;
+        let Some((statement_end, has_semicolon)) =
+            top_level_statement_end_after(source, statement_start, to)
+        else {
+            return false;
+        };
+        let statement = source[statement_start..statement_end].trim();
+        if statement_prefix_named_let_binding(statement).as_deref() == Some(ident)
+            || statement_assigns_identifier(statement, ident)
+        {
+            return false;
+        }
+        let next = if has_semicolon {
+            skip_ascii_whitespace(source, statement_end + 1)
+        } else {
+            to
+        };
+        if next >= to {
+            return identifier_occurs_in_span(source, ident, statement_start, statement_end);
+        }
+        cursor = next;
+    }
+    false
+}
+
+fn statement_assigns_identifier(statement: &str, ident: &str) -> bool {
+    let statement = statement.trim_start();
+    let Some(after_ident) = statement.strip_prefix(ident) else {
+        return false;
+    };
+    if statement
+        .as_bytes()
+        .get(ident.len())
+        .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte))
+    {
+        return false;
+    }
+    let suffix = after_ident.trim_start();
+    suffix.starts_with('=')
+        || ["+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="]
+            .iter()
+            .any(|operator| suffix.starts_with(operator))
+}
+
+fn identifier_occurs_in_span(source: &str, ident: &str, from: usize, to: usize) -> bool {
     let bytes = source.as_bytes();
     let ident_bytes = ident.as_bytes();
     let mut cursor = from;
@@ -5276,11 +5583,11 @@ fn match_arm_body_resets_work_template(source: &str, start: usize, end: usize) -
             == Some("best.supply_digest")
 }
 
-fn top_level_block_tail_expression<'a>(
-    source: &'a str,
+fn top_level_block_tail_expression(
+    source: &str,
     body_start: usize,
     block_end: usize,
-) -> Option<&'a str> {
+) -> Option<&str> {
     let tail_start = top_level_statement_start_in_span(source, body_start, block_end);
     let tail = source[tail_start..block_end].trim();
     (!tail.is_empty()).then_some(tail)
@@ -5538,6 +5845,73 @@ fn match_body_has_only_returning_err_arms(
         cursor = arm_body_end.saturating_add(1);
     }
     saw_err
+}
+
+fn match_body_has_only_submit_action_rejecting_err_arms(
+    source: &str,
+    raw_source: &str,
+    body_start: usize,
+    body_end: usize,
+) -> bool {
+    let mut cursor = body_start;
+    let mut saw_err = false;
+    while cursor < body_end {
+        cursor = skip_match_arm_separator(source, cursor, body_end);
+        if cursor >= body_end {
+            break;
+        }
+        let Some(arrow) = find_top_level_fat_arrow(source, cursor, body_end) else {
+            return false;
+        };
+        let pattern = source[cursor..arrow].trim();
+        let arm_body_start = skip_ascii_whitespace(source, arrow + 2);
+        let arm_body_end = top_level_match_arm_end(source, arm_body_start, body_end);
+        if !saw_err && match_pattern_may_catch_result_err_before_plain_err(pattern) {
+            return false;
+        }
+        if match_pattern_is_plain_err(pattern) {
+            if saw_err
+                || !match_arm_body_returns_submit_action_rejection(
+                    source,
+                    raw_source,
+                    arm_body_start,
+                    arm_body_end,
+                )
+            {
+                return false;
+            }
+            saw_err = true;
+        }
+        cursor = arm_body_end.saturating_add(1);
+    }
+    saw_err
+}
+
+fn match_arm_body_returns_submit_action_rejection(
+    source: &str,
+    raw_source: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if start >= end {
+        return false;
+    }
+    if source.as_bytes().get(start) == Some(&b'{') {
+        let Ok(block_end) = match_rust_brace(source, start) else {
+            return false;
+        };
+        if block_end > end {
+            return false;
+        }
+        return rust_block_has_top_level_terminal_submit_action_rejection_return(
+            source,
+            raw_source,
+            start + 1,
+            block_end,
+        );
+    }
+    span_is_terminal_submit_action_rejection_return(source, raw_source, start, end)
 }
 
 fn match_body_has_only_continuing_err_arms(
@@ -5808,6 +6182,13 @@ fn rust_block_has_top_level_terminal_return(source: &str, start: usize, end: usi
             else {
                 return false;
             };
+            if !terminal_return_expression_is_fail_closed(
+                source,
+                index + "return".len(),
+                statement_end,
+            ) {
+                return false;
+            }
             let tail_start = if has_semicolon {
                 statement_end + 1
             } else {
@@ -5839,12 +6220,306 @@ fn span_is_terminal_return_statement(source: &str, start: usize, end: usize) -> 
     else {
         return false;
     };
+    if !terminal_return_expression_is_fail_closed(source, start + "return".len(), statement_end) {
+        return false;
+    }
     let tail_start = if has_semicolon {
         statement_end + 1
     } else {
         statement_end
     };
     source[tail_start..end].trim().is_empty()
+}
+
+fn terminal_return_expression_is_fail_closed(source: &str, start: usize, end: usize) -> bool {
+    let expression = source[start..end].trim();
+    if expression.is_empty()
+        || matches!(expression, "None" | "false")
+        || exact_rust_parenthesized_constructor(expression, "Err")
+        || exact_rust_braced_constructor(expression, "Err")
+        || exact_rust_parenthesized_constructor(expression, "ControlFlow::Break")
+    {
+        return true;
+    }
+    if let Some(ok_payload) = expression
+        .strip_prefix("Ok(")
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        return matches!(ok_payload.trim(), "None" | "false");
+    }
+    two_component_tuple_returns_err(expression)
+}
+
+fn two_component_tuple_returns_err(expression: &str) -> bool {
+    if expression.as_bytes().first() != Some(&b'(') {
+        return false;
+    }
+    let Ok(close) = match_rust_paren(expression, 0) else {
+        return false;
+    };
+    if close + 1 != expression.len() {
+        return false;
+    }
+    let Some(comma) = find_top_level_byte(expression, 1, close, b',') else {
+        return false;
+    };
+    if find_top_level_byte(expression, comma + 1, close, b',').is_some() {
+        return false;
+    }
+    let trace = expression[1..comma].trim();
+    let bytes = trace.as_bytes();
+    if bytes.is_empty()
+        || !(bytes[0] == b'_' || bytes[0].is_ascii_alphabetic())
+        || !bytes
+            .iter()
+            .copied()
+            .all(is_rust_identifier_continuation_byte)
+    {
+        return false;
+    }
+    let result = expression[comma + 1..close].trim();
+    exact_rust_parenthesized_constructor(result, "Err")
+        || exact_rust_braced_constructor(result, "Err")
+}
+
+fn exact_rust_parenthesized_constructor(expression: &str, constructor: &str) -> bool {
+    let Some(after_constructor) = expression.strip_prefix(constructor) else {
+        return false;
+    };
+    if after_constructor
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte))
+    {
+        return false;
+    }
+    let open = skip_ascii_whitespace(expression, constructor.len());
+    if expression.as_bytes().get(open) != Some(&b'(') {
+        return false;
+    }
+    match_rust_paren(expression, open)
+        .is_ok_and(|close| skip_ascii_whitespace(expression, close + 1) == expression.len())
+}
+
+fn exact_rust_braced_constructor(expression: &str, constructor: &str) -> bool {
+    let Some(after_constructor) = expression.strip_prefix(constructor) else {
+        return false;
+    };
+    if after_constructor
+        .as_bytes()
+        .first()
+        .is_some_and(|byte| is_rust_identifier_continuation_byte(*byte))
+    {
+        return false;
+    }
+    let open = skip_ascii_whitespace(expression, constructor.len());
+    if expression.as_bytes().get(open) != Some(&b'{') {
+        return false;
+    }
+    match_rust_brace(expression, open)
+        .is_ok_and(|close| skip_ascii_whitespace(expression, close + 1) == expression.len())
+}
+
+fn rust_block_has_top_level_terminal_submit_action_rejection_return(
+    source: &str,
+    raw_source: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    let bytes = source.as_bytes();
+    let mut index = start;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+    while index < end {
+        if paren_depth == 0
+            && bracket_depth == 0
+            && brace_depth == 0
+            && rust_token_at(source, "return", index).is_some()
+        {
+            let Some((statement_end, has_semicolon)) =
+                top_level_statement_end_after(source, index + "return".len(), end)
+            else {
+                return false;
+            };
+            if !terminal_return_expression_is_submit_action_rejection(
+                source,
+                raw_source,
+                index + "return".len(),
+                statement_end,
+            ) {
+                return false;
+            }
+            let tail_start = if has_semicolon {
+                statement_end + 1
+            } else {
+                statement_end
+            };
+            return source[tail_start..end].trim().is_empty();
+        }
+        match bytes[index] {
+            b'(' => paren_depth += 1,
+            b')' => paren_depth = paren_depth.saturating_sub(1),
+            b'[' => bracket_depth += 1,
+            b']' => bracket_depth = bracket_depth.saturating_sub(1),
+            b'{' => brace_depth += 1,
+            b'}' => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+fn span_is_terminal_submit_action_rejection_return(
+    source: &str,
+    raw_source: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    let start = skip_ascii_whitespace(source, start);
+    if rust_token_at(source, "return", start).is_none() {
+        return false;
+    }
+    let Some((statement_end, has_semicolon)) =
+        top_level_statement_end_after(source, start + "return".len(), end)
+    else {
+        return false;
+    };
+    if !terminal_return_expression_is_submit_action_rejection(
+        source,
+        raw_source,
+        start + "return".len(),
+        statement_end,
+    ) {
+        return false;
+    }
+    let tail_start = if has_semicolon {
+        statement_end + 1
+    } else {
+        statement_end
+    };
+    source[tail_start..end].trim().is_empty()
+}
+
+fn terminal_return_expression_is_submit_action_rejection(
+    source: &str,
+    raw_source: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    debug_assert_eq!(source.len(), raw_source.len());
+    let expression_start = skip_ascii_whitespace(source, start);
+    let expression_end = skip_ascii_whitespace_back(source, end);
+    let Some(after_json) = rust_token_at(source, "json", expression_start) else {
+        return false;
+    };
+    let bang = skip_ascii_whitespace(source, after_json);
+    if source.as_bytes().get(bang) != Some(&b'!') {
+        return false;
+    }
+    let outer_start = skip_ascii_whitespace(source, bang + 1);
+    if source.as_bytes().get(outer_start) != Some(&b'(') {
+        return false;
+    }
+    let Ok(outer_end) = match_rust_paren(source, outer_start) else {
+        return false;
+    };
+    if skip_ascii_whitespace(source, outer_end + 1) != expression_end {
+        return false;
+    }
+    let object_start = skip_ascii_whitespace(source, outer_start + 1);
+    if source.as_bytes().get(object_start) != Some(&b'{') {
+        return false;
+    }
+    let Ok(object_end) = match_rust_brace(source, object_start) else {
+        return false;
+    };
+    if skip_ascii_whitespace(source, object_end + 1) != outer_end {
+        return false;
+    }
+    submit_action_rejection_object_fields_are_exact(
+        source,
+        raw_source,
+        object_start + 1,
+        object_end,
+    )
+}
+
+fn submit_action_rejection_object_fields_are_exact(
+    source: &str,
+    raw_source: &str,
+    start: usize,
+    end: usize,
+) -> bool {
+    let bytes = source.as_bytes();
+    let mut cursor = start;
+    let mut first = true;
+    let mut saw_success = false;
+    let mut saw_tx_hash = false;
+    let mut saw_error = false;
+
+    loop {
+        cursor = skip_ascii_whitespace(raw_source, cursor);
+        if cursor >= end {
+            break;
+        }
+        if !first {
+            if bytes.get(cursor) != Some(&b',') {
+                return false;
+            }
+            cursor = skip_ascii_whitespace(raw_source, cursor + 1);
+            if cursor >= end {
+                break;
+            }
+        }
+
+        let key_start = cursor;
+        let mut colon = None;
+        while cursor < end {
+            match bytes[cursor] {
+                b':' => {
+                    colon = Some(cursor);
+                    break;
+                }
+                b',' => return false,
+                _ => cursor += 1,
+            }
+        }
+        let Some(colon) = colon else {
+            return false;
+        };
+        let key = raw_source[key_start..colon].trim();
+        let value_start = skip_ascii_whitespace(source, colon + 1);
+        let mut value_end = value_start;
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+        while value_end < end {
+            match bytes[value_end] {
+                b',' if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 => break,
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                _ => {}
+            }
+            value_end += 1;
+        }
+        let value = source[value_start..value_end].trim();
+        match key {
+            "\"success\"" if !saw_success && value == "false" => saw_success = true,
+            "\"tx_hash\"" if !saw_tx_hash && value == "null" => saw_tx_hash = true,
+            "\"error\"" if !saw_error && value == "err.to_string()" => saw_error = true,
+            _ => return false,
+        }
+        cursor = value_end;
+        first = false;
+    }
+
+    saw_success && saw_tx_hash && saw_error
 }
 
 fn top_level_statement_end_after(source: &str, from: usize, end: usize) -> Option<(usize, bool)> {
@@ -6177,7 +6852,7 @@ fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<St
         serde_json::to_value(node).context("serialize blueprint node for target review")?,
     )?;
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"hegemon.formal-blueprint-source-bound-review.v1\0");
+    hasher.update(b"hegemon.formal-blueprint-source-bound-review.v2\0");
     hasher.update(&(canonical.len() as u64).to_le_bytes());
     hasher.update(&canonical);
 
@@ -6188,13 +6863,50 @@ fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<St
         .filter(|path| !BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS.contains(&path.as_str()))
         .cloned()
         .collect::<BTreeSet<_>>();
+    let mut review_sources = BTreeMap::<String, Vec<u8>>::new();
     for relative in source_paths {
-        let bytes = read_repo_relative_regular_file_bounded(
-            root,
-            &relative,
-            &format!("{} review source", node.id),
-            MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
-        )?;
+        let is_rust_module_root = Path::new(&relative)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("mod.rs")
+            && Path::new(&relative)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                == Some("rs");
+        if is_rust_module_root {
+            for (module_relative, source) in rust_binding_module_sources(root, &relative)? {
+                let bytes = source.into_bytes();
+                if let Some(existing) = review_sources.get(&module_relative) {
+                    ensure!(
+                        existing == &bytes,
+                        "{} review source changed while reading {}",
+                        node.id,
+                        module_relative
+                    );
+                } else {
+                    review_sources.insert(module_relative, bytes);
+                }
+            }
+        } else {
+            let bytes = read_repo_relative_regular_file_bounded(
+                root,
+                &relative,
+                &format!("{} review source", node.id),
+                MAX_BLUEPRINT_REVIEW_SOURCE_BYTES,
+            )?;
+            if let Some(existing) = review_sources.get(&relative) {
+                ensure!(
+                    existing == &bytes,
+                    "{} review source changed while reading {}",
+                    node.id,
+                    relative
+                );
+            } else {
+                review_sources.insert(relative, bytes);
+            }
+        }
+    }
+    for (relative, bytes) in review_sources {
         hasher.update(&(relative.len() as u64).to_le_bytes());
         hasher.update(relative.as_bytes());
         hasher.update(&(bytes.len() as u64).to_le_bytes());
@@ -6636,7 +7348,7 @@ fn parse_hex_vec(raw: &str) -> Result<Vec<u8>> {
         .strip_prefix("0x")
         .or_else(|| raw.strip_prefix("0X"))
         .unwrap_or(raw);
-    ensure!(trimmed.len() % 2 == 0, "hex string has odd length");
+    ensure!(trimmed.len().is_multiple_of(2), "hex string has odd length");
     hex::decode(trimmed).context("decode hex")
 }
 
@@ -7462,6 +8174,122 @@ mod tests {
     }
 
     #[test]
+    fn module_root_review_digest_covers_declared_non_test_siblings() {
+        let root = test_root("module-review-digest-sibling");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod admission;\nfn import_mined_block() { verified_helper(); }\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/admission.rs",
+            "fn verified_helper() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["import_mined_block"],
+            ),
+        );
+
+        write_repo_file(
+            &root,
+            "src/native/admission.rs",
+            "fn verified_helper() { let _semantic_change = true; }\n",
+        );
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("a declared module sibling change must stale target review");
+        assert!(
+            err.to_string()
+                .contains("target_review content_blake3 mismatch"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn module_root_review_digest_excludes_cfg_test_siblings_with_analysis() {
+        let root = test_root("module-review-digest-cfg-test-sibling");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod admission;\n#[cfg(test)]\nmod tests;\nfn import_mined_block() { verified_helper(); }\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/admission.rs",
+            "fn verified_helper() {}\n",
+        );
+        write_repo_file(&root, "src/native/tests.rs", "fn test_only_helper() {}\n");
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["import_mined_block"],
+            ),
+        );
+
+        write_repo_file(
+            &root,
+            "src/native/tests.rs",
+            "fn changed_test_only_helper() {}\n",
+        );
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("cfg(test) sibling is excluded from analysis and review digest");
+        assert_eq!(report.implementation_bindings, 1);
+    }
+
+    #[test]
+    fn module_root_binding_rejects_ambiguous_reexported_callee() {
+        let root = test_root("module-ambiguous-reexported-callee");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native/mod.rs",
+            "mod reviewed;\nmod adversarial;\npub(crate) use adversarial::verified_helper;\nfn import_mined_block() { verified_helper(); }\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/reviewed.rs",
+            "pub(crate) fn verified_helper() {}\n",
+        );
+        write_repo_file(
+            &root,
+            "src/native/adversarial.rs",
+            "pub(crate) fn verified_helper() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_binding_at(
+                "src/native/mod.rs",
+                "verified_helper",
+                &["import_mined_block"],
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("an ambiguous reexported callee must not receive review credit");
+        assert!(err.to_string().contains("ambiguous across 2"), "{err:#}");
+    }
+
+    #[test]
     fn module_root_binding_ignores_cfg_test_module_files() {
         let root = test_root("module-split-test-file-excluded");
         write_repo_file(&root, "evidence/support.txt", "support");
@@ -8278,6 +9106,41 @@ mod tests {
     }
 
     #[test]
+    fn blueprint_rejects_call_inside_statically_dead_if_body() {
+        let root = test_root("statically-dead-if-body");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Ok(()) }\n\
+             fn import_mined_block() -> Result<(), ()> {\n\
+                 if false { verified_helper()?; }\n\
+                 Ok(())\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "must_propagate_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("a statically dead branch must not satisfy a binding");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with propagated result"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn blueprint_rejects_non_call_token_spoofs_for_bound_callee() {
         for (name, spoof) in [
             ("stringify-macro", "stringify!(verified_helper()?);"),
@@ -8286,6 +9149,11 @@ mod tests {
             (
                 "raw-byte-string",
                 "let _text = br##\"verified_helper()?\"##;",
+            ),
+            ("raw-c-string", "let _text = cr\"verified_helper()?\";"),
+            (
+                "raw-hashed-c-string",
+                "let _text = cr##\"verified_helper()?\"##;",
             ),
             ("unicode-prefix-identifier", "alpha_verified_helper()?;"),
             ("unicode-suffix-identifier", "verified_helper_alpha()?;"),
@@ -8742,6 +9610,283 @@ mod tests {
             .expect("is_err fail-closed implementation binding");
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_success_return_as_fail_closed_handling() {
+        let root = test_root("success-return-as-fail-closed-handling");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Err(()) }\n\
+             fn import_mined_block() {\n\
+                 let accepted = Some(());\n\
+                 if verified_helper().is_err() { return Ok(accepted); }\n\
+                 mutate();\n\
+             }\n\
+             fn mutate() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("returning an accepted value is not fail-closed handling");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with fail-closed result handling"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_chained_err_constructor_as_fail_closed_handling() {
+        for (name, return_expression) in [
+            (
+                "chained-err-constructor-return",
+                "Err(rejection).unwrap_or(accepted)",
+            ),
+            (
+                "chained-trace-err-constructor-return",
+                "(trace, Err(rejection).unwrap_or(Ok(accepted)))",
+            ),
+        ] {
+            let root = test_root(name);
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn verified_helper() -> Result<(), ()> {{ Err(()) }}\n\
+                     fn import_mined_block() {{\n\
+                         let trace = Vec::new();\n\
+                         let rejection = ();\n\
+                         let accepted = Some(());\n\
+                         if verified_helper().is_err() {{ return {return_expression}; }}\n\
+                         mutate();\n\
+                     }}\n\
+                     fn mutate() {{}}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_dominating_ordered_binding(
+                    "verified_helper",
+                    &["import_mined_block"],
+                    "import_mined_block",
+                    &["mutate"],
+                    Some("must_check_result_fail_closed"),
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("a chained Err constructor can recover to success");
+            assert!(
+                err.to_string()
+                    .contains("does not call verified_helper with fail-closed result handling"),
+                "{name}: {err:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn blueprint_accepts_trace_tuple_err_as_fail_closed_handling() {
+        let root = test_root("trace-tuple-err-as-fail-closed-handling");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Err(()) }\n\
+             fn import_mined_block() {\n\
+                 let mut trace = Vec::new();\n\
+                 let value = match verified_helper() {\n\
+                     Ok(value) => value,\n\
+                     Err(rejection) => return (trace, Err(rejection)),\n\
+                 };\n\
+                 mutate(value);\n\
+             }\n\
+             fn mutate<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("trace plus Err tuple is fail-closed handling");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_trace_tuple_ok_as_fail_closed_handling() {
+        let root = test_root("trace-tuple-ok-as-fail-closed-handling");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() -> Result<(), ()> { Err(()) }\n\
+             fn import_mined_block() {\n\
+                 let mut trace = Vec::new();\n\
+                 let accepted = Some(());\n\
+                 let value = match verified_helper() {\n\
+                     Ok(value) => value,\n\
+                     Err(_) => return (trace, Ok(accepted)),\n\
+                 };\n\
+                 mutate(value);\n\
+             }\n\
+             fn mutate<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["import_mined_block"],
+                "import_mined_block",
+                &["mutate"],
+                Some("must_check_result_fail_closed"),
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("trace plus Ok tuple is not fail-closed handling");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with fail-closed result handling"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_accepts_exact_submit_action_rejection_response() {
+        let root = test_root("exact-submit-action-rejection-response");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper() {}\n\
+             fn submit_action() {\n\
+                 let action = match verified_helper() {\n\
+                     Ok(action) => action,\n\
+                     Err(err) => {\n\
+                         return json!({\n\
+                             \"success\": false,\n\
+                             \"tx_hash\": null,\n\
+                             \"error\": err.to_string(),\n\
+                         });\n\
+                     }\n\
+                 };\n\
+                 mutate(action);\n\
+             }\n\
+             fn mutate<T>(_value: T) {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_dominating_ordered_binding(
+                "verified_helper",
+                &["submit_action"],
+                "submit_action",
+                &["mutate"],
+                Some("must_return_submit_action_rejection"),
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("exact submit-action rejection implementation binding");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_order_edges, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_success_shaped_submit_action_rejection_response() {
+        for (name, fields) in [
+            (
+                "submit-action-rejection-success-true",
+                "\"success\": true, \"tx_hash\": null, \"error\": err.to_string()",
+            ),
+            (
+                "submit-action-rejection-duplicate-success",
+                "\"success\": false, \"tx_hash\": null, \"error\": err.to_string(), \"success\": true",
+            ),
+            (
+                "submit-action-rejection-nonnull-hash",
+                "\"success\": false, \"tx_hash\": action_hash, \"error\": err.to_string()",
+            ),
+        ] {
+            let root = test_root(name);
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                "src/native.rs",
+                &format!(
+                    "fn verified_helper() {{}}\n\
+                     fn submit_action() {{\n\
+                         let action = match verified_helper() {{\n\
+                             Ok(action) => action,\n\
+                             Err(err) => {{ return json!({{{fields}}}); }}\n\
+                         }};\n\
+                         mutate(action);\n\
+                     }}\n\
+                     fn mutate<T>(_value: T) {{}}\n"
+                ),
+            );
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_dominating_ordered_binding(
+                    "verified_helper",
+                    &["submit_action"],
+                    "submit_action",
+                    &["mutate"],
+                    Some("must_return_submit_action_rejection"),
+                ),
+            );
+
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("success-shaped submit-action response must reject");
+            assert!(
+                err.to_string()
+                    .contains("does not call verified_helper with an exact submit-action rejection response"),
+                "{name}: {err:#}"
+            );
+        }
     }
 
     #[test]
@@ -9633,6 +10778,134 @@ mod tests {
             .expect("filter Ok-result block predicate implementation binding");
         assert_eq!(report.implementation_bindings, 1);
         assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_accepts_mineable_preselection_count_dataflow() {
+        let root = test_root("mineable-preselection-count-dataflow");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn evaluate_native_mineable_action_admission<T>(_value: T) -> Result<(), ()> { Ok(()) }\n\
+             fn select_mineable_actions(state: &State) {\n\
+                 let actions = ordered_pending_actions(state);\n\
+                 let transfer_count = actions.iter().filter(|action| is_transfer(action)).filter(|action| {\n\
+                     let input = native_mineable_action_admission_input(state, action, None);\n\
+                     evaluate_native_mineable_action_admission(input).is_ok()\n\
+                 }).count();\n\
+                 let selected_candidate_hash = if transfer_count == 0 {\n\
+                     None\n\
+                 } else {\n\
+                     actions.iter().find(|action| {\n\
+                         is_candidate(action) && action.candidate_artifact.as_ref().is_some_and(|artifact| artifact.tx_count as usize == transfer_count)\n\
+                     }).map(|action| action.tx_hash)\n\
+                 };\n\
+                 actions.into_iter().filter(|action| {\n\
+                     let input = native_mineable_action_admission_input(state, action, selected_candidate_hash);\n\
+                     evaluate_native_mineable_action_admission(input).is_ok()\n\
+                 }).collect()\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "evaluate_native_mineable_action_admission",
+                &["select_mineable_actions"],
+                "must_contribute_to_mineable_selection",
+            ),
+        );
+
+        let report = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect("mineable preselection count must feed final admitted selection");
+        assert_eq!(report.implementation_bindings, 1);
+        assert_eq!(report.implementation_result_obligations, 1);
+    }
+
+    #[test]
+    fn blueprint_rejects_disconnected_mineable_preselection_count() {
+        let root = test_root("disconnected-mineable-preselection-count");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn evaluate_native_mineable_action_admission<T>(_value: T) -> Result<(), ()> { Ok(()) }\n\
+             fn select_mineable_actions(state: &State) {\n\
+                 let actions = ordered_pending_actions(state);\n\
+                 let transfer_count = actions.iter().filter(|action| {\n\
+                     let input = native_mineable_action_admission_input(state, action, None);\n\
+                     evaluate_native_mineable_action_admission(input).is_ok()\n\
+                 }).count();\n\
+                 let selected_candidate_hash = unchecked_candidate_hash();\n\
+                 actions.into_iter().filter(|action| {\n\
+                     let input = native_mineable_action_admission_input(state, action, selected_candidate_hash);\n\
+                     evaluate_native_mineable_action_admission(input).is_ok()\n\
+                 }).collect()\n\
+             }\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "evaluate_native_mineable_action_admission",
+                &["select_mineable_actions"],
+                "must_contribute_to_mineable_selection",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("disconnected mineable preselection count must reject");
+        assert!(
+            err.to_string().contains(
+                "does not call evaluate_native_mineable_action_admission with mineable-selection admission dataflow"
+            ),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn blueprint_rejects_shadowed_filtered_result_at_block_sink() {
+        let root = test_root("shadowed-filtered-result-at-block-sink");
+        write_repo_file(&root, "evidence/support.txt", "support");
+        write_repo_file(&root, "evidence/target.txt", "target");
+        write_repo_file(
+            &root,
+            "src/native.rs",
+            "fn verified_helper<T>(_value: T) -> Result<(), ()> { Ok(()) }\n\
+             fn unchecked_actions() -> Vec<u8> { Vec::new() }\n\
+             fn select_mineable_actions() {\n\
+                 let selected = actions().into_iter().filter(|action| verified_helper(action).is_ok()).collect::<Vec<_>>();\n\
+                 let selected = unchecked_actions();\n\
+                 selected\n\
+             }\n\
+             fn actions() {}\n",
+        );
+        let claims_path = root.join("claims.json");
+        let blueprint_path = root.join("blueprint.json");
+        write_json(&claims_path, claims_fixture());
+        write_json(
+            &blueprint_path,
+            blueprint_fixture_with_result_binding(
+                "verified_helper",
+                &["select_mineable_actions"],
+                "must_filter_ok_result",
+            ),
+        );
+
+        let err = check_blueprint_file(&blueprint_path, &claims_path)
+            .expect_err("a shadowed filtered value must not satisfy the selection sink");
+        assert!(
+            err.to_string()
+                .contains("does not call verified_helper with filter Ok-result gating"),
+            "{err:#}"
+        );
     }
 
     #[test]

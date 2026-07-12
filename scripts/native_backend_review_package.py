@@ -74,6 +74,24 @@ GENERATED_EVIDENCE_PATHS = (
     "reference_claim_verifier_report.json",
     "production_verifier_report.json",
 )
+EXPECTED_VECTOR_CASES = (
+    ("native_tx_leaf_valid", True),
+    ("native_tx_leaf_invalid_spec_digest", False),
+    ("native_tx_leaf_invalid_params_fingerprint", False),
+    ("native_tx_leaf_invalid_stark_proof", False),
+    ("native_tx_leaf_invalid_proof_digest", False),
+    ("native_tx_leaf_invalid_trailing_bytes", False),
+    ("receipt_root_valid", True),
+    ("receipt_root_invalid_spec_digest", False),
+    ("receipt_root_invalid_fold_rows", False),
+    ("receipt_root_invalid_root_commitment", False),
+    ("receipt_root_invalid_trailing_bytes", False),
+)
+EXPECTED_REDUCED_CRYPTANALYSIS_CASES = (
+    ("crt_component_pair_box2", 4, 624),
+    ("fq3_like_subspace_box1", 12, 531_440),
+    ("sparse_two_term_box2", 108, 92_880),
+)
 
 
 class ReviewPackageError(RuntimeError):
@@ -478,6 +496,111 @@ def verify_generated_evidence(package_root: Path, regenerated_root: Path) -> Non
             )
 
 
+def _read_json_evidence(root: Path, relative: str) -> object:
+    path = root / relative
+    if path.is_symlink() or not path.is_file():
+        raise ReviewPackageError(f"generated evidence is not a regular file: {relative}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ReviewPackageError(f"invalid JSON evidence {relative}: {exc}") from exc
+
+
+def _verify_vector_report(payload: object, relative: str) -> tuple[tuple[str, bool, bool], ...]:
+    if not isinstance(payload, dict):
+        raise ReviewPackageError(f"{relative} must be a JSON object")
+    summary = payload.get("summary")
+    results = payload.get("results")
+    if not isinstance(summary, dict) or not isinstance(results, list):
+        raise ReviewPackageError(f"{relative} is missing summary or results")
+    expected_count = len(EXPECTED_VECTOR_CASES)
+    expected_summary = {
+        "bundle_path": "testdata/native_backend_vectors/bundle.json",
+        "case_count": expected_count,
+        "passed_cases": expected_count,
+        "failed_cases": 0,
+    }
+    for field, expected in expected_summary.items():
+        if summary.get(field) != expected:
+            raise ReviewPackageError(
+                f"{relative} summary {field} must be {expected!r}, got {summary.get(field)!r}"
+            )
+    if len(results) != expected_count:
+        raise ReviewPackageError(
+            f"{relative} must contain exactly {expected_count} vector results"
+        )
+
+    identities: list[tuple[str, bool, bool]] = []
+    for index, ((expected_name, expected_valid), result) in enumerate(
+        zip(EXPECTED_VECTOR_CASES, results, strict=True)
+    ):
+        if not isinstance(result, dict):
+            raise ReviewPackageError(f"{relative} result {index} must be an object")
+        identity = (
+            result.get("name"),
+            result.get("expected_valid"),
+            result.get("passed"),
+        )
+        expected_identity = (expected_name, expected_valid, True)
+        if identity != expected_identity:
+            raise ReviewPackageError(
+                f"{relative} result {index} identity must be {expected_identity!r}, got {identity!r}"
+            )
+        identities.append(expected_identity)
+    return tuple(identities)
+
+
+def verify_evidence_semantics(root: Path) -> None:
+    reference_identity = _verify_vector_report(
+        _read_json_evidence(root, "reference_verifier_report.json"),
+        "reference_verifier_report.json",
+    )
+    production_identity = _verify_vector_report(
+        _read_json_evidence(root, "production_verifier_report.json"),
+        "production_verifier_report.json",
+    )
+    if reference_identity != production_identity:
+        raise ReviewPackageError(
+            "reference and production verifier result identities differ"
+        )
+
+    reduced = _read_json_evidence(root, "reduced_cryptanalysis_spikes.json")
+    if not isinstance(reduced, dict) or not isinstance(reduced.get("cases"), list):
+        raise ReviewPackageError("reduced_cryptanalysis_spikes.json is missing cases")
+    cases = reduced["cases"]
+    if len(cases) != len(EXPECTED_REDUCED_CRYPTANALYSIS_CASES):
+        raise ReviewPackageError(
+            "reduced_cryptanalysis_spikes.json must contain exactly "
+            f"{len(EXPECTED_REDUCED_CRYPTANALYSIS_CASES)} cases"
+        )
+    for index, ((expected_name, expected_variables, expected_searches), case) in enumerate(
+        zip(EXPECTED_REDUCED_CRYPTANALYSIS_CASES, cases, strict=True)
+    ):
+        if not isinstance(case, dict):
+            raise ReviewPackageError(
+                f"reduced_cryptanalysis_spikes.json case {index} must be an object"
+            )
+        actual = (
+            case.get("name"),
+            case.get("variable_count"),
+            case.get("searched_candidates"),
+            case.get("found_nonzero_kernel"),
+            case.get("first_kernel_vector"),
+        )
+        expected = (
+            expected_name,
+            expected_variables,
+            expected_searches,
+            False,
+            None,
+        )
+        if actual != expected:
+            raise ReviewPackageError(
+                "reduced_cryptanalysis_spikes.json case "
+                f"{index} must be {expected!r}, got {actual!r}"
+            )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -503,6 +626,9 @@ def parse_args() -> argparse.Namespace:
     verify_generated = subcommands.add_parser("verify-generated-evidence")
     verify_generated.add_argument("--package-root", type=Path, required=True)
     verify_generated.add_argument("--regenerated-root", type=Path, required=True)
+
+    verify_semantics = subcommands.add_parser("verify-evidence-semantics")
+    verify_semantics.add_argument("--root", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -526,6 +652,9 @@ def main() -> None:
         elif args.command == "verify-generated-evidence":
             verify_generated_evidence(args.package_root, args.regenerated_root)
             print("generated review evidence matches packaged-source regeneration")
+        elif args.command == "verify-evidence-semantics":
+            verify_evidence_semantics(args.root)
+            print("native backend review evidence has exact semantic coverage")
     except (OSError, ValueError, tarfile.TarError, ReviewPackageError) as exc:
         raise SystemExit(str(exc)) from exc
 

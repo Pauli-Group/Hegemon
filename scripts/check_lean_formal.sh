@@ -17,7 +17,7 @@ if ! command -v lake >/dev/null 2>&1; then
 fi
 
 if find "$LEAN_ROOT" -name '*.lean' -print0 \
-  | xargs -0 grep -nE '\b(sorry|admit)\b|^[[:space:]]*axiom[[:space:]]' >/tmp/hegemon-lean-forbidden.$$ 2>/dev/null; then
+  | xargs -0 grep -nE '\b(sorry|admit)\b|^[[:space:]]*((private|protected|noncomputable)[[:space:]]+)*axiom[[:space:]]' >/tmp/hegemon-lean-forbidden.$$ 2>/dev/null; then
   printf 'Lean formal sources contain forbidden proof placeholders or declared axioms:\n' >&2
   cat /tmp/hegemon-lean-forbidden.$$ >&2
   rm -f /tmp/hegemon-lean-forbidden.$$

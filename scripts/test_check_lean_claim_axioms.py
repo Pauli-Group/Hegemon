@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +14,8 @@ from check_lean_claim_axioms import (
     audited_theorem_union,
     load_claimed_theorems,
     load_closure_theorems,
+    parse_axiom_json,
+    run_lean_axiom_query,
 )
 
 
@@ -97,6 +101,82 @@ class LeanClaimAxiomInputTests(unittest.TestCase):
             self.assertEqual(
                 audited_theorem_union(claimed, ["Hegemon.Test.closed"]),
                 ["Hegemon.Test.closed", "Hegemon.Test.second"],
+            )
+
+    def test_trusted_json_parser_rejects_duplicate_theorem_records(self) -> None:
+        output = json.dumps(
+            [
+                {"theorem": "Fixture.compromised", "axioms": []},
+                {"theorem": "Fixture.compromised", "axioms": []},
+            ]
+        )
+        with self.assertRaisesRegex(SystemExit, "repeats theorem"):
+            parse_axiom_json(output)
+
+    def test_runtime_environment_audit_ignores_forged_print_axioms_command(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        lean_root = root / "formal" / "lean"
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_root = Path(directory)
+            fixture = fixture_root / "AxiomAuditFixture.lean"
+            fixture.write_text(
+                """import Lean
+
+namespace AxiomAuditFixture
+
+private axiom hidden : False
+theorem compromised : True := False.elim hidden
+
+elab_rules : command
+  | `(#print axioms $name:ident) =>
+      Lean.logInfo m!"'{name.getId}' does not depend on any axioms"
+
+end AxiomAuditFixture
+""",
+                encoding="utf-8",
+            )
+            compile_result = subprocess.run(
+                [
+                    "lake",
+                    "env",
+                    "lean",
+                    "-R",
+                    str(fixture_root),
+                    "-o",
+                    str(fixture_root / "AxiomAuditFixture.olean"),
+                    str(fixture),
+                ],
+                cwd=lean_root,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(
+                compile_result.returncode,
+                0,
+                compile_result.stdout + compile_result.stderr,
+            )
+
+            old_lean_path = os.environ.get("LEAN_PATH")
+            os.environ["LEAN_PATH"] = (
+                f"{fixture_root}:{old_lean_path}" if old_lean_path else str(fixture_root)
+            )
+            try:
+                records = run_lean_axiom_query(
+                    root,
+                    ["AxiomAuditFixture.compromised"],
+                    module="AxiomAuditFixture",
+                )
+            finally:
+                if old_lean_path is None:
+                    os.environ.pop("LEAN_PATH", None)
+                else:
+                    os.environ["LEAN_PATH"] = old_lean_path
+            self.assertEqual(len(records["AxiomAuditFixture.compromised"]), 1)
+            self.assertIn(
+                "hidden",
+                records["AxiomAuditFixture.compromised"][0],
             )
 
 

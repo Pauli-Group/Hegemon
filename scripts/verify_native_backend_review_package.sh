@@ -31,6 +31,8 @@ python3 -I "$PACKAGE_HELPER" verify-source \
   --package-root "$PACKAGE_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-package-layout \
   --package-root "$PACKAGE_ROOT"
+python3 -I "$PACKAGE_HELPER" verify-evidence-semantics \
+  --root "$PACKAGE_ROOT"
 SOURCE_TREE_SHA256="$(python3 -I "$PACKAGE_HELPER" source-digest --source "$SOURCE_ROOT")"
 
 required_files=(
@@ -229,6 +231,8 @@ cp \
 )
 
 python3 -I "$PACKAGE_HELPER" normalize-json-reports --root "$REGENERATED_ROOT"
+python3 -I "$PACKAGE_HELPER" verify-evidence-semantics \
+  --root "$REGENERATED_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-generated-evidence \
   --package-root "$PACKAGE_ROOT" \
   --regenerated-root "$REGENERATED_ROOT"

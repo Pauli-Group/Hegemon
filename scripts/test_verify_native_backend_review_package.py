@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -106,6 +107,19 @@ def expect_layout_rejection(package_root: Path, expected_message: str) -> None:
         raise SystemExit("invalid package layout unexpectedly accepted")
 
 
+def expect_semantic_rejection(root: Path, expected_message: str) -> None:
+    try:
+        review.verify_evidence_semantics(root)
+    except review.ReviewPackageError as exc:
+        if expected_message not in str(exc):
+            raise SystemExit(
+                f"review evidence rejected for wrong reason: {exc}; "
+                f"expected {expected_message!r}"
+            ) from exc
+    else:
+        raise SystemExit("invalid review evidence unexpectedly accepted")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="hegemon-native-review-package-") as raw:
         temp = Path(raw)
@@ -113,6 +127,60 @@ def main() -> None:
         package_root = review.safe_extract(PACKAGE, temp / "current")
         review.verify_source_snapshot(ROOT, package_root)
         review.verify_package_layout(package_root)
+        review.verify_evidence_semantics(package_root)
+
+        reference_report_path = package_root / "reference_verifier_report.json"
+        reference_report = json.loads(reference_report_path.read_text(encoding="utf-8"))
+        reference_report_path.write_text(
+            json.dumps(
+                {**reference_report, "results": reference_report["results"][:-1]},
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        expect_semantic_rejection(package_root, "exactly 11 vector results")
+        reference_report_path.write_text(
+            json.dumps(reference_report, indent=2) + "\n", encoding="utf-8"
+        )
+
+        production_report_path = package_root / "production_verifier_report.json"
+        production_report = json.loads(production_report_path.read_text(encoding="utf-8"))
+        reordered_results = production_report["results"].copy()
+        reordered_results[0], reordered_results[1] = (
+            reordered_results[1],
+            reordered_results[0],
+        )
+        production_report_path.write_text(
+            json.dumps(
+                {**production_report, "results": reordered_results}, indent=2
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        expect_semantic_rejection(package_root, "result 0 identity")
+        production_report_path.write_text(
+            json.dumps(production_report, indent=2) + "\n", encoding="utf-8"
+        )
+
+        spikes_path = package_root / "reduced_cryptanalysis_spikes.json"
+        spikes = json.loads(spikes_path.read_text(encoding="utf-8"))
+        spikes_path.write_text(
+            json.dumps({**spikes, "cases": []}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        expect_semantic_rejection(package_root, "exactly 3 cases")
+        zero_work_cases = [dict(case) for case in spikes["cases"]]
+        zero_work_cases[0]["searched_candidates"] = 0
+        spikes_path.write_text(
+            json.dumps({**spikes, "cases": zero_work_cases}, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        expect_semantic_rejection(package_root, "case 0 must be")
+        spikes_path.write_text(
+            json.dumps(spikes, indent=2) + "\n", encoding="utf-8"
+        )
+        review.verify_evidence_semantics(package_root)
 
         cargo_config = package_root / ".cargo/config.toml"
         cargo_config.parent.mkdir(parents=True)
@@ -440,6 +508,7 @@ def main() -> None:
                 'python3 -I "$PACKAGE_HELPER" extract',
                 'python3 -I "$PACKAGE_HELPER" verify-source',
                 'python3 -I "$PACKAGE_HELPER" verify-package-layout',
+                'python3 -I "$PACKAGE_HELPER" verify-evidence-semantics',
                 'python3 -I "$PACKAGE_HELPER" source-digest',
                 'python3 -I "$PACKAGE_HELPER" normalize-json-reports',
                 'python3 -I "$PACKAGE_HELPER" verify-generated-evidence',

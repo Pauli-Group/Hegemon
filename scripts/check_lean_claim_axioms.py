@@ -81,14 +81,16 @@ def audited_theorem_union(
     return sorted(claimed | closure)
 
 
-def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
+def run_lean_axiom_query(
+    root: Path, theorems: list[str], module: str = "Hegemon"
+) -> dict[str, list[str]]:
     lean_root = root / "formal" / "lean"
-    query = "import Hegemon\n" + "".join(f"#print axioms {name}\n" for name in theorems)
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".lean", prefix="hegemon-claim-axioms-", delete=False
+        mode="w", suffix=".txt", prefix="hegemon-claim-axioms-", delete=False
     ) as handle:
-        handle.write(query)
-        query_path = Path(handle.name)
+        handle.write("\n".join(theorems))
+        handle.write("\n")
+        theorem_list_path = Path(handle.name)
 
     env = os.environ.copy()
     elan_bin = Path.home() / ".elan" / "bin"
@@ -97,7 +99,17 @@ def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
 
     try:
         result = subprocess.run(
-            ["lake", "env", "lean", str(query_path)],
+            [
+                "lake",
+                "env",
+                "lean",
+                "-R",
+                str(root),
+                "--run",
+                str(root / "scripts" / "lean_axiom_audit.lean"),
+                str(theorem_list_path),
+                module,
+            ],
             cwd=lean_root,
             env=env,
             check=False,
@@ -106,48 +118,38 @@ def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
             stderr=subprocess.PIPE,
         )
     finally:
-        query_path.unlink(missing_ok=True)
+        theorem_list_path.unlink(missing_ok=True)
 
     if result.returncode != 0:
         sys.stderr.write(result.stdout)
         sys.stderr.write(result.stderr)
         raise SystemExit(result.returncode)
-    return result.stdout
+    return parse_axiom_json(result.stdout)
 
 
-def parse_axiom_output(output: str) -> dict[str, list[str]]:
+def parse_axiom_json(output: str) -> dict[str, list[str]]:
+    try:
+        raw_records = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"could not parse trusted Lean axiom JSON: {error}") from error
+    if not isinstance(raw_records, list):
+        raise SystemExit("trusted Lean axiom output must be a JSON array")
+
     records: dict[str, list[str]] = {}
-    current_name: str | None = None
-    current_body = ""
-
-    def flush_current() -> None:
-        nonlocal current_name, current_body
-        if current_name is None:
-            return
-        body = current_body.strip()
-        if not body.startswith("[") or not body.endswith("]"):
-            raise SystemExit(f"could not parse Lean axiom output for {current_name}: {body}")
-        records[current_name] = [
-            item.strip() for item in body[1:-1].split(",") if item.strip()
-        ]
-        current_name = None
-        current_body = ""
-
-    for line in output.splitlines():
-        starts_record = line.startswith("'") and (
-            "depends on axioms:" in line or "does not depend on any axioms" in line
-        )
-        if starts_record:
-            flush_current()
-            name = line.split("'", 2)[1]
-            if "does not depend on any axioms" in line:
-                records[name] = []
-                continue
-            current_name = name
-            current_body = line.split("depends on axioms:", 1)[1].strip()
-        elif current_name is not None:
-            current_body += " " + line.strip()
-    flush_current()
+    for record in raw_records:
+        if not isinstance(record, dict) or set(record) != {"theorem", "axioms"}:
+            raise SystemExit("trusted Lean axiom record has an invalid shape")
+        theorem = record["theorem"]
+        axioms = record["axioms"]
+        if not isinstance(theorem, str) or not theorem:
+            raise SystemExit("trusted Lean axiom record has an invalid theorem name")
+        if theorem in records:
+            raise SystemExit(f"trusted Lean axiom output repeats theorem {theorem}")
+        if not isinstance(axioms, list) or any(
+            not isinstance(axiom, str) or not axiom for axiom in axioms
+        ):
+            raise SystemExit(f"trusted Lean axiom record for {theorem} has invalid axioms")
+        records[theorem] = axioms
     return records
 
 
@@ -273,8 +275,7 @@ def main() -> int:
     claimed_theorems = load_claimed_theorems(args.claims)
     closure_theorems = load_closure_theorems(args.matrix)
     theorems = audited_theorem_union(claimed_theorems, closure_theorems)
-    output = run_lean_axiom_query(root, theorems)
-    theorem_axioms = parse_axiom_output(output)
+    theorem_axioms = run_lean_axiom_query(root, theorems)
     missing = sorted(set(theorems) - set(theorem_axioms))
     if missing:
         raise SystemExit(f"Lean did not report axiom dependencies for: {missing}")
