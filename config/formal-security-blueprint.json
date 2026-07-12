@@ -143,7 +143,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-15",
         "notes": "Pending independent review. Previous internal assessment: Accepted as repository-local workflow wiring plus checked ruleset-export evidence; live GitHub ruleset installation/enforcement remains an external administrative control.",
-        "content_blake3": "b8e9157e0446c1f17c0a7962c8679681a214266e5a69de3b5748ac1b5baf0e07"
+        "content_blake3": "563571695233fbf144c67cad0ee98ce01bcb762abe8ec7a4dd52ac9a126b1ef1"
       },
       "falsification_cases": [
         {
@@ -14604,7 +14604,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Pending independent review of the 64-bit reducer preimage classification, degree-support predicate, and package parity gate. This is arithmetic, vector, and byte-grammar evidence only; random-oracle independence, irreducibility, collision reduction, proof of knowledge, and production fold equivalence remain open.",
-        "content_blake3": "78646f69b30ba71401cfc5174f998f853ac49df346b35d9c14610ba6a4ce0c58"
+        "content_blake3": "11e6bed59115e638cbcc95f06510811a1f615304d1331ee2a5a9653dcc029a3b"
       },
       "falsification_cases": [
         {
