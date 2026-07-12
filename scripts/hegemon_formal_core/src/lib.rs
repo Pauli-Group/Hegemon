@@ -7049,16 +7049,19 @@ fn blueprint_node_content_blake3(root: &Path, node: &BlueprintNode) -> Result<St
         .filter(|path| !BLUEPRINT_REVIEW_SOURCE_BYTE_EXCLUSIONS.contains(&path.as_str()))
         .cloned()
         .collect::<BTreeSet<_>>();
+    let rust_binding_roots = node
+        .implementation_bindings
+        .iter()
+        .map(|binding| binding.path.as_str())
+        .collect::<BTreeSet<_>>();
     let mut review_sources = BTreeMap::<String, Vec<u8>>::new();
     for relative in source_paths {
-        let is_rust_module_root = Path::new(&relative)
-            .file_name()
-            .and_then(|name| name.to_str())
-            == Some("mod.rs")
-            && Path::new(&relative)
-                .extension()
-                .and_then(|ext| ext.to_str())
-                == Some("rs");
+        let source_path = Path::new(&relative);
+        let file_name = source_path.file_name().and_then(|name| name.to_str());
+        let is_rust_module_root = source_path.extension().and_then(|ext| ext.to_str())
+            == Some("rs")
+            && (matches!(file_name, Some("lib.rs" | "main.rs" | "mod.rs"))
+                || rust_binding_roots.contains(relative.as_str()));
         if is_rust_module_root {
             for (module_relative, source) in rust_binding_module_sources(root, &relative)? {
                 let bytes = source.into_bytes();
@@ -8398,6 +8401,50 @@ mod tests {
                 .contains("target_review content_blake3 mismatch"),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn rust_review_digest_covers_children_for_every_source_root_form() {
+        for (case, root_source, child_source) in [
+            ("lib", "src/lib.rs", "src/admission.rs"),
+            ("main", "src/main.rs", "src/admission.rs"),
+            ("ordinary", "src/native.rs", "src/native/admission.rs"),
+            ("mod", "src/native/mod.rs", "src/native/admission.rs"),
+        ] {
+            let root = test_root(&format!("module-review-digest-{case}-root"));
+            write_repo_file(&root, "evidence/support.txt", "support");
+            write_repo_file(&root, "evidence/target.txt", "target");
+            write_repo_file(
+                &root,
+                root_source,
+                "mod admission;\nfn import_mined_block() { verified_helper(); }\n",
+            );
+            write_repo_file(&root, child_source, "fn verified_helper() {}\n");
+            let claims_path = root.join("claims.json");
+            let blueprint_path = root.join("blueprint.json");
+            write_json(&claims_path, claims_fixture());
+            write_json(
+                &blueprint_path,
+                blueprint_fixture_with_binding_at(
+                    root_source,
+                    "verified_helper",
+                    &["import_mined_block"],
+                ),
+            );
+
+            write_repo_file(
+                &root,
+                child_source,
+                "fn verified_helper() { let _semantic_change = true; }\n",
+            );
+            let err = check_blueprint_file(&blueprint_path, &claims_path)
+                .expect_err("a declared Rust child change must stale target review");
+            assert!(
+                err.to_string()
+                    .contains("target_review content_blake3 mismatch"),
+                "{case}: {err:#}"
+            );
+        }
     }
 
     #[test]
