@@ -108,6 +108,7 @@ import Hegemon.Native.RawIngressFullBytePublicationSurface
 import Hegemon.Native.MaterializedSidecarDaBlobPublication
 import Hegemon.Native.MaterializedConsensusDaBlobRefinement
 import Hegemon.Native.MaterializedTransferNoTheftPublication
+import Hegemon.Native.NativeBackendAlgebra
 import Hegemon.Native.PendingActionByteReplayRowCountBinding
 import Hegemon.Native.PendingActionFieldProjectionVectors
 import Hegemon.Native.RawIngressBridgePendingActionPublication
@@ -171,8 +172,10 @@ import Hegemon.Transaction.ProofWrapperWire
 import Hegemon.Transaction.PrivateMultisigAccumulator
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
+import Hegemon.Transaction.SmallWoodNoCounterfeit
 import Hegemon.Transaction.SmallWoodPublicStatementBinding
 import Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire
+import Hegemon.Transaction.SmallWoodSemanticClosure
 import Hegemon.Transaction.SmallWoodSpendAuthorization
 import Hegemon.Transaction.SmallWoodTranscriptBinding
 import Hegemon.Transaction.SmallWoodVerifierStatementProjection

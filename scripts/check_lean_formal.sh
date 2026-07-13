@@ -17,7 +17,7 @@ if ! command -v lake >/dev/null 2>&1; then
 fi
 
 if find "$LEAN_ROOT" -name '*.lean' -print0 \
-  | xargs -0 grep -nE '\b(sorry|admit)\b|^[[:space:]]*axiom[[:space:]]' >/tmp/hegemon-lean-forbidden.$$ 2>/dev/null; then
+  | xargs -0 grep -nE '\b(sorry|admit)\b|^[[:space:]]*((private|protected|noncomputable)[[:space:]]+)*axiom[[:space:]]' >/tmp/hegemon-lean-forbidden.$$ 2>/dev/null; then
   printf 'Lean formal sources contain forbidden proof placeholders or declared axioms:\n' >&2
   cat /tmp/hegemon-lean-forbidden.$$ >&2
   rm -f /tmp/hegemon-lean-forbidden.$$
@@ -288,6 +288,8 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Transaction/GenerateStatementHashVectors.lean
 )
 
+python3 "$ROOT/scripts/test_check_lean_claim_axioms.py"
 python3 "$ROOT/scripts/check_lean_claim_axioms.py" \
   --claims "$ROOT/config/formal-security-claims.json" \
-  --waivers "$ROOT/config/lean-axiom-waivers.json"
+  --waivers "$ROOT/config/lean-axiom-waivers.json" \
+  --matrix "$ROOT/config/highest-standard-formal-verification-matrix.json"

@@ -3093,7 +3093,7 @@ impl NativeNode {
         let action = match self.validate_and_stage_action(request) {
             Ok(action) => action,
             Err(err) => {
-                return json!({
+                return serde_json::json!({
                 "success": false,
                 "tx_hash": null,
                 "error": err.to_string(),

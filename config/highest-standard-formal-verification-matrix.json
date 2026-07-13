@@ -1,10 +1,268 @@
 {
   "schema_version": 1,
-  "branch": "codex/superneo-formal-verification",
-  "baseline_commit": "19acdaab5b6bece8e0afcece57d8b4953ccfe36f",
+  "branch": "codex/lean-assumption-closure",
+  "baseline_commit": "53cad173b3b78295f75d58010d92c7646e1312a7",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
-  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap.",
+  "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap. The active-goal release ledger separately binds the complete Lean source tree and authenticates the fixed closure theorem set through aggregate elaboration and axiom audit.",
   "overall_completion_percent": 100.0,
+  "formal_surface_coverage_percent": 100.0,
+  "mechanized_assumption_closure": {
+    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "total_tracks": 20,
+    "closed_tracks": 9,
+    "closure_percent": 45.0,
+    "tracks": [
+      {
+        "id": "transaction.smallwood-semantic-implication",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodSemanticClosure.accepted_proof_and_semantic_constraints_imply_transaction_relation"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "transaction.smallwood-profile-drift-binding",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodTranscriptBinding.lean",
+          "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
+          "circuits/transaction/src/smallwood_frontend.rs"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_binding_rejects_all_named_in_range_single_field_mutations"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "transaction.recursive-admission-local-facts",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
+          "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+          "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodNoCounterfeit.accepted_recursive_v2_artifact_still_requires_semantic_replay",
+          "Hegemon.Transaction.TxValidityClaimMatching.claimMatchAccepts_implies_exact_surface",
+          "Hegemon.Consensus.ProvenBatchBinding.accepts_iff_binding_preconditions"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "transaction.recursive-cross-object-identity-refinement",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
+          "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
+          "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
+        ],
+        "remaining_work": [
+          "Extend the artifact, claim, batch, transaction, and supply models with concrete canonical statement bytes, ordered transaction count, statement commitment, public replay commitment, and DA identity projections, then prove those projections identify the same accepted object. The current models expose local acceptance booleans only, so no cross-object composition theorem is credited."
+        ]
+      },
+      {
+        "id": "consensus.accepted-chain-supply-composition",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
+          "formal/lean/Hegemon/Consensus/SupplyInvariant.lean"
+        ],
+        "remaining_work": [
+          "Bind each claimed supply step's minted amount to the accepted block's one-coinbase subsidy or zero-coinbase case, bind burns to accepted burn actions, bind fees to the complete ordered accepted transaction list, and prove the supply step and transaction list belong to the same accepted block artifact.",
+          "Add a production-refined note-opening commitment binding or cryptographic hash assumption before lifting the toy digest model to a no-counterfeit claim; modulo-65537 commitment arithmetic is not collision resistant."
+        ]
+      },
+      {
+        "id": "native.raw-ingress-canonical-publication",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+          "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "native.reorg-startup-row-equivalence",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativePublicationRowEquivalence.lean",
+          "formal/lean/Hegemon/Native/CanonicalStateReload.lean",
+          "formal/lean/Hegemon/Native/CanonicalReorgChainAdmission.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.NativePublicationRowEquivalence.accepted_native_publication_path_family_binds_native_publication_rows"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "native.challenge-reduction-entropy-arithmetic",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean",
+          "circuits/superneo-backend-lattice/src/lib.rs"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_preimage_bound_is_243",
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_supports_312_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_tuple_probability_bound_does_not_support_313_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_receipt_root_composition_loss_is_exact",
+          "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_supports_305_bits",
+          "Hegemon.Native.NativeBackendAlgebra.active_composed_probability_bound_does_not_support_306_bits",
+          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_positive",
+          "Hegemon.Native.NativeBackendAlgebra.reduced_active_fold_challenge_at_most_value_count",
+          "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_quotient_at_most_two",
+          "Hegemon.Native.NativeBackendAlgebra.active_reducer_preimage_has_one_of_three_representatives",
+          "Hegemon.Native.NativeBackendAlgebra.active_challenge_polynomial_is_nonzero"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "native.fold-output-equality-model",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "circuits/superneo-backend-lattice/src/lib.rs"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.fold_output_matches_recomputed_iff_equality"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "native.fold-verifier-implementation-equivalence",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "circuits/superneo-backend-lattice/src/lib.rs",
+          "docs/crypto/native_backend_formal_theorems.md"
+        ],
+        "remaining_work": [
+          "Model the production fold recomputation algorithm and prove its Rust verifier implementation equivalent to that model. Equality with a caller-supplied recomputed record proves only output equality and uniqueness, not production fold canonicalization."
+        ]
+      },
+      {
+        "id": "native.digit-bound-euclidean-arithmetic",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "formal/lean/Hegemon/Native/GenerateNativeBackendAlgebraVectors.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Native.NativeBackendAlgebra.active_ambient_coefficient_dimension_is_4104",
+          "Hegemon.Native.NativeBackendAlgebra.active_conservative_euclidean_bound_is_sound",
+          "Hegemon.Native.NativeBackendAlgebra.active_live_coefficient_dimension_is_648",
+          "Hegemon.Native.NativeBackendAlgebra.active_live_euclidean_bound_is_sound",
+          "Hegemon.Native.NativeBackendAlgebra.bounded_digits_have_bounded_centered_difference"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "proof.statement-wrapper-binding",
+        "status": "closed",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean",
+          "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean"
+        ],
+        "lean_theorems": [
+          "Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension"
+        ],
+        "remaining_work": []
+      },
+      {
+        "id": "transaction.accepted-proof-exact-constraint-extraction",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean"
+        ],
+        "remaining_work": [
+          "Prove that an accepted deployed SmallWood proof yields a witness satisfying the exact semantic constraint record without assuming spend authorization, output validity, or balance conservation."
+        ]
+      },
+      {
+        "id": "transaction.smallwood-air-row-implementation-equivalence",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean",
+          "circuits/transaction/src/smallwood_frontend.rs"
+        ],
+        "remaining_work": [
+          "Refine the production linear-constraint builder and verifier execution into every field of the Lean semantic row records; mutation tests are adversarial evidence, not a complete implementation-equivalence proof."
+        ]
+      },
+      {
+        "id": "native.complete-parser-node-refinement",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/RawIngressFullBytePublicationSurface.lean",
+          "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean"
+        ],
+        "remaining_work": [
+          "Discharge arbitrary parser internals and complete Rust native-node equivalence beyond the scoped exact-decode and canonical-publication path family."
+        ]
+      },
+      {
+        "id": "native.low-degree-unit-irreducibility",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
+          "docs/crypto/native_backend_formal_theorems.md"
+        ],
+        "remaining_work": [
+          "Mechanize finite-field factorization and irreducibility for the two degree-27 factors, then discharge the named low-degree-unit assumption."
+        ]
+      },
+      {
+        "id": "native.backend-collision-reduction-and-pok",
+        "status": "open",
+        "evidence_paths": [
+          "docs/crypto/native_backend_formal_theorems.md",
+          "audits/native-backend-128b/KNOWN_GAPS.md"
+        ],
+        "remaining_work": [
+          "Mechanize the deterministic-commitment collision-to-BK-MSIS reduction and coefficient flattening, obtain external cryptanalysis, and do not claim CCS proof-of-knowledge unless a real protocol and extractor are implemented."
+        ]
+      },
+      {
+        "id": "privacy.zero-knowledge-unlinkability-game",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Privacy/CiphertextPrivacy.lean"
+        ],
+        "remaining_work": [
+          "Provide a cryptographic game and reduction for zero knowledge, unlinkability, and global observer leakage rather than only an explicit assumption boundary."
+        ]
+      },
+      {
+        "id": "bridge.external-receipt-soundness",
+        "status": "open",
+        "evidence_paths": [
+          "formal/lean/Hegemon/Native/BridgeMintSafety.lean"
+        ],
+        "remaining_work": [
+          "Bind a PQ-clean production receipt verifier and external-chain soundness proof before enabling positive bridge minting."
+        ]
+      },
+      {
+        "id": "system.da-storage-runtime-semantics",
+        "status": "open",
+        "evidence_paths": [
+          "config/system-model-assumption-gates.json",
+          "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md"
+        ],
+        "remaining_work": [
+          "Retain fail-closed monitoring for DA retention and storage durability; these operational semantics are not discharged by Lean process models alone."
+        ]
+      }
+    ]
+  },
   "last_full_formal_core": {
     "date": "2026-06-19T08:43:23Z",
     "commit": "50710d33",

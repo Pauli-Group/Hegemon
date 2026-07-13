@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit Lean axiom dependencies for theorem-backed security claims."""
+"""Audit Lean axiom dependencies for claims and closed assumption tracks."""
 
 from __future__ import annotations
 
@@ -32,14 +32,65 @@ def load_claimed_theorems(claims_path: Path) -> list[str]:
     return sorted(theorems)
 
 
-def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
+def load_closure_theorems(matrix_path: Path) -> list[str]:
+    matrix = json.loads(matrix_path.read_text())
+    closure = matrix.get("mechanized_assumption_closure")
+    if not isinstance(closure, dict):
+        raise SystemExit("matrix does not contain mechanized_assumption_closure")
+    tracks = closure.get("tracks")
+    if not isinstance(tracks, list) or not tracks:
+        raise SystemExit("mechanized assumption closure must contain tracks")
+
+    theorems: set[str] = set()
+    for track in tracks:
+        if not isinstance(track, dict):
+            raise SystemExit("mechanized assumption closure track must be an object")
+        track_id = track.get("id")
+        status = track.get("status")
+        if not isinstance(track_id, str) or not track_id:
+            raise SystemExit("mechanized assumption closure track must have an id")
+        if status not in {"open", "closed"}:
+            raise SystemExit(f"track {track_id} has unsupported status {status!r}")
+        names = track.get("lean_theorems", [])
+        if not isinstance(names, list) or any(
+            not isinstance(name, str) or not name for name in names
+        ):
+            raise SystemExit(f"track {track_id} has malformed lean_theorems")
+        if status == "closed" and not names:
+            raise SystemExit(f"closed track {track_id} has no Lean theorem identities")
+        if status == "open" and names:
+            raise SystemExit(f"open track {track_id} must not claim closure theorems")
+        theorems.update(names)
+
+    if not theorems:
+        raise SystemExit("no closed-track Lean theorems found")
+    return sorted(theorems)
+
+
+def audited_theorem_union(
+    claimed_theorems: list[str], closure_theorems: list[str]
+) -> list[str]:
+    claimed = set(claimed_theorems)
+    closure = set(closure_theorems)
+    missing = sorted(closure - claimed)
+    if missing:
+        raise SystemExit(
+            "closed-track Lean theorems are missing from formal security claims: "
+            f"{missing}"
+        )
+    return sorted(claimed | closure)
+
+
+def run_lean_axiom_query(
+    root: Path, theorems: list[str], module: str = "Hegemon"
+) -> dict[str, list[str]]:
     lean_root = root / "formal" / "lean"
-    query = "import Hegemon\n" + "".join(f"#print axioms {name}\n" for name in theorems)
     with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".lean", prefix="hegemon-claim-axioms-", delete=False
+        mode="w", suffix=".txt", prefix="hegemon-claim-axioms-", delete=False
     ) as handle:
-        handle.write(query)
-        query_path = Path(handle.name)
+        handle.write("\n".join(theorems))
+        handle.write("\n")
+        theorem_list_path = Path(handle.name)
 
     env = os.environ.copy()
     elan_bin = Path.home() / ".elan" / "bin"
@@ -48,7 +99,17 @@ def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
 
     try:
         result = subprocess.run(
-            ["lake", "env", "lean", str(query_path)],
+            [
+                "lake",
+                "env",
+                "lean",
+                "-R",
+                str(root),
+                "--run",
+                str(root / "scripts" / "lean_axiom_audit.lean"),
+                str(theorem_list_path),
+                module,
+            ],
             cwd=lean_root,
             env=env,
             check=False,
@@ -57,48 +118,38 @@ def run_lean_axiom_query(root: Path, theorems: list[str]) -> str:
             stderr=subprocess.PIPE,
         )
     finally:
-        query_path.unlink(missing_ok=True)
+        theorem_list_path.unlink(missing_ok=True)
 
     if result.returncode != 0:
         sys.stderr.write(result.stdout)
         sys.stderr.write(result.stderr)
         raise SystemExit(result.returncode)
-    return result.stdout
+    return parse_axiom_json(result.stdout)
 
 
-def parse_axiom_output(output: str) -> dict[str, list[str]]:
+def parse_axiom_json(output: str) -> dict[str, list[str]]:
+    try:
+        raw_records = json.loads(output)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"could not parse trusted Lean axiom JSON: {error}") from error
+    if not isinstance(raw_records, list):
+        raise SystemExit("trusted Lean axiom output must be a JSON array")
+
     records: dict[str, list[str]] = {}
-    current_name: str | None = None
-    current_body = ""
-
-    def flush_current() -> None:
-        nonlocal current_name, current_body
-        if current_name is None:
-            return
-        body = current_body.strip()
-        if not body.startswith("[") or not body.endswith("]"):
-            raise SystemExit(f"could not parse Lean axiom output for {current_name}: {body}")
-        records[current_name] = [
-            item.strip() for item in body[1:-1].split(",") if item.strip()
-        ]
-        current_name = None
-        current_body = ""
-
-    for line in output.splitlines():
-        starts_record = line.startswith("'") and (
-            "depends on axioms:" in line or "does not depend on any axioms" in line
-        )
-        if starts_record:
-            flush_current()
-            name = line.split("'", 2)[1]
-            if "does not depend on any axioms" in line:
-                records[name] = []
-                continue
-            current_name = name
-            current_body = line.split("depends on axioms:", 1)[1].strip()
-        elif current_name is not None:
-            current_body += " " + line.strip()
-    flush_current()
+    for record in raw_records:
+        if not isinstance(record, dict) or set(record) != {"theorem", "axioms"}:
+            raise SystemExit("trusted Lean axiom record has an invalid shape")
+        theorem = record["theorem"]
+        axioms = record["axioms"]
+        if not isinstance(theorem, str) or not theorem:
+            raise SystemExit("trusted Lean axiom record has an invalid theorem name")
+        if theorem in records:
+            raise SystemExit(f"trusted Lean axiom output repeats theorem {theorem}")
+        if not isinstance(axioms, list) or any(
+            not isinstance(axiom, str) or not axiom for axiom in axioms
+        ):
+            raise SystemExit(f"trusted Lean axiom record for {theorem} has invalid axioms")
+        records[theorem] = axioms
     return records
 
 
@@ -213,17 +264,27 @@ def main() -> int:
         default=root / "config" / "lean-axiom-waivers.json",
         help="Lean axiom waiver policy JSON path",
     )
+    parser.add_argument(
+        "--matrix",
+        type=Path,
+        default=root / "config" / "highest-standard-formal-verification-matrix.json",
+        help="highest-standard formal verification matrix JSON path",
+    )
     args = parser.parse_args()
 
-    theorems = load_claimed_theorems(args.claims)
-    output = run_lean_axiom_query(root, theorems)
-    theorem_axioms = parse_axiom_output(output)
+    claimed_theorems = load_claimed_theorems(args.claims)
+    closure_theorems = load_closure_theorems(args.matrix)
+    theorems = audited_theorem_union(claimed_theorems, closure_theorems)
+    theorem_axioms = run_lean_axiom_query(root, theorems)
     missing = sorted(set(theorems) - set(theorem_axioms))
     if missing:
         raise SystemExit(f"Lean did not report axiom dependencies for: {missing}")
 
     waivers = json.loads(args.waivers.read_text())
     report = audit_axioms(theorem_axioms, waivers)
+    report["claimed_theorems"] = len(claimed_theorems)
+    report["closed_track_theorems"] = len(closure_theorems)
+    report["closed_track_theorems_missing_from_claims"] = []
     print(json.dumps(report, indent=2, sort_keys=True))
     return 0 if report["passed"] else 1
 

@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use hegemon_formal_core::{
-    check_active_goal_progress_file, check_blueprint_file, check_claims_file,
-    check_formal_inventory, check_system_model_gates_file, verify_bridge_vectors_file,
+    blueprint_review_digests_file, check_active_goal_progress_file, check_blueprint_file,
+    check_claims_file, check_formal_inventory, check_system_model_gates_file,
+    mechanized_assumption_proposition_blake3, verify_bridge_vectors_file,
 };
 use std::path::PathBuf;
 
@@ -27,6 +28,9 @@ enum Command {
         #[arg(long)]
         claims: PathBuf,
     },
+    PrintBlueprintReviewDigests {
+        path: PathBuf,
+    },
     VerifyBridgeVectors {
         path: PathBuf,
     },
@@ -40,6 +44,10 @@ enum Command {
     CheckActiveGoalProgress {
         path: PathBuf,
     },
+    PrintMechanizedAssumptionPropositionDigest {
+        #[arg(long, default_value = ".")]
+        root: PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -48,6 +56,9 @@ fn main() -> Result<()> {
         Command::CheckClaims { path } => serde_json::to_value(check_claims_file(&path)?)?,
         Command::CheckBlueprint { path, claims } => {
             serde_json::to_value(check_blueprint_file(&path, &claims)?)?
+        }
+        Command::PrintBlueprintReviewDigests { path } => {
+            serde_json::to_value(blueprint_review_digests_file(&path)?)?
         }
         Command::VerifyBridgeVectors { path } => {
             serde_json::to_value(verify_bridge_vectors_file(&path)?)?
@@ -61,6 +72,9 @@ fn main() -> Result<()> {
         Command::CheckActiveGoalProgress { path } => {
             serde_json::to_value(check_active_goal_progress_file(&path)?)?
         }
+        Command::PrintMechanizedAssumptionPropositionDigest { root } => serde_json::json!({
+            "blake3": mechanized_assumption_proposition_blake3(&root)?,
+        }),
     };
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())

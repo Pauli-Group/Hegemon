@@ -776,19 +776,25 @@ pub(crate) fn native_stablecoin_policy_binding_authorized_by_entries(
     binding: &StablecoinPolicyBinding,
     entries: &[StablecoinPolicyManifestEntry],
 ) -> bool {
-    entries.iter().any(|entry| {
+    for entry in entries {
         let plausible_candidate = u64::from(entry.asset_id) == binding.asset_id
             || entry.policy_hash() == binding.policy_hash;
-        plausible_candidate
-            && evaluate_native_stablecoin_policy_authorization(
-                native_stablecoin_policy_authorization_input_for_entry(
-                    current_height,
-                    binding,
-                    Some(entry),
-                ),
-            )
-            .is_ok()
-    })
+        if !plausible_candidate {
+            continue;
+        }
+        if evaluate_native_stablecoin_policy_authorization(
+            native_stablecoin_policy_authorization_input_for_entry(
+                current_height,
+                binding,
+                Some(entry),
+            ),
+        )
+        .is_ok()
+        {
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) fn native_stablecoin_policy_binding_authorized_by_protocol_manifest(
@@ -1594,9 +1600,8 @@ pub(crate) fn validate_coinbase_action_payload(action: &PendingAction) -> Result
     let args: MintCoinbaseArgs = decode_scale_exact(&action.public_args, "coinbase action args")?;
     let note = &args.reward_bundle.miner_note.encrypted_note;
     let (ciphertext_bytes, ciphertext_metadata) = coinbase_ciphertext_metadata(note);
-    let commitment_matches = action.commitments.first().is_some_and(|commitment| {
-        coinbase_note_commitment_matches(commitment, &args.reward_bundle.miner_note)
-    });
+    let commitment_matches =
+        coinbase_note_commitment_matches(&action.commitments[0], &args.reward_bundle.miner_note);
     let input = NativeCoinbaseActionPayloadAdmissionInput {
         amount_nonzero: args.reward_bundle.miner_note.amount != 0,
         commitment_matches,

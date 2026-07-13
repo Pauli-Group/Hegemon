@@ -5,6 +5,14 @@ set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$ROOT"
 
+if [[ -d "${HOME:-}/.elan/bin" ]]; then
+  export PATH="${HOME}/.elan/bin:$PATH"
+fi
+if ! command -v lake >/dev/null 2>&1; then
+  echo "Lean lake is required for the SmallWood adversarial conformance campaign" >&2
+  exit 2
+fi
+
 MODE="${HEGEMON_REDTEAM_MODE:-full}"
 HEGEMON_FUZZ_TOOLCHAIN="${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}"
 if [[ "$MODE" != "ci" && "$MODE" != "full" ]]; then
@@ -72,6 +80,46 @@ cargo_test_lib_filter() {
 }
 export -f cargo_test_lib_filter
 
+cargo_test_lib_exact() {
+  local package="$1"
+  local test_name="$2"
+  shift 2
+
+  local listed
+  if ! listed="$(cargo test -p "$package" --lib -- --list 2>&1)"; then
+    printf '%s\n' "$listed" >&2
+    return 1
+  fi
+  local matches
+  matches="$(printf '%s\n' "$listed" \
+    | awk -v expected="${test_name}: test" '$0 == expected { count++ } END { print count + 0 }')"
+  if [[ "$matches" -ne 1 ]]; then
+    echo "red-team gate expected one exact test $test_name in $package, found $matches" >&2
+    return 97
+  fi
+
+  local ignored
+  ignored="$(cargo test -p "$package" --lib -- --ignored --list 2>&1 \
+    | awk -v expected="${test_name}: test" '$0 == expected { count++ } END { print count + 0 }')"
+  if [[ "$ignored" -ne 0 ]]; then
+    echo "red-team gate refuses ignored test $test_name in $package" >&2
+    return 97
+  fi
+
+  local output
+  if ! output="$(CARGO_TERM_COLOR=never cargo test -p "$package" --lib "$test_name" \
+      -- --exact "$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+  if ! grep -Eq 'test result: ok\. 1 passed; 0 failed; 0 ignored;' <<<"$output"; then
+    echo "red-team gate did not execute exactly one test: $test_name" >&2
+    return 97
+  fi
+}
+export -f cargo_test_lib_exact
+
 cargo_test_target() {
   local package="$1"
   local target="$2"
@@ -116,6 +164,21 @@ if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo test -p transaction-circuit --test security_fuzz -- --nocapture
   cargo test -p wallet --test address_fuzz -- --nocapture
 fi
+EOF
+      ;;
+    smallwood-lean-spec-hardening)
+      cat <<'EOF'
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_frontend_inline_merkle_rejects_spend_secret_not_matching_input_pk_auth --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_active_input_note_value_and_commitment_mutation --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_active_output_binding_mutation --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_inactive_nonzero_public_nullifier --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_inactive_output_ciphertext_hash --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_merkle_sibling_and_root_mutation --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_nullifier_position_and_rho_mutation --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_public_balance_mutation --nocapture
+cargo_test_lib_exact transaction-circuit smallwood_frontend::tests::packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --nocapture
 EOF
       ;;
     staged-proof-abuse)
@@ -214,6 +277,7 @@ run_campaign() {
 
 run_campaign "parser-malleability"
 run_campaign "semantic-aliasing"
+run_campaign "smallwood-lean-spec-hardening"
 run_campaign "staged-proof-abuse"
 run_campaign "recursive-block-mismatch"
 run_campaign "receipt-root-tamper"

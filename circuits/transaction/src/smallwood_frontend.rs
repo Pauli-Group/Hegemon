@@ -1972,11 +1972,42 @@ pub fn verify_smallwood_candidate_transaction_proof(
     Ok(VerificationReport { verified: true })
 }
 
-pub fn smallwood_candidate_verifier_profile_material(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SmallwoodVerifierProfileBindingParameters {
+    effective_constraint_degree: u64,
+    profile: SmallwoodNoGrindingProfileV1,
+    poseidon_width: u64,
+    poseidon_rate: u64,
+    poseidon_steps: u64,
+    poseidon_rows_per_permutation: u64,
+}
+
+fn smallwood_verifier_profile_binding_parameters(
+    arithmetization: SmallwoodArithmetization,
+) -> SmallwoodVerifierProfileBindingParameters {
+    let poseidon_rows_per_permutation = compact_binding_shape_for_arithmetization(arithmetization)
+        .map(SmallwoodBridgeRowLayout::for_shape)
+        .unwrap_or_else(|| {
+            SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1())
+        })
+        .poseidon_rows_per_permutation();
+    SmallwoodVerifierProfileBindingParameters {
+        effective_constraint_degree: smallwood_effective_constraint_degree_for_arithmetization(
+            arithmetization,
+        ) as u64,
+        profile: smallwood_no_grinding_profile_for_arithmetization(arithmetization),
+        poseidon_width: POSEIDON2_WIDTH as u64,
+        poseidon_rate: POSEIDON2_RATE as u64,
+        poseidon_steps: POSEIDON2_STEPS as u64,
+        poseidon_rows_per_permutation: poseidon_rows_per_permutation as u64,
+    }
+}
+
+fn smallwood_candidate_verifier_profile_material_with_parameters(
     version: VersionBinding,
     arithmetization: SmallwoodArithmetization,
+    parameters: SmallwoodVerifierProfileBindingParameters,
 ) -> Vec<u8> {
-    let profile = smallwood_no_grinding_profile_for_arithmetization(arithmetization);
     let mut material = Vec::new();
     material.extend_from_slice(SMALLWOOD_PUBLIC_STATEMENT_DOMAIN);
     material.extend_from_slice(match arithmetization {
@@ -2012,29 +2043,31 @@ pub fn smallwood_candidate_verifier_profile_material(
     material.extend_from_slice(&version.circuit.to_le_bytes());
     material.extend_from_slice(&version.crypto.to_le_bytes());
     material.extend_from_slice(&(arithmetization as u64).to_le_bytes());
-    material.extend_from_slice(
-        &(smallwood_effective_constraint_degree_for_arithmetization(arithmetization) as u64)
-            .to_le_bytes(),
-    );
-    material.extend_from_slice(&(profile.rho as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.nb_opened_evals as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.beta as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.opening_pow_bits as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.decs_nb_evals as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.decs_nb_opened_evals as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.decs_eta as u64).to_le_bytes());
-    material.extend_from_slice(&(profile.decs_pow_bits as u64).to_le_bytes());
-    material.extend_from_slice(&(POSEIDON2_WIDTH as u64).to_le_bytes());
-    material.extend_from_slice(&(POSEIDON2_RATE as u64).to_le_bytes());
-    material.extend_from_slice(&(POSEIDON2_STEPS as u64).to_le_bytes());
-    let poseidon_rows_per_permutation = compact_binding_shape_for_arithmetization(arithmetization)
-        .map(SmallwoodBridgeRowLayout::for_shape)
-        .unwrap_or_else(|| {
-            SmallwoodBridgeRowLayout::for_shape(SmallwoodFrontendShape::bridge64_v1())
-        })
-        .poseidon_rows_per_permutation();
-    material.extend_from_slice(&(poseidon_rows_per_permutation as u64).to_le_bytes());
+    material.extend_from_slice(&parameters.effective_constraint_degree.to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.rho as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.nb_opened_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.beta as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.opening_pow_bits as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.decs_nb_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.decs_nb_opened_evals as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.decs_eta as u64).to_le_bytes());
+    material.extend_from_slice(&(parameters.profile.decs_pow_bits as u64).to_le_bytes());
+    material.extend_from_slice(&parameters.poseidon_width.to_le_bytes());
+    material.extend_from_slice(&parameters.poseidon_rate.to_le_bytes());
+    material.extend_from_slice(&parameters.poseidon_steps.to_le_bytes());
+    material.extend_from_slice(&parameters.poseidon_rows_per_permutation.to_le_bytes());
     material
+}
+
+pub fn smallwood_candidate_verifier_profile_material(
+    version: VersionBinding,
+    arithmetization: SmallwoodArithmetization,
+) -> Vec<u8> {
+    smallwood_candidate_verifier_profile_material_with_parameters(
+        version,
+        arithmetization,
+        smallwood_verifier_profile_binding_parameters(arithmetization),
+    )
 }
 
 pub fn build_smallwood_public_statement_from_witness(
@@ -5317,6 +5350,7 @@ mod tests {
         smallwood_public_statement_domain_hex: String,
         smallwood_field_xof_domain_hex: String,
         smallwood_transcript_binding_cases: Vec<LeanSmallwoodTranscriptBindingCase>,
+        active_profile_single_field_mutations: Vec<LeanSmallwoodProfileMutationCase>,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -5332,6 +5366,28 @@ mod tests {
         expected_padding_len: usize,
         expected_padding_bytes: Vec<u8>,
         expected_aligned_to_eight: bool,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanSmallwoodProfileMutationCase {
+        name: String,
+        circuit_version: u16,
+        crypto_suite: u16,
+        arithmetization: u64,
+        constraint_degree: u64,
+        rho: usize,
+        opened_evaluations: usize,
+        beta: usize,
+        opening_grinding_bits: u32,
+        decs_evaluations: usize,
+        decs_opened_evaluations: usize,
+        decs_eta: usize,
+        decs_grinding_bits: u32,
+        poseidon_width: u64,
+        poseidon_rate: u64,
+        poseidon_steps: u64,
+        poseidon_rows_per_permutation: u64,
+        expected_profile_material_hex: String,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -6826,6 +6882,49 @@ mod tests {
     }
 
     #[test]
+    fn smallwood_active_profile_is_no_grinding_and_pow_bits_are_transcript_bound() {
+        let arithmetization =
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1;
+        let active_parameters = smallwood_verifier_profile_binding_parameters(arithmetization);
+        assert_eq!(active_parameters.profile.opening_pow_bits, 0);
+        assert_eq!(active_parameters.profile.decs_pow_bits, 0);
+        let active_material = smallwood_candidate_verifier_profile_material_with_parameters(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            arithmetization,
+            active_parameters,
+        );
+        for (name, profile) in [
+            (
+                "opening grinding",
+                SmallwoodNoGrindingProfileV1 {
+                    opening_pow_bits: 1,
+                    ..active_parameters.profile
+                },
+            ),
+            (
+                "DECS grinding",
+                SmallwoodNoGrindingProfileV1 {
+                    decs_pow_bits: 1,
+                    ..active_parameters.profile
+                },
+            ),
+        ] {
+            assert_ne!(
+                active_material,
+                smallwood_candidate_verifier_profile_material_with_parameters(
+                    SMALLWOOD_CANDIDATE_VERSION_BINDING,
+                    arithmetization,
+                    SmallwoodVerifierProfileBindingParameters {
+                        profile,
+                        ..active_parameters
+                    },
+                ),
+                "{name} bits must alter verifier profile material"
+            );
+        }
+    }
+
+    #[test]
     fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
         let vectors = load_smallwood_transcript_binding_vectors();
         assert_eq!(vectors.schema_version, 1);
@@ -6953,6 +7052,152 @@ mod tests {
         let active_profile = smallwood_candidate_verifier_profile_material(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,
             SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        let expected_mutation_names = std::collections::BTreeSet::from([
+            "circuit-version",
+            "crypto-suite",
+            "arithmetization",
+            "constraint-degree",
+            "rho",
+            "opened-evaluations",
+            "beta",
+            "opening-grinding-bits",
+            "decs-evaluations",
+            "decs-opened-evaluations",
+            "decs-eta",
+            "decs-grinding-bits",
+            "poseidon-width",
+            "poseidon-rate",
+            "poseidon-steps",
+            "poseidon-rows-per-permutation",
+        ]);
+        let mut observed_mutation_names = std::collections::BTreeSet::new();
+        let active_parameters = smallwood_verifier_profile_binding_parameters(
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+        );
+        let active_field_values = [
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit as u64,
+            SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto as u64,
+            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+                as u64,
+            active_parameters.effective_constraint_degree,
+            active_parameters.profile.rho as u64,
+            active_parameters.profile.nb_opened_evals as u64,
+            active_parameters.profile.beta as u64,
+            active_parameters.profile.opening_pow_bits as u64,
+            active_parameters.profile.decs_nb_evals as u64,
+            active_parameters.profile.decs_nb_opened_evals as u64,
+            active_parameters.profile.decs_eta as u64,
+            active_parameters.profile.decs_pow_bits as u64,
+            active_parameters.poseidon_width,
+            active_parameters.poseidon_rate,
+            active_parameters.poseidon_steps,
+            active_parameters.poseidon_rows_per_permutation,
+        ];
+        for case in &vectors.active_profile_single_field_mutations {
+            assert!(
+                observed_mutation_names.insert(case.name.as_str()),
+                "duplicate Lean profile mutation {}",
+                case.name
+            );
+            let arithmetization = smallwood_arithmetization_from_vector(case.arithmetization);
+            let parameters = SmallwoodVerifierProfileBindingParameters {
+                effective_constraint_degree: case.constraint_degree,
+                profile: SmallwoodNoGrindingProfileV1 {
+                    rho: case.rho,
+                    nb_opened_evals: case.opened_evaluations,
+                    beta: case.beta,
+                    opening_pow_bits: case.opening_grinding_bits,
+                    decs_nb_evals: case.decs_evaluations,
+                    decs_nb_opened_evals: case.decs_opened_evaluations,
+                    decs_eta: case.decs_eta,
+                    decs_pow_bits: case.decs_grinding_bits,
+                },
+                poseidon_width: case.poseidon_width,
+                poseidon_rate: case.poseidon_rate,
+                poseidon_steps: case.poseidon_steps,
+                poseidon_rows_per_permutation: case.poseidon_rows_per_permutation,
+            };
+            let mutated_material = smallwood_candidate_verifier_profile_material_with_parameters(
+                VersionBinding {
+                    circuit: case.circuit_version,
+                    crypto: case.crypto_suite,
+                },
+                arithmetization,
+                parameters,
+            );
+            assert_eq!(
+                mutated_material,
+                decode_hex_bytes(&case.expected_profile_material_hex),
+                "{} mutation disagreed with Lean profile material",
+                case.name
+            );
+            assert_ne!(
+                active_profile, mutated_material,
+                "{} mutation must alter verifier profile material",
+                case.name
+            );
+            let mutated_field_values = [
+                case.circuit_version as u64,
+                case.crypto_suite as u64,
+                case.arithmetization,
+                case.constraint_degree,
+                case.rho as u64,
+                case.opened_evaluations as u64,
+                case.beta as u64,
+                case.opening_grinding_bits as u64,
+                case.decs_evaluations as u64,
+                case.decs_opened_evaluations as u64,
+                case.decs_eta as u64,
+                case.decs_grinding_bits as u64,
+                case.poseidon_width,
+                case.poseidon_rate,
+                case.poseidon_steps,
+                case.poseidon_rows_per_permutation,
+            ];
+            let changed_fields = active_field_values
+                .iter()
+                .zip(mutated_field_values.iter())
+                .enumerate()
+                .filter_map(|(index, (active, mutated))| (active != mutated).then_some(index))
+                .collect::<Vec<_>>();
+            let expected_changed_field = match case.name.as_str() {
+                "circuit-version" => 0,
+                "crypto-suite" => 1,
+                "arithmetization" => 2,
+                "constraint-degree" => 3,
+                "rho" => 4,
+                "opened-evaluations" => 5,
+                "beta" => 6,
+                "opening-grinding-bits" => 7,
+                "decs-evaluations" => 8,
+                "decs-opened-evaluations" => 9,
+                "decs-eta" => 10,
+                "decs-grinding-bits" => 11,
+                "poseidon-width" => 12,
+                "poseidon-rate" => 13,
+                "poseidon-steps" => 14,
+                "poseidon-rows-per-permutation" => 15,
+                other => panic!("unexpected Lean profile mutation name {other}"),
+            };
+            assert_eq!(
+                changed_fields,
+                vec![expected_changed_field],
+                "{} must mutate exactly its named profile field",
+                case.name
+            );
+        }
+        assert_eq!(observed_mutation_names, expected_mutation_names);
+        assert_ne!(
+            active_profile,
+            smallwood_candidate_verifier_profile_material(
+                VersionBinding {
+                    crypto: SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto + 1,
+                    ..SMALLWOOD_CANDIDATE_VERSION_BINDING
+                },
+                SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            ),
+            "crypto-suite mutation must alter verifier profile material"
         );
         for tag in expected_arithmetization_tags {
             if tag

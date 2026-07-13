@@ -137,6 +137,14 @@ def require_contains(name: str, text: str, needle: str) -> None:
         raise SystemExit(f"{name}: missing {needle!r}")
 
 
+def require_lean_installer_outside_worktree(name: str, text: str) -> None:
+    require_contains(name, text, 'ELAN_INIT="$RUNNER_TEMP/elan-init.sh"')
+    require_contains(name, text, '-o "$ELAN_INIT"')
+    require_contains(name, text, 'sh "$ELAN_INIT" -y --default-toolchain none')
+    if re.search(r"(?m)-o\s+elan-init\.sh(?:\s|$)", text):
+        raise SystemExit(f"{name}: Lean installer download must not dirty the worktree")
+
+
 def require_binary_audit(
     name: str,
     text: str,
@@ -155,10 +163,17 @@ def check_ci_workflow(path: Path) -> None:
     workflow = path.read_text(encoding="utf-8")
     release_build = job_block(workflow, "release-build")
     dependency_audit = job_block(workflow, "dependency-audit")
-    job_block(workflow, "formal-core")
-    job_block(workflow, "security-adversarial")
+    formal_core = job_block(workflow, "formal-core")
+    core_tests = job_block(workflow, "core-tests")
+    security_adversarial = job_block(workflow, "security-adversarial")
     job_block(workflow, "native-backend-security")
     app_no_ssh = job_block(workflow, "app-no-ssh-e2e")
+    require_lean_installer_outside_worktree("formal-core Lean installer", formal_core)
+    require_lean_installer_outside_worktree("core-tests Lean installer", core_tests)
+    require_lean_installer_outside_worktree(
+        "security-adversarial Lean installer",
+        security_adversarial,
+    )
     require_contains(
         "dependency-audit waiver gate",
         dependency_audit,
@@ -246,6 +261,10 @@ def check_release_workflow(path: Path) -> None:
     )
     require_contains("release security-gates elan hash", security_gates, "ELAN_INIT_SHA256:")
     require_contains("release security-gates elan hash check", security_gates, "sha256sum -c -")
+    require_lean_installer_outside_worktree(
+        "release security-gates Lean installer",
+        security_gates,
+    )
     require_contains("release security-gates", security_gates, "bash scripts/check_formal_core.sh")
     require_contains(
         "release security-gates",

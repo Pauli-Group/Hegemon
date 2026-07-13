@@ -2501,6 +2501,38 @@ fn parse_block_hash_height_params() {
 }
 
 #[test]
+fn submit_action_returns_exact_rejection_response() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config = NativeConfig {
+        dev: true,
+        tmp: false,
+        base_path: tmp.path().to_path_buf(),
+        db_path: tmp.path().join("native-chain.sled"),
+        rpc_addr: "127.0.0.1:0".parse().expect("rpc addr"),
+        p2p_listen_addr: "127.0.0.1:0".to_string(),
+        node_name: "test".to_string(),
+        rpc_methods: "unsafe".to_string(),
+        rpc_external: false,
+        rpc_cors: None,
+        seeds: Vec::new(),
+        max_peers: 0,
+        mine: false,
+        mine_threads: 1,
+        bootstrap_mining_authoring: false,
+        miner_address: None,
+        pow_bits: 0x207f_ffff,
+    };
+    let node = NativeNode::open(config).expect("node");
+
+    let response = node.submit_action(json!({}));
+    let object = response.as_object().expect("rejection response object");
+    assert_eq!(object.len(), 3);
+    assert_eq!(object.get("success"), Some(&json!(false)));
+    assert_eq!(object.get("tx_hash"), Some(&Value::Null));
+    assert!(object.get("error").and_then(Value::as_str).is_some());
+}
+
+#[test]
 fn submit_action_stages_and_imports_shielded_transfer() {
     use base64::Engine;
 
