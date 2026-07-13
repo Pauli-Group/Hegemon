@@ -36,9 +36,10 @@ jobs:
         env:
           ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
         run: |
-          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o elan-init.sh
-          printf '%s  elan-init.sh\n' "$ELAN_INIT_SHA256" | sha256sum -c -
-          sh elan-init.sh -y --default-toolchain none
+          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
+          sh "$ELAN_INIT" -y --default-toolchain none
 
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh

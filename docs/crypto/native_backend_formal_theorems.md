@@ -1,6 +1,19 @@
 # Native Backend Formal Theorems
 
-This note states the theorem-grade math for Hegemon's active native backend family. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript cap with an exact statement about the implemented five-challenge Fiat-Shamir schedule, proves the exact deterministic-commitment collision reduction the repo claims, proves the coefficient-space flattening step with zero in-repo loss, and records the concrete security arithmetic for the active conservative instance.
+This note records the mathematical argument and the exact machine-checked boundary for Hegemon's active native backend family. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript cap with checked arithmetic for the implemented five-challenge schedule, but it does not present every argument below as already mechanized.
+
+## Verification status
+
+`Hegemon.Native.NativeBackendAlgebra` now machine-checks:
+
+- the active reducer's positive bounded range, a complete three-representative classification for every `64`-bit reducer input, and the nonzero challenge polynomial with support confined to coefficients `0..4`,
+- `3^5 / 2^320` supporting 312 bits but not 313, and the 128-leaf composition supporting 305 bits but not 306,
+- the `4104` conservative and `648` live coefficient dimensions plus the `16336` and `6492` Euclidean arithmetic,
+- canonical Goldilocks coefficient reduction and idempotence,
+- the centered difference bound for 8-bit digits,
+- and equality and uniqueness of two supplied fold-output records.
+
+Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the production recomputation algorithm and proving `verify_fold` equivalent to that model remain open. The reducer theorems classify bounded `64`-bit inputs arithmetically, but interpreting five indexed BLAKE3 XOF outputs as independent uniform words remains an explicit random-oracle assumption. Other open mathematical or cryptographic obligations include finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
 
 ## Scope
 
@@ -43,7 +56,7 @@ So in `F_q[X]`:
 X^54 + X^27 + 1 = (X^27 - ω)(X^27 - ω^2).
 ```
 
-### Lemma 1.1: `X^27 - ω` and `X^27 - ω^2` are irreducible over `F_q`
+### Open Lemma 1.1: `X^27 - ω` and `X^27 - ω^2` are irreducible over `F_q`
 
 Let `α` satisfy `α^27 = ω`. Then `α^81 = 1` and `α^27 != 1`, so `α` has multiplicative order `81`. The degree of the minimal polynomial of a primitive `81`st root over `F_q` is `ord_81(q)`. Here
 
@@ -54,7 +67,7 @@ ord_81(4) = 27.
 
 Therefore every root of `X^27 - ω` has degree `27` over `F_q`. Since the polynomial itself also has degree `27`, it is irreducible. The same argument applies to `X^27 - ω^2`.
 
-### Corollary 1.2: every nonzero polynomial of degree `< 27` is a unit in `R_q`
+### Conditional Corollary 1.2: every nonzero polynomial of degree `< 27` is a unit in `R_q`
 
 Let `g(X) ∈ F_q[X]` be nonzero with `deg g < 27`. A nonunit in `R_q` must share a nontrivial common factor with `X^54 + X^27 + 1`, hence with either `X^27 - ω` or `X^27 - ω^2`. By Lemma 1.1 each such factor has degree `27`, which is impossible for `g`. Hence `gcd(g, X^54 + X^27 + 1) = 1`, so the residue class of `g` is invertible in `R_q`.
 
@@ -80,11 +93,11 @@ and the associated challenge polynomial
 χ_c(X) = c_0 + c_1 X + c_2 X^2 + c_3 X^3 + c_4 X^4 ∈ R_q.
 ```
 
-Because each `c_i` is strictly positive, `χ_c(X)` is nonzero and has degree at most `4`. Corollary 1.2 therefore implies `χ_c(X) ∈ R_q^×`.
+Because each `c_i` is strictly positive, Lean proves that `χ_c(X)` is nonzero and that every coefficient at index `5` or above is zero. The unit theorem now consumes both facts explicitly through `PolynomialSupportedBelowActiveFoldDegree`; its conclusion still depends on the named low-degree-unit assumption corresponding to Open Lemma 1.1.
 
-### Theorem 2.1: the active fold verifier is an exact canonicalization check
+### Open Theorem Target 2.1: the active fold verifier is an exact canonicalization check
 
-For fixed `(vk, left, right)`, there is at most one accepted tuple
+The following is the production argument to be mechanized, not the theorem currently proved by `NativeBackendAlgebra`. For fixed `(vk, left, right)`, there is at most one accepted tuple
 
 ```text
 (proof.challenges, proof.parent_rows, proof.parent_commitment_digest,
@@ -99,11 +112,11 @@ Proof sketch:
 4. It recomputes the folded statement digest from the child statement digests, `c`, and the parent commitment digest, and rejects unless both `parent.statement_digest` and `proof.parent_statement_digest` match it.
 5. It recomputes `fold_proof_digest` from the full public transcript and rejects unless `proof.proof_digest` matches.
 
-So acceptance is equivalent to equality with one deterministic recomputation path. There is no hidden-witness extractor and no Neo/SuperNeo CCS soundness claim here. The exact theorem for the active fold layer is canonicality plus the random-oracle challenge law below.
+If the implementation-refinement target is discharged, acceptance is equivalent to equality with one deterministic recomputation path. The current Lean theorem proves only that equality to an already supplied recomputed record is exact and unique; it does not model steps 1-5. There is no hidden-witness extractor and no Neo/SuperNeo CCS soundness claim here.
 
-### Theorem 2.2: exact random-oracle bound for the implemented five-challenge rule
+### Conditional Theorem 2.2: exact random-oracle bound for the implemented five-challenge rule
 
-Model each indexed BLAKE3 XOF call as an independent uniform `64`-bit word. Since
+Model each indexed BLAKE3 XOF call as an independent uniform `64`-bit word. Lean proves that every bounded input has quotient at most two under division by `2^63 - 1` and is therefore its residue plus zero, one, or two multiples of that modulus. Since
 
 ```text
 2^64 = 2(2^63 - 1) + 2,
@@ -146,7 +159,7 @@ composition_loss_bits = ceil(log2 128) = 7,
 transcript_floor_bits = 312 - 7 = 305.
 ```
 
-This is the mathematically correct replacement for the old blanket `/2` halving rule. It is a theorem-backed bound on the exact indexed challenge-tuple distribution of the implemented schedule, not a claim that the fold layer is a CCS soundness protocol.
+This is the mathematically correct replacement for the old blanket `/2` halving rule. The bounded reducer classification and the `3^5`, 312/313, and 305/306 integer inequalities are machine-checked. The probability interpretation remains conditional on independent uniform indexed XOF words; it is not a proof of BLAKE3 random-oracle behavior and not a claim that the fold layer is a CCS soundness protocol.
 
 ## 3. Exact Deterministic-Commitment Reduction
 
@@ -166,7 +179,7 @@ ring elements after the implemented pack-then-digit-expand embedding.
 
 So the exact live deterministic commitment class is a strict sub-class of the manifest-owned conservative cap `M = 76`. The repo keeps `M = 76` in the exported claim because the manifest is allowed to zero-pad messages up to that length, but the current `TxLeafPublicRelation` occupies only `12` ring elements.
 
-### Theorem 3.2: accepted deterministic-commitment collisions reduce directly to BK-MSIS
+### Open Reduction 3.2: accepted deterministic-commitment collisions reduce directly to BK-MSIS
 
 Fix the live deterministic commitment matrix `A ∈ R_q^{11 x 76}` derived from the active parameter fingerprint. Let `M_live ⊂ R_q^76` be the exact set of zero-padded message vectors produced by the shipped public-witness reconstruction path. Suppose an adversary outputs distinct `m, m' ∈ M_live` with
 
@@ -236,7 +249,7 @@ For each `a ∈ R_q`, let `T_a ∈ F_q^{54 x 54}` be the matrix of the `F_q`-lin
 A_flat = (T_aij) ∈ F_q^{594 x 4104}.
 ```
 
-### Theorem 4.1: exact equivalence of the ring/module kernel and the flattened kernel
+### Open Theorem 4.1: exact equivalence of the ring/module kernel and the flattened kernel
 
 For every `z ∈ R_q^76`,
 
@@ -248,7 +261,7 @@ A_flat coeff(z) = 0 in F_q^594.
 
 This is immediate from the definition of `T_a` and block-matrix multiplication.
 
-### Theorem 4.2: the flattening is zero-loss on the claimed bounded class
+### Open Theorem 4.2: the flattening is zero-loss on the claimed bounded class
 
 Interpret each admissible coefficient in centered form in `[-(q-1)/2, (q-1)/2]`. For the bounded-kernel class above, every centered coefficient already lies in `[-255, 255]`, far below `q/2`. Therefore:
 
@@ -308,7 +321,7 @@ commitment_binding_bits = 872.
 
 ## 6. Consequence For The Exported Claim
 
-Combining Theorem 2.2 and Theorem 3.2 with the zero-loss flattening of Section 4 gives the active conservative repository floor:
+Combining the checked challenge arithmetic with the still-open Reduction 3.2, coefficient flattening, and estimator assumptions gives the active conservative candidate claim:
 
 ```text
 transcript_soundness_bits = 312
@@ -318,4 +331,4 @@ commitment_binding_bits = 872
 soundness_floor_bits = min(305, 872) = 305.
 ```
 
-This note does **not** prove Neo/SuperNeo CCS knowledge soundness. It proves the exact active GoldilocksFrog fold canonicalization law, the exact deterministic-commitment collision reduction the repo claims, the exact coefficient-space flattening, and the concrete arithmetic of the active conservative exported instance.
+The machine-checked result is the supplied-record fold-output equality model, bounded reducer/preimage classification, low-degree support predicate, and the concrete arithmetic listed in the verification-status section. Production fold recomputation and verifier implementation equivalence are not yet machine-checked. This note also does **not** machine-check BLAKE3 random-oracle behavior, the collision reduction, or coefficient-space flattening, and it does **not** prove Neo/SuperNeo CCS knowledge soundness. Those remain release-blocking review boundaries for promoting the candidate backend.

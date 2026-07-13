@@ -17,5 +17,8 @@ superneo-ccs = { path = "../superneo-ccs" }
 superneo-core = { path = "../superneo-core" }
 superneo-ring = { path = "../superneo-ring" }
 
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true

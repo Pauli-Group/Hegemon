@@ -128,20 +128,245 @@ def profileBytes (profile : NoGrindingProfile) : List Byte :=
     ++ u64le profile.decsEta
     ++ u64le profile.decsPowBits
 
+structure ProfileBindingParameters where
+  circuitVersion : Nat
+  cryptoSuite : Nat
+  arithmetization : Nat
+  constraintDegree : Nat
+  profile : NoGrindingProfile
+  poseidonWidth : Nat
+  poseidonRate : Nat
+  poseidonSteps : Nat
+  poseidonRowsPerPermutation : Nat
+deriving DecidableEq, Repr
+
+abbrev NoGrindingProfile.wellFormed (profile : NoGrindingProfile) : Prop :=
+  profile.rho < 2 ^ 64
+    ∧ profile.nbOpenedEvals < 2 ^ 64
+    ∧ profile.beta < 2 ^ 64
+    ∧ profile.openingPowBits < 2 ^ 64
+    ∧ profile.decsNbEvals < 2 ^ 64
+    ∧ profile.decsNbOpenedEvals < 2 ^ 64
+    ∧ profile.decsEta < 2 ^ 64
+    ∧ profile.decsPowBits < 2 ^ 64
+
+abbrev ProfileBindingParameters.wellFormed
+    (parameters : ProfileBindingParameters) : Prop :=
+  parameters.circuitVersion < 2 ^ 16
+    ∧ parameters.cryptoSuite < 2 ^ 16
+    ∧ parameters.arithmetization < 2 ^ 64
+    ∧ parameters.constraintDegree < 2 ^ 64
+    ∧ parameters.profile.wellFormed
+    ∧ parameters.poseidonWidth < 2 ^ 64
+    ∧ parameters.poseidonRate < 2 ^ 64
+    ∧ parameters.poseidonSteps < 2 ^ 64
+    ∧ parameters.poseidonRowsPerPermutation < 2 ^ 64
+
+def activeProfileBindingParameters : ProfileBindingParameters :=
+  { circuitVersion := activeCircuitVersion,
+    cryptoSuite := activeCryptoSuite,
+    arithmetization :=
+      arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+    constraintDegree := effectiveConstraintDegree,
+    profile := activeProfile,
+    poseidonWidth := poseidonWidth,
+    poseidonRate := poseidonRate,
+    poseidonSteps := poseidonSteps,
+    poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation }
+
+def profileBindingParameterBytes
+    (parameters : ProfileBindingParameters) : List Byte :=
+  u16le parameters.circuitVersion
+    ++ u16le parameters.cryptoSuite
+    ++ u64le parameters.arithmetization
+    ++ u64le parameters.constraintDegree
+    ++ profileBytes parameters.profile
+    ++ u64le parameters.poseidonWidth
+    ++ u64le parameters.poseidonRate
+    ++ u64le parameters.poseidonSteps
+    ++ u64le parameters.poseidonRowsPerPermutation
+
+def profileMaterialWithParameters
+    (parameters : ProfileBindingParameters) : List Byte :=
+  smallwoodPublicStatementDomain
+    ++ arithmetizationLabel parameters.arithmetization
+    ++ smallwoodFieldXofDomain
+    ++ profileBindingParameterBytes parameters
+
+inductive ProfileBindingField
+  | circuitVersion
+  | cryptoSuite
+  | arithmetization
+  | constraintDegree
+  | rho
+  | openedEvaluations
+  | beta
+  | openingGrindingBits
+  | decsEvaluations
+  | decsOpenedEvaluations
+  | decsEta
+  | decsGrindingBits
+  | poseidonWidth
+  | poseidonRate
+  | poseidonSteps
+  | poseidonRowsPerPermutation
+deriving DecidableEq, Repr
+
+def activeProfileMutationFields : List ProfileBindingField :=
+  [ .circuitVersion,
+    .cryptoSuite,
+    .arithmetization,
+    .constraintDegree,
+    .rho,
+    .openedEvaluations,
+    .beta,
+    .openingGrindingBits,
+    .decsEvaluations,
+    .decsOpenedEvaluations,
+    .decsEta,
+    .decsGrindingBits,
+    .poseidonWidth,
+    .poseidonRate,
+    .poseidonSteps,
+    .poseidonRowsPerPermutation ]
+
+def ProfileBindingField.label : ProfileBindingField -> String
+  | .circuitVersion => "circuit-version"
+  | .cryptoSuite => "crypto-suite"
+  | .arithmetization => "arithmetization"
+  | .constraintDegree => "constraint-degree"
+  | .rho => "rho"
+  | .openedEvaluations => "opened-evaluations"
+  | .beta => "beta"
+  | .openingGrindingBits => "opening-grinding-bits"
+  | .decsEvaluations => "decs-evaluations"
+  | .decsOpenedEvaluations => "decs-opened-evaluations"
+  | .decsEta => "decs-eta"
+  | .decsGrindingBits => "decs-grinding-bits"
+  | .poseidonWidth => "poseidon-width"
+  | .poseidonRate => "poseidon-rate"
+  | .poseidonSteps => "poseidon-steps"
+  | .poseidonRowsPerPermutation => "poseidon-rows-per-permutation"
+
+def ProfileBindingField.mutate
+    (field : ProfileBindingField) : ProfileBindingParameters :=
+  match field with
+  | .circuitVersion =>
+      { activeProfileBindingParameters with
+          circuitVersion := activeCircuitVersion + 1 }
+  | .cryptoSuite =>
+      { activeProfileBindingParameters with
+          cryptoSuite := activeCryptoSuite + 1 }
+  | .arithmetization =>
+      { activeProfileBindingParameters with
+          arithmetization := arithDirectPacked64V1 }
+  | .constraintDegree =>
+      { activeProfileBindingParameters with
+          constraintDegree := effectiveConstraintDegree + 1 }
+  | .rho =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with rho := activeProfile.rho + 1 } }
+  | .openedEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with
+              nbOpenedEvals := activeProfile.nbOpenedEvals + 1 } }
+  | .beta =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with beta := activeProfile.beta + 1 } }
+  | .openingGrindingBits =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with openingPowBits := 1 } }
+  | .decsEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with decsNbEvals := activeProfile.decsNbEvals + 1 } }
+  | .decsOpenedEvaluations =>
+      { activeProfileBindingParameters with
+          profile :=
+            { activeProfile with
+              decsNbOpenedEvals := activeProfile.decsNbOpenedEvals + 1 } }
+  | .decsEta =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with decsEta := activeProfile.decsEta + 1 } }
+  | .decsGrindingBits =>
+      { activeProfileBindingParameters with
+          profile := { activeProfile with decsPowBits := 1 } }
+  | .poseidonWidth =>
+      { activeProfileBindingParameters with
+          poseidonWidth := SmallWoodTranscriptBinding.poseidonWidth + 1 }
+  | .poseidonRate =>
+      { activeProfileBindingParameters with
+          poseidonRate := SmallWoodTranscriptBinding.poseidonRate + 1 }
+  | .poseidonSteps =>
+      { activeProfileBindingParameters with
+          poseidonSteps := SmallWoodTranscriptBinding.poseidonSteps + 1 }
+  | .poseidonRowsPerPermutation =>
+      { activeProfileBindingParameters with
+          poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation + 1 }
+
+def activeProfileSingleFieldMutationCases :
+    List (String × ProfileBindingParameters) :=
+  activeProfileMutationFields.map fun field => (field.label, field.mutate)
+
+def activeProfileSingleFieldMutationNames : List String :=
+  activeProfileMutationFields.map ProfileBindingField.label
+
+def activeProfileSingleFieldMutations : List ProfileBindingParameters :=
+  activeProfileMutationFields.map ProfileBindingField.mutate
+
+def circuitVersionWraparoundMutation : ProfileBindingParameters :=
+  { activeProfileBindingParameters with
+      circuitVersion := activeCircuitVersion + 2 ^ 16 }
+
+theorem active_profile_is_no_grinding :
+    activeProfile.openingPowBits = 0
+      ∧ activeProfile.decsPowBits = 0 := by
+  decide
+
+theorem active_profile_binding_parameters_well_formed :
+    activeProfileBindingParameters.wellFormed := by
+  decide
+
+theorem active_profile_binding_rejects_all_named_in_range_single_field_mutations :
+    ∀ mutation ∈ activeProfileSingleFieldMutations,
+      mutation.wellFormed
+        ∧ profileMaterialWithParameters mutation ≠
+          profileMaterialWithParameters activeProfileBindingParameters := by
+  decide
+
+theorem circuit_version_wraparound_mutation_is_not_well_formed :
+    ¬ circuitVersionWraparoundMutation.wellFormed := by
+  decide
+
+theorem circuit_version_wraparound_collision_is_outside_production_domain :
+    profileMaterialWithParameters circuitVersionWraparoundMutation =
+        profileMaterialWithParameters activeProfileBindingParameters
+      ∧ ¬ circuitVersionWraparoundMutation.wellFormed := by
+  decide
+
+theorem active_profile_mutation_names_cover_every_mutation :
+    activeProfileSingleFieldMutationNames.length =
+      activeProfileSingleFieldMutations.length := by
+  decide
+
+theorem active_profile_mutation_fields_are_unique :
+    activeProfileMutationFields.Nodup := by
+  decide
+
 def smallwoodProfileMaterial
     (circuitVersion cryptoSuite arithmetization : Nat) : List Byte :=
-  smallwoodPublicStatementDomain
-    ++ arithmetizationLabel arithmetization
-    ++ smallwoodFieldXofDomain
-    ++ u16le circuitVersion
-    ++ u16le cryptoSuite
-    ++ u64le arithmetization
-    ++ u64le effectiveConstraintDegree
-    ++ profileBytes (profileForArithmetization arithmetization)
-    ++ u64le poseidonWidth
-    ++ u64le poseidonRate
-    ++ u64le poseidonSteps
-    ++ u64le (poseidonRowsPerPermutation arithmetization)
+  profileMaterialWithParameters
+    { circuitVersion := circuitVersion,
+      cryptoSuite := cryptoSuite,
+      arithmetization := arithmetization,
+      constraintDegree := effectiveConstraintDegree,
+      profile := profileForArithmetization arithmetization,
+      poseidonWidth := poseidonWidth,
+      poseidonRate := poseidonRate,
+      poseidonSteps := poseidonSteps,
+      poseidonRowsPerPermutation :=
+        poseidonRowsPerPermutation arithmetization }
 
 def paddingLength (bytes : List Byte) : Nat :=
   (8 - bytes.length % 8) % 8
