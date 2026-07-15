@@ -104,9 +104,11 @@ def maxOutputs : Nat := 2
 def balanceSlots : Nat := 4
 def paddingAssetId : Nat := 18446744073709551615
 def paddingFieldId : Nat := 4294967294
-def legacyPlonky3CircuitVersion : Nat := 2
-def legacyPlonky3CryptoSuite : Nat := 3
-def plonky3BackendVariant : Nat := 0
+def smallwoodCircuitVersion : Nat := 3
+def smallwoodCryptoSuite : Nat := 2
+-- Bincode encodes the second Rust enum variant as index one. Variant zero is
+-- retained only as a rejected tombstone for historical bytes.
+def smallwoodBackendVariant : Nat := 1
 def invalidBackendVariant : Nat := 99
 
 def defaultBalanceSlotAssetIds : List Nat :=
@@ -134,8 +136,8 @@ def transactionPublicInputsBytes : List Byte :=
     ++ u128le 0
     ++ defaultStablecoinBindingBytes
     ++ digest48Bytes
-    ++ u16le legacyPlonky3CircuitVersion
-    ++ u16le legacyPlonky3CryptoSuite
+    ++ u16le smallwoodCircuitVersion
+    ++ u16le smallwoodCryptoSuite
 
 def admissionValidTransactionPublicInputsBytes : List Byte :=
   digest48Bytes
@@ -147,8 +149,8 @@ def admissionValidTransactionPublicInputsBytes : List Byte :=
     ++ u128le 0
     ++ defaultStablecoinBindingBytes
     ++ digest48Bytes
-    ++ u16le legacyPlonky3CircuitVersion
-    ++ u16le legacyPlonky3CryptoSuite
+    ++ u16le smallwoodCircuitVersion
+    ++ u16le smallwoodCryptoSuite
 
 def serializedStarkInputsBytes : List Byte :=
   bincodeVecU8 [0, 0]
@@ -214,11 +216,11 @@ def transactionProofWrapperBytesWithBackendVariant
     ++ transactionProofWrapperSuffixAfterBackend
 
 def canonicalDummyProofWrapperBytes : List Byte :=
-  transactionProofWrapperBytesWithBackendVariant plonky3BackendVariant
+  transactionProofWrapperBytesWithBackendVariant smallwoodBackendVariant
 
 def topLevelNullifierDriftProofWrapperBytes : List Byte :=
   transactionProofWrapperPrefixWithTopLevelNullifierDriftBeforeBackend
-    ++ bincodeEnumVariant plonky3BackendVariant
+    ++ bincodeEnumVariant smallwoodBackendVariant
     ++ admissionValidTransactionProofWrapperSuffixAfterBackend
 
 def trailingDummyProofWrapperBytes : List Byte :=

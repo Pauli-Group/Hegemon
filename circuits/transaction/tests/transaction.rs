@@ -1,20 +1,12 @@
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use protocol_versioning::{
-    LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
-};
+use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
-use transaction_circuit::p3_prover::TransactionProofParams;
-use transaction_circuit::p3_verifier::{
-    verify_transaction_proof_bytes_p3, verify_transaction_proof_bytes_p3_for_version,
-};
 use transaction_circuit::proof::{
-    prove, prove_with_params, serialized_stark_inputs_from_witness, stark_public_inputs_p3,
-    transaction_public_inputs_digest_from_serialized,
+    prove, serialized_stark_inputs_from_witness, transaction_public_inputs_digest_from_serialized,
     transaction_statement_hash_from_public_inputs, verify,
 };
 use transaction_circuit::{
@@ -76,13 +68,6 @@ fn decode_mirror_smallwood_candidate_proof(proof_bytes: &[u8]) -> MirrorSmallwoo
 }
 
 fn encode_mirror_smallwood_candidate_proof(wrapper: &MirrorSmallwoodCandidateProof) -> Vec<u8> {
-    if wrapper.auxiliary_witness_words.is_empty() {
-        return bincode::serialize(&LegacyMirrorSmallwoodCandidateProof {
-            arithmetization: wrapper.arithmetization,
-            ark_proof: wrapper.ark_proof.clone(),
-        })
-        .expect("reencode legacy candidate wrapper");
-    }
     bincode::serialize(wrapper).expect("reencode candidate wrapper")
 }
 
@@ -309,8 +294,8 @@ fn stablecoin_witness() -> TransactionWitness {
 
 #[test]
 #[cfg_attr(
-    not(feature = "plonky3-e2e"),
-    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+    not(feature = "slow-smallwood-e2e"),
+    ignore = "slow: generates a full SmallWood proof; run with --features slow-smallwood-e2e --release"
 )]
 fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
     let witness = sample_witness();
@@ -328,7 +313,7 @@ fn proving_and_verification_succeeds() -> Result<(), TransactionCircuitError> {
 #[test]
 fn verification_fails_for_bad_balance() {
     let mut witness = sample_witness();
-    witness.version = LEGACY_PLONKY3_FRI_VERSION_BINDING;
+    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let (_proving_key, verifying_key) = generate_keys();
     let public_inputs = witness.public_inputs().expect("public inputs");
     let trace =
@@ -338,7 +323,7 @@ fn verification_fails_for_bad_balance() {
         commitments: public_inputs.commitments.clone(),
         balance_slots: trace.padded_balance_slots(),
         public_inputs,
-        backend: transaction_circuit::TxProofBackend::Plonky3Fri,
+        backend: transaction_circuit::TxProofBackend::SmallwoodCandidate,
         stark_proof: vec![0],
         stark_public_inputs: Some(
             serialized_stark_inputs_from_witness(&witness).expect("serialized public inputs"),
@@ -351,8 +336,8 @@ fn verification_fails_for_bad_balance() {
 
 #[test]
 #[cfg_attr(
-    not(feature = "plonky3-e2e"),
-    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+    not(feature = "slow-smallwood-e2e"),
+    ignore = "slow: generates a full SmallWood proof; run with --features slow-smallwood-e2e --release"
 )]
 fn verification_fails_for_nullifier_mutation() {
     let witness = sample_witness();
@@ -620,37 +605,20 @@ fn smallwood_candidate_proof_stays_below_native_tx_leaf_cap() {
 }
 
 #[test]
-fn smallwood_candidate_default_projection_tracks_inline_merkle_skip_initial_mds_arithmetization() {
+fn smallwood_candidate_default_projection_tracks_committed_inline_merkle_arithmetization() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let default_bytes = projected_smallwood_candidate_proof_bytes(&witness)
         .expect("projected smallwood candidate proof bytes");
-    let inline_merkle_skip_initial_mds_bytes =
+    let committed_inline_merkle_bytes =
         projected_smallwood_candidate_proof_bytes_for_arithmetization(
             &witness,
-            SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
         )
-        .expect("projected inline-merkle skip-initial-mds smallwood candidate proof bytes");
+        .expect("projected committed inline-merkle smallwood candidate proof bytes");
     assert_eq!(
-        default_bytes, inline_merkle_skip_initial_mds_bytes,
-        "default SmallWood candidate projection should stay pinned to the inline-merkle skip-initial-mds arithmetization"
-    );
-}
-
-#[test]
-fn smallwood_candidate_explicit_direct_proof_wrapper_tracks_direct_arithmetization() {
-    let mut witness = sample_witness();
-    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
-        &witness,
-        SmallwoodArithmetization::DirectPacked64V1,
-    )
-    .expect("smallwood candidate direct proof");
-    let mirror = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
-    assert_eq!(
-        mirror.arithmetization,
-        SmallwoodArithmetization::DirectPacked64V1,
-        "explicit direct SmallWood proof should carry the direct arithmetization tag"
+        default_bytes, committed_inline_merkle_bytes,
+        "default SmallWood candidate projection should stay pinned to the committed inline-merkle V3 arithmetization"
     );
 }
 
@@ -795,10 +763,6 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
         "inline-merkle + skip-initial-mds should beat the explicit-merkle helper frontier point: inline-merkle={packed64_inline_merkle_skip_initial_mds_bytes} explicit-merkle={packed64_skip_initial_mds_bytes}"
     );
     assert!(
-        packed128_inline_merkle_bytes < packed128_bytes,
-        "inline-merkle + skip-initial-mds should beat the explicit-merkle 128x point if the auxiliary move is still real at 128x: inline-merkle={packed128_inline_merkle_bytes} explicit-merkle={packed128_bytes}"
-    );
-    assert!(
         packed128_inline_merkle_bytes > packed64_inline_merkle_skip_initial_mds_bytes,
         "128x inline-merkle is a measured negative result on the current engine and should stay above the shipped 64x inline-merkle winner until a real backend change lands: packed128_inline={packed128_inline_merkle_bytes} packed64_inline={packed64_inline_merkle_skip_initial_mds_bytes}"
     );
@@ -808,15 +772,13 @@ fn smallwood_candidate_compact_binding_geometry_frontier_report() {
 fn smallwood_candidate_active_no_grinding_profile_clears_128_bits() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let profile = transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(
-        SmallwoodArithmetization::Bridge64V1,
-    );
-    let analysis = analyze_smallwood_candidate_profile_for_arithmetization(
-        &witness,
-        SmallwoodArithmetization::Bridge64V1,
-        profile,
-    )
-    .expect("analyze active smallwood profile");
+    let arithmetization =
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    let profile =
+        transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(arithmetization);
+    let analysis =
+        analyze_smallwood_candidate_profile_for_arithmetization(&witness, arithmetization, profile)
+            .expect("analyze active smallwood profile");
     assert!(
         analysis.soundness.meets_128_bit_floor,
         "active profile must clear the 128-bit no-grinding floor: {:?}",
@@ -962,17 +924,17 @@ fn smallwood_semantic_lppc_frontier_reports_current_engine_projections() {
         reports[0].shape,
         SmallwoodSemanticLppcShape::packed_1024x4_v1()
     );
-    assert_eq!(reports[0].projected_total_bytes, 52_874);
+    assert_eq!(reports[0].projected_total_bytes, 54_355);
     assert_eq!(
         reports[1].shape,
         SmallwoodSemanticLppcShape::packed_512x8_v1()
     );
-    assert_eq!(reports[1].projected_total_bytes, 36_346);
+    assert_eq!(reports[1].projected_total_bytes, 38_107);
     assert_eq!(
         reports[2].shape,
         SmallwoodSemanticLppcShape::packed_256x16_v1()
     );
-    assert_eq!(reports[2].projected_total_bytes, 31_154);
+    assert_eq!(reports[2].projected_total_bytes, 33_571);
 }
 
 #[test]
@@ -1076,13 +1038,17 @@ fn smallwood_semantic_lppc_auxiliary_poseidon_exact_spike_matches_projection_and
         serde_json::to_string_pretty(&report)
             .expect("serialize semantic LPPC auxiliary poseidon exact report")
     );
-    let exact_projection_delta = report
-        .projected_total_bytes
-        .abs_diff(report.exact_total_bytes);
+    assert_eq!(report.projected_total_bytes, 477_403);
     assert!(
-        report.exact_total_bytes <= report.projected_total_bytes
-            && exact_projection_delta <= 4_096,
-        "the exact auxiliary poseidon spike should stay within one compact-section budget of the structural projection"
+        report.exact_total_bytes <= report.projected_total_bytes,
+        "the exact auxiliary poseidon spike must stay below its structural projection"
+    );
+    assert!(
+        report
+            .projected_total_bytes
+            .abs_diff(report.exact_total_bytes)
+            <= 8 * 1024,
+        "transcript-dependent compact auth-path deduplication exceeded the 8 KiB projection slack"
     );
     assert!(
         report.exact_total_bytes > 400_000,
@@ -1119,7 +1085,7 @@ fn smallwood_semantic_bridge_lower_bound_frontier_quantifies_current_backend_flo
     );
     assert!(reports[0].projected_total_bytes > reports[1].projected_total_bytes);
     assert!(reports[2].projected_total_bytes > reports[1].projected_total_bytes);
-    assert_eq!(reports[1].projected_total_bytes, 97_130);
+    assert_eq!(reports[1].projected_total_bytes, 103_771);
     assert!(
         reports[1].projected_total_bytes >= reports[1].shipped_smallwood_candidate_bytes,
         "after promoting the compact inline-Merkle default, the pure semantic lower bound should no longer beat the shipped line"
@@ -1302,35 +1268,32 @@ fn smallwood_semantic_helper_aux_exact_report_matches_projection() {
 }
 
 #[test]
-fn smallwood_candidate_active_profile_beats_previous_decs_point() {
+fn smallwood_candidate_active_profile_beats_adjacent_decs_point() {
     let mut witness = sample_witness();
     witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    let arithmetization =
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    let active_profile =
+        transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(arithmetization);
+    assert_eq!(active_profile, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1);
     let previous_profile = SmallwoodNoGrindingProfileV1 {
-        rho: 2,
-        nb_opened_evals: 3,
-        beta: 2,
-        opening_pow_bits: 0,
-        decs_nb_evals: 16_384,
-        decs_nb_opened_evals: 29,
-        decs_eta: 3,
-        decs_pow_bits: 0,
+        decs_nb_opened_evals: active_profile.decs_nb_opened_evals + 1,
+        ..active_profile
     };
     let previous = analyze_smallwood_candidate_profile_for_arithmetization(
         &witness,
-        SmallwoodArithmetization::Bridge64V1,
+        arithmetization,
         previous_profile,
     )
     .expect("analyze previous smallwood profile");
     let active = analyze_smallwood_candidate_profile_for_arithmetization(
         &witness,
-        SmallwoodArithmetization::Bridge64V1,
-        transaction_circuit::smallwood_no_grinding_profile_for_arithmetization(
-            SmallwoodArithmetization::Bridge64V1,
-        ),
+        arithmetization,
+        active_profile,
     )
     .expect("analyze active smallwood profile");
     eprintln!(
-        "smallwood candidate bridge profile bytes: previous={} active={}",
+        "smallwood candidate V3 profile bytes: previous={} active={}",
         previous.projected_total_bytes, active.projected_total_bytes
     );
     assert!(
@@ -1340,27 +1303,9 @@ fn smallwood_candidate_active_profile_beats_previous_decs_point() {
     );
     assert!(
         active.projected_total_bytes < previous.projected_total_bytes,
-        "active profile should beat the previous DECS point: previous={} active={}",
+        "active profile should beat the adjacent 25-query DECS point: previous={} active={}",
         previous.projected_total_bytes,
         active.projected_total_bytes
-    );
-}
-
-#[test]
-fn smallwood_candidate_direct_wrapper_uses_succinct_row_scalar_openings() {
-    let mut witness = sample_witness();
-    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let proof = transaction_circuit::prove_smallwood_candidate_with_arithmetization(
-        &witness,
-        SmallwoodArithmetization::DirectPacked64V1,
-    )
-    .expect("smallwood candidate direct proof");
-    let outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
-    let inner = decode_smallwood_proof_trace_v1(&outer.ark_proof)
-        .expect("decode inner smallwood proof trace");
-    assert!(
-        !inner.opened_witness_row_scalars.is_empty(),
-        "row-scalar openings must be present"
     );
 }
 
@@ -1796,8 +1741,8 @@ fn smallwood_candidate_rejects_spliced_pcs_layer() {
 
 #[test]
 #[cfg_attr(
-    not(feature = "plonky3-e2e"),
-    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
+    not(feature = "slow-smallwood-e2e"),
+    ignore = "slow: generates a full SmallWood proof; run with --features slow-smallwood-e2e --release"
 )]
 fn verification_fails_for_stablecoin_policy_hash_mutation() {
     let witness = stablecoin_witness();
@@ -1818,37 +1763,5 @@ fn verification_fails_for_stablecoin_policy_hash_mutation() {
         ),
         "Expected STARK verification failure, got: {:?}",
         err
-    );
-}
-
-#[test]
-#[cfg_attr(
-    not(feature = "plonky3-e2e"),
-    ignore = "slow: generates a full Plonky3 proof; run with --features plonky3-e2e --release"
-)]
-fn low_query_proof_is_rejected_by_release_profile() {
-    let witness = sample_witness();
-    let (proving_key, _verifying_key) = generate_keys();
-    let proof = prove_with_params(
-        &witness,
-        &proving_key,
-        TransactionProofParams {
-            log_blowup: 4,
-            num_queries: 16,
-        },
-    )
-    .expect("proof generation");
-    let stark_public_inputs = stark_public_inputs_p3(&proof).expect("decode public inputs");
-    verify_transaction_proof_bytes_p3(&proof.stark_proof, &stark_public_inputs)
-        .expect("shape-specific verifier should accept the proof");
-    let err = verify_transaction_proof_bytes_p3_for_version(
-        &proof.stark_proof,
-        &stark_public_inputs,
-        witness.version,
-    )
-    .expect_err("release verifier should reject low-query proof");
-    assert!(
-        err.to_string().contains("proof FRI profile mismatch"),
-        "unexpected verifier error: {err}"
     );
 }

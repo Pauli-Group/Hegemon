@@ -1,3 +1,4 @@
+#[path = "retired_aggregation.rs"]
 mod aggregation;
 pub mod backend_interface;
 mod batch_proof;

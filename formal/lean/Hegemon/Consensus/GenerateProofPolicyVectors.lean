@@ -24,13 +24,13 @@ def rejectionJson : Option ProofPolicyReject -> String
   | some ProofPolicyReject.missingTransactionValidityClaims =>
       "\"missing_transaction_validity_claims\""
   | some ProofPolicyReject.legacyInlineBatch => "\"legacy_inline_batch\""
+  | some ProofPolicyReject.retiredReceiptRoot => "\"retired_receipt_root\""
   | some ProofPolicyReject.recursiveBlockCommitmentProofBytes =>
       "\"recursive_block_commitment_proof_bytes\""
   | some ProofPolicyReject.recursiveBlockReceiptRootPayload =>
       "\"recursive_block_receipt_root_payload\""
   | some ProofPolicyReject.missingRecursiveBlockArtifact =>
       "\"missing_recursive_block_artifact\""
-  | some ProofPolicyReject.missingReceiptRootPayload => "\"missing_receipt_root_payload\""
 
 def proofPolicyCaseJson (name : String) (input : ProofPolicyInput) : String :=
   let result := evaluateProofPolicy input
@@ -124,9 +124,9 @@ def vectorJson : String :=
     ++ proofPolicyCaseJson "recursive-block-requires-block-artifact"
       { recursiveComplete with hasBlockArtifact := false } ++ ",\n"
     ++ proofPolicyCaseJson "recursive-block-complete-accepted" recursiveComplete ++ ",\n"
-    ++ proofPolicyCaseJson "receipt-root-requires-receipt-payload"
+    ++ proofPolicyCaseJson "receipt-root-without-payload-retired"
       { receiptRootComplete with hasReceiptRoot := false } ++ ",\n"
-    ++ proofPolicyCaseJson "receipt-root-complete-accepted" receiptRootComplete ++ "\n"
+    ++ proofPolicyCaseJson "receipt-root-with-payload-retired" receiptRootComplete ++ "\n"
     ++ "  ]\n"
     ++ "}\n"
 

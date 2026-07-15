@@ -230,16 +230,6 @@ structure SmallWoodOutputWitness where
   noteCommitment : Digest
 deriving DecidableEq, Repr
 
-def noteCommitmentFromOutputWitness
-    (witness : SmallWoodOutputWitness) : Digest :=
-  (witness.value * 1315423911
-    + witness.assetId * 2654435761
-    + witness.recipientKey * 97531
-    + witness.authorizationPublicKey * 314159
-    + witness.rho * 271828
-    + witness.noteRandomness * 65537
-    + 97) % SpendAuthorization.authDigestMod
-
 def inputNoteSummary (witness : InputSpendWitness) : NoteSummary :=
   { assetId := witness.assetId, value := witness.value }
 
@@ -273,7 +263,6 @@ def SmallWoodOutputConstraintRowSatisfied
       ∧ publicCiphertextHash = 0)
     ∨ (activeFlag = 1
       ∧ publicCommitment ≠ 0
-      ∧ row.noteOpeningCommitment = noteCommitmentFromOutputWitness witness
       ∧ row.noteOpeningCommitment = witness.noteCommitment
       ∧ row.noteCommitmentRow = row.noteOpeningCommitment
       ∧ row.noteCommitmentRow = publicCommitment
@@ -343,7 +332,7 @@ theorem output_constraints_imply_slots_valid
           activeFlag, publicCommitment, publicCiphertextHash,
           inductionHypothesis]
       · rcases active with
-          ⟨activeFlag, publicCommitment, _, _, _, _, _, _⟩
+          ⟨activeFlag, publicCommitment, _, _, _, _, _⟩
         simp [allOutputsValid, validOutputSlot, isBoolFlag, isZeroDigest,
           activeFlag, publicCommitment, inductionHypothesis]
 
@@ -364,26 +353,7 @@ theorem active_output_constraint_binds_note_opening
   rcases satisfied with inactive | activeFacts
   · rw [inactive.left] at active
     cases active
-  · exact activeFacts.2.2.2.2.2.1.symm.trans activeFacts.2.2.2.2.1
-
-theorem active_output_constraint_recomputes_note_commitment
-    {activeFlag : Nat}
-    {publicCommitment publicCiphertextHash : Digest}
-    {witness : SmallWoodOutputWitness}
-    {row : SmallWoodOutputConstraintRow}
-    (satisfied :
-      SmallWoodOutputConstraintRowSatisfied
-        activeFlag
-        publicCommitment
-        publicCiphertextHash
-        witness
-        row)
-    (active : activeFlag = 1) :
-    noteCommitmentFromOutputWitness witness = witness.noteCommitment := by
-  rcases satisfied with inactive | activeFacts
-  · rw [inactive.left] at active
-    cases active
-  · exact activeFacts.2.2.1.symm.trans activeFacts.2.2.2.1
+  · exact activeFacts.2.2.2.2.1.symm.trans activeFacts.2.2.2.1
 
 structure SmallWoodBalanceConstraintsSatisfied
     (balanceWitness : BalanceWitness)
@@ -556,27 +526,6 @@ theorem semantic_constraints_imply_public_shape_valid
   simp at coreValid
   simp [coreValid, inputsValid, outputsValid]
 
-def SmallWoodExactConstraintExtractionAssumption
-    (wrapper : ProofWrapperInput)
-    (shape : PublicInputShape)
-    (merkleRoot : Digest)
-    (spendWitnesses : List InputSpendWitness)
-    (inputRows : List SmallWoodInputConstraintRow)
-    (outputWitnesses : List SmallWoodOutputWitness)
-    (outputRows : List SmallWoodOutputConstraintRow)
-    (balanceWitness : BalanceWitness)
-    (slots : List BalanceSlot) : Prop :=
-  proofWrapperAccepts wrapper = true ->
-    SmallWoodSemanticConstraintsSatisfied
-      shape
-      merkleRoot
-      spendWitnesses
-      inputRows
-      outputWitnesses
-      outputRows
-      balanceWitness
-      slots
-
 theorem semantic_constraints_imply_spend_authorized
     {shape : PublicInputShape}
     {merkleRoot : Digest}
@@ -636,39 +585,6 @@ theorem accepted_proof_and_semantic_constraints_imply_transaction_relation
       balance_constraints_imply_valid_balance satisfied.balanceConstraints,
       semantic_constraints_imply_public_shape_valid satisfied,
       input_constraints_imply_slots_authorized satisfied.inputConstraints⟩
-
-theorem accepted_proof_with_exact_constraint_extraction_implies_relation
-    {wrapper : ProofWrapperInput}
-    {shape : PublicInputShape}
-    {merkleRoot : Digest}
-    {spendWitnesses : List InputSpendWitness}
-    {inputRows : List SmallWoodInputConstraintRow}
-    {outputWitnesses : List SmallWoodOutputWitness}
-    {outputRows : List SmallWoodOutputConstraintRow}
-    {balanceWitness : BalanceWitness}
-    {slots : List BalanceSlot}
-    (accepted : proofWrapperAccepts wrapper = true)
-    (extraction :
-      SmallWoodExactConstraintExtractionAssumption
-        wrapper
-        shape
-        merkleRoot
-        spendWitnesses
-        inputRows
-        outputWitnesses
-        outputRows
-        balanceWitness
-        slots) :
-    AcceptedTransactionRelation
-      wrapper
-      shape
-      merkleRoot
-      spendWitnesses
-      balanceWitness
-      slots :=
-  accepted_proof_and_semantic_constraints_imply_transaction_relation
-    accepted
-    (extraction accepted)
 
 theorem semantic_constraints_imply_output_slots_valid
     {shape : PublicInputShape}

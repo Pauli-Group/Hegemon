@@ -3,6 +3,18 @@ use protocol_shielded_pool::types::{
     ReceiptRootMetadata, ReceiptRootProofPayload, TxValidityReceipt,
 };
 
+#[test]
+fn receipt_root_candidate_mode_is_rejected_before_consensus_conversion() {
+    let err = consensus_batch_mode(BlockProofMode::ReceiptRoot)
+        .expect_err("retired receipt-root mode must not enter consensus verification");
+    assert!(err.to_string().contains("decode-only"));
+    assert_eq!(
+        consensus_batch_mode(BlockProofMode::RecursiveBlock)
+            .expect("recursive mode remains the shipped route"),
+        consensus::ProvenBatchMode::RecursiveBlock
+    );
+}
+
 #[derive(Debug, Clone, Copy)]
 struct NormalizedScaleByte;
 
@@ -90,6 +102,138 @@ struct LeanNativeSupplyCase {
     has_coinbase: bool,
     expected_delta: Option<String>,
     expected_supply: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodBlockCompositionVectorFile {
+    schema_version: u32,
+    production_fields: Vec<String>,
+    claim_scope_cases: Vec<LeanAcceptedSmallwoodClaimScopeCase>,
+    expected_da_blob_hex: String,
+    canonical_transactions: Vec<LeanAcceptedSmallwoodCanonicalTransaction>,
+    canonical_actions: Vec<LeanAcceptedSmallwoodCanonicalAction>,
+    proof_artifact_cases: Vec<LeanAcceptedSmallwoodProofArtifactCase>,
+    header_fixture: LeanAcceptedSmallwoodHeaderFixture,
+    accepted_parent_fixture: LeanAcceptedSmallwoodParentFixture,
+    supply_fixture: LeanAcceptedSmallwoodSupplyFixture,
+    identity_cases: Vec<LeanAcceptedSmallwoodBlockCompositionCase>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodClaimScopeCase {
+    name: String,
+    circuit_version: u16,
+    crypto_suite: u16,
+    expected_valid: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodCanonicalTransaction {
+    expected_tx_id_hex: String,
+    expected_transaction_hash_preimage_hex: String,
+    expected_ciphertext_hashes_hex: Vec<String>,
+    statement_hash: u8,
+    proof_digest: u8,
+    public_inputs_digest: u8,
+    verifier_profile: u8,
+    anchor_root: u8,
+    fee: u64,
+    binding_circuit_version: u32,
+    transaction_circuit_version: u16,
+    transaction_crypto_suite: u16,
+    transaction: LeanAcceptedSmallwoodTransactionFixture,
+    claim: LeanAcceptedSmallwoodClaimFixture,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodTransactionFixture {
+    nullifier_tags: Vec<u8>,
+    commitment_tags: Vec<u8>,
+    balance_tag: u8,
+    circuit_version: u16,
+    crypto_suite: u16,
+    da_payload: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodClaimFixture {
+    statement_hash_tag: u8,
+    proof_digest_tag: u8,
+    public_inputs_digest_tag: u8,
+    verifier_profile_tag: u8,
+    anchor_tag: u8,
+    fee: u64,
+    circuit_version: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodCanonicalAction {
+    kind: String,
+    transaction_index: Option<usize>,
+    amount: Option<u64>,
+    action_bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodProofArtifactCase {
+    name: String,
+    proof_bytes: Vec<u8>,
+    public_input_bytes: Vec<u8>,
+    verifier_profile: u8,
+    expected_valid: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodHeaderFixture {
+    height: u64,
+    parent_block_hash: u64,
+    action_count: usize,
+    tx_statements_commitment: u64,
+    da_root: u64,
+    da_chunk_count: u32,
+    claimed_supply: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodParentFixture {
+    block_hash: u64,
+    height: u64,
+    supply: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodSupplyFixture {
+    height: u64,
+    parent_block_hash: u64,
+    parent_supply: String,
+    ordered_transfer_fees: Vec<u64>,
+    exact_transfer_fee_total: u128,
+    checked_transfer_fee_total: Option<u64>,
+    accepted_burn_amounts: Vec<u128>,
+    coinbase_count: usize,
+    observed_coinbase_amount: Option<u64>,
+    expected_coinbase_amount: Option<u64>,
+    has_coinbase: bool,
+    supply_delta: String,
+    claimed_supply: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LeanAcceptedSmallwoodBlockCompositionCase {
+    layer: String,
+    name: String,
+    expected_valid: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6148,7 +6292,7 @@ fn submit_action_rejects_non_transfer_or_excess_nullifiers_before_parsing() {
 }
 
 #[test]
-fn submit_action_rejects_inactive_legacy_binding_before_staging() {
+fn submit_action_rejects_non_active_transaction_bindings_before_staging() {
     use base64::Engine;
 
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -6158,21 +6302,28 @@ fn submit_action_rejects_inactive_legacy_binding_before_staging() {
         app_family_id: 9,
         payload: b"legacy binding".to_vec(),
     };
-    let legacy = protocol_versioning::LEGACY_PLONKY3_FRI_VERSION_BINDING;
-    let err = node
-        .validate_and_stage_action(json!({
-            "binding_circuit": legacy.circuit,
-            "binding_crypto": legacy.crypto,
-            "family_id": FAMILY_BRIDGE,
-            "action_id": ACTION_BRIDGE_OUTBOUND,
-            "new_nullifiers": [],
-            "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
-        }))
-        .expect_err("inactive legacy binding must reject before staging");
-    assert!(
-        err.to_string().contains("is not active"),
-        "unexpected inactive-binding error: {err}"
-    );
+    for inactive in [
+        protocol_versioning::LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        protocol_versioning::VersionBinding::new(
+            protocol_versioning::CIRCUIT_V2,
+            protocol_versioning::CRYPTO_SUITE_GAMMA,
+        ),
+    ] {
+        let err = node
+            .validate_and_stage_action(json!({
+                "binding_circuit": inactive.circuit,
+                "binding_crypto": inactive.crypto,
+                "family_id": FAMILY_BRIDGE,
+                "action_id": ACTION_BRIDGE_OUTBOUND,
+                "new_nullifiers": [],
+                "public_args": base64::engine::general_purpose::STANDARD.encode(args.encode()),
+            }))
+            .expect_err("inactive transaction binding must reject before staging");
+        assert!(
+            err.to_string().contains("is not active"),
+            "unexpected inactive-binding error for {inactive:?}: {err}"
+        );
+    }
     assert_eq!(node.state.read().pending_actions.len(), 0);
 }
 
@@ -13808,7 +13959,28 @@ fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
         state.pending_actions.insert(action.tx_hash, action);
     }
 
-    let transfer_count = ordered_pending_actions(&state)
+    let ordered_actions = ordered_pending_actions(&state);
+    let actual_ordered_labels = ordered_actions
+        .iter()
+        .map(|action| {
+            label_by_hash
+                .get(&action.tx_hash)
+                .unwrap_or_else(|| panic!("{} ordered unknown action", case.name))
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    let expected_ordered_labels = case
+        .actions
+        .iter()
+        .map(|action| action.label.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual_ordered_labels, expected_ordered_labels,
+        "{} complete mineable action order drifted from Lean spec",
+        case.name
+    );
+
+    let transfer_count = ordered_actions
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
         .filter(|action| {
@@ -17482,6 +17654,7 @@ fn live_mining_requires_shared_seeds_or_explicit_bootstrap_authoring() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let cli = |base_path: PathBuf| NativeCli {
+        print_crypto_profile: false,
         dev: false,
         tmp: false,
         base_path: Some(base_path),
@@ -20682,22 +20855,16 @@ fn materialized_sidecar_observer_projection_ignores_received_time() {
 #[test]
 fn pending_action_raw_bytes_project_to_validated_materialized_replay_rows() {
     let pow_bits = 0x207f_ffff;
-    let state = test_state(genesis_meta(pow_bits).expect("genesis"));
-    let anchor = state.commitment_tree.root();
-    let inline_transfer = test_inline_transfer_action(anchor, [72u8; 48], [73u8; 48], 0);
-    let sidecar_transfer = test_sidecar_transfer_action(anchor, [74u8; 48], [75u8; 48], 0);
+    let (state, inline_transfer) =
+        test_valid_inline_transfer_action_and_state(genesis_meta(pow_bits).expect("genesis"), 29);
     let outbound = test_outbound_bridge_action(b"projection outbound");
-    let coinbase = test_coinbase_action(consensus::reward::block_subsidy(1));
-    let candidate = test_candidate_artifact_action(2, 76);
-    let mut transfers = vec![inline_transfer, sidecar_transfer];
-    transfers.sort_by_key(action_order_key);
-    let actions = vec![
-        transfers.remove(0),
-        transfers.remove(0),
-        outbound,
-        coinbase,
-        candidate,
-    ];
+    let coinbase = test_coinbase_action(
+        consensus::reward::block_subsidy(1)
+            .checked_add(5)
+            .expect("test subsidy plus fees"),
+    );
+    let candidate = test_candidate_artifact_action(1, 76);
+    let actions = vec![inline_transfer, outbound, coinbase, candidate];
     let meta = mined_child_with_actions(&state.best, 1, pow_bits, 0, actions.clone());
     let (_db, da_ciphertext_tree) = test_da_ciphertext_tree();
     for action in &actions {
@@ -20749,6 +20916,73 @@ fn pending_action_raw_bytes_project_to_validated_materialized_replay_rows() {
             assert_eq!(bytes.len(), usize::try_from(*expected_size).unwrap());
         }
     }
+
+    let mut transactions = Vec::new();
+    let mut artifacts = Vec::new();
+    for (action, payload) in decoded.iter().zip(materialized.iter()) {
+        if is_shielded_transfer_action(action) {
+            let proof_bytes = transfer_proof_from_action(action)
+                .expect("extract canonical decoded native tx-leaf proof bytes");
+            let decoded_leaf =
+                consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&proof_bytes)
+                    .expect("decode canonical native tx-leaf proof bytes");
+            assert_eq!(
+                decoded_leaf.stark_public_inputs.input_flags.len(),
+                transaction_core::constants::MAX_INPUTS,
+                "native tx-leaf statement must preserve every fixed input slot"
+            );
+            assert_eq!(
+                decoded_leaf.stark_public_inputs.output_flags.len(),
+                transaction_core::constants::MAX_OUTPUTS,
+                "native tx-leaf statement must preserve every fixed output slot"
+            );
+            let (transaction, artifact) = consensus_tx_and_artifact_from_action(action, payload)
+                .expect("derive transaction and proof artifact from canonical decoded transfer");
+            transactions.push(transaction);
+            artifacts.push(artifact);
+        }
+    }
+    let claims = consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
+        .expect("derive verified claims from canonical decoded transfers");
+    let identity_projection = consensus::proof::canonical_block_identity_projection(
+        &transactions,
+        &claims,
+        native_da_params(),
+    )
+    .expect("derive recursive identity from canonical decoded transfers");
+    let supply_projection = native_supply_composition_projection(&decoded, meta.height)
+        .expect("derive supply from the same canonical decoded action stream");
+    assert_eq!(identity_projection.tx_count as usize, transactions.len());
+    assert_eq!(identity_projection.tx_count, 1);
+    assert_eq!(
+        identity_projection.ordered_fees, supply_projection.ordered_transfer_fees,
+        "recursive identity and supply must preserve one decoded transfer order"
+    );
+    assert_eq!(supply_projection.exact_transfer_fee_total, 5);
+    assert_eq!(supply_projection.checked_transfer_fee_total, Some(5));
+    assert_eq!(
+        supply_projection.observed_coinbase_amount,
+        supply_projection.expected_coinbase_amount
+    );
+    assert!(supply_projection.has_coinbase);
+
+    let candidate_artifact = decoded
+        .iter()
+        .find_map(|action| action.candidate_artifact.as_ref())
+        .expect("decoded stream contains the recursive candidate artifact");
+    assert_eq!(candidate_artifact.tx_count, identity_projection.tx_count);
+    let candidate_binding = NativeCandidateArtifactBindingAdmissionInput {
+        da_root_matches: candidate_artifact.da_root == identity_projection.da_root,
+        da_chunk_count_matches: candidate_artifact.da_chunk_count
+            == identity_projection.da_chunk_count,
+        tx_statements_commitment_matches: candidate_artifact.tx_statements_commitment
+            == identity_projection.tx_statements_commitment,
+        recursive_state_root_matches: true,
+    };
+    assert!(
+        evaluate_native_candidate_artifact_binding_admission(candidate_binding).is_err(),
+        "the deliberately unrelated candidate fixture must not bind to the decoded transfers"
+    );
 
     let planned = plan_materialized_action_effects(&da_ciphertext_tree, &state, &decoded)
         .expect("plan effects from same decoded actions");
@@ -24429,6 +24663,127 @@ fn test_transfer_ciphertext_bytes() -> Vec<u8> {
     note_bytes
 }
 
+fn test_valid_inline_transfer_action_and_state(
+    best: NativeBlockMeta,
+    seed: u8,
+) -> (NativeState, PendingAction) {
+    use transaction_circuit::{
+        hashing_pq::{bytes48_to_felts, spend_auth_key_bytes},
+        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
+        TransactionWitness,
+    };
+
+    let sk_spend = [seed.wrapping_add(42); 32];
+    let input_note = NoteData {
+        value: 8,
+        asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+        pk_recipient: [seed.wrapping_add(1); 32],
+        pk_auth: spend_auth_key_bytes(&sk_spend),
+        rho: [seed.wrapping_add(2); 32],
+        r: [seed.wrapping_add(3); 32],
+    };
+    let input_commitment = felts_to_bytes48(&input_note.commitment());
+    let mut state = test_state(best);
+    let append = state
+        .commitment_tree
+        .append_with_certificate(input_commitment)
+        .expect("append the production input note commitment");
+    let merkle_path = MerklePath {
+        siblings: append
+            .trace
+            .iter()
+            .map(|step| {
+                bytes48_to_felts(&step.sibling)
+                    .expect("production commitment-tree siblings are canonical field elements")
+            })
+            .collect(),
+    };
+    let output_note = OutputNoteWitness {
+        note: NoteData {
+            value: 3,
+            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
+            pk_recipient: [seed.wrapping_add(4); 32],
+            pk_auth: [seed.wrapping_add(5); 32],
+            rho: [seed.wrapping_add(6); 32],
+            r: [seed.wrapping_add(7); 32],
+        },
+    };
+    let encrypted_note = test_transfer_encrypted_note();
+    let ciphertext_hash = ciphertext_hash_bytes(&test_transfer_ciphertext_bytes());
+    let witness = TransactionWitness {
+        inputs: vec![InputNoteWitness {
+            note: input_note,
+            position: append.leaf_index,
+            rho_seed: [seed.wrapping_add(8); 32],
+            merkle_path,
+        }],
+        outputs: vec![output_note],
+        ciphertext_hashes: vec![ciphertext_hash],
+        sk_spend,
+        merkle_root: append.result_root,
+        fee: 5,
+        value_balance: 0,
+        stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),
+        version: TransactionWitness::default_version_binding(),
+    };
+    let built = superneo_hegemon::build_native_tx_leaf_artifact_bytes(&witness)
+        .expect("build the active native SmallWood proof artifact");
+    let decoded =
+        consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
+            .expect("decode the active native SmallWood proof artifact");
+    let balance_slot_asset_ids = decoded
+        .stark_public_inputs
+        .balance_slot_asset_ids
+        .clone()
+        .try_into()
+        .expect("production balance-slot width");
+    let inputs = ShieldedTransferInputs {
+        anchor: decoded.stark_public_inputs.merkle_root,
+        nullifiers: decoded.tx.nullifiers.clone(),
+        commitments: decoded.tx.commitments.clone(),
+        ciphertext_hashes: decoded.tx.ciphertext_hashes.clone(),
+        balance_slot_asset_ids,
+        fee: decoded.stark_public_inputs.fee,
+        value_balance: 0,
+        stablecoin: None,
+    };
+    let binding_hash = StarkVerifier::compute_binding_hash(&inputs).data;
+    let binding = KernelVersionBinding {
+        circuit: decoded.tx.version.circuit,
+        crypto: decoded.tx.version.crypto,
+    };
+    let ciphertext_size =
+        u32::try_from(encrypted_note.ciphertext.len() + encrypted_note.kem_ciphertext.len())
+            .expect("ciphertext size");
+    let args = ShieldedTransferInlineArgs {
+        proof: built.artifact_bytes,
+        commitments: decoded.tx.commitments.clone(),
+        ciphertexts: vec![encrypted_note],
+        anchor: decoded.stark_public_inputs.merkle_root,
+        balance_slot_asset_ids,
+        binding_hash,
+        stablecoin: None,
+        fee: decoded.stark_public_inputs.fee,
+    };
+    let mut action = PendingAction {
+        tx_hash: [0u8; 32],
+        binding,
+        family_id: FAMILY_SHIELDED_POOL,
+        action_id: ACTION_SHIELDED_TRANSFER_INLINE,
+        anchor: decoded.stark_public_inputs.merkle_root,
+        nullifiers: decoded.tx.nullifiers,
+        commitments: decoded.tx.commitments,
+        ciphertext_hashes: decoded.tx.ciphertext_hashes,
+        ciphertext_sizes: vec![ciphertext_size],
+        public_args: args.encode(),
+        fee: decoded.stark_public_inputs.fee,
+        candidate_artifact: None,
+        received_ms: 0,
+    };
+    action.tx_hash = pending_action_hash(&action);
+    (state, action)
+}
+
 fn insert_test_sidecar_ciphertext(tree: &sled::Tree, action: &PendingAction) {
     if action.family_id != FAMILY_SHIELDED_POOL
         || action.action_id != ACTION_SHIELDED_TRANSFER_SIDECAR
@@ -24505,8 +24860,12 @@ fn test_transfer_proof_artifact_with_value_balance(
     decoded.tx.version = binding.into();
     decoded.proof_backend = protocol_versioning::tx_proof_backend_for_version(decoded.tx.version)
         .unwrap_or(protocol_versioning::DEFAULT_TX_PROOF_BACKEND);
-    decoded.stark_public_inputs.input_flags = vec![1; nullifiers.len()];
-    decoded.stark_public_inputs.output_flags = vec![1; commitments.len()];
+    decoded.stark_public_inputs.input_flags = (0..transaction_core::constants::MAX_INPUTS)
+        .map(|index| u8::from(index < nullifiers.len()))
+        .collect();
+    decoded.stark_public_inputs.output_flags = (0..transaction_core::constants::MAX_OUTPUTS)
+        .map(|index| u8::from(index < commitments.len()))
+        .collect();
     decoded.stark_public_inputs.fee = fee;
     decoded.stark_public_inputs.value_balance_sign = u8::from(value_balance < 0);
     decoded.stark_public_inputs.value_balance_magnitude = value_balance_magnitude;
@@ -25138,6 +25497,289 @@ fn lean_generated_native_supply_vectors_match_production() {
         assert!(names.insert(case.name.clone()));
         verify_lean_native_supply_case(case);
     }
+}
+
+#[test]
+fn lean_generated_accepted_smallwood_block_supply_vectors_match_production() {
+    let Ok(path) = std::env::var("HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS")
+    else {
+        eprintln!(
+            "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS not set; skipping generated Lean vector check"
+        );
+        return;
+    };
+    let raw = std::fs::read_to_string(&path)
+        .expect("read generated Lean accepted-SmallWood block composition vectors");
+    let vectors: LeanAcceptedSmallwoodBlockCompositionVectorFile = serde_json::from_str(&raw)
+        .expect("parse generated Lean accepted-SmallWood block composition vectors");
+    assert_eq!(vectors.schema_version, 1);
+    assert_eq!(vectors.production_fields.len(), 70);
+    assert_eq!(vectors.claim_scope_cases.len(), 3);
+    assert_eq!(vectors.canonical_transactions.len(), 2);
+    assert_eq!(vectors.proof_artifact_cases.len(), 4);
+
+    let mut claim_scope_names = BTreeSet::new();
+    for case in &vectors.claim_scope_cases {
+        assert!(claim_scope_names.insert(case.name.clone()));
+        let binding = KernelVersionBinding {
+            circuit: case.circuit_version,
+            crypto: case.crypto_suite,
+        };
+        assert_eq!(
+            kernel_manifest().binding_allowed(binding, vectors.header_fixture.height),
+            case.expected_valid,
+            "{} active SmallWood claim scope drifted from native ingress policy",
+            case.name
+        );
+    }
+    assert_eq!(
+        claim_scope_names,
+        BTreeSet::from([
+            "active_v3_beta".to_string(),
+            "legacy_v2_beta".to_string(),
+            "wrong_crypto_suite".to_string(),
+        ])
+    );
+
+    let canonical_artifact = vectors
+        .proof_artifact_cases
+        .iter()
+        .find(|case| case.name == "valid")
+        .expect("Lean vectors contain the canonical proof artifact");
+    let mut artifact_case_names = BTreeSet::new();
+    for case in &vectors.proof_artifact_cases {
+        assert!(artifact_case_names.insert(case.name.clone()));
+        let exact_tuple_matches = case.proof_bytes == canonical_artifact.proof_bytes
+            && case.public_input_bytes == canonical_artifact.public_input_bytes
+            && case.verifier_profile == canonical_artifact.verifier_profile;
+        assert_eq!(exact_tuple_matches, case.expected_valid);
+    }
+    assert_eq!(
+        artifact_case_names,
+        BTreeSet::from([
+            "valid".to_string(),
+            "proof_bytes_mutated".to_string(),
+            "public_inputs_mutated".to_string(),
+            "verifier_profile_mutated".to_string(),
+        ])
+    );
+
+    let baseline = vectors.supply_fixture.clone();
+    for fixture in &vectors.canonical_transactions {
+        assert_eq!(fixture.statement_hash, fixture.claim.statement_hash_tag);
+        assert_eq!(fixture.proof_digest, fixture.claim.proof_digest_tag);
+        assert_eq!(
+            fixture.public_inputs_digest,
+            fixture.claim.public_inputs_digest_tag
+        );
+        assert_eq!(fixture.verifier_profile, fixture.claim.verifier_profile_tag);
+        assert_eq!(fixture.anchor_root, fixture.claim.anchor_tag);
+        assert_eq!(fixture.fee, fixture.claim.fee);
+        assert_eq!(
+            fixture.binding_circuit_version,
+            fixture.claim.circuit_version
+        );
+        assert_eq!(
+            fixture.transaction_circuit_version,
+            fixture.transaction.circuit_version
+        );
+        assert_eq!(
+            fixture.transaction_crypto_suite,
+            fixture.transaction.crypto_suite
+        );
+        assert!(!fixture.transaction.nullifier_tags.is_empty());
+        assert!(!fixture.transaction.commitment_tags.is_empty());
+        assert_ne!(fixture.transaction.balance_tag, 0);
+        assert_eq!(
+            fixture.expected_tx_id_hex.strip_prefix("0x").unwrap().len(),
+            64
+        );
+        assert_eq!(
+            fixture
+                .expected_transaction_hash_preimage_hex
+                .strip_prefix("0x")
+                .unwrap()
+                .len(),
+            392
+        );
+        assert_eq!(fixture.expected_ciphertext_hashes_hex.len(), 1);
+    }
+
+    let model_statement_commitment = vectors
+        .canonical_transactions
+        .iter()
+        .map(|tx| u64::from(tx.statement_hash))
+        .sum::<u64>();
+    let exact_da_blob = hex::decode(
+        vectors
+            .expected_da_blob_hex
+            .strip_prefix("0x")
+            .expect("Lean DA blob hex has 0x prefix"),
+    )
+    .expect("Lean DA blob hex decodes");
+    let mut reconstructed_da_blob = Vec::new();
+    reconstructed_da_blob.extend_from_slice(
+        &u32::try_from(vectors.canonical_transactions.len())
+            .expect("fixture transaction count fits u32")
+            .to_le_bytes(),
+    );
+    for fixture in &vectors.canonical_transactions {
+        reconstructed_da_blob.extend_from_slice(
+            &u32::try_from(fixture.transaction.da_payload.len())
+                .expect("fixture ciphertext count fits u32")
+                .to_le_bytes(),
+        );
+        for ciphertext in &fixture.transaction.da_payload {
+            reconstructed_da_blob.extend_from_slice(
+                &u32::try_from(ciphertext.len())
+                    .expect("fixture ciphertext length fits u32")
+                    .to_le_bytes(),
+            );
+            reconstructed_da_blob.extend_from_slice(ciphertext);
+        }
+    }
+    assert_eq!(reconstructed_da_blob, exact_da_blob);
+    let model_da_root = exact_da_blob
+        .iter()
+        .map(|byte| u64::from(*byte))
+        .sum::<u64>();
+    assert_eq!(
+        vectors.header_fixture.tx_statements_commitment,
+        model_statement_commitment
+    );
+    assert_eq!(vectors.header_fixture.da_root, model_da_root);
+    assert_eq!(
+        usize::try_from(vectors.header_fixture.da_chunk_count).unwrap(),
+        vectors.canonical_transactions.len()
+    );
+    assert_eq!(vectors.header_fixture.height, baseline.height);
+    assert_eq!(
+        vectors.header_fixture.height,
+        vectors.accepted_parent_fixture.height + 1
+    );
+    assert_eq!(
+        vectors.header_fixture.parent_block_hash,
+        baseline.parent_block_hash
+    );
+    assert_eq!(
+        vectors.header_fixture.parent_block_hash,
+        vectors.accepted_parent_fixture.block_hash
+    );
+    assert_eq!(
+        parse_u128(&baseline.parent_supply),
+        parse_u128(&vectors.accepted_parent_fixture.supply)
+    );
+    assert_eq!(
+        vectors.header_fixture.claimed_supply,
+        baseline.claimed_supply
+    );
+
+    let mut actions = Vec::new();
+    let mut ordered_fixture_fees = Vec::new();
+    let mut action_tokens = BTreeSet::new();
+    for action in &vectors.canonical_actions {
+        assert!(action_tokens.insert(action.action_bytes.clone()));
+        match action.kind.as_str() {
+            "transfer" => {
+                assert!(action.amount.is_none());
+                let index = action
+                    .transaction_index
+                    .expect("transfer action has a transaction index");
+                let fee = vectors
+                    .canonical_transactions
+                    .get(index)
+                    .unwrap_or_else(|| panic!("transfer transaction index {index} is in range"))
+                    .claim
+                    .fee;
+                ordered_fixture_fees.push(fee);
+                actions.push(test_empty_action(
+                    FAMILY_SHIELDED_POOL,
+                    ACTION_SHIELDED_TRANSFER_INLINE,
+                    fee,
+                ));
+            }
+            "coinbase" => {
+                assert!(action.transaction_index.is_none());
+                actions.push(test_coinbase_action(
+                    action.amount.expect("coinbase action has an amount"),
+                ));
+            }
+            other => panic!("unknown canonical action kind {other}"),
+        }
+    }
+    assert_eq!(action_tokens.len(), vectors.canonical_actions.len());
+    assert_eq!(vectors.header_fixture.action_count, actions.len());
+    assert_eq!(ordered_fixture_fees, baseline.ordered_transfer_fees);
+    let projection = native_supply_composition_projection(&actions, baseline.height)
+        .expect("build native production supply composition projection");
+
+    let supply_case_accepts = |candidate: &LeanAcceptedSmallwoodSupplyFixture| {
+        let claimed_supply = parse_u128(&candidate.claimed_supply);
+        candidate.height == vectors.header_fixture.height
+            && candidate.parent_block_hash == vectors.header_fixture.parent_block_hash
+            && parse_u128(&candidate.parent_supply)
+                == parse_u128(&vectors.accepted_parent_fixture.supply)
+            && claimed_supply == parse_u128(&vectors.header_fixture.claimed_supply)
+            && candidate.ordered_transfer_fees == projection.ordered_transfer_fees
+            && candidate.exact_transfer_fee_total == projection.exact_transfer_fee_total
+            && candidate.checked_transfer_fee_total == projection.checked_transfer_fee_total
+            && candidate.accepted_burn_amounts == projection.accepted_burn_amounts
+            && candidate.coinbase_count == projection.coinbase_count
+            && candidate.observed_coinbase_amount == projection.observed_coinbase_amount
+            && candidate.expected_coinbase_amount == projection.expected_coinbase_amount
+            && candidate.has_coinbase == projection.has_coinbase
+            && parse_u128(&candidate.supply_delta) == projection.supply_delta
+            && parse_u128(&candidate.parent_supply).checked_add(projection.supply_delta)
+                == Some(claimed_supply)
+    };
+
+    assert!(supply_case_accepts(&baseline));
+    assert_eq!(projection.exact_transfer_fee_total, 8);
+    assert_eq!(projection.checked_transfer_fee_total, Some(8));
+    assert_eq!(
+        projection.expected_coinbase_amount,
+        baseline.observed_coinbase_amount
+    );
+    assert!(projection.has_coinbase);
+
+    let mut names = BTreeSet::new();
+    for case in vectors
+        .identity_cases
+        .iter()
+        .filter(|case| case.layer == "supply")
+    {
+        assert!(names.insert(case.name.clone()));
+        let mut candidate = baseline.clone();
+        match case.name.as_str() {
+            "fee_order_mismatched" => candidate.ordered_transfer_fees.reverse(),
+            "coinbase_mismatched" => candidate.observed_coinbase_amount = Some(0),
+            "parent_mismatched" => candidate.parent_block_hash = 0,
+            "paired_parent_supply_shift" => {
+                candidate.parent_supply = (parse_u128(&candidate.parent_supply) + 1).to_string();
+                candidate.claimed_supply = (parse_u128(&candidate.claimed_supply) + 1).to_string();
+            }
+            "supply_mismatched" => {
+                candidate.claimed_supply = (parse_u128(&candidate.claimed_supply) + 1).to_string();
+            }
+            other => panic!("unknown Lean supply mutation {other}"),
+        }
+        assert_eq!(
+            supply_case_accepts(&candidate),
+            case.expected_valid,
+            "{} supply composition drifted from Lean",
+            case.name
+        );
+    }
+    assert_eq!(
+        names,
+        BTreeSet::from([
+            "fee_order_mismatched".to_string(),
+            "coinbase_mismatched".to_string(),
+            "parent_mismatched".to_string(),
+            "paired_parent_supply_shift".to_string(),
+            "supply_mismatched".to_string(),
+        ])
+    );
 }
 
 fn verify_lean_native_supply_case(case: &LeanNativeSupplyCase) {

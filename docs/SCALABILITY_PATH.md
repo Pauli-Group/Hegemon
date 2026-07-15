@@ -24,7 +24,7 @@ There is no external public prover host in the normal shipping topology for this
 Two non-inline block-proof lanes remain in-tree, but only one is now shipped:
 
 - **`RecursiveBlockV2`** is the shipped constant-size recursive lane. It has a real bounded-domain invariant and explicit verification plumbing, and it is now the default shipped path.
-- **`ReceiptRoot`** is the explicit native comparison lane. It still carries a parent-bound commitment proof plus a native receipt-root artifact. It is useful for comparison, diagnostics, and research, but it is not the default shipped path.
+- **`ReceiptRoot`** is decode-only. Native receipt-root helpers remain useful for bounded comparison vectors, diagnostics, and research, but block admission and authoring reject the route.
 
 The current shipped `RecursiveBlockV2` domain is a single bounded chunk:
 

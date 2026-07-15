@@ -1,5 +1,6 @@
 import Hegemon.Consensus.RecursiveBlockAdmission
 import Hegemon.Transaction.ProofSystemBoundary
+import Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 import Hegemon.Transaction.SmallWoodSemanticClosure
 
 namespace Hegemon
@@ -14,6 +15,7 @@ open Hegemon.Transaction.ProofSystemBoundary
 open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
 open Hegemon.Transaction.SmallWoodSemanticClosure
+open Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 open Hegemon.Transaction.SpendAuthorization
 
 theorem accepted_recursive_artifact_exposes_statement_and_replay_binding
@@ -126,67 +128,6 @@ theorem semantic_constraints_canonical_surface_imply_no_theft_boundary
       surface
       spendSound
       balanceSound
-
-theorem exact_constraint_extraction_canonical_surface_implies_no_theft_boundary
-    {wrapper : ProofWrapperInput}
-    {shape : PublicInputShape}
-    {publicFields : PublicInputBinding.PublicFields}
-    {serializedFields : PublicInputBinding.SerializedFields}
-    {bound : PublicInputBinding.BoundPublicInputs}
-    {statementFields : StatementHash.StatementFields}
-    {statementBytes : List Byte}
-    {bindingFields : ProofStatementBinding.BindingFields}
-    {bindingBytes : List Byte}
-    {merkleRoot : Digest}
-    {spendWitnesses : List InputSpendWitness}
-    {inputRows : List SmallWoodInputConstraintRow}
-    {outputWitnesses : List SmallWoodOutputWitness}
-    {outputRows : List SmallWoodOutputConstraintRow}
-    {balanceWitness : BalanceWitness}
-    {slots : List BalanceSlot}
-    (surface :
-      CanonicalTxStatementSurface
-        wrapper
-        shape
-        publicFields
-        serializedFields
-        bound
-        statementFields
-        statementBytes
-        bindingFields
-        bindingBytes
-        merkleRoot)
-    (extraction :
-      SmallWoodExactConstraintExtractionAssumption
-        wrapper
-        shape
-        merkleRoot
-        spendWitnesses
-        inputRows
-        outputWitnesses
-        outputRows
-        balanceWitness
-        slots)
-    (balancePublicFields :
-      BalancePublicFieldFacts publicFields balanceWitness) :
-    CanonicalProofSystemNoTheftBoundaryFacts
-      wrapper
-      shape
-      publicFields
-      serializedFields
-      bound
-      statementFields
-      statementBytes
-      bindingFields
-      bindingBytes
-      merkleRoot
-      spendWitnesses
-      balanceWitness
-      slots :=
-  semantic_constraints_canonical_surface_imply_no_theft_boundary
-    surface
-    (extraction surface.accepted)
-    balancePublicFields
 
 theorem accepted_recursive_v2_artifact_still_requires_semantic_replay
     {artifact : ArtifactAdmissionInput}

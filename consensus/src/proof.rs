@@ -12,8 +12,8 @@ use crate::backend_interface::{
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash,
     transaction_statement_hash_checked, transaction_statement_hash_from_parts,
     transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
-    verify_block_commitment, verify_block_recursive_v1, verify_block_recursive_v2,
-    verify_native_tx_leaf_artifact_bytes, verify_transaction_proof, verify_tx_leaf_artifact_bytes,
+    verify_block_recursive_v1, verify_block_recursive_v2, verify_native_tx_leaf_artifact_bytes,
+    verify_transaction_proof, verify_tx_leaf_artifact_bytes,
 };
 use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
@@ -33,13 +33,15 @@ use crate::types::{
 use crypto::hashes::blake3_384;
 use parking_lot::Mutex;
 use rayon::prelude::*;
+#[cfg(test)]
 use std::any::Any;
 use std::collections::{BTreeSet, HashMap, VecDeque};
+#[cfg(test)]
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 use transaction_circuit::constants::{MAX_INPUTS, MAX_OUTPUTS};
-use transaction_circuit::hashing_pq::{ciphertext_hash_bytes, felts_to_bytes48};
+use transaction_circuit::hashing_pq::ciphertext_hash_bytes;
 use transaction_circuit::keys::generate_keys;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,10 +80,10 @@ enum BlockProofPolicyRejection {
     MissingProvenBatch,
     MissingTransactionValidityClaims,
     LegacyInlineBatch,
+    RetiredReceiptRoot,
     RecursiveBlockCommitmentProofBytes,
     RecursiveBlockReceiptRootPayload,
     MissingRecursiveBlockArtifact,
-    MissingReceiptRootPayload,
 }
 
 impl BlockProofPolicyRejection {
@@ -95,10 +97,10 @@ impl BlockProofPolicyRejection {
             Self::MissingProvenBatch => "missing_proven_batch",
             Self::MissingTransactionValidityClaims => "missing_transaction_validity_claims",
             Self::LegacyInlineBatch => "legacy_inline_batch",
+            Self::RetiredReceiptRoot => "retired_receipt_root",
             Self::RecursiveBlockCommitmentProofBytes => "recursive_block_commitment_proof_bytes",
             Self::RecursiveBlockReceiptRootPayload => "recursive_block_receipt_root_payload",
             Self::MissingRecursiveBlockArtifact => "missing_recursive_block_artifact",
-            Self::MissingReceiptRootPayload => "missing_receipt_root_payload",
         }
     }
 }
@@ -133,13 +135,7 @@ fn evaluate_block_proof_policy(
     }
     match input.proven_batch_mode {
         ProvenBatchMode::InlineTx => Err(BlockProofPolicyRejection::LegacyInlineBatch),
-        ProvenBatchMode::ReceiptRoot => {
-            if input.has_receipt_root {
-                Ok(())
-            } else {
-                Err(BlockProofPolicyRejection::MissingReceiptRootPayload)
-            }
-        }
+        ProvenBatchMode::ReceiptRoot => Err(BlockProofPolicyRejection::RetiredReceiptRoot),
         ProvenBatchMode::RecursiveBlock => {
             if input.commitment_proof_bytes != 0 {
                 Err(BlockProofPolicyRejection::RecursiveBlockCommitmentProofBytes)
@@ -180,6 +176,10 @@ fn proof_policy_rejection_to_error(
         BlockProofPolicyRejection::LegacyInlineBatch => ProofError::UnsupportedProofArtifact(
             "legacy InlineTx proven batches are no longer supported on the product path".to_string(),
         ),
+        BlockProofPolicyRejection::RetiredReceiptRoot => ProofError::UnsupportedProofArtifact(
+            "ReceiptRoot blocks are decode-only and are not admitted by the SmallWood product path"
+                .to_string(),
+        ),
         BlockProofPolicyRejection::RecursiveBlockCommitmentProofBytes => {
             ProofError::UnsupportedProofArtifact(
                 "recursive block product lane forbids commitment proof bytes".to_string(),
@@ -192,11 +192,6 @@ fn proof_policy_rejection_to_error(
         }
         BlockProofPolicyRejection::MissingRecursiveBlockArtifact => {
             ProofError::MissingAggregationProofForSelfContainedMode
-        }
-        BlockProofPolicyRejection::MissingReceiptRootPayload => {
-            ProofError::ProvenBatchBindingMismatch(
-                "missing receipt_root payload for ReceiptRoot mode".to_string(),
-            )
         }
     }
 }
@@ -347,6 +342,7 @@ fn native_tx_leaf_admission_error(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootPayloadAdmissionInput {
     payload_leaf_count_matches: bool,
@@ -356,6 +352,7 @@ struct ReceiptRootPayloadAdmissionInput {
     has_tx_artifacts: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootPayloadAdmissionRejection {
     LeafCountMismatch,
@@ -365,8 +362,8 @@ enum ReceiptRootPayloadAdmissionRejection {
     MissingTransactionProofs,
 }
 
+#[cfg(test)]
 impl ReceiptRootPayloadAdmissionRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::LeafCountMismatch => "leaf_count_mismatch",
@@ -378,6 +375,7 @@ impl ReceiptRootPayloadAdmissionRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_payload_admission(
     input: ReceiptRootPayloadAdmissionInput,
 ) -> Result<(), ReceiptRootPayloadAdmissionRejection> {
@@ -1241,7 +1239,7 @@ impl Default for VerifierRegistry {
         let mut registry = Self {
             verifiers: Vec::new(),
         };
-        registry.register(Arc::new(InlineTxP3Verifier {
+        registry.register(Arc::new(InlineTxSmallwoodVerifier {
             verifying_key: generate_keys().1,
         }));
         registry.register(Arc::new(TxLeafVerifier));
@@ -1283,11 +1281,11 @@ impl VerifierRegistry {
     }
 }
 
-struct InlineTxP3Verifier {
+struct InlineTxSmallwoodVerifier {
     verifying_key: transaction_circuit::keys::VerifyingKey,
 }
 
-impl ArtifactVerifier for InlineTxP3Verifier {
+impl ArtifactVerifier for InlineTxSmallwoodVerifier {
     fn kind(&self) -> ProofArtifactKind {
         ProofArtifactKind::InlineTx
     }
@@ -1758,99 +1756,16 @@ pub fn commitment_nullifier_lists(
 }
 
 pub fn verify_commitment_proof_payload(
-    block: &Block<impl HeaderProofExt>,
-    parent_commitment_tree: &CommitmentTreeState,
-    proof: &CommitmentBlockProof,
+    _block: &Block<impl HeaderProofExt>,
+    _parent_commitment_tree: &CommitmentTreeState,
+    _proof: &CommitmentBlockProof,
 ) -> Result<(), ProofError> {
-    let lists = commitment_nullifier_lists(&block.transactions)?;
-
-    if proof.public_inputs.tx_count as usize != block.transactions.len() {
-        return Err(ProofError::CommitmentProofInputsMismatch(format!(
-            "tx_count mismatch (proof {}, block {})",
-            proof.public_inputs.tx_count,
-            block.transactions.len()
-        )));
-    }
-
-    let proof_nullifiers: Vec<[u8; 48]> = proof
-        .public_inputs
-        .nullifiers
-        .iter()
-        .map(felts_to_bytes48)
-        .collect();
-    if proof_nullifiers != lists.nullifiers {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "nullifier list mismatch".to_string(),
-        ));
-    }
-    let proof_sorted_nullifiers: Vec<[u8; 48]> = proof
-        .public_inputs
-        .sorted_nullifiers
-        .iter()
-        .map(felts_to_bytes48)
-        .collect();
-    if proof_sorted_nullifiers != lists.sorted_nullifiers {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "sorted nullifier list mismatch".to_string(),
-        ));
-    }
-
-    let expected_da_root = da_root(&block.transactions, block.header.da_params())
-        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    let proof_da_root = felts_to_bytes48(&proof.public_inputs.da_root);
-    if proof_da_root != expected_da_root {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "da_root mismatch".to_string(),
-        ));
-    }
-
-    let expected_nullifier_root = nullifier_root_from_list(&lists.nullifiers)?;
-    let proof_nullifier_root = felts_to_bytes48(&proof.public_inputs.nullifier_root);
-    if proof_nullifier_root != expected_nullifier_root {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "nullifier root mismatch".to_string(),
-        ));
-    }
-
-    let proof_starting_root = felts_to_bytes48(&proof.public_inputs.starting_state_root);
-    if proof_starting_root != parent_commitment_tree.root() {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "starting state root mismatch".to_string(),
-        ));
-    }
-    let expected_tree = apply_commitments(parent_commitment_tree, &block.transactions)?;
-    let proof_ending_root = felts_to_bytes48(&proof.public_inputs.ending_state_root);
-    if proof_ending_root != expected_tree.root() {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "ending state root mismatch".to_string(),
-        ));
-    }
-
-    let proof_starting_kernel_root = felts_to_bytes48(&proof.public_inputs.starting_kernel_root);
-    let expected_starting_kernel_root =
-        kernel_root_from_shielded_root(&parent_commitment_tree.root());
-    if proof_starting_kernel_root != expected_starting_kernel_root {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "starting kernel root mismatch".to_string(),
-        ));
-    }
-
-    let proof_ending_kernel_root = felts_to_bytes48(&proof.public_inputs.ending_kernel_root);
-    let expected_ending_kernel_root = kernel_root_from_shielded_root(&expected_tree.root());
-    if proof_ending_kernel_root != expected_ending_kernel_root {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "ending kernel root mismatch".to_string(),
-        ));
-    }
-
-    run_verifier(
-        "commitment proof verification".to_string(),
-        || verify_block_commitment(proof),
-        |err| ProofError::CommitmentProofVerification(err.to_string()),
-    )?;
-    Ok(())
+    Err(ProofError::UnsupportedProofArtifact(
+        "retired commitment-proof payloads are decode-only".to_string(),
+    ))
 }
 
+#[cfg(test)]
 fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
@@ -1861,6 +1776,7 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
     }
 }
 
+#[cfg(test)]
 fn run_verifier<T, E, F, M>(context: String, verifier: F, map_err: M) -> Result<T, ProofError>
 where
     F: FnOnce() -> Result<T, E>,
@@ -2202,6 +2118,107 @@ pub fn tx_validity_claims_from_tx_artifacts(
     verify_tx_validity_artifacts(&VerifierRegistry::default(), transactions, artifacts)
 }
 
+/// Exact ordered identity projection consumed by block-proof admission.
+///
+/// The claims passed here have already been derived from, or matched against,
+/// verified transaction artifacts. Keeping this projection in the executable
+/// verifier prevents statement, DA, and ordering checks from drifting onto
+/// independently reconstructed object lists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CanonicalBlockIdentityProjection {
+    pub ordered_tx_ids: Vec<[u8; 32]>,
+    pub ordered_statement_hashes: Vec<[u8; 48]>,
+    pub ordered_proof_digests: Vec<[u8; 48]>,
+    pub ordered_public_inputs_digests: Vec<[u8; 48]>,
+    pub ordered_verifier_profiles: Vec<[u8; 48]>,
+    pub ordered_anchor_roots: Vec<[u8; 48]>,
+    pub ordered_fees: Vec<u64>,
+    pub ordered_binding_circuit_versions: Vec<u32>,
+    pub ordered_transaction_circuit_versions: Vec<u16>,
+    pub ordered_transaction_crypto_suites: Vec<u16>,
+    pub tx_count: u32,
+    pub tx_statements_commitment: [u8; 48],
+    pub da_root: [u8; 48],
+    pub da_chunk_count: u32,
+    statement_bindings: Vec<TxStatementBinding>,
+    receipts: Vec<TxValidityReceipt>,
+}
+
+pub fn canonical_block_identity_projection(
+    transactions: &[crate::types::Transaction],
+    claims: &[TxValidityClaim],
+    da_params: crate::types::DaParams,
+) -> Result<CanonicalBlockIdentityProjection, ProofError> {
+    if claims.len() != transactions.len() {
+        return Err(ProofError::CommitmentProofInputsMismatch(format!(
+            "canonical identity claim count mismatch (expected {}, got {})",
+            transactions.len(),
+            claims.len()
+        )));
+    }
+
+    let tx_count = u32::try_from(transactions.len()).map_err(|_| {
+        ProofError::CommitmentProofInputsMismatch(
+            "canonical identity transaction count exceeds u32".to_string(),
+        )
+    })?;
+    let statement_bindings = tx_statement_bindings_from_claims(claims)?;
+    let tx_statements_commitment = commitment_from_statement_bindings(&statement_bindings)?;
+    let da_encoding = crate::types::encode_da_blob(transactions, da_params)
+        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
+    let da_chunk_count = u32::try_from(da_encoding.chunks().len())
+        .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
+
+    Ok(CanonicalBlockIdentityProjection {
+        ordered_tx_ids: transactions
+            .iter()
+            .map(crate::types::Transaction::hash)
+            .collect(),
+        ordered_statement_hashes: claims
+            .iter()
+            .map(|claim| claim.receipt.statement_hash)
+            .collect(),
+        ordered_proof_digests: claims
+            .iter()
+            .map(|claim| claim.receipt.proof_digest)
+            .collect(),
+        ordered_public_inputs_digests: claims
+            .iter()
+            .map(|claim| claim.receipt.public_inputs_digest)
+            .collect(),
+        ordered_verifier_profiles: claims
+            .iter()
+            .map(|claim| claim.receipt.verifier_profile)
+            .collect(),
+        ordered_anchor_roots: statement_bindings
+            .iter()
+            .map(|binding| binding.anchor)
+            .collect(),
+        ordered_fees: statement_bindings
+            .iter()
+            .map(|binding| binding.fee)
+            .collect(),
+        ordered_binding_circuit_versions: statement_bindings
+            .iter()
+            .map(|binding| binding.circuit_version)
+            .collect(),
+        ordered_transaction_circuit_versions: transactions
+            .iter()
+            .map(|tx| tx.version.circuit)
+            .collect(),
+        ordered_transaction_crypto_suites: transactions
+            .iter()
+            .map(|tx| tx.version.crypto)
+            .collect(),
+        tx_count,
+        tx_statements_commitment,
+        da_root: da_encoding.root(),
+        da_chunk_count,
+        statement_bindings,
+        receipts: tx_validity_receipts_from_claims(claims),
+    })
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TxValidityClaimMatchRejection {
     Count,
@@ -2379,6 +2396,7 @@ fn evaluate_proven_batch_binding(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_proven_batch_binding<BH>(
     block: &Block<BH>,
     proven_batch: &crate::types::ProvenBatch,
@@ -2394,6 +2412,24 @@ where
     let expected_da_root = expected_da_encoding.root();
     let expected_da_chunk_count = u32::try_from(expected_da_encoding.chunks().len())
         .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
+    validate_proven_batch_binding_against_expected(
+        proven_batch,
+        expected_commitment,
+        block.transactions.len(),
+        expected_da_root,
+        expected_da_chunk_count,
+        block_artifact,
+    )
+}
+
+fn validate_proven_batch_binding_against_expected(
+    proven_batch: &crate::types::ProvenBatch,
+    expected_commitment: &[u8; 48],
+    expected_tx_count: usize,
+    expected_da_root: [u8; 48],
+    expected_da_chunk_count: u32,
+    block_artifact: Option<&ProofEnvelope>,
+) -> Result<(), ProofError> {
     let artifact_kind = block_artifact.map(|artifact| artifact.kind);
     let artifact_verifier_profile_matches = block_artifact
         .map(|artifact| artifact.verifier_profile == proven_batch.verifier_profile)
@@ -2402,7 +2438,7 @@ where
         proven_batch_mode: proven_batch.mode,
         proof_kind: proven_batch.proof_kind,
         tx_count: proven_batch.tx_count as usize,
-        expected_tx_count: block.transactions.len(),
+        expected_tx_count,
         statement_commitment_matches: proven_batch.tx_statements_commitment == *expected_commitment,
         da_root_matches: proven_batch.da_root == expected_da_root,
         da_chunk_count: proven_batch.da_chunk_count,
@@ -2422,8 +2458,7 @@ where
         ProvenBatchBindingRejection::TxCountMismatch => {
             ProofError::ProvenBatchBindingMismatch(format!(
                 "proven batch tx_count mismatch (payload {}, expected {})",
-                proven_batch.tx_count,
-                block.transactions.len()
+                proven_batch.tx_count, expected_tx_count
             ))
         }
         ProvenBatchBindingRejection::StatementCommitmentMismatch => {
@@ -2497,17 +2532,13 @@ impl ProofVerifier for HashVerifier {
     }
 }
 
-#[derive(Clone)]
-pub struct ParallelProofVerifier {
-    verifier_registry: VerifierRegistry,
-}
+#[derive(Clone, Debug)]
+pub struct ParallelProofVerifier;
 
 impl ParallelProofVerifier {
     pub fn new() -> Self {
         let _ = generate_keys();
-        Self {
-            verifier_registry: VerifierRegistry::default(),
-        }
+        Self
     }
 }
 
@@ -2629,18 +2660,17 @@ impl ProofVerifier for ParallelProofVerifier {
             .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
         let commitment_proof = &proven_batch.commitment_proof;
 
-        let commitment_verify_ms = if matches!(proven_batch.mode, ProvenBatchMode::ReceiptRoot) {
-            let start_commitment = Instant::now();
-            verify_commitment_proof_payload(block, parent_commitment_tree, commitment_proof)?;
-            start_commitment.elapsed().as_millis()
-        } else {
-            if !commitment_proof.proof_bytes.is_empty() {
-                return Err(ProofError::UnsupportedProofArtifact(
-                    "recursive block product lane forbids commitment proof bytes".to_string(),
-                ));
-            }
-            0
-        };
+        if !matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "only RecursiveBlock is admitted by the SmallWood product path".to_string(),
+            ));
+        }
+        if !commitment_proof.proof_bytes.is_empty() {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "recursive block product lane forbids commitment proof bytes".to_string(),
+            ));
+        }
+        let commitment_verify_ms = 0;
 
         if matches!(
             verification_mode,
@@ -2650,71 +2680,35 @@ impl ProofVerifier for ParallelProofVerifier {
             return Err(ProofError::MissingTransactionValidityClaims);
         }
 
-        let resolved_statement_bindings = resolved_claims
-            .as_deref()
-            .map(tx_statement_bindings_from_claims)
-            .transpose()?;
-        let statement_bindings = resolved_statement_bindings
+        let resolved_claims = resolved_claims
             .as_deref()
             .ok_or(ProofError::MissingTransactionValidityClaims)?;
+        let identity_projection = canonical_block_identity_projection(
+            &block.transactions,
+            resolved_claims,
+            block.header.da_params(),
+        )?;
+        let statement_bindings = identity_projection.statement_bindings.as_slice();
         validate_statement_anchor_history(
             parent_commitment_tree,
             block.transactions.len(),
             statement_bindings,
         )?;
-        let resolved_receipts = resolved_claims
-            .as_deref()
-            .map(tx_validity_receipts_from_claims);
-        let derived_statement_commitment =
-            Some(commitment_from_statement_bindings(statement_bindings)?);
-        let expected_commitment =
-            match (block.tx_statements_commitment, derived_statement_commitment) {
-                (Some(expected), Some(derived)) => {
-                    if expected != derived {
-                        return Err(ProofError::CommitmentProofInputsMismatch(
-                            "tx_statements_commitment does not match provided transaction claims"
-                                .to_string(),
-                        ));
-                    }
-                    expected
-                }
-                (Some(expected), None) => expected,
-                (None, Some(derived)) => derived,
-                (None, None) => {
-                    return Err(ProofError::MissingTransactionValidityClaims);
-                }
-            };
-        if matches!(proven_batch.mode, ProvenBatchMode::ReceiptRoot) {
-            let proof_commitment =
-                felts_to_bytes48(&commitment_proof.public_inputs.tx_statements_commitment);
-            if expected_commitment != proof_commitment {
-                return Err(ProofError::CommitmentProofInputsMismatch(
-                    "tx_statements_commitment mismatch".to_string(),
-                ));
-            }
+        let expected_commitment = identity_projection.tx_statements_commitment;
+        if let Some(expected) = block.tx_statements_commitment
+            && expected != expected_commitment
+        {
+            return Err(ProofError::CommitmentProofInputsMismatch(
+                "tx_statements_commitment does not match provided transaction claims".to_string(),
+            ));
         }
-
-        let block_artifact = block
-            .block_artifact
-            .clone()
-            .or_else(|| match proven_batch.mode {
-                ProvenBatchMode::ReceiptRoot => {
-                    proven_batch
-                        .receipt_root
-                        .as_ref()
-                        .map(|receipt_root| ProofEnvelope {
-                            kind: proven_batch.proof_kind,
-                            verifier_profile: proven_batch.verifier_profile,
-                            artifact_bytes: receipt_root.root_proof.clone(),
-                        })
-                }
-                ProvenBatchMode::RecursiveBlock => None,
-                ProvenBatchMode::InlineTx => None,
-            });
-        validate_proven_batch_binding(
-            block,
+        let block_artifact = block.block_artifact.clone();
+        validate_proven_batch_binding_against_expected(
             proven_batch,
             &expected_commitment,
+            identity_projection.tx_count as usize,
+            identity_projection.da_root,
+            identity_projection.da_chunk_count,
             block_artifact.as_ref(),
         )?;
 
@@ -2729,133 +2723,29 @@ impl ProofVerifier for ParallelProofVerifier {
         let aggregation_cache_prewarm_build_ms = 0u128;
         let aggregation_cache_prewarm_total_ms = 0u128;
 
-        let recursive_semantic = if matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
-            Some(recursive_block_semantic_inputs_from_block(
-                block,
-                parent_commitment_tree,
-                expected_commitment,
-            )?)
-        } else {
-            None
-        };
+        let recursive_semantic = recursive_block_semantic_inputs_from_block(
+            block,
+            parent_commitment_tree,
+            expected_commitment,
+        )?;
+        let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        let recursive_artifact = block_artifact
+            .as_ref()
+            .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
+        let verify_report = verify_recursive_block_artifact_against_verified_records(
+            &block.transactions,
+            artifacts,
+            &expected_commitment,
+            &recursive_semantic,
+            recursive_artifact,
+        )?;
+        let aggregation_verified = true;
+        let aggregation_verify_ms = verify_report.verify_ms;
+        let aggregation_verify_batch_ms = verify_report.verify_batch_ms;
+        let aggregation_verify_mode = verify_report.root_verify_mode.unwrap_or("unknown");
 
-        let (
-            aggregation_verified,
-            aggregation_verify_ms,
-            aggregation_verify_batch_ms,
-            aggregation_verify_mode,
-        ) = match proven_batch.mode {
-            ProvenBatchMode::InlineTx => {
-                return Err(ProofError::UnsupportedProofArtifact(
-                    "legacy InlineTx proven batches are no longer supported on the product path"
-                        .to_string(),
-                ));
-            }
-            ProvenBatchMode::ReceiptRoot => {
-                let receipt_root = proven_batch.receipt_root.as_ref().ok_or_else(|| {
-                    ProofError::ProvenBatchBindingMismatch(
-                        "missing receipt_root payload for ReceiptRoot mode".to_string(),
-                    )
-                })?;
-                let claim_receipts = resolved_receipts.as_ref();
-                let payload_admission_input = ReceiptRootPayloadAdmissionInput {
-                    payload_leaf_count_matches: receipt_root.metadata.leaf_count == tx_count as u32,
-                    payload_receipt_count_matches: receipt_root.receipts.len() == tx_count,
-                    has_claim_receipts: claim_receipts.is_some(),
-                    payload_receipts_match_claims: claim_receipts
-                        .map(|claims| receipt_root.receipts == *claims)
-                        .unwrap_or(false),
-                    has_tx_artifacts: tx_validity_artifacts.is_some(),
-                };
-                evaluate_receipt_root_payload_admission(payload_admission_input).map_err(
-                    |rejection| match rejection {
-                        ReceiptRootPayloadAdmissionRejection::LeafCountMismatch => {
-                            ProofError::ProvenBatchBindingMismatch(format!(
-                                "receipt-root leaf_count mismatch (payload {}, expected {})",
-                                receipt_root.metadata.leaf_count, tx_count
-                            ))
-                        }
-                        ReceiptRootPayloadAdmissionRejection::ReceiptCountMismatch => {
-                            ProofError::ProvenBatchBindingMismatch(format!(
-                                "receipt-root receipt count mismatch (payload {}, expected {})",
-                                receipt_root.receipts.len(),
-                                tx_count
-                            ))
-                        }
-                        ReceiptRootPayloadAdmissionRejection::MissingClaimReceipts => {
-                            ProofError::MissingTransactionValidityClaims
-                        }
-                        ReceiptRootPayloadAdmissionRejection::ReceiptsMismatch => {
-                            ProofError::ProvenBatchBindingMismatch(
-                                "receipt-root payload receipts do not match tx validity claims"
-                                    .to_string(),
-                            )
-                        }
-                        ReceiptRootPayloadAdmissionRejection::MissingTransactionProofs => {
-                            ProofError::MissingTransactionProofs
-                        }
-                    },
-                )?;
-                let artifacts = tx_validity_artifacts
-                    .expect("receipt-root payload admission requires tx artifacts");
-                let receipt_root_verifier = self
-                    .verifier_registry
-                    .resolve(proven_batch.proof_kind, proven_batch.verifier_profile)?;
-                let verify_report = receipt_root_verifier.verify_block_artifact(
-                    &block.transactions,
-                    Some(artifacts),
-                    &expected_commitment,
-                    block_artifact
-                        .as_ref()
-                        .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
-                )?;
-                (
-                    true,
-                    verify_report.verify_ms,
-                    verify_report.verify_batch_ms,
-                    verify_report.root_verify_mode.unwrap_or("unknown"),
-                )
-            }
-            ProvenBatchMode::RecursiveBlock => {
-                let artifacts =
-                    tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
-                let recursive_artifact = block_artifact
-                    .as_ref()
-                    .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
-                let verify_report = verify_recursive_block_artifact_against_verified_records(
-                    &block.transactions,
-                    artifacts,
-                    &expected_commitment,
-                    recursive_semantic
-                        .as_ref()
-                        .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?,
-                    recursive_artifact,
-                )?;
-                (
-                    true,
-                    verify_report.verify_ms,
-                    verify_report.verify_batch_ms,
-                    verify_report.root_verify_mode.unwrap_or("unknown"),
-                )
-            }
-        };
-
-        let (proof_starting_root, proof_ending_root) = match proven_batch.mode {
-            ProvenBatchMode::ReceiptRoot => (
-                felts_to_bytes48(&commitment_proof.public_inputs.starting_state_root),
-                felts_to_bytes48(&commitment_proof.public_inputs.ending_state_root),
-            ),
-            ProvenBatchMode::RecursiveBlock => {
-                let recursive_semantic = recursive_semantic
-                    .as_ref()
-                    .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
-                (
-                    recursive_semantic.start_shielded_root,
-                    recursive_semantic.end_shielded_root,
-                )
-            }
-            ProvenBatchMode::InlineTx => unreachable!("InlineTx already rejected"),
-        };
+        let proof_starting_root = recursive_semantic.start_shielded_root;
+        let proof_ending_root = recursive_semantic.end_shielded_root;
         let result = verify_and_apply_tree_transition_without_anchors(
             parent_commitment_tree,
             proof_starting_root,
@@ -3132,6 +3022,138 @@ mod tests {
         has_tx_validity_claims: bool,
         expected_valid: bool,
         expected_rejection: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodBlockCompositionVectorFile {
+        schema_version: u32,
+        production_fields: Vec<String>,
+        claim_scope_cases: Vec<LeanAcceptedSmallwoodClaimScopeCase>,
+        expected_da_blob_hex: String,
+        canonical_transactions: Vec<LeanAcceptedSmallwoodCanonicalTransaction>,
+        canonical_actions: Vec<LeanAcceptedSmallwoodCanonicalAction>,
+        proof_artifact_cases: Vec<LeanAcceptedSmallwoodProofArtifactCase>,
+        header_fixture: LeanAcceptedSmallwoodHeaderFixture,
+        accepted_parent_fixture: LeanAcceptedSmallwoodParentFixture,
+        supply_fixture: LeanAcceptedSmallwoodSupplyFixture,
+        identity_cases: Vec<LeanAcceptedSmallwoodBlockCompositionCase>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodClaimScopeCase {
+        name: String,
+        circuit_version: u16,
+        crypto_suite: u16,
+        expected_valid: bool,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodCanonicalTransaction {
+        expected_tx_id_hex: String,
+        expected_transaction_hash_preimage_hex: String,
+        expected_ciphertext_hashes_hex: Vec<String>,
+        statement_hash: u8,
+        proof_digest: u8,
+        public_inputs_digest: u8,
+        verifier_profile: u8,
+        anchor_root: u8,
+        fee: u64,
+        binding_circuit_version: u32,
+        transaction_circuit_version: u16,
+        transaction_crypto_suite: u16,
+        transaction: LeanAcceptedSmallwoodTransactionFixture,
+        claim: LeanAcceptedSmallwoodClaimFixture,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodTransactionFixture {
+        nullifier_tags: Vec<u8>,
+        commitment_tags: Vec<u8>,
+        balance_tag: u8,
+        circuit_version: u16,
+        crypto_suite: u16,
+        da_payload: Vec<Vec<u8>>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodClaimFixture {
+        statement_hash_tag: u8,
+        proof_digest_tag: u8,
+        public_inputs_digest_tag: u8,
+        verifier_profile_tag: u8,
+        anchor_tag: u8,
+        fee: u64,
+        circuit_version: u32,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodCanonicalAction {
+        kind: String,
+        transaction_index: Option<usize>,
+        amount: Option<u64>,
+        action_bytes: Vec<u8>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodProofArtifactCase {
+        name: String,
+        proof_bytes: Vec<u8>,
+        public_input_bytes: Vec<u8>,
+        verifier_profile: u8,
+        expected_valid: bool,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodHeaderFixture {
+        height: u64,
+        parent_block_hash: u64,
+        action_count: usize,
+        tx_statements_commitment: u64,
+        da_root: u64,
+        da_chunk_count: u32,
+        claimed_supply: String,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodParentFixture {
+        block_hash: u64,
+        height: u64,
+        supply: String,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodSupplyFixture {
+        height: u64,
+        parent_block_hash: u64,
+        parent_supply: String,
+        ordered_transfer_fees: Vec<u64>,
+        exact_transfer_fee_total: u128,
+        checked_transfer_fee_total: Option<u64>,
+        accepted_burn_amounts: Vec<u128>,
+        coinbase_count: usize,
+        observed_coinbase_amount: Option<u64>,
+        expected_coinbase_amount: Option<u64>,
+        has_coinbase: bool,
+        supply_delta: String,
+        claimed_supply: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanAcceptedSmallwoodBlockCompositionCase {
+        layer: String,
+        name: String,
+        expected_valid: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -3583,6 +3605,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn receipt_root_is_rejected_at_the_first_proof_policy_gate() {
+        for has_receipt_root in [false, true] {
+            let input = BlockProofPolicyInput {
+                tx_count: 1,
+                verification_mode: ProofVerificationMode::SelfContainedAggregation,
+                has_proven_batch: true,
+                proven_batch_mode: ProvenBatchMode::ReceiptRoot,
+                commitment_proof_bytes: 1,
+                has_block_artifact: false,
+                has_receipt_root,
+                has_tx_validity_artifacts: true,
+                tx_validity_artifact_count: 1,
+                has_tx_validity_claims: true,
+            };
+            assert_eq!(
+                evaluate_block_proof_policy(input),
+                Err(BlockProofPolicyRejection::RetiredReceiptRoot)
+            );
+        }
+    }
+
     fn block_for_proven_batch_binding() -> (Block<TestHeader>, [u8; 48], ProofEnvelope) {
         let transactions = vec![tx_with_commitments(vec![[1u8; 48]])];
         let da_params = crate::types::DaParams {
@@ -3773,6 +3817,585 @@ mod tests {
             assert!(names.insert(case.name.clone()));
             verify_lean_tx_validity_claim_match_case(case);
         }
+    }
+
+    #[test]
+    fn lean_generated_accepted_smallwood_block_identity_vectors_match_production() {
+        let Ok(path) = std::env::var("HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS")
+        else {
+            eprintln!(
+                "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS not set; skipping generated Lean vector check"
+            );
+            return;
+        };
+        let raw = std::fs::read_to_string(&path)
+            .expect("read generated Lean accepted-SmallWood block composition vectors");
+        let vectors: LeanAcceptedSmallwoodBlockCompositionVectorFile = serde_json::from_str(&raw)
+            .expect("parse generated Lean accepted-SmallWood block composition vectors");
+        assert_eq!(vectors.schema_version, 1);
+        assert_eq!(vectors.production_fields.len(), 70);
+        assert_eq!(vectors.claim_scope_cases.len(), 3);
+        assert_eq!(vectors.canonical_transactions.len(), 2);
+        assert_eq!(vectors.proof_artifact_cases.len(), 4);
+
+        let mut claim_scope_names = BTreeSet::new();
+        for case in &vectors.claim_scope_cases {
+            assert!(claim_scope_names.insert(case.name.clone()));
+            let binding =
+                protocol_versioning::VersionBinding::new(case.circuit_version, case.crypto_suite);
+            assert_eq!(
+                binding == protocol_versioning::DEFAULT_VERSION_BINDING,
+                case.expected_valid,
+                "{} active SmallWood claim scope drifted from the production default binding",
+                case.name
+            );
+        }
+        assert_eq!(
+            claim_scope_names,
+            BTreeSet::from([
+                "active_v3_beta".to_string(),
+                "legacy_v2_beta".to_string(),
+                "wrong_crypto_suite".to_string(),
+            ])
+        );
+
+        let canonical_artifact = vectors
+            .proof_artifact_cases
+            .iter()
+            .find(|case| case.name == "valid")
+            .expect("Lean vectors contain the canonical proof artifact");
+        let mut artifact_case_names = BTreeSet::new();
+        for case in &vectors.proof_artifact_cases {
+            assert!(artifact_case_names.insert(case.name.clone()));
+            let exact_tuple_matches = case.proof_bytes == canonical_artifact.proof_bytes
+                && case.public_input_bytes == canonical_artifact.public_input_bytes
+                && case.verifier_profile == canonical_artifact.verifier_profile;
+            assert_eq!(
+                exact_tuple_matches, case.expected_valid,
+                "{} proof-artifact identity drifted from Lean",
+                case.name
+            );
+        }
+        assert_eq!(
+            artifact_case_names,
+            BTreeSet::from([
+                "valid".to_string(),
+                "proof_bytes_mutated".to_string(),
+                "public_inputs_mutated".to_string(),
+                "verifier_profile_mutated".to_string(),
+            ])
+        );
+
+        let da_params = crate::types::DaParams {
+            chunk_size: 1024,
+            sample_count: 4,
+        };
+        let digest48 = |tag: u8| [tag; 48];
+        let mut fixture_pairs = Vec::new();
+        for fixture in &vectors.canonical_transactions {
+            assert_eq!(fixture.statement_hash, fixture.claim.statement_hash_tag);
+            assert_eq!(fixture.proof_digest, fixture.claim.proof_digest_tag);
+            assert_eq!(
+                fixture.public_inputs_digest,
+                fixture.claim.public_inputs_digest_tag
+            );
+            assert_eq!(fixture.verifier_profile, fixture.claim.verifier_profile_tag);
+            assert_eq!(fixture.anchor_root, fixture.claim.anchor_tag);
+            assert_eq!(fixture.fee, fixture.claim.fee);
+            assert_eq!(
+                fixture.binding_circuit_version,
+                fixture.claim.circuit_version
+            );
+            assert_eq!(
+                fixture.transaction_circuit_version,
+                fixture.transaction.circuit_version
+            );
+            assert_eq!(
+                fixture.transaction_crypto_suite,
+                fixture.transaction.crypto_suite
+            );
+            let tx = crate::types::Transaction::new(
+                fixture
+                    .transaction
+                    .nullifier_tags
+                    .iter()
+                    .copied()
+                    .map(|tag| patterned_bytes48(u64::from(tag)))
+                    .collect(),
+                fixture
+                    .transaction
+                    .commitment_tags
+                    .iter()
+                    .copied()
+                    .map(|tag| patterned_bytes48(u64::from(tag)))
+                    .collect(),
+                patterned_bytes48(u64::from(fixture.transaction.balance_tag)),
+                VersionBinding::new(
+                    fixture.transaction.circuit_version,
+                    fixture.transaction.crypto_suite,
+                ),
+                fixture.transaction.da_payload.clone(),
+            );
+            let expected_ciphertext_hashes = fixture
+                .expected_ciphertext_hashes_hex
+                .iter()
+                .map(|value| {
+                    expected_hex_bytes(value)
+                        .try_into()
+                        .expect("Lean ciphertext hash is exactly 48 bytes")
+                })
+                .collect::<Vec<[u8; 48]>>();
+            assert_eq!(tx.ciphertext_hashes, expected_ciphertext_hashes);
+            let transaction_hash_preimage = crate::types::transaction_hash_preimage(
+                &tx.nullifiers,
+                &tx.commitments,
+                &tx.balance_tag,
+                tx.version,
+                &tx.ciphertext_hashes,
+            );
+            assert_eq!(
+                transaction_hash_preimage,
+                expected_hex_bytes(&fixture.expected_transaction_hash_preimage_hex),
+                "production transaction hash preimage drifted from Lean"
+            );
+            assert_eq!(
+                tx.hash().as_slice(),
+                expected_hex_bytes(&fixture.expected_tx_id_hex),
+                "production transaction hash output drifted from Lean"
+            );
+            let claim = TxValidityClaim::new(
+                TxValidityReceipt::new(
+                    digest48(fixture.claim.statement_hash_tag),
+                    digest48(fixture.claim.proof_digest_tag),
+                    digest48(fixture.claim.public_inputs_digest_tag),
+                    digest48(fixture.claim.verifier_profile_tag),
+                ),
+                TxStatementBinding {
+                    statement_hash: digest48(fixture.claim.statement_hash_tag),
+                    anchor: digest48(fixture.claim.anchor_tag),
+                    fee: fixture.claim.fee,
+                    circuit_version: fixture.claim.circuit_version,
+                },
+            );
+            fixture_pairs.push((tx, claim));
+        }
+
+        let mut transactions = Vec::new();
+        let mut claims = Vec::new();
+        let mut action_tokens = BTreeSet::new();
+        let mut coinbase_amounts = Vec::new();
+        for action in &vectors.canonical_actions {
+            assert!(
+                action_tokens.insert(action.action_bytes.clone()),
+                "canonical action tokens must be unique"
+            );
+            match action.kind.as_str() {
+                "transfer" => {
+                    assert!(action.amount.is_none());
+                    let index = action
+                        .transaction_index
+                        .expect("transfer action has a transaction index");
+                    let (tx, claim) = fixture_pairs.get(index).unwrap_or_else(|| {
+                        panic!("transfer transaction index {index} is in range")
+                    });
+                    transactions.push(tx.clone());
+                    claims.push(claim.clone());
+                }
+                "coinbase" => {
+                    assert!(action.transaction_index.is_none());
+                    coinbase_amounts.push(action.amount.expect("coinbase action has an amount"));
+                }
+                other => panic!("unknown canonical action kind {other}"),
+            }
+        }
+        assert_eq!(action_tokens.len(), vectors.canonical_actions.len());
+        assert_eq!(coinbase_amounts.len(), 1);
+        assert_eq!(
+            coinbase_amounts[0],
+            vectors
+                .supply_fixture
+                .observed_coinbase_amount
+                .expect("one-coinbase fixture exposes its amount")
+        );
+        let fixture_fees = claims
+            .iter()
+            .map(|claim| claim.binding.fee)
+            .collect::<Vec<_>>();
+        let fixture_fee_total = fixture_fees
+            .iter()
+            .map(|fee| u128::from(*fee))
+            .sum::<u128>();
+        let parent_supply = vectors
+            .supply_fixture
+            .parent_supply
+            .parse::<u128>()
+            .expect("parent supply is a decimal u128");
+        let supply_delta = vectors
+            .supply_fixture
+            .supply_delta
+            .parse::<u128>()
+            .expect("supply delta is a decimal u128");
+        let claimed_supply = vectors
+            .supply_fixture
+            .claimed_supply
+            .parse::<u128>()
+            .expect("claimed supply is a decimal u128");
+        assert_eq!(vectors.supply_fixture.ordered_transfer_fees, fixture_fees);
+        assert_eq!(
+            vectors.supply_fixture.exact_transfer_fee_total,
+            fixture_fee_total
+        );
+        assert_eq!(
+            vectors.supply_fixture.checked_transfer_fee_total,
+            u64::try_from(fixture_fee_total).ok()
+        );
+        assert!(vectors.supply_fixture.accepted_burn_amounts.is_empty());
+        assert_eq!(
+            vectors.supply_fixture.coinbase_count,
+            coinbase_amounts.len()
+        );
+        assert_eq!(
+            vectors.supply_fixture.expected_coinbase_amount,
+            vectors.supply_fixture.observed_coinbase_amount
+        );
+        assert_eq!(
+            vectors.supply_fixture.has_coinbase,
+            coinbase_amounts.len() == 1
+        );
+        assert_eq!(
+            parent_supply.checked_add(supply_delta),
+            Some(claimed_supply)
+        );
+        let expected = canonical_block_identity_projection(&transactions, &claims, da_params)
+            .expect("build canonical production identity projection");
+
+        let model_statement_commitment = vectors
+            .canonical_transactions
+            .iter()
+            .map(|tx| u64::from(tx.statement_hash))
+            .sum::<u64>();
+        let production_da_blob = crate::types::build_da_blob(&transactions);
+        assert_eq!(
+            production_da_blob,
+            expected_hex_bytes(&vectors.expected_da_blob_hex),
+            "production DA blob encoding drifted from Lean"
+        );
+        let model_da_root = production_da_blob
+            .iter()
+            .map(|byte| u64::from(*byte))
+            .sum::<u64>();
+        assert_eq!(
+            vectors.header_fixture.tx_statements_commitment,
+            model_statement_commitment
+        );
+        assert_eq!(vectors.header_fixture.da_root, model_da_root);
+        assert_eq!(
+            usize::try_from(vectors.header_fixture.da_chunk_count).unwrap(),
+            transactions.len()
+        );
+        assert_eq!(vectors.header_fixture.height, vectors.supply_fixture.height);
+        assert_eq!(
+            vectors.header_fixture.height,
+            vectors.accepted_parent_fixture.height + 1
+        );
+        assert_eq!(
+            vectors.header_fixture.parent_block_hash,
+            vectors.supply_fixture.parent_block_hash
+        );
+        assert_eq!(
+            vectors.header_fixture.parent_block_hash,
+            vectors.accepted_parent_fixture.block_hash
+        );
+        assert_eq!(
+            vectors.supply_fixture.parent_supply,
+            vectors.accepted_parent_fixture.supply
+        );
+        assert_eq!(
+            vectors.header_fixture.action_count,
+            vectors.canonical_actions.len()
+        );
+        assert_eq!(
+            vectors.header_fixture.claimed_supply,
+            vectors.supply_fixture.claimed_supply
+        );
+
+        let expected_fields = [
+            "transaction_hash_preimage_nullifiers",
+            "transaction_hash_preimage_commitments",
+            "transaction_hash_preimage_ciphertext_hashes",
+            "transaction_hash_preimage_balance_tag",
+            "transaction_hash_preimage_circuit_version",
+            "transaction_hash_preimage_crypto_suite",
+            "transaction_hash",
+            "transaction_ciphertext_payload_hash_binding",
+            "claim_receipt_statement_hash",
+            "claim_receipt_proof_digest",
+            "claim_receipt_public_inputs_digest",
+            "claim_receipt_verifier_profile",
+            "claim_binding_anchor",
+            "claim_binding_fee",
+            "claim_binding_circuit_version",
+            "transaction_circuit_version",
+            "transaction_crypto_suite",
+            "transaction_ciphertexts",
+            "exact_proof_artifact_verifier_acceptance",
+            "output_note_hash_preimage_18_words",
+            "output_note_hash_initial_value_asset_bindings",
+            "output_note_hash_fresh_frame_bindings",
+            "output_note_hash_continuation_bindings",
+            "output_note_hash_authorization_key_bindings",
+            "output_note_hash_public_commitment_bindings",
+            "output_note_hash_poseidon_transition_relation",
+            "output_note_hash_collision_resistance_boundary",
+            "claim_order",
+            "identity_tx_count",
+            "identity_ordered_tx_ids",
+            "identity_ordered_statement_hashes",
+            "identity_ordered_proof_digests",
+            "identity_ordered_public_inputs_digests",
+            "identity_ordered_verifier_profiles",
+            "identity_ordered_anchor_roots",
+            "identity_ordered_fees",
+            "identity_ordered_binding_circuit_versions",
+            "identity_ordered_transaction_circuit_versions",
+            "identity_ordered_transaction_crypto_suites",
+            "canonical_da_blob_bytes",
+            "identity_tx_statements_commitment",
+            "identity_da_root",
+            "identity_da_chunk_count",
+            "proven_batch_tx_count",
+            "proven_batch_tx_statements_commitment",
+            "proven_batch_da_root",
+            "proven_batch_da_chunk_count",
+            "accepted_parent_hash",
+            "accepted_parent_height",
+            "accepted_parent_supply",
+            "block_height",
+            "block_parent_hash",
+            "block_action_count",
+            "header_tx_statements_commitment",
+            "header_da_root",
+            "header_da_chunk_count",
+            "header_claimed_supply",
+            "supply_height",
+            "supply_parent_block_hash",
+            "parent_supply",
+            "ordered_transfer_fees",
+            "exact_transfer_fee_total",
+            "checked_transfer_fee_total",
+            "accepted_burn_amounts",
+            "coinbase_count",
+            "observed_coinbase_amount",
+            "expected_coinbase_amount",
+            "has_coinbase",
+            "supply_delta",
+            "claimed_supply",
+        ];
+        assert_eq!(
+            vectors.production_fields,
+            expected_fields
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        );
+
+        let accepted_parent_supply = vectors
+            .accepted_parent_fixture
+            .supply
+            .parse::<u128>()
+            .expect("accepted parent supply is a decimal u128");
+        let mut supply_case_names = BTreeSet::new();
+        for case in vectors
+            .identity_cases
+            .iter()
+            .filter(|case| case.layer == "supply")
+        {
+            assert!(supply_case_names.insert(case.name.clone()));
+            let mut embedded_parent_supply = accepted_parent_supply;
+            let mut supply_parent_hash = vectors.supply_fixture.parent_block_hash;
+            let mut candidate_parent_supply = parent_supply;
+            let mut ordered_fees = vectors.supply_fixture.ordered_transfer_fees.clone();
+            let mut observed_coinbase = vectors.supply_fixture.observed_coinbase_amount;
+            let mut candidate_claimed_supply = claimed_supply;
+            let mut header_claimed_supply = vectors
+                .header_fixture
+                .claimed_supply
+                .parse::<u128>()
+                .expect("header claimed supply is a decimal u128");
+            match case.name.as_str() {
+                "fee_order_mismatched" => ordered_fees.reverse(),
+                "coinbase_mismatched" => observed_coinbase = Some(0),
+                "parent_mismatched" => supply_parent_hash = 0,
+                "paired_parent_supply_shift" => {
+                    embedded_parent_supply += 1;
+                    candidate_parent_supply += 1;
+                    candidate_claimed_supply += 1;
+                    header_claimed_supply += 1;
+                }
+                "supply_mismatched" => candidate_claimed_supply += 1,
+                other => panic!("unknown Lean supply mutation {other}"),
+            }
+            let accepted_parent_matches = embedded_parent_supply == accepted_parent_supply;
+            let header_accepts = accepted_parent_matches
+                && vectors.header_fixture.parent_block_hash
+                    == vectors.accepted_parent_fixture.block_hash
+                && supply_parent_hash == vectors.accepted_parent_fixture.block_hash
+                && vectors.header_fixture.height == vectors.accepted_parent_fixture.height + 1
+                && vectors.supply_fixture.height == vectors.accepted_parent_fixture.height + 1
+                && candidate_parent_supply == accepted_parent_supply
+                && vectors.header_fixture.height == vectors.supply_fixture.height
+                && vectors.header_fixture.parent_block_hash == supply_parent_hash
+                && header_claimed_supply == candidate_claimed_supply;
+            let supply_accepts = ordered_fees == fixture_fees
+                && vectors.supply_fixture.exact_transfer_fee_total == fixture_fee_total
+                && vectors.supply_fixture.checked_transfer_fee_total
+                    == u64::try_from(fixture_fee_total).ok()
+                && vectors.supply_fixture.accepted_burn_amounts.is_empty()
+                && vectors.supply_fixture.coinbase_count == coinbase_amounts.len()
+                && vectors.supply_fixture.coinbase_count <= 1
+                && vectors.supply_fixture.has_coinbase == (coinbase_amounts.len() == 1)
+                && observed_coinbase == coinbase_amounts.first().copied()
+                && vectors.supply_fixture.expected_coinbase_amount
+                    == coinbase_amounts.first().copied()
+                && observed_coinbase == vectors.supply_fixture.expected_coinbase_amount
+                && candidate_parent_supply.checked_add(supply_delta)
+                    == Some(candidate_claimed_supply);
+            assert_eq!(
+                header_accepts && supply_accepts,
+                case.expected_valid,
+                "{} supply composition drifted from Lean",
+                case.name
+            );
+        }
+        assert_eq!(
+            supply_case_names,
+            BTreeSet::from([
+                "fee_order_mismatched".to_string(),
+                "coinbase_mismatched".to_string(),
+                "parent_mismatched".to_string(),
+                "paired_parent_supply_shift".to_string(),
+                "supply_mismatched".to_string(),
+            ])
+        );
+
+        let mut names = BTreeSet::new();
+        for case in vectors
+            .identity_cases
+            .iter()
+            .filter(|case| case.layer == "identity")
+        {
+            assert!(names.insert(case.name.clone()));
+            let mut actual = expected.clone();
+            let mut batch_da_root = expected.da_root;
+            let mut header_parent_block_hash = vectors.header_fixture.parent_block_hash;
+            let mut header_action_count = vectors.header_fixture.action_count;
+            let header_tx_statements_commitment = expected.tx_statements_commitment;
+            let mut header_da_root = expected.da_root;
+            let header_da_chunk_count = expected.da_chunk_count;
+            match case.name.as_str() {
+                "valid" => {}
+                "omitted" => {
+                    canonical_block_identity_projection(&transactions[..1], &claims[..1], da_params)
+                        .map(|projection| actual = projection)
+                        .expect("omitted projection remains structurally valid")
+                }
+                "reordered" => {
+                    let mut reordered_transactions = transactions.clone();
+                    let mut reordered_claims = claims.clone();
+                    reordered_transactions.reverse();
+                    reordered_claims.reverse();
+                    actual = canonical_block_identity_projection(
+                        &reordered_transactions,
+                        &reordered_claims,
+                        da_params,
+                    )
+                    .expect("reordered projection remains structurally valid");
+                }
+                "substituted" => {
+                    let mut substituted_claims = claims.clone();
+                    substituted_claims[0].binding.fee += 1;
+                    actual = canonical_block_identity_projection(
+                        &transactions,
+                        &substituted_claims,
+                        da_params,
+                    )
+                    .expect("substituted projection remains structurally valid");
+                }
+                "duplicated" => {
+                    let mut duplicated_transactions = transactions.clone();
+                    let mut duplicated_claims = claims.clone();
+                    duplicated_transactions.push(transactions[0].clone());
+                    duplicated_claims.push(claims[0].clone());
+                    actual = canonical_block_identity_projection(
+                        &duplicated_transactions,
+                        &duplicated_claims,
+                        da_params,
+                    )
+                    .expect("duplicated projection remains structurally valid");
+                }
+                "transaction_preimage_substituted" => {
+                    let mut substituted_transactions = transactions.clone();
+                    substituted_transactions[0].balance_tag = patterned_bytes48(4);
+                    actual = canonical_block_identity_projection(
+                        &substituted_transactions,
+                        &claims,
+                        da_params,
+                    )
+                    .expect("substituted transaction projection remains structurally valid");
+                    assert_ne!(
+                        substituted_transactions[0].hash(),
+                        transactions[0].hash(),
+                        "production transaction hash must bind the substituted preimage"
+                    );
+                }
+                "wrapped" => {
+                    actual.ordered_tx_ids.insert(0, [0u8; 32]);
+                }
+                "truncated" => {
+                    actual.ordered_proof_digests.pop();
+                }
+                "da_mismatched" => batch_da_root[0] ^= 0x80,
+                "header_parent_mismatched" => header_parent_block_hash = 0,
+                "header_action_count_mismatched" => header_action_count += 1,
+                "header_da_mismatched" => header_da_root[0] ^= 0x80,
+                other => panic!("unknown Lean identity mutation {other}"),
+            }
+            let header_accepts = vectors.header_fixture.height == vectors.supply_fixture.height
+                && vectors.header_fixture.height == vectors.accepted_parent_fixture.height + 1
+                && vectors.supply_fixture.height == vectors.accepted_parent_fixture.height + 1
+                && parent_supply == accepted_parent_supply
+                && header_parent_block_hash == vectors.supply_fixture.parent_block_hash
+                && header_parent_block_hash == vectors.accepted_parent_fixture.block_hash
+                && header_action_count == vectors.canonical_actions.len()
+                && header_tx_statements_commitment == expected.tx_statements_commitment
+                && header_da_root == expected.da_root
+                && header_da_chunk_count == expected.da_chunk_count
+                && vectors.header_fixture.claimed_supply == vectors.supply_fixture.claimed_supply;
+            let actual_valid =
+                actual == expected && batch_da_root == expected.da_root && header_accepts;
+            assert_eq!(
+                actual_valid, case.expected_valid,
+                "{} identity projection drifted from Lean composition",
+                case.name
+            );
+        }
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "valid".to_string(),
+                "omitted".to_string(),
+                "reordered".to_string(),
+                "substituted".to_string(),
+                "duplicated".to_string(),
+                "transaction_preimage_substituted".to_string(),
+                "wrapped".to_string(),
+                "truncated".to_string(),
+                "da_mismatched".to_string(),
+                "header_parent_mismatched".to_string(),
+                "header_action_count_mismatched".to_string(),
+                "header_da_mismatched".to_string(),
+            ])
+        );
     }
 
     #[test]
@@ -5102,7 +5725,7 @@ mod tests {
             commitments: public_inputs.commitments.clone(),
             balance_slots: public_inputs.balance_slots.clone(),
             public_inputs,
-            backend: protocol_versioning::TxProofBackend::Plonky3Fri,
+            backend: protocol_versioning::TxProofBackend::SmallwoodCandidate,
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: None,
         }
@@ -5166,12 +5789,9 @@ mod tests {
 
     #[derive(Clone)]
     struct ReceiptRootCallerFixture {
-        parent_tree: CommitmentTreeState,
         transactions: Vec<crate::types::Transaction>,
         tx_artifacts: Vec<TxValidityArtifact>,
         verified_records: Vec<VerifiedNativeTxLeaf>,
-        backend_inputs: BlockBackendInputs,
-        block: Block<TestHeader>,
         envelope: ProofEnvelope,
         statement_commitment: [u8; 48],
         metadata: crate::types::ReceiptRootMetadata,
@@ -5202,15 +5822,6 @@ mod tests {
             vec![[4u8; 48]],
         );
         let transactions = vec![tx.clone()];
-        let da_params = crate::types::DaParams {
-            chunk_size: 1024,
-            sample_count: 4,
-        };
-        let da_encoding =
-            crate::types::encode_da_blob(&transactions, da_params).expect("fixture da blob");
-        let da_root = da_encoding.root();
-        let da_chunk_count =
-            u32::try_from(da_encoding.chunks().len()).expect("fixture DA chunk count fits u32");
         let native_tx_profile = experimental_native_tx_leaf_verifier_profile();
         let receipt =
             TxValidityReceipt::new([0x11u8; 48], [0x12u8; 48], [0x13u8; 48], native_tx_profile);
@@ -5229,28 +5840,9 @@ mod tests {
             fee: 7,
             circuit_version: u32::from(DEFAULT_VERSION_BINDING.circuit),
         };
-        let claim = TxValidityClaim::new(receipt.clone(), binding.clone());
         let statement_commitment =
             commitment_from_statement_bindings(std::slice::from_ref(&binding))
                 .expect("fixture statement commitment");
-        let updated_tree =
-            apply_commitments(&parent_tree, &transactions).expect("fixture commitment tree update");
-        let lists = commitment_nullifier_lists(&transactions).expect("fixture nullifier lists");
-        let nullifier_root =
-            nullifier_root_from_list(&lists.nullifiers).expect("fixture nullifier root");
-        let commitment_proof = CommitmentBlockProver::new()
-            .prove_from_statement_hashes_with_inputs(
-                &[receipt.statement_hash],
-                parent_tree.root(),
-                updated_tree.root(),
-                kernel_root_from_shielded_root(&parent_tree.root()),
-                kernel_root_from_shielded_root(&updated_tree.root()),
-                nullifier_root,
-                da_root,
-                lists.nullifiers,
-                lists.sorted_nullifiers,
-            )
-            .expect("fixture commitment proof");
 
         let metadata = crate::types::ReceiptRootMetadata {
             params_fingerprint: [0x21u8; 48],
@@ -5260,37 +5852,7 @@ mod tests {
             fold_count: 0,
         };
         let root_proof = b"receipt-root backend sentinel proof".to_vec();
-        let receipt_root_payload = crate::types::ReceiptRootProofPayload {
-            root_proof: root_proof.clone(),
-            metadata: metadata.clone(),
-            receipts: vec![receipt.clone()],
-        };
         let native_root_profile = experimental_native_receipt_root_verifier_profile();
-        let block = Block {
-            header: TestHeader {
-                da_params,
-                da_root,
-                message_root: [0u8; 48],
-            },
-            transactions: transactions.clone(),
-            coinbase: None,
-            proven_batch: Some(crate::types::ProvenBatch {
-                version: 2,
-                tx_count: transactions.len() as u32,
-                tx_statements_commitment: statement_commitment,
-                da_root,
-                da_chunk_count,
-                commitment_proof,
-                mode: ProvenBatchMode::ReceiptRoot,
-                proof_kind: ProofArtifactKind::ReceiptRoot,
-                verifier_profile: native_root_profile,
-                receipt_root: Some(receipt_root_payload),
-            }),
-            block_artifact: None,
-            tx_validity_claims: Some(vec![claim]),
-            tx_statements_commitment: Some(statement_commitment),
-            proof_verification_mode: ProofVerificationMode::SelfContainedAggregation,
-        };
         let verified_record = VerifiedNativeTxLeaf {
             tx: tx_leaf_public_tx_from_consensus_tx(&tx),
             receipt: receipt.clone(),
@@ -5299,12 +5861,9 @@ mod tests {
         };
         let tx_artifacts = vec![tx_artifact];
         ReceiptRootCallerFixture {
-            parent_tree,
             transactions,
             tx_artifacts: tx_artifacts.clone(),
             verified_records: vec![verified_record],
-            backend_inputs: BlockBackendInputs::from_tx_validity_artifacts(tx_artifacts),
-            block,
             envelope: ProofEnvelope {
                 kind: ProofArtifactKind::ReceiptRoot,
                 verifier_profile: native_root_profile,
@@ -5379,60 +5938,6 @@ mod tests {
     }
 
     #[test]
-    fn parallel_receipt_root_payload_mismatches_reject_before_backend() {
-        let _guard = set_native_receipt_root_verify_mode("verified_records");
-        let fixture = receipt_root_caller_fixture();
-        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
-
-        let mut leaf_count_mismatch = fixture.block.clone();
-        leaf_count_mismatch
-            .proven_batch
-            .as_mut()
-            .expect("fixture proven batch")
-            .receipt_root
-            .as_mut()
-            .expect("fixture receipt-root payload")
-            .metadata
-            .leaf_count += 1;
-        let err = expect_receipt_root_backend_not_called(|| {
-            ParallelProofVerifier::new().verify_block_with_backend(
-                &leaf_count_mismatch,
-                Some(&fixture.backend_inputs),
-                &fixture.parent_tree,
-            )
-        });
-        assert!(matches!(
-            err,
-            ProofError::ProvenBatchBindingMismatch(message)
-                if message.contains("leaf_count mismatch")
-        ));
-
-        let mut block = fixture.block.clone();
-        block
-            .proven_batch
-            .as_mut()
-            .expect("fixture proven batch")
-            .receipt_root
-            .as_mut()
-            .expect("fixture receipt-root payload")
-            .receipts[0]
-            .proof_digest[0] ^= 0x01;
-
-        let err = expect_receipt_root_backend_not_called(|| {
-            ParallelProofVerifier::new().verify_block_with_backend(
-                &block,
-                Some(&fixture.backend_inputs),
-                &fixture.parent_tree,
-            )
-        });
-        assert!(matches!(
-            err,
-            ProofError::ProvenBatchBindingMismatch(message)
-                if message.contains("payload receipts do not match")
-        ));
-    }
-
-    #[test]
     fn receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
@@ -5495,7 +6000,7 @@ mod tests {
     }
 
     #[test]
-    fn parallel_receipt_root_verified_metadata_leaf_count_mismatch_rejects() {
+    fn receipt_root_verified_metadata_leaf_count_mismatch_rejects() {
         let _guard = set_native_receipt_root_verify_mode("verified_records");
         let fixture = receipt_root_caller_fixture();
         let _cache_guard = install_receipt_root_fixture_cache(&fixture);
@@ -5514,11 +6019,12 @@ mod tests {
                 Ok(wrong_metadata.clone())
             }),
             || {
-                ParallelProofVerifier::new()
-                    .verify_block_with_backend(
-                        &fixture.block,
-                        Some(&fixture.backend_inputs),
-                        &fixture.parent_tree,
+                ReceiptRootVerifier
+                    .verify_block_artifact(
+                        &fixture.transactions,
+                        Some(&fixture.tx_artifacts),
+                        &fixture.statement_commitment,
+                        &fixture.envelope,
                     )
                     .expect_err("verified metadata leaf-count mismatch must reject")
             },
@@ -6165,6 +6671,88 @@ mod tests {
         assert_eq!(
             recursive_block_direct_verifier_error_label(&err),
             "requires_semantic_replay"
+        );
+    }
+
+    #[test]
+    fn recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations() {
+        let fixture = receipt_root_caller_fixture();
+        let _cache_guard = install_receipt_root_fixture_cache(&fixture);
+        let records = fixture
+            .verified_records
+            .iter()
+            .enumerate()
+            .map(|(tx_index, record)| {
+                recursive_block_leaf_record_from_verified(tx_index as u32, record)
+            })
+            .collect::<Vec<_>>();
+        let mut semantic = sample_recursive_semantic();
+        semantic.tx_statements_commitment = fixture.statement_commitment;
+        let artifact = crate::backend_interface::prove_block_recursive_v2(
+            &crate::backend_interface::BlockRecursiveProverInputV2 {
+                records,
+                semantic: semantic.clone(),
+            },
+        )
+        .expect("prove canonical recursive_block_v2 product-path fixture");
+        let envelope_for =
+            |artifact: &crate::backend_interface::RecursiveBlockArtifactV2| ProofEnvelope {
+                kind: ProofArtifactKind::RecursiveBlockV2,
+                verifier_profile: backend_recursive_block_profile_v2(),
+                artifact_bytes: crate::backend_interface::serialize_recursive_block_artifact_v2(
+                    artifact,
+                )
+                .expect("serialize recursive_block_v2 fixture"),
+            };
+
+        verify_recursive_block_artifact_against_verified_records(
+            &fixture.transactions,
+            &fixture.tx_artifacts,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&artifact),
+        )
+        .expect("canonical recursive_block_v2 fixture must pass the product wrapper");
+
+        let mut proof_mutation = artifact.clone();
+        let proof_index = proof_mutation.artifact.proof_bytes.len() / 2;
+        proof_mutation.artifact.proof_bytes[proof_index] ^= 1;
+        let proof_error = verify_recursive_block_artifact_against_verified_records(
+            &fixture.transactions,
+            &fixture.tx_artifacts,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&proof_mutation),
+        )
+        .expect_err("mutated V2 proof bytes must reject through the product wrapper");
+        assert!(proof_error.to_string().contains("verification failed"));
+
+        let mut public_mutation = artifact.clone();
+        public_mutation.public.da_root[0] ^= 1;
+        let public_error = verify_recursive_block_artifact_against_verified_records(
+            &fixture.transactions,
+            &fixture.tx_artifacts,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&public_mutation),
+        )
+        .expect_err("mutated V2 replayed public fields must reject through the product wrapper");
+        assert!(public_error.to_string().contains("public replay mismatch"));
+
+        let mut final_root_mutation = artifact;
+        final_root_mutation.public.end_shielded_root[0] ^= 1;
+        let final_root_error = verify_recursive_block_artifact_against_verified_records(
+            &fixture.transactions,
+            &fixture.tx_artifacts,
+            &fixture.statement_commitment,
+            &semantic,
+            &envelope_for(&final_root_mutation),
+        )
+        .expect_err("mutated V2 final state root must reject through the product wrapper");
+        assert!(
+            final_root_error
+                .to_string()
+                .contains("public replay mismatch")
         );
     }
 }

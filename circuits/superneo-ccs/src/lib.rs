@@ -2,7 +2,7 @@ use std::fmt;
 
 use anyhow::{bail, ensure, Result};
 use blake3::Hasher;
-use p3_field::PrimeField64;
+use hegemon_field::PrimeField64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -354,7 +354,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use p3_goldilocks::Goldilocks;
+    use hegemon_field::Goldilocks;
 
     use super::{
         digest_shape, digest_statement, ensure_assignment_matches_shape, Assignment, CcsShape,

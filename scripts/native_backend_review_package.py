@@ -717,6 +717,202 @@ def verify_evidence_semantics(root: Path) -> None:
             )
 
 
+def _required_projection(
+    value: object,
+    fields: tuple[str, ...],
+    label: str,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ReviewPackageError(f"{label} must be an object")
+    missing = [field for field in fields if field not in value]
+    if missing:
+        raise ReviewPackageError(f"{label} is missing stable fields: {missing!r}")
+    return {field: value[field] for field in fields}
+
+
+def _stable_tx_context(value: object, label: str) -> dict[str, object]:
+    projected = _required_projection(
+        value,
+        (
+            "backend_params",
+            "expected_version",
+            "params_fingerprint_hex",
+            "spec_digest_hex",
+            "relation_id_hex",
+            "shape_digest_hex",
+            "commitment_rows",
+            "receipt",
+            "tx",
+            "stark_public_inputs",
+        ),
+        label,
+    )
+    projected["receipt"] = _required_projection(
+        projected["receipt"],
+        (
+            "statement_hash_hex",
+            "public_inputs_digest_hex",
+            "verifier_profile_hex",
+        ),
+        f"{label}.receipt",
+    )
+    projected["tx"] = _required_projection(
+        projected["tx"],
+        (
+            "nullifiers_hex",
+            "commitments_hex",
+            "ciphertext_hashes_hex",
+            "balance_tag_hex",
+            "version_circuit",
+            "version_crypto",
+        ),
+        f"{label}.tx",
+    )
+    projected["stark_public_inputs"] = _required_projection(
+        projected["stark_public_inputs"],
+        (
+            "input_flags",
+            "output_flags",
+            "fee",
+            "value_balance_sign",
+            "value_balance_magnitude",
+            "merkle_root_hex",
+            "balance_slot_asset_ids",
+            "stablecoin_enabled",
+            "stablecoin_asset_id",
+            "stablecoin_policy_version",
+            "stablecoin_issuance_sign",
+            "stablecoin_issuance_magnitude",
+            "stablecoin_policy_hash_hex",
+            "stablecoin_oracle_commitment_hex",
+            "stablecoin_attestation_commitment_hex",
+        ),
+        f"{label}.stark_public_inputs",
+    )
+    return projected
+
+
+def _stable_block_context(value: object, label: str) -> dict[str, object]:
+    projected = _required_projection(
+        value,
+        (
+            "backend_params",
+            "expected_version",
+            "params_fingerprint_hex",
+            "spec_digest_hex",
+            "relation_id_hex",
+            "shape_digest_hex",
+            "leaves",
+        ),
+        label,
+    )
+    leaves = projected["leaves"]
+    if not isinstance(leaves, list):
+        raise ReviewPackageError(f"{label}.leaves must be a list")
+    stable_leaves = []
+    for index, leaf in enumerate(leaves):
+        leaf_label = f"{label}.leaves[{index}]"
+        leaf_projection = _required_projection(
+            leaf,
+            ("artifact_sha256", "artifact_hex", "tx_context"),
+            leaf_label,
+        )
+        try:
+            artifact = bytes.fromhex(leaf_projection["artifact_hex"])
+        except (TypeError, ValueError) as exc:
+            raise ReviewPackageError(f"{leaf_label}.artifact_hex is invalid") from exc
+        digest = hashlib.sha256(artifact).hexdigest()
+        if leaf_projection["artifact_sha256"] != digest:
+            raise ReviewPackageError(f"{leaf_label} artifact SHA-256 mismatch")
+        stable_leaves.append(
+            {
+                "tx_context": _stable_tx_context(
+                    leaf_projection["tx_context"], f"{leaf_label}.tx_context"
+                )
+            }
+        )
+    projected["leaves"] = stable_leaves
+    return projected
+
+
+def _review_vector_semantic_manifest(root: Path) -> dict[str, object]:
+    relative = "testdata/native_backend_vectors/bundle.json"
+    payload = _read_json_evidence(root, relative)
+    if not isinstance(payload, dict):
+        raise ReviewPackageError(f"{relative} must be a JSON object")
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        raise ReviewPackageError(f"{relative} cases must be a list")
+
+    case_manifest: list[dict[str, object]] = []
+    artifact_digests: set[str] = set()
+    for index, case in enumerate(cases):
+        if not isinstance(case, dict):
+            raise ReviewPackageError(f"{relative} case {index} must be an object")
+        artifact_hex = case.get("artifact_hex")
+        if not isinstance(artifact_hex, str):
+            raise ReviewPackageError(f"{relative} case {index} lacks artifact_hex")
+        try:
+            artifact = bytes.fromhex(artifact_hex)
+        except ValueError as exc:
+            raise ReviewPackageError(
+                f"{relative} case {index} has invalid artifact_hex"
+            ) from exc
+        digest = hashlib.sha256(artifact).hexdigest()
+        if case.get("artifact_sha256") != digest:
+            raise ReviewPackageError(f"{relative} case {index} artifact SHA-256 mismatch")
+        if digest in artifact_digests:
+            raise ReviewPackageError(f"{relative} case {index} aliases another artifact")
+        artifact_digests.add(digest)
+        tx_context = case.get("tx_context")
+        block_context = case.get("block_context")
+        if (tx_context is None) == (block_context is None):
+            raise ReviewPackageError(
+                f"{relative} case {index} must carry exactly one semantic context"
+            )
+        case_manifest.append(
+            {
+                "name": case.get("name"),
+                "kind": case.get("kind"),
+                "expected_valid": case.get("expected_valid"),
+                "expected_error_substring": case.get("expected_error_substring"),
+                "mutation_id": case.get("mutation_id"),
+                "tx_context": (
+                    None
+                    if tx_context is None
+                    else _stable_tx_context(tx_context, f"{relative} case {index}.tx_context")
+                ),
+                "block_context": (
+                    None
+                    if block_context is None
+                    else _stable_block_context(
+                        block_context, f"{relative} case {index}.block_context"
+                    )
+                ),
+            }
+        )
+
+    return {
+        "schema_version": payload.get("schema_version"),
+        "generator_id": payload.get("generator_id"),
+        "active_tx_profile": payload.get("active_tx_profile"),
+        "parameter_fingerprint": payload.get("parameter_fingerprint"),
+        "native_backend_params": payload.get("native_backend_params"),
+        "native_security_claim": payload.get("native_security_claim"),
+        "cases": case_manifest,
+    }
+
+
+def verify_vector_semantic_equivalence(package_root: Path, regenerated_root: Path) -> None:
+    packaged = _review_vector_semantic_manifest(package_root)
+    regenerated = _review_vector_semantic_manifest(regenerated_root)
+    if packaged != regenerated:
+        raise ReviewPackageError(
+            "packaged native review bundle semantic manifest differs from "
+            "the fresh packaged-source regeneration"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -745,6 +941,10 @@ def parse_args() -> argparse.Namespace:
 
     verify_semantics = subcommands.add_parser("verify-evidence-semantics")
     verify_semantics.add_argument("--root", type=Path, required=True)
+
+    verify_vectors = subcommands.add_parser("verify-vector-semantic-equivalence")
+    verify_vectors.add_argument("--package-root", type=Path, required=True)
+    verify_vectors.add_argument("--regenerated-root", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -771,6 +971,9 @@ def main() -> None:
         elif args.command == "verify-evidence-semantics":
             verify_evidence_semantics(args.root)
             print("native backend review evidence has exact semantic coverage")
+        elif args.command == "verify-vector-semantic-equivalence":
+            verify_vector_semantic_equivalence(args.package_root, args.regenerated_root)
+            print("native review vectors match fresh packaged-source semantics")
     except (OSError, ValueError, tarfile.TarError, ReviewPackageError) as exc:
         raise SystemExit(str(exc)) from exc
 

@@ -4,7 +4,7 @@ use crate::backend_interface::{
     Challenge, CommitmentBlockProver, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash,
     POSEIDON2_RATE, TransactionAirP3, TransactionProof, TransactionProofP3,
     TransactionPublicInputsP3, Val, config_with_fri, default_build_tx_fri_profile,
-    felts_to_bytes48, stark_public_inputs_p3, verify_transaction_proof_p3,
+    felts_to_bytes48, transaction_verifier_inputs, verify_transaction_proof_p3,
 };
 use blake2::Blake2bVar;
 use blake2::digest::{Update as BlakeUpdate, VariableOutput};
@@ -901,7 +901,7 @@ pub fn warm_aggregation_cache(
         ));
     }
 
-    let pub_inputs = stark_public_inputs_p3(representative_proof).map_err(|err| {
+    let pub_inputs = transaction_verifier_inputs(representative_proof).map_err(|err| {
         ProofError::AggregationProofInputsMismatch(format!(
             "transaction proof public inputs invalid: {err}"
         ))

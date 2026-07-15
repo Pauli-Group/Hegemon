@@ -25,19 +25,25 @@ grep -q '!app.isPackaged && process.env.ELECTRON_RENDERER_URL' "$ROOT/hegemon-ap
 grep -q 'if (app.isPackaged)' "$ROOT/hegemon-app/electron/binPaths.ts" \
   || fail "packaged app must not honor HEGEMON_BIN_DIR"
 
-python3 - "$ROOT/hegemon-app/electron/walletdClient.ts" "$ROOT/hegemon-app/package-lock.json" <<'PY'
+python3 - \
+  "$ROOT/hegemon-app/electron/walletdClient.ts" \
+  "$ROOT/hegemon-app/electron/walletdProtocol.ts" \
+  "$ROOT/hegemon-app/package-lock.json" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
 walletd_client = Path(sys.argv[1]).read_text(encoding="utf-8")
-if "rejectLineDelimitedPassphrase" not in walletd_client:
+walletd_protocol = Path(sys.argv[2]).read_text(encoding="utf-8")
+if "rejectLineDelimitedPassphrase(passphrase);" not in walletd_client:
     raise SystemExit("walletd client must reject line-delimited passphrases")
-if "passphrase.includes('\\n')" not in walletd_client or "passphrase.includes('\\r')" not in walletd_client:
+if "export function rejectLineDelimitedPassphrase" not in walletd_protocol:
+    raise SystemExit("walletd protocol must define line-delimited passphrase rejection")
+if "passphrase.includes('\\n')" not in walletd_protocol or "passphrase.includes('\\r')" not in walletd_protocol:
     raise SystemExit("walletd client must reject both LF and CR in passphrases")
 
-lock = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+lock = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 electron = lock.get("packages", {}).get("node_modules/electron", {}).get("version")
 if not isinstance(electron, str):
     raise SystemExit("package-lock must pin electron")
@@ -164,16 +170,18 @@ for job in ("build-linux", "build-macos-intel", "build-macos-arm", "build-window
     if not match:
         raise SystemExit(f"missing release job {job}")
     body = match.group("body")
-    build_index = body.find("Build wallet binaries")
+    build_index = body.find("Build attested release artifacts")
     audit_index = body.find("Release PQ binary audit")
     if build_index < 0 or audit_index < 0 or build_index > audit_index:
-        raise SystemExit(f"{job}: wallet/walletd must build before release audit")
+        raise SystemExit(f"{job}: attested artifacts must build before release audit")
     audit_line = next(
         (line for line in body.splitlines() if "./scripts/security-audit.sh" in line),
         "",
     )
     if "--require-binary" not in audit_line or "--node-bin" not in audit_line:
         raise SystemExit(f"{job}: release audit must require node binary")
+    if "--binary-manifest" not in audit_line:
+        raise SystemExit(f"{job}: release audit must require an artifact manifest")
     if "--binary" not in audit_line or "wallet" not in audit_line or "walletd" not in audit_line:
         raise SystemExit(f"{job}: release audit must include wallet and walletd binaries")
 if "cargo install cargo-audit --version 0.22.2 --locked" not in workflow:
@@ -188,6 +196,10 @@ grep -q 'Required release binary not found' "$ROOT/scripts/security-audit.sh" \
   || fail "security-audit.sh must fail closed for each missing required binary"
 grep -q 'for release_bin in' "$ROOT/scripts/security-audit.sh" \
   || fail "security-audit.sh must scan every listed release binary"
+grep -q 'release_artifact_manifest.py' "$ROOT/scripts/security-audit.sh" \
+  || fail "security-audit.sh must verify release artifact provenance"
+grep -q 'check_release_crypto_profile.py' "$ROOT/scripts/security-audit.sh" \
+  || fail "security-audit.sh must attest the compiled SmallWood profile"
 
 grep -q 'HEGEMON_TLC_BIN' "$ROOT/scripts/check_formal_core.sh" \
   || fail "formal-core model checker gate must require pinned TLC path"

@@ -6,30 +6,18 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Context, Result};
 use chrono::{TimeZone, Utc};
-use disclosure_circuit::{
-    prove_payment_disclosure, verify_payment_disclosure, PaymentDisclosureClaim,
-    PaymentDisclosureProofBundle, PaymentDisclosureWitness,
-};
 use fs2::FileExt;
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Serialize, Serializer};
 use serde_json::Value;
 use tokio::runtime::Builder as RuntimeBuilder;
-use transaction_circuit::{
-    constants::is_canonical_asset_id,
-    hashing_pq::{bytes48_to_felts, felts_to_bytes48, note_commitment_bytes},
-    note::MerklePath,
-};
+use transaction_circuit::hashing_pq::{felts_to_bytes48, note_commitment_bytes};
 use wallet::{
-    address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
     build_multisig_approval_transaction, build_multisig_final_transaction_from_plan,
     build_multisig_initial_accumulator_transaction, build_multisig_value_lock_transaction,
     build_transaction,
-    disclosure::{
-        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
-        DisclosurePackage, DisclosureProof,
-    },
+    disclosure::{decode_base64, encode_base64},
     node_rpc::NodeRpcClient,
     notes::MemoPlaintext,
     parse_recipients, precheck_nullifiers, prepare_multisig_final_plan,
@@ -42,10 +30,6 @@ use wallet::{
 
 const PROTOCOL_VERSION: u32 = 2;
 const MAX_WALLETD_REQUEST_LINE_BYTES: usize = 8 * 1024 * 1024;
-const MAX_DISCLOSURE_PACKAGE_JSON_BYTES: usize = 8 * 1024 * 1024;
-const MAX_DISCLOSURE_PROOF_BYTES: usize = 4 * 1024 * 1024;
-const MAX_DISCLOSURE_PROOF_BASE64_BYTES: usize = ((MAX_DISCLOSURE_PROOF_BYTES + 2) / 3) * 4;
-const DISCLOSURE_MERKLE_DEPTH: usize = transaction_circuit::note::MERKLE_TREE_DEPTH as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WalletdSmallwoodSignerTag(transaction_circuit::SmallwoodSignerTag);
@@ -163,9 +147,7 @@ enum WalletdErrorCode {
     PassphraseEmpty,
     WatchOnly,
     ConsolidationRequired,
-    GenesisMismatch,
     AnchorInvalid,
-    MerklePathInvalid,
     ProofInvalid,
     RpcConnectionFailed,
     SyncFailed,
@@ -409,6 +391,7 @@ struct TxPlanResponse {
     plan: Option<ConsolidationPlanSummary>,
 }
 
+#[cfg(any())]
 #[derive(Deserialize)]
 struct DisclosureCreateParams {
     ws_url: String,
@@ -416,12 +399,14 @@ struct DisclosureCreateParams {
     output: u32,
 }
 
+#[cfg(any())]
 #[derive(Deserialize)]
 struct DisclosureVerifyParams {
     ws_url: String,
     package: DisclosurePackage,
 }
 
+#[cfg(any())]
 #[derive(Serialize)]
 struct DisclosureVerifyResponse {
     verified: bool,
@@ -648,6 +633,11 @@ struct MultisigIntentRecipientParams {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().skip(1).eq(["--print-crypto-profile"]) {
+        let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
+        println!("{}", serde_json::to_string(&profile)?);
+        return Ok(());
+    }
     let (store_path, mode) = parse_args()?;
     let stdin = io::stdin();
     let mut stdin = stdin.lock();
@@ -867,15 +857,7 @@ fn handle_request(
                 let params: SendParams = parse_params(request.params)?;
                 to_json(tx_send(runtime, store, params)?)
             }
-            "disclosure.create" => {
-                let params: DisclosureCreateParams = parse_params(request.params)?;
-                to_json(disclosure_create(runtime, store, params)?)
-            }
-            "disclosure.verify" => {
-                ensure_disclosure_verify_params_json_size(&request.params)?;
-                let params: DisclosureVerifyParams = parse_params(request.params)?;
-                to_json(disclosure_verify(runtime, params)?)
-            }
+            "disclosure.create" | "disclosure.verify" => disclosure_proofs_retired(),
             "disclosure.list" => to_json(disclosure_list(&store)?),
             "multisig.accountCreate" => {
                 let params: MultisigAccountCreateParams = parse_params(request.params)?;
@@ -979,6 +961,14 @@ fn parse_params<T: for<'de> Deserialize<'de>>(params: Value) -> WalletdResult<T>
     })
 }
 
+fn disclosure_proofs_retired<T>() -> WalletdResult<T> {
+    Err(WalletdError::new(
+        WalletdErrorCode::UnknownMethod,
+        "disclosure proof generation and verification are unavailable in this release",
+    ))
+}
+
+#[cfg(any())]
 fn ensure_disclosure_verify_params_json_size(params: &Value) -> WalletdResult<()> {
     let size = serde_json::to_vec(params)
         .map_err(WalletdError::internal)?
@@ -1072,7 +1062,7 @@ fn status_get(store: &Arc<WalletStore>, store_path: &str) -> WalletdResult<Walle
     Ok(WalletStatusResponse {
         protocol_version: PROTOCOL_VERSION,
         capabilities: WalletCapabilities {
-            disclosure: true,
+            disclosure: false,
             auto_consolidate: true,
             notes_summary: true,
             note_details: true,
@@ -2769,6 +2759,7 @@ fn tx_plan(store: &Arc<WalletStore>, params: TxPlanParams) -> WalletdResult<TxPl
     })
 }
 
+#[cfg(any())]
 fn disclosure_create(
     runtime: &tokio::runtime::Runtime,
     store: Arc<WalletStore>,
@@ -2885,6 +2876,7 @@ fn disclosure_create(
     })
 }
 
+#[cfg(any())]
 fn disclosure_verify(
     runtime: &tokio::runtime::Runtime,
     params: DisclosureVerifyParams,
@@ -3027,6 +3019,7 @@ fn disclosure_verify(
     })
 }
 
+#[cfg(any())]
 fn decode_bound_recipient_address(
     package_claim: &DisclosureClaim,
 ) -> WalletdResult<ShieldedAddress> {
@@ -3091,6 +3084,7 @@ fn parse_param_hex_48(input: &str) -> WalletdResult<[u8; 48]> {
     Ok(out)
 }
 
+#[cfg(any())]
 fn memo_to_disclosed_string(memo: &Option<MemoPlaintext>) -> Option<String> {
     let memo = memo.as_ref()?;
     if memo.as_bytes().is_empty() {
@@ -3399,6 +3393,7 @@ mod tests {
         assert_eq!(detail.source, "mining_reward");
         assert!(detail.nullifier.is_some());
         assert!(status.capabilities.note_details);
+        assert!(!status.capabilities.disclosure);
         assert_eq!(status.note_accounting.len(), 1);
         let accounting = &status.note_accounting[0];
         assert_eq!(
@@ -3415,6 +3410,35 @@ mod tests {
         assert_eq!(accounting.spent, 0);
         assert_eq!(accounting.recovered_total, 42_000_000_000);
         assert_eq!(accounting.balance_total, 42_000_000_000);
+    }
+
+    #[test]
+    fn walletd_disclosure_proof_methods_fail_closed() {
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (store, store_path) = temp_store();
+
+        for method in ["disclosure.create", "disclosure.verify"] {
+            let response = handle_request(
+                &runtime,
+                store.clone(),
+                Arc::new(Mutex::new(HashMap::new())),
+                &store_path,
+                RequestEnvelope {
+                    id: json!(1),
+                    method: method.to_string(),
+                    params: json!({}),
+                },
+            );
+            assert!(!response.ok);
+            assert!(matches!(
+                response.error_code,
+                Some(WalletdErrorCode::UnknownMethod)
+            ));
+            assert!(response.error.unwrap().contains("unavailable"));
+        }
     }
 
     fn temp_store() -> (Arc<WalletStore>, String) {

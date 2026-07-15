@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "branch": "codex/lean-assumption-closure",
-  "baseline_commit": "53cad173b3b78295f75d58010d92c7646e1312a7",
+  "branch": "codex/deployed-smallwood-no-counterfeit-closure",
+  "baseline_commit": "8be2a170fa66e19fa27ed8f16bf0b6ed2f2053e2",
   "goal": "Highest-standard Lean formal verification for Hegemon as a PQC privacy chain, with critical theorem targets proved and production-bound at little to no performance cost.",
   "completion_method": "Weighted average of property completion percentages. A property reaches 100 only when the top-level Lean theorem is proved, assumptions are explicit, production conformance/refinement gates bind the shipped path, formal-core includes the gate, and performance-sensitive runtime changes are benchmarked or demonstrably cheap. The active-goal release ledger separately binds the complete Lean source tree and authenticates the fixed closure theorem set through aggregate elaboration and axiom audit.",
   "overall_completion_percent": 100.0,
@@ -9,8 +9,8 @@
   "mechanized_assumption_closure": {
     "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
     "total_tracks": 20,
-    "closed_tracks": 9,
-    "closure_percent": 45.0,
+    "closed_tracks": 13,
+    "closure_percent": 65.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
@@ -53,27 +53,33 @@
       },
       {
         "id": "transaction.recursive-cross-object-identity-refinement",
-        "status": "open",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
-          "formal/lean/Hegemon/Transaction/TxValidityClaimMatching.lean",
-          "formal/lean/Hegemon/Consensus/ProvenBatchBinding.lean"
+          "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
+          "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
+          "consensus/src/proof.rs",
+          "scripts/check_formal_core.sh"
         ],
-        "remaining_work": [
-          "Extend the artifact, claim, batch, transaction, and supply models with concrete canonical statement bytes, ordered transaction count, statement commitment, public replay commitment, and DA identity projections, then prove those projections identify the same accepted object. The current models expose local acceptance booleans only, so no cross-object composition theorem is credited."
-        ]
+        "lean_theorems": [
+          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block"
+        ],
+        "remaining_work": []
       },
       {
         "id": "consensus.accepted-chain-supply-composition",
-        "status": "open",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Transaction/SmallWoodNoCounterfeit.lean",
-          "formal/lean/Hegemon/Consensus/SupplyInvariant.lean"
+          "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
+          "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
+          "node/src/native/block_flow.rs",
+          "node/src/native/tests.rs",
+          "scripts/check_formal_core.sh"
         ],
-        "remaining_work": [
-          "Bind each claimed supply step's minted amount to the accepted block's one-coinbase subsidy or zero-coinbase case, bind burns to accepted burn actions, bind fees to the complete ordered accepted transaction list, and prove the supply step and transaction list belong to the same accepted block artifact.",
-          "Add a production-refined note-opening commitment binding or cryptographic hash assumption before lifting the toy digest model to a no-counterfeit claim; modulo-65537 commitment arithmetic is not collision resistant."
-        ]
+        "lean_theorems": [
+          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
+          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path"
+        ],
+        "remaining_work": []
       },
       {
         "id": "native.raw-ingress-canonical-publication",
@@ -178,24 +184,42 @@
       },
       {
         "id": "transaction.accepted-proof-exact-constraint-extraction",
-        "status": "open",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean"
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+          "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean",
+          "circuits/transaction/src/smallwood_frontend.rs",
+          "scripts/check_formal_core.sh"
         ],
-        "remaining_work": [
-          "Prove that an accepted deployed SmallWood proof yields a witness satisfying the exact semantic constraint record without assuming spend authorization, output validity, or balance conservation."
-        ]
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound"
+        ],
+        "remaining_work": []
       },
       {
         "id": "transaction.smallwood-air-row-implementation-equivalence",
-        "status": "open",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean",
-          "circuits/transaction/src/smallwood_frontend.rs"
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+          "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean",
+          "circuits/transaction/src/smallwood_frontend.rs",
+          "scripts/check_formal_core.sh"
         ],
-        "remaining_work": [
-          "Refine the production linear-constraint builder and verifier execution into every field of the Lean semantic row records; mutation tests are adversarial evidence, not a complete implementation-equivalence proof."
-        ]
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes"
+        ],
+        "remaining_work": []
       },
       {
         "id": "native.complete-parser-node-refinement",
@@ -495,7 +519,7 @@
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean direct projected ledger-state executor preserves final nullifier Nodup through accepted replay equivalence",
         "formal/lean/Hegemon/Native/BlockReplayInputProjection.lean now proves accepted raw-projected replay preserves final spent-nullifier Nodup through the projected ledger-state theorem",
         "formal/lean/Hegemon/Transaction/NullifierInputs.lean proves the concrete deployed nullifier preimage order used before the anti-double-spend state consumes public nullifiers",
-        "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper",
+        "transaction-circuit regressions require the SmallWood nullifier preimage builder to use the shared core nullifier_inputs helper",
         "node/src/native/mod.rs revalidates canonical reorg pending resurrection by semantically admitting existing pending actions before orphaned old-chain actions",
         "formal-core includes a hostile reorg pending duplicate-nullifier regression before reorg persistence/publication",
         "formal/lean/Hegemon/Native/CommitmentTreeContentRefinement.lean now proves canonical nullifier rows equal exact ordered decoded nullifier rows at the accepted raw-ingress full-byte publication boundary",
@@ -536,8 +560,8 @@
         "statement-hash and proof-statement binding vectors",
         "formal/lean/Hegemon/Transaction/NoteCommitmentInputs.lean proves the concrete deployed note-commitment input order used by spend-opening reconstruction",
         "formal/lean/Hegemon/Transaction/NullifierInputs.lean proves the concrete deployed nullifier input order used by spend authorization facts",
-        "transaction-circuit and disclosure-circuit regressions require Plonky3, SmallWood, and disclosure preimage builders to use the shared core note_commitment_inputs helper",
-        "transaction-circuit regressions require Plonky3 and SmallWood nullifier preimage builders to use the shared core nullifier_inputs helper",
+        "transaction-circuit regressions require the SmallWood note preimage builder to use the shared core note_commitment_inputs helper",
+        "transaction-circuit regressions require the SmallWood nullifier preimage builder to use the shared core nullifier_inputs helper",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean mechanizes active-input authorization and accepted-wrapper soundness boundary",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves authorized public flag/nullifier vectors and private spend-witness vectors have matching lengths before indexed authorization facts are consumed",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean proves any indexed active input in aligned public/witness vectors yields spend facts",
@@ -801,7 +825,7 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now directly projects accepted tx-leaf/action stablecoin payload equality from the production-bound admission table",
         "formal/lean/Hegemon/Transaction/ProofStatementBinding.lean proves binding-hash-v3 vector partition length tags distinguish repartitioning the same digest bytes between nullifier and commitment vectors; generated vectors and protocol-shielded-pool Rust tests bind that transcript shape to production.",
         "formal/lean/Hegemon/Transaction/SmallWoodPublicStatementBinding.lean proves SmallWood public statement values are exactly the 76-field P3 public-input vector plus circuit-version and crypto-suite suffix, with exact length/no-extension and transcript-surface feed facts",
-        "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values_for_p3`",
+        "circuits/transaction/tests/smallwood_public_statement_binding.rs checks Lean-generated vector cases plus normal and stablecoin production SmallWood candidate profile surfaces against `smallwood_public_statement_values`",
         "raw-ingress and materialized transfer publication certificates now carry `SmallWoodPublicStatementVerifierExportFacts` through the same native tx-leaf statement surface used by production publication, preserving statement/proof-binding rows while deriving no-theft, conservation, and stablecoin exception consequences",
         "formal/lean/Hegemon/Native/MaterializedConsensusDaBlobRefinement.lean end-to-end boundary carries tx-leaf statement artifact facts, native statement/proof digest/backend equality gates, and ciphertext vector publication through the accepted materialized witness",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierSoundnessEnvelope.lean `accepted_smallwood_public_statement_surfaces_with_split_soundness_review_certificate` packages the split spend/balance soundness assumptions with the concrete SmallWood public-statement verifier export and no-theft/public-conservation consequences in one review certificate",

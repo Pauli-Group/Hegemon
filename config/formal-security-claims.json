@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_for_branch": "codex/lean-assumption-closure",
+  "generated_for_branch": "codex/deployed-smallwood-no-counterfeit-closure",
   "claims": [
     {
       "id": "release.pq-binary",
@@ -237,7 +237,7 @@
       "id": "formal.transaction-balance",
       "component": "shielded transaction semantics",
       "claim_class": "lean_theorem",
-      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, proves that valid non-stablecoin balances force every non-native asset delta to zero, and proves stablecoin-enabled balances confine the nonzero non-native delta to the explicitly selected stablecoin asset. The AcceptedProofArtifact lift carries those balance facts to accepted proof wrappers under an explicit proof-system balance-soundness assumption. The SmallWood balance-boundary slice additionally proves the public-field native delta, selected stablecoin delta, disabled stablecoin zero, non-selected non-native zero, and canonical signed-magnitude facts that the deployed inline-Merkle SmallWood verifier surface must expose, while focused Rust gates mutate public balance/stablecoin fields and require the production constraint path to reject even after recomputing auxiliary Merkle rows. The AIR balance-boundary slice now models the deployed P3 final-row balance equations directly, proving native value-balance authorization, selected-stablecoin delta authorization, non-selected non-native zero, disabled-stablecoin metadata/slot zeroing, and selector asset binding, with a P3 verifier regression proving value-balance and stablecoin issuance public-field mutations reject. Generated Lean vectors are checked against production TransactionWitness balance slot and validation behavior, including padding-field-alias and padding-asset rejection for stablecoin exception assets; production `verify_balance_slots` also rejects noncanonical stablecoin asset ids before any issuance exception is applied.",
+      "summary": "The Lean transaction-balance kernel proves native-delta and stablecoin-rule extraction for executable balance validation, proves that valid non-stablecoin balances force every non-native asset delta to zero, and proves stablecoin-enabled balances confine the nonzero non-native delta to the explicitly selected stablecoin asset. The AcceptedProofArtifact lift carries those facts to accepted wrappers under its explicit compatibility soundness assumption. The deployed SmallWood closure instead binds the same balance consequences to exact evaluation of the generated production map: both complete sparse linear tables and the balance, value-range, stablecoin, authorization, and related nonlinear root families are checked against the Rust builder. Focused mutation gates reject public balance/stablecoin drift, and serialized monetary values are rejected before Goldilocks reduction when they exceed the in-circuit 61-bit range.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_bounded_tla_model",
       "production_eligible": true,
@@ -264,29 +264,21 @@
         "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_nonselected_non_native_zero",
         "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_value_balance_sign_rejected",
         "Hegemon.Transaction.SmallWoodBalanceBoundary.noncanonical_zero_stablecoin_issuance_sign_rejected",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_exposes_boundary_facts",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_native_delta",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_selected_slot_asset",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_nonselected_slot_delta_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_metadata_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_non_native_delta_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_slot1_selected_delta",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_slot2_selected_delta",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_slot3_selected_delta",
-        "Hegemon.Transaction.validBalance_stablecoin_padding_field_alias_rejected"
+        "Hegemon.Transaction.validBalance_stablecoin_padding_field_alias_rejected",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_transaction_relation"
       ],
       "assumptions": [
         "The Lean NoteSummary model represents transaction balance asset ids and values, not note commitment hashing, Merkle hash-function security, ciphertext hashes, or hash-derived nullifiers.",
         "Generated Lean conformance vectors cover TransactionWitness::balance_slots and TransactionWitness::validate balance accept/reject behavior for native fees, non-native conservation, stablecoin issuance, stablecoin mismatch, native-asset stablecoin rejection, and slot overflow cases.",
         "The theorem covers executable balance-slot and validation semantics, including the per-asset no-transmutation boundary exposed by those slots. The AcceptedProofArtifact lift is conditional on an explicit balance-soundness assumption from proof acceptance to the validBalance relation; it does not prove full AIR/proof-system soundness or every witness/public-input field.",
         "The SmallWood balance-boundary theorem names the public native-delta and selected-stablecoin-delta facts expected from the deployed inline-Merkle constraint surface and proves noncanonical signed zero is rejected in the modeled boundary. It remains a verifier-surface target, not a complete AIR/PCS soundness theorem.",
-        "The AirBalanceBoundary theorem names the exact P3 final-row AIR balance equations for public value-balance and stablecoin fields. Generated AIR boundary vectors now bind the modeled final-row surface to production P3 trace/public-input extraction for the default and stablecoin witnesses plus native-delta, selected-delta, selector-asset, disabled-metadata, nonselected-delta, and boolean rejection cases; the production P3 mutation regression proves those public fields are bound by verifier acceptance. This is still a final-row AIR/refinement slice, not a full STARK/PCS soundness or witness-extraction proof."
+        "The exact production-map refinement evaluates the generated SmallWood sparse-linear and nonlinear program and deterministically projects its balance families into the modeled conservation facts. Deployed STARK/FRI/PCS soundness and complete arbitrary Rust/compiler refinement remain explicit boundaries."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/Balance.lean",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
-        "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean",
-        "formal/lean/Hegemon/Transaction/GenerateAirBalanceBoundaryVectors.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/GenerateVectors.lean",
         "circuits/transaction/src/witness.rs",
@@ -297,16 +289,18 @@
         "circuits/formal/README.md",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
-        "circuits/transaction/src/proof.rs"
+        "circuits/transaction/src/proof.rs",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "bash scripts/check_formal_core.sh",
-        "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture",
         "HEGEMON_LEAN_TRANSACTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture",
-        "cargo test -p transaction-circuit balance_slot_verifier_rejects_stablecoin_padding_field_alias_exception -- --nocapture"
+        "cargo test -p transaction-circuit balance_slot_verifier_rejects_stablecoin_padding_field_alias_exception -- --nocapture",
+        "HEGEMON_LEAN_SMALLWOOD_PRODUCTION_CONSTRAINT_REFINEMENT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_production_constraint_maps_match_every_production_row --lib -- --nocapture"
       ],
       "residual_risks": []
     },
@@ -353,7 +347,7 @@
       "id": "formal.transaction-note-commitment-inputs",
       "component": "transaction note commitment preimage and asset-id field admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean note-commitment input kernel proves the deployed transcript layout for note commitments: domain tag 1, 18 absorbed field limbs, value and asset first, then pk_recipient, rho, commitment randomness, and pk_auth as 8-byte big-endian limbs. It also proves the field-canonical asset-id policy that rejects the external padding sentinel, the padding field alias, and the field modulus. Generated Lean vectors are checked against the shared production helper, and Rust regressions require P3, SmallWood, and disclosure preimage builders to use the shared helper while raw note/public/disclosure boundaries reject field-aliasing asset ids. The wallet plaintext path now checks the same Lean vectors against `NotePlaintext::to_note_data`, so wallet-exported value, asset, recipient, authorization key, rho, and randomness feed the deployed commitment transcript while memo data remains excluded.",
+      "summary": "The Lean note-commitment input kernel proves the deployed transcript layout for note commitments: domain tag 1, 18 absorbed field limbs, value and asset first, then pk_recipient, rho, commitment randomness, and pk_auth as 8-byte big-endian limbs. It also proves the field-canonical asset-id policy that rejects the external padding sentinel, the padding field alias, and the field modulus. Generated Lean vectors are checked against the shared production helper, and Rust regressions require SmallWood and disclosure preimage builders to use the shared helper while raw note/public/disclosure boundaries reject field-aliasing asset ids. The wallet plaintext path now checks the same Lean vectors against `NotePlaintext::to_note_data`, so wallet-exported value, asset, recipient, authorization key, rho, and randomness feed the deployed commitment transcript while memo data remains excluded.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors_and_alias_regressions",
       "production_eligible": true,
@@ -371,7 +365,7 @@
       ],
       "assumptions": [
         "The theorem and vectors prove note-commitment preimage layout and asset-id field canonicality, not Poseidon2 permutation security or collision resistance.",
-        "Generated Lean conformance vectors cover representative 32-byte recipient/auth/rho/randomness encodings and asset-id canonicality edge cases; Rust tests additionally cover P3, SmallWood, and disclosure wrappers against the shared helper.",
+        "Generated Lean conformance vectors cover representative 32-byte recipient/auth/rho/randomness encodings and asset-id canonicality edge cases; Rust tests additionally cover SmallWood and disclosure wrappers against the shared helper.",
         "The production asset-id gate treats u64::MAX as an external padding sentinel only and reserves its reduced Goldilocks-field alias as an invalid real asset id."
       ],
       "evidence_paths": [
@@ -381,7 +375,6 @@
         "circuits/transaction-core/src/hashing_pq.rs",
         "circuits/transaction/src/note.rs",
         "circuits/transaction/src/proof.rs",
-        "circuits/transaction/src/p3_prover.rs",
         "circuits/transaction/src/smallwood_frontend.rs",
         "circuits/disclosure/src/prover.rs",
         "circuits/disclosure/tests/disclosure.rs",
@@ -413,7 +406,7 @@
       "id": "formal.transaction-nullifier-inputs",
       "component": "transaction nullifier preimage",
       "claim_class": "lean_theorem",
-      "summary": "The Lean nullifier input kernel proves the deployed transcript layout for note nullifiers: domain tag 2, one Poseidon2 absorb block with exactly six field limbs, prf_key and note position first, then rho as four 8-byte big-endian limbs. Generated Lean vectors are checked against the shared production helper, and Rust regressions require P3 and SmallWood nullifier preimage builders to use that helper.",
+      "summary": "The Lean nullifier input kernel proves the deployed transcript layout for note nullifiers: domain tag 2, one Poseidon2 absorb block with exactly six field limbs, prf_key and note position first, then rho as four 8-byte big-endian limbs. Generated Lean vectors are checked against the shared production helper, and Rust regressions require SmallWood nullifier preimage builders to use that helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -427,14 +420,13 @@
       "assumptions": [
         "The theorem and vectors prove nullifier preimage layout only, not Poseidon2 permutation security, collision resistance, or nullifier PRF pseudorandomness.",
         "Generated Lean conformance vectors cover representative rho encodings, a nonzero PRF key, the maximum canonical Goldilocks PRF-key representative, and the maximum 32-bit note-position domain used by the current Merkle tree.",
-        "The production helper is shared by the core nullifier function and the P3 and SmallWood prover-facing preimage builders; deployed AIR/proof-system soundness remains a separate target."
+        "The production helper is shared by the core nullifier function and the SmallWood prover-facing preimage builders; deployed AIR/proof-system soundness remains a separate target."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/NullifierInputs.lean",
         "formal/lean/Hegemon/Transaction/GenerateNullifierInputVectors.lean",
         "circuits/transaction-core/src/hashing_pq.rs",
         "circuits/transaction/src/note.rs",
-        "circuits/transaction/src/p3_prover.rs",
         "circuits/transaction/src/smallwood_frontend.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
@@ -458,7 +450,7 @@
       "id": "formal.transaction-public-input-shape",
       "component": "transaction verifier public-input shape",
       "claim_class": "lean_theorem",
-      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, output-slot commitment/ciphertext-hash facts including direct list-index facts, nonempty transaction admission, canonical balance-slot asset ordering, and stablecoin asset presence, and generated Lean vectors are checked against production TransactionPublicInputsP3::validate.",
+      "summary": "The Lean public-input shape kernel proves fixed vector widths, boolean flags, inactive padding zeroing, active nullifier/commitment nonzero checks, output-slot commitment/ciphertext-hash facts, nonempty transaction admission, canonical balance-slot ordering, and stablecoin asset presence. Generated vectors are checked against the canonical verifier-field validation used by the SmallWood production path.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -483,16 +475,17 @@
       ],
       "assumptions": [
         "The Lean Digest model and generated vectors use abstract one-limb nonzero/zero digests; they do not prove Poseidon2, note commitment, nullifier, or ciphertext hash derivation security.",
-        "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by TransactionPublicInputsP3::validate, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership. The indexed output-slot theorems derive active-commitment and inactive commitment/ciphertext-hash facts from the same executable predicate.",
+        "Generated Lean conformance vectors cover the verifier-facing shape/admission rules enforced by the canonical SmallWood verifier-field validator, including malformed flags, inactive nonzero fields, active zero fields, empty transactions, balance-slot ordering, and stablecoin asset membership. The indexed output-slot theorems derive active-commitment and inactive commitment/ciphertext-hash facts from the same executable predicate.",
         "The theorem covers public-input shape admission, not statement-hash preimage binding, which is covered separately by formal.transaction-statement-hash-binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/PublicInputs.lean",
         "formal/lean/Hegemon/Transaction/GeneratePublicInputVectors.lean",
-        "circuits/transaction-core/src/p3_air.rs",
         "circuits/transaction/src/proof.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "circuits/transaction/src/public_inputs.rs",
+        "circuits/transaction-core/src/verifier_inputs.rs"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -505,7 +498,7 @@
       "id": "formal.transaction-public-input-binding",
       "component": "transaction public/serialized input binding",
       "claim_class": "lean_theorem",
-      "summary": "The Lean public-input binding kernel proves executable accept/reject facts for the verifier seam that combines TransactionPublicInputs with SerializedStarkInputs before constructing TransactionPublicInputsP3. Successful binding now exposes theorem-level P3 public-input field facts for merkle root, fee, signed value balance, balance-slot assets, input/output flags, and stablecoin payload fields, and generated Lean vectors are checked against production transaction_public_inputs_p3_from_parts.",
+      "summary": "The Lean public-input binding kernel proves executable accept/reject facts for the verifier seam combining TransactionPublicInputs with SerializedStarkInputs before constructing the canonical SmallWood verifier field vector. Successful binding exposes merkle-root, fee, signed value-balance, balance-slot, flag, and stablecoin payload facts, and generated vectors are checked against production SmallWood field-vector construction.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -533,16 +526,16 @@
       ],
       "assumptions": [
         "The Lean model treats 48-byte commitments as abstract digest identifiers; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
-        "Generated Lean conformance vectors cover merkle-root, fee, signed value-balance, balance-slot asset list, stablecoin enable/asset/version/issuance/hash/oracle/attestation binding, and the legacy empty serialized balance-slot fallback. The additional successful-binding theorem package exposes the exact field equalities that the Rust `transaction_public_inputs_p3_from_parts` helper uses before constructing `TransactionPublicInputsP3`.",
+        "Generated Lean conformance vectors cover merkle-root, fee, signed value-balance, balance-slot asset list, stablecoin enable/asset/version/issuance/hash/oracle/attestation binding, and the legacy empty serialized balance-slot fallback. The additional successful-binding theorem package exposes the exact field equalities that the Rust `the production SmallWood verifier-field builder` helper uses before constructing `the canonical SmallWood verifier field vector`.",
         "The theorem covers the public/serialized binding predicate used before verifier public-input construction, not transaction statement-hash preimage binding, which is covered separately by formal.transaction-statement-hash-binding, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/PublicInputBinding.lean",
         "formal/lean/Hegemon/Transaction/GeneratePublicInputBindingVectors.lean",
         "circuits/transaction/src/proof.rs",
-        "circuits/transaction-core/src/p3_air.rs",
         "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
+        "scripts/check_lean_formal.sh",
+        "circuits/transaction-core/src/verifier_inputs.rs"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
@@ -555,7 +548,7 @@
       "id": "formal.transaction-proof-wrapper-admission",
       "component": "transaction proof wrapper admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves representative raw outer TransactionProof wire admission for canonical dummy bincode, trailing bytes, invalid backend tags, truncated bytes, and malformed bytes before decoded admission is consumed; schema-v2 wire vectors additionally include a raw canonical wrapper that exact-decodes and then fails decoded admission specifically on top-level/public nullifier-vector drift. Every accepted wrapper exposes the full statement surface as theorem-level facts; accepted wrapper metadata cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the existing statement-binding boundary; and the SmallWood candidate wrapper selector accepts only exact/canonical current or legacy wrappers with nonempty inner ARK proof bytes, using current-first precedence and fail-closed legacy fallback. The SmallWood recursive proof-envelope wire slice separately models representative bincode envelope bytes, trailing/truncated/invalid enum/truncated proof-vector rejection, and descriptor equality before recursive proof verification. Generated Lean vectors are checked against production transaction-circuit exact wrapper decoding/admission helpers, the consensus inline-tx artifact decoder, the default SmallWood verifier path, SmallWood candidate wrapper decoding, SmallWood recursive envelope decoding, and the tx-proof manifest nested-proof verifier path; an additional arbitrary-byte mutation corpus compares production TransactionProof wrapper exact decode to the bincode parser, full-consumption, and canonical-reencode oracle over malformed, truncated, trailing-byte, inserted-byte, and mutated-valid wrappers.",
+      "summary": "The Lean proof-wrapper admission kernel proves executable ordering for exact/canonical wrapper admission, supported backend selection, proof/public-input presence, verifier-facing public-input validity, top-level nullifier/commitment vector agreement with decoded public inputs, wrapper balance-slot agreement, and final verifier acceptance. It now also proves representative raw outer TransactionProof wire admission for canonical dummy bincode, trailing bytes, invalid backend tags, truncated bytes, and malformed bytes before decoded admission is consumed; schema-v2 wire vectors additionally include a raw canonical wrapper that exact-decodes and then fails decoded admission specifically on top-level/public nullifier-vector drift. Every accepted wrapper exposes the full statement surface as theorem-level facts; accepted wrapper metadata cannot alter the bound statement/public-input projection or add public nullifier, ciphertext, or asset rows outside the existing statement-binding boundary; and the SmallWood candidate wrapper selector accepts only exact/canonical V3 or historical V2 wrappers with nonempty inner ARK proof bytes, using V3-first proving policy and fail-closed historical V2 verification fallback. The SmallWood recursive proof-envelope wire slice separately models representative bincode envelope bytes, trailing/truncated/invalid enum/truncated proof-vector rejection, and descriptor equality before recursive proof verification. Generated Lean vectors are checked against production transaction-circuit exact wrapper decoding/admission helpers, the consensus inline-tx artifact decoder, the default SmallWood verifier path, SmallWood candidate wrapper decoding, SmallWood recursive envelope decoding, and the tx-proof manifest nested-proof verifier path; an additional arbitrary-byte mutation corpus compares production TransactionProof wrapper exact decode to the bincode parser, full-consumption, and canonical-reencode oracle over malformed, truncated, trailing-byte, inserted-byte, and mutated-valid wrappers.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -611,7 +604,7 @@
         "The TransactionProof wrapper mutation corpus compares decode_transaction_proof_bytes_exact to an independent bincode deserialize/full-consumption/canonical-reencode oracle across malformed, truncated, trailing-byte, inserted-byte, pseudo-random, and mutated-valid wrappers; this reduces parser drift risk without claiming a proof of the bincode crate internals.",
         "Generated SmallWood candidate wrapper vectors cover current wrapper acceptance, legacy wrapper acceptance, current-first selection, empty inner ARK proof rejection, malformed wrapper rejection, and trailing-byte rejection for both current and legacy candidate wrapper encodings.",
         "Generated SmallWood recursive proof-envelope vectors cover representative valid profile-A/profile-B bincode envelopes, trailing-byte rejection, truncated envelope rejection, invalid profile enum rejection, truncated proof-vector rejection, and descriptor mismatch rejection before recursive proof verification. They bind the parser and descriptor handoff without claiming proof-byte soundness.",
-        "The production consensus inline-tx artifact, Plonky3, default SmallWood, and manifest paths call exact/canonical wrapper decoding and the admission predicate around decoded-field admission and verifier acceptance. The wire theorem is a representative bincode boundary checked against production bytes, not a full proof of the bincode crate internals."
+        "The production consensus inline-tx artifact, SmallWood, and manifest paths call exact/canonical wrapper decoding and the admission predicate around decoded-field admission and verifier acceptance. The wire theorem is a representative bincode boundary checked against production bytes, not a full proof of the bincode crate internals."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofWrapperAdmission.lean",
@@ -646,7 +639,7 @@
       "id": "formal.transaction-spend-authorization-boundary",
       "component": "transaction spend authorization boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link, input spend row-boundary, and output row-boundary slices additionally prove verifier-surface Goldilocks-field auth-link, active input commitment/nullifier/Merkle row binding, inactive zero-nullifier facts, active output commitment/ciphertext-hash row binding, and inactive output zeroing, gate Lean-generated wrap/mismatch/inactive/boundary vectors against Rust, and gate the production packed SmallWood constraint builder with wrong-secret plus note, nullifier, Merkle, inactive-nullifier, active-output, and inactive-output mutation regressions. SmallWoodSemanticClosure now binds the balance witness inputs and outputs to the active committed note openings' exact value/asset summaries, recomputes active output commitments from those openings, binds materialized balance-slot assets to the public shape, and composes the resulting rows into spend authorization and full public-shape validity without assuming either conclusion wholesale. The native tx-leaf input projection slice proves and vector-checks that concrete input flags plus compact public transaction nullifiers materialize the padded public-input nullifier slots before tx-leaf statement hashing and P3 public-input reconstruction, accepting non-prefix active slots only when the padded public slot matches and rejecting prefix aliases, active-zero rows, missing/extra compact rows, and malformed flags.",
+      "summary": "The Lean spend-authorization kernel defines the input-slot relation connecting public nullifiers to private spend witnesses: inactive slots must carry zero nullifiers, while active slots require note commitment reconstruction, spend-authority public key derivation from the spend secret, nullifier derivation, Merkle membership, and indexed public-input slot authorization. It proves that successful slot authorization forces the public flag/nullifier vectors and private witness vector to have matching lengths, and that accepted proof wrappers imply this authorization only under an explicit spend-authorization proof-system soundness assumption. The SmallWood active-auth-link, input spend row-boundary, and output row-boundary slices additionally prove verifier-surface Goldilocks-field auth-link, active input commitment/nullifier/Merkle row binding, inactive zero-nullifier facts, active output commitment/ciphertext-hash row binding, and inactive output zeroing, gate Lean-generated wrap/mismatch/inactive/boundary vectors against Rust, and gate the production packed SmallWood constraint builder with wrong-secret plus note, nullifier, Merkle, inactive-nullifier, active-output, and inactive-output mutation regressions. SmallWoodSemanticClosure binds the balance witness inputs and outputs to active note-opening value/asset summaries and composes those rows into spend authorization and public-shape validity. The production constraint refinement separately proves that every active output row executes the canonical 18-field note-opening hash relation and that a substituted opening with the same public commitment has the same canonical preimage under the explicit production hash collision-resistance boundary. The native tx-leaf input projection slice proves and vector-checks that concrete input flags plus compact public transaction nullifiers materialize the padded public-input nullifier slots before tx-leaf statement hashing and SmallWood verifier-field reconstruction, accepting non-prefix active slots only when the padded public slot matches and rejecting prefix aliases, active-zero rows, missing/extra compact rows, and malformed flags.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumption",
       "production_eligible": false,
@@ -708,12 +701,13 @@
         "Hegemon.Transaction.SmallWoodSemanticClosure.input_constraints_imply_public_inputs_valid",
         "Hegemon.Transaction.SmallWoodSemanticClosure.output_constraints_imply_slots_valid",
         "Hegemon.Transaction.SmallWoodSemanticClosure.active_output_constraint_binds_note_opening",
-        "Hegemon.Transaction.SmallWoodSemanticClosure.active_output_constraint_recomputes_note_commitment",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_rows_bind_every_active_opening",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_opening_bindings_are_unique",
         "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_public_shape_valid",
         "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_spend_authorized"
       ],
       "assumptions": [
-        "The executable Lean model uses abstract digest arithmetic for note commitments, spend-authority keys, nullifiers, and Merkle nodes. It proves relation plumbing, not hash security or implementation equivalence.",
+        "The legacy executable Lean spend model uses abstract digest arithmetic for spend-authority keys, nullifiers, and Merkle nodes. The production output-opening theorem uses the canonical 18-field preimage and keeps production hash collision resistance explicit; it does not prove primitive hash security.",
         "The theorem `accepted_wrapper_implies_spend_authorization` is conditional on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled authorization relation for the exact public input shape and root.",
         "`authorizeInputSlots_lengths_match` and `transactionSpendAuthorized_witnesses_align_with_public_inputs` prove that successful authorization cannot be derived over mismatched public flag/nullifier vectors or mismatched private witness vectors.",
         "The indexed theorem `authorizeInputSlots_active_input_facts_at` lifts authorization facts for any active input slot in aligned flag/nullifier/witness vectors, not only the head slot.",
@@ -732,6 +726,7 @@
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodSpendAuthorizationVectors.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSpendAuthorization.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
@@ -752,8 +747,8 @@
       ],
       "residual_risks": [
         {
-          "id": "spend-authorization-soundness-not-mechanized",
-          "description": "The semantic implication from exact SmallWood constraint rows to spend authorization is mechanized. The remaining proof-system step is accepted deployed proof bytes to those exact rows, plus complete production constraint-builder/verifier implementation equivalence.",
+          "id": "spend-authorization-proof-system-soundness-boundary",
+          "description": "The exact deployed SmallWood relation, production row refinement, and semantic implication to spend authorization are mechanized and production-gated. Cryptographic proof-system soundness for accepted proof bytes remains an explicit primitive boundary.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -763,7 +758,7 @@
       "id": "formal.transaction-accepted-soundness-boundary",
       "component": "accepted transaction proof-system soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, accepted statement-surface facts, balance validity, per-asset conservation facts, spend authorization, total indexed input-slot facts, and total indexed output-slot facts into one abstract relation. The compatibility theorem retains explicit balance and spend proof-system assumptions, while SmallWoodSemanticClosure now derives the same accepted relation from input and output openings that are bound to the exact value/asset summaries conserved by the balance witness, plus shape-core and balance constraint facts. The remaining SmallWood extraction premise says only that accepted proof bytes yield those exact facts; it no longer assumes transaction authorization or conservation as its conclusion. The production residual certificate names every remaining verifier/proof/hash/serialization residual while carrying no-theft, balance/public, input-slot, output-slot, and authorized-delta facts.",
+      "summary": "The Lean accepted-transaction soundness boundary combines accepted proof-wrapper admission, statement-surface facts, balance validity, per-asset conservation, spend authorization, and total indexed input/output-slot facts. SmallWoodProductionConstraintRefinement now defines an executable decision over the exact production constraint-map identity, public shape, input/output rows, balance witness, and slot projection; proves that decision refines the semantic constraint record; and derives the accepted transaction relation under only the named deployed proof-system soundness boundary. The compatibility theorem with older split balance/spend assumptions remains non-production support, while the SmallWood path no longer assumes exact extraction, authorization, output validity, balance conservation, or row equivalence as conclusions.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_soundness_assumptions",
       "production_eligible": false,
@@ -784,20 +779,25 @@
         "Hegemon.Transaction.AcceptedTransactionSoundness.accepted_wrapper_implies_output_slot_facts_at",
         "Hegemon.Transaction.SmallWoodSemanticClosure.balance_constraints_imply_valid_balance",
         "Hegemon.Transaction.SmallWoodSemanticClosure.accepted_proof_and_semantic_constraints_imply_transaction_relation",
-        "Hegemon.Transaction.SmallWoodSemanticClosure.accepted_proof_with_exact_constraint_extraction_implies_relation",
-        "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_output_slots_valid"
+        "Hegemon.Transaction.SmallWoodSemanticClosure.semantic_constraints_imply_output_slots_valid",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_transaction_relation"
       ],
       "assumptions": [
         "The theorem depends on `BalanceSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled `validBalance` relation for the exact balance witness and slots.",
         "The theorem depends on `SpendAuthorizationSoundnessAssumption`: accepted proof-wrapper verification must imply the modeled active-input spend-authorization relation for the exact public input shape and Merkle root.",
-        "The SmallWood-specific path replaces those broad semantic conclusions with `SmallWoodExactConstraintExtractionAssumption`, whose conclusion is only the exact input/output/shape-core/balance constraint record. Cryptographic proof soundness and production verifier-to-record implementation equivalence remain open.",
-        "The theorem packages the abstract accepted transaction relation and now exposes every indexed input slot as either inactive with zero nullifier or active with full spend facts, and every indexed output slot as either inactive with zero commitment/ciphertext hash or active with a nonzero public commitment. It does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, hash implementation equivalence, note commitment/nullifier/ciphertext cryptographic security, or complete Rust/native-node refinement."
+        "The deployed SmallWood theorem consumes `DeployedSmallWoodProofSystemSoundnessAssumption`: cryptographic verifier acceptance implies that the exact production relation evaluates true. This is the retained STARK/FRI/PCS soundness boundary, not an assumption of authorization, output validity, conservation, extraction, or row equivalence.",
+        "The theorem exposes every indexed input slot as inactive with zero nullifier or active with full spend facts, and every indexed output slot as inactive with zero commitment/ciphertext hash or active with a nonzero public commitment. Primitive hash security, proof-system soundness, and complete arbitrary Rust/native-node refinement remain external boundaries."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/AcceptedTransactionSoundness.lean",
         "formal/lean/Hegemon/Transaction/AcceptedProofArtifact.lean",
         "formal/lean/Hegemon/Transaction/SpendAuthorization.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodSemanticClosure.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean",
+        "circuits/transaction/src/smallwood_frontend.rs",
         "formal/lean/Hegemon.lean",
         "METHODS.md",
         "DESIGN.md",
@@ -810,8 +810,8 @@
       ],
       "residual_risks": [
         {
-          "id": "accepted-transaction-soundness-assumptions-not-discharged",
-          "description": "The exact SmallWood semantic record now implies the accepted-transaction relation. Accepted deployed proof bytes to that exact record, and complete Rust constraint-builder/verifier equivalence, remain open.",
+          "id": "accepted-transaction-cryptographic-soundness-boundary",
+          "description": "The deterministic exact-map, production-row, and semantic refinement steps are closed. The retained external boundary is cryptographic soundness of the deployed SmallWood proof system and primitive hashes.",
           "status": "open",
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         }
@@ -821,7 +821,7 @@
       "id": "formal.transaction-canonical-verifier-boundary",
       "component": "canonical deployed transaction verifier soundness boundary",
       "claim_class": "lean_theorem",
-      "summary": "The Lean canonical verifier boundary packages accepted proof-wrapper admission, canonical public-input binding, transaction statement preimage construction, proof binding-message construction, public nullifier/commitment/ciphertext vector agreement, total input/output-vector binding, indexed input/output-slot statement/binding facts, root/fee/balance-slot/stablecoin core statement binding, value-balance and stablecoin payload agreement, active spend binding to the exact statement surface, deployed relation facts, native/per-asset authorized-delta projections, and the accepted transaction relation. The boundary now splits deployed soundness into spend-only and balance/public-field-only packages, proves direct input-slot, public-delta, and live-policy-authorized stablecoin exception payload consequences from those split assumptions, proves that an authorized stablecoin exception preserves the exact public/bound/statement/proof-binding policy metadata and rejects unauthorized or mismatched payload surfaces, lifts successful binding to P3 public-input field facts, proves signed magnitude equality for public fields, adds a proof-artifact admission statement certificate tying proof-wrapper metadata projection and balance artifact facts to the canonical statement surface, adds a SmallWood public balance-boundary target that exposes native and stablecoin delta facts while rejecting noncanonical signed zero, adds a P3 AIR final-row balance target with public-field verifier mutation regressions, adds a SmallWood public-statement binding target that proves the public statement is exactly the P3 public-input vector plus circuit/crypto version suffix, adds a SmallWood transcript/profile binding target that proves the modeled transcript bytes include the domain, verifier profile material, serialized statement bytes, and eight-byte padding, packages accepted SmallWood wrapper/public-statement/transcript/auth/input/output/balance/AIR surfaces with the split deployed-verifier assumptions into one explicit no-theft and public-conservation verifier envelope, and now exports the public-statement binding and verifier envelope in one theorem carrying statement-byte equality, no-theft, public conservation, and non-native stablecoin exception consequences. It provides a compatibility theorem back to the monolithic assumption while keeping real STARK/FRI proof-system soundness explicit. The residual verifier export canonical soundness certificate now composes the SmallWood verifier export, canonical boundary facts, proof-system no-theft boundary, proof-artifact statement certificate, SmallWood balance facts, AIR final-row facts, and explicit STARK/AIR, PCS, transcript, hash, extraction, and implementation-equivalence residual assumptions into one review surface. The canonical proof-system production residual certificate now carries proof-artifact statement admission, no-theft boundary facts, canonical boundary facts, spend and balance/public split boundary facts, input/output slot facts, public/witness authorized deltas, native delta authorization, non-native exception surfaces, and explicit wrapper/serialization/hash/transcript/verifier/STARK/AIR/PCS/extraction residuals. A new packaged-boundary constructor and SmallWood production review certificate now compose the concrete SmallWood residual export into the canonical production residual certificate on the same witness, mapping SmallWood transcript, verifier implementation, STARK/AIR, PCS, witness extraction, and Merkle/hash residuals into the canonical residual record while leaving wrapper decode, public-input serialization, and statement-hash collision resistance explicit. The compact SmallWood production residual certificate now projects that review surface into a single theorem target carrying statement preimage, proof-binding message, public-input binding, wrapper admission, spend authorization, public and native asset-delta facts, stablecoin exception facts, and explicit residual assumptions. The SmallWood verifier statement projection slice now proves an executable verifier-call projection table and gates production construction of the verifier-facing arithmetization, public values, row count, packing factor, effective constraint degree, linear-constraint vectors, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and explicit verifier-result handoff before invoking the named proof-system soundness assumption.",
+      "summary": "The Lean canonical verifier boundary packages exact wrapper admission, canonical public/serialized-input binding, statement and proof-binding construction, nullifier/commitment/ciphertext vector agreement, indexed input/output-slot facts, core root/fee/balance/stablecoin binding, and authorized-delta projections. The deployed SmallWood production closure now derives the accepted transaction relation from exact evaluation of the generated sparse-linear and nonlinear expression/root program under the explicit STARK/FRI/PCS soundness boundary. Historical split-soundness and verifier-envelope theorems remain research-only compatibility surfaces; the production claim no longer relies on a retired backend AIR or a caller-populated semantic certificate. Complete parser/compiler/native-node refinement and primitive hash security remain explicit boundaries.",
       "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_explicit_deployed_verifier_soundness_assumption",
       "production_eligible": false,
@@ -898,12 +898,6 @@
         "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_authorize_selected_stablecoin_delta",
         "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_disabled_stablecoin_delta_zero",
         "Hegemon.Transaction.SmallWoodBalanceBoundary.accepted_smallwood_balance_constraints_nonselected_non_native_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_exposes_boundary_facts",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_native_delta",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_selected_slot_asset",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_nonselected_slot_delta_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_metadata_zero",
-        "Hegemon.Transaction.AirBalanceBoundary.accepted_air_balance_final_row_disabled_non_native_delta_zero",
         "Hegemon.Transaction.SmallWoodPublicStatementBinding.base_p3_public_vector_length",
         "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_append_version_binding",
         "Hegemon.Transaction.SmallWoodPublicStatementBinding.smallwood_public_statement_values_length",
@@ -915,6 +909,7 @@
         "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_version",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_arithmetization",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.active_inline_merkle_profile_uses_active_decs_opening_count",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.historical_v2_inline_merkle_profile_uses_historical_decs_opening_count",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.legacy_profile_arithmetizations_use_legacy_decs_opening_count",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.deployed_smallwood_profile_materials_distinguish_arithmetization_tags",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.active_profile_is_no_grinding",
@@ -945,11 +940,14 @@
         "Hegemon.Transaction.SmallWoodVerifierStatementProjection.public_value_drift_rejects_before_row_shape",
         "Hegemon.Transaction.SmallWoodVerifierStatementProjection.linear_constraint_offset_drift_rejects_before_indices",
         "Hegemon.Transaction.SmallWoodVerifierStatementProjection.transcript_byte_drift_rejects_before_empty_proof",
-        "Hegemon.Transaction.SmallWoodVerifierStatementProjection.verifier_rejection_stays_last_after_projection_facts"
+        "Hegemon.Transaction.SmallWoodVerifierStatementProjection.verifier_rejection_stays_last_after_projection_facts",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_transaction_relation"
       ],
       "assumptions": [
         "The theorem depends on `DeployedTxVerifierSoundnessAssumption`: accepted deployed verifier evidence over the exact canonical statement surface must imply the modeled balance slots, valid balance relation, and spend-authorization relation.",
-        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target. `canonical_statement_surface_p3_public_input_binding_facts` and `deployed_soundness_canonical_surface_public_input_p3_binding_facts` additionally expose the successful-binding P3 public-input field package from the same canonical surface. `CanonicalDeployedVerifierInputSlotBoundaryFacts` and `CanonicalDeployedVerifierOutputSlotBoundaryFacts` expose the same input/output slot packages directly from the canonical surface plus the explicit deployed-verifier soundness assumption. `CanonicalProofArtifactAdmissionStatementCertificate` separately packages an accepted canonical statement surface with the existing balance-soundness assumption to expose proof-wrapper metadata projection, public/statement/proof-binding facts, balance artifact facts, and native delta on one statement witness.",
+        "`Hegemon.Transaction.ProofSystemBoundary.CanonicalDeployedVerifierBoundaryFacts` packages the exact canonical statement surface, deployed relation facts, accepted transaction relation, public-input binding validity, wrapper preconditions, statement preimage length, statement preimage success, proof binding-message success, core root/fee/balance-slot/stablecoin statement binding, vector binding, input-vector binding, output-vector binding, value-balance binding, stablecoin payload binding, native/per-asset authorized-delta projections, total input-slot statement/proof-binding projection, and output-slot statement/proof-binding projection into one future AIR/refinement target. `canonical_statement_surface_p3_public_input_binding_facts` and `deployed_soundness_canonical_surface_public_input_p3_binding_facts` additionally expose the successful-binding canonical verifier-field package from the same canonical surface. `CanonicalDeployedVerifierInputSlotBoundaryFacts` and `CanonicalDeployedVerifierOutputSlotBoundaryFacts` expose the same input/output slot packages directly from the canonical surface plus the explicit deployed-verifier soundness assumption. `CanonicalProofArtifactAdmissionStatementCertificate` separately packages an accepted canonical statement surface with the existing balance-soundness assumption to expose proof-wrapper metadata projection, public/statement/proof-binding facts, balance artifact facts, and native delta on one statement witness.",
         "`Hegemon.Native.TxLeafCanonicalSurface.native_tx_leaf_deployed_verifier_boundary_facts` composes those packaged proof-system boundary facts with accepted native tx-leaf/action equality admission, while `native_tx_leaf_canonical_artifact_boundary_active_input_no_theft` packages an active artifact input slot into spend facts and `native_tx_leaf_full_statement_artifact_output_slot_full_binding` packages selected output rows with statement/proof-binding vector facts, wrapper/public/statement facts, native output equality gates, and artifact digest/backend gates. Both still inherit the explicit deployed verifier soundness assumption where they derive accepted-relation facts.",
         "The canonical surface binds proof-wrapper admission, public/serialized input binding, statement-hash preimage construction, proof binding-message construction, nullifier/commitment/ciphertext-hash vector agreement across public shape, statement preimage, and proof binding message, total input-slot facts across public shape, statement preimage, and proof binding message, indexed output-slot facts across public shape, statement preimage, and proof binding message, value-balance agreement, balance-slot asset agreement, stablecoin field agreement, stablecoin payload agreement, and active spend facts to the exact bound anchor/nullifier statement surface.",
         "The theorem does not prove deployed STARK/AIR or SmallWood soundness, witness extraction, verifier implementation correctness, bincode/postcard implementation correctness, hash collision resistance, note/nullifier cryptographic security, stablecoin policy validity, bridge mint authorization, or complete Rust/native-node refinement.",
@@ -958,21 +956,19 @@
         "`AuthorizedStablecoinMintExceptionSurface` now has theorem-level anti-mismatch projections: the exact canonical payload is authorized, policy hash/oracle/attestation/version fields are preserved across public inputs, bound inputs, statement rows, and proof-binding rows, and unauthorized, asset-mismatched, delta-mismatched, or policy-metadata-mismatched payloads cannot inhabit the authorized surface.",
         "These theorems still keep `LiveStablecoinPolicyAuthorizes` as an explicit predicate; production policy/oracle/attestation lookup, freshness, and dispute checks remain separate implementation-equivalence work.",
         "`Hegemon.Transaction.SmallWoodBalanceBoundary` narrows the future balance/public-field verifier target to concrete public native-delta, selected-stablecoin-delta, disabled-stablecoin-zero, non-selected non-native zero, and signed-magnitude canonicality facts; the production mutation gates require the inline-Merkle SmallWood constraint path to reject public balance/stablecoin tampering even when auxiliary Merkle rows are recomputed from the tampered public values.",
-        "`Hegemon.Transaction.AirBalanceBoundary` narrows the deployed P3 AIR target by modeling the final-row value-balance and stablecoin equations directly; `GenerateAirBalanceBoundaryVectors.lean` now emits final-row surfaces checked against production P3 trace/public-input extraction and equation rejection cases, while `p3_air_balance_public_field_mutations_rejected` proves the production P3 verifier rejects verifier-facing value-balance and stablecoin issuance public-field drift for a valid stablecoin proof.",
-        "`Hegemon.Transaction.SmallWoodPublicStatementBinding` narrows the SmallWood verifier implementation-equivalence target by proving the modeled public statement values are exactly the P3 public-input vector followed by the circuit-version and crypto-suite suffix, and by carrying the serialized-statement boundary into the transcript surface. The generated-vector gate checks the production `smallwood_public_statement_values_for_p3` helper and the live SmallWood candidate profile surface for normal and stablecoin witnesses. This does not prove bincode serialization correctness, hash security, or SmallWood cryptographic soundness.",
+        "`Hegemon.Transaction.SmallWoodPublicStatementBinding` narrows the SmallWood verifier implementation-equivalence target by proving the modeled public statement values are exactly the canonical verifier field vector followed by the circuit-version and crypto-suite suffix, and by carrying the serialized-statement boundary into the transcript surface. The generated-vector gate checks the production `smallwood_public_statement_values` helper and the live SmallWood candidate profile surface for normal and stablecoin witnesses. This does not prove bincode serialization correctness, hash security, or SmallWood cryptographic soundness.",
         "`Hegemon.Transaction.SmallWoodTranscriptBinding` narrows the SmallWood verifier target by modeling the transcript/profile bytes over already serialized public statement bytes; the generated-vector gate checks the production transcript helper, every production-recognized arithmetization label, the active 23-DECS-opening profile split from the legacy 25-opening family, statement byte inclusion, and eight-byte padding. The active profile proves both grinding fields are zero and emits all 16 named in-range single-field version, suite, arithmetization, degree, opening, grinding, DECS, and Poseidon mutations; Rust reconstructs every emitted profile and requires exact byte agreement plus non-aliasing with the active material. The theorem explicitly restricts circuit/suite fields to the production u16 domain and the remaining serialized fields to u64. A circuit-version increment by 2^16 is proved to collide under u16 serialization and to be outside that production domain. This does not prove bincode serialization correctness or SmallWood cryptographic soundness.",
-        "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_surfaces_with_split_soundness_imply_verifier_envelope` packages accepted SmallWood candidate wrapper admission, transcript/profile binding, active auth-link facts, active input row-boundary facts, active output row-boundary facts, SmallWood public balance facts, P3 AIR final-row balance facts, canonical deployed-verifier boundary facts, split spend-only boundary facts, split balance/public-field boundary facts, public authorized deltas, native delta authorization, and the exact remaining split deployed-verifier soundness assumptions into one reviewable verifier envelope. `accepted_smallwood_public_statement_surfaces_with_split_soundness_imply_verifier_export` joins that envelope to the accepted public-statement binding surface and statement-byte equality, exposing no-theft, public conservation, and non-native stablecoin exception consequences at the same export boundary. This narrows the AIR/FRI/Rust-refinement target but still does not prove STARK/FRI soundness or witness extraction.",
         "The SmallWood formal soundness review certificate co-witnesses the explicit split spend/balance soundness assumptions with the concrete public-statement verifier export and no-theft/public-conservation consequences; it still does not discharge STARK/FRI soundness or witness extraction.",
         "The SmallWood residual verifier export canonical soundness certificate keeps STARK/AIR constraint soundness, PCS opening binding, transcript hash/random-oracle behavior, Merkle/commitment hash security, witness extraction completeness, and verifier implementation equivalence as explicit theorem fields rather than prose residuals.",
         "The proof-system production residual certificate keeps wrapper canonical decode equivalence, public-input serialization equivalence, statement-hash collision resistance, binding transcript hash soundness, deployed verifier implementation equivalence, STARK/AIR/PCS soundness, witness extraction, and Merkle/commitment hash security explicit.",
         "`Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope.accepted_smallwood_public_statement_surfaces_with_split_soundness_and_residuals_imply_production_review_certificate` composes the concrete SmallWood residual certificate into `CanonicalProofSystemProductionResidualCertificate` through `packaged_canonical_boundaries_with_residuals_imply_proof_system_production_residual_certificate`; this packages review evidence without proving STARK/AIR/PCS soundness, witness extraction, hash security, wrapper decode equivalence, public-input serialization equivalence, or statement-hash collision resistance.",
         "The residual-boundary projection theorems expose the proof artifact, no-theft, input/output slot, public/native delta, stablecoin exception, and explicit wrapper/serialization/hash/transcript/verifier/STARK/AIR/PCS/extraction residual fields from the canonical and compact SmallWood certificates, so downstream implementation-equivalence claims cannot cite the certificate while silently dropping residual assumptions.",
-        "`Hegemon.Transaction.SmallWoodVerifierStatementProjection` turns the deployed SmallWood verifier-call construction into a checked projection gate: Lean models candidate-wrapper/public-statement/transcript acceptance, arithmetization, public values, row/packing/degree metadata, all linear-constraint vector families, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and the explicit verifier-result handoff. The Rust vector gate reconstructs the production `PackedStatement` verifier surface for normal and stablecoin inline-Merkle witnesses and checks every modeled drift case. This narrows verifier implementation equivalence while keeping STARK/AIR/PCS soundness, witness extraction, and primitive hash/security assumptions explicit."
+        "`Hegemon.Transaction.SmallWoodVerifierStatementProjection` turns the deployed SmallWood verifier-call construction into a checked projection gate: Lean models candidate-wrapper/public-statement/transcript acceptance, arithmetization, public values, row/packing/degree metadata, all linear-constraint vector families, auxiliary witness limb count, profile material, transcript bytes, proof-byte presence, and the explicit verifier-result handoff. The Rust vector gate reconstructs the production `PackedStatement` verifier surface for normal and stablecoin inline-Merkle witnesses and checks every modeled drift case. This narrows verifier implementation equivalence while keeping STARK/AIR/PCS soundness, witness extraction, and primitive hash/security assumptions explicit.",
+        "The exact production-map theorem supersedes the retired AIR-specific production target: accepted SmallWood verification reaches the full generated sparse-linear and nonlinear program only through the named deployed STARK/FRI/PCS soundness boundary."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Transaction/ProofSystemBoundary.lean",
         "formal/lean/Hegemon/Transaction/CanonicalVerifierBoundary.lean",
-        "formal/lean/Hegemon/Transaction/AirBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodBalanceBoundary.lean",
         "formal/lean/Hegemon/Transaction/SmallWoodCandidateWrapperAdmission.lean",
         "formal/lean/Hegemon/Transaction/GenerateSmallWoodCandidateWrapperAdmissionVectors.lean",
@@ -996,20 +992,22 @@
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh",
         "formal/lean/Hegemon/Transaction/SmallWoodVerifierStatementProjection.lean",
-        "formal/lean/Hegemon/Transaction/GenerateSmallWoodVerifierStatementProjectionVectors.lean"
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodVerifierStatementProjectionVectors.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "bash scripts/check_formal_core.sh",
         "HEGEMON_LEAN_SMALLWOOD_CANDIDATE_WRAPPER_ADMISSION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production --lib -- --nocapture",
-        "cargo test -p transaction-circuit p3_air_balance_public_field_mutations_rejected --lib -- --nocapture",
         "HEGEMON_LEAN_SMALLWOOD_PUBLIC_STATEMENT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit --test smallwood_public_statement_binding lean_generated_smallwood_public_statement_binding_vectors_match_production -- --nocapture",
         "HEGEMON_LEAN_SMALLWOOD_TRANSCRIPT_BINDING_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_transcript_binding_vectors_match_production -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_balance_mutation --lib -- --nocapture",
         "cargo test -p transaction-circuit packed_smallwood_inline_merkle_rejects_public_stablecoin_delta_mutation --lib -- --nocapture",
         "cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierSoundnessEnvelope",
         "HEGEMON_LEAN_SMALLWOOD_VERIFIER_STATEMENT_PROJECTION_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_verifier_statement_projection_vectors_match_production --lib -- --nocapture",
-        "cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierStatementProjection Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors"
+        "cd formal/lean && lake build Hegemon.Transaction.SmallWoodVerifierStatementProjection Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors",
+        "HEGEMON_LEAN_SMALLWOOD_PRODUCTION_CONSTRAINT_REFINEMENT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_production_constraint_maps_match_every_production_row --lib -- --nocapture"
       ],
       "residual_risks": [
         {
@@ -1150,9 +1148,7 @@
         "Hegemon.Transaction.StatementHash.statementPreimage_valid_length",
         "Hegemon.Transaction.StatementHash.proofDigestDomain_length",
         "Hegemon.Transaction.StatementHash.proofDigestPreimage_length",
-        "Hegemon.Transaction.StatementHash.proofDigestPreimage_valid_plonky3_length",
         "Hegemon.Transaction.StatementHash.proofDigestPreimage_valid_smallwood_length",
-        "Hegemon.Transaction.StatementHash.proofDigestPreimage_binds_backend_wire_id",
         "Hegemon.Transaction.StatementHash.proofDigestPreimage_binds_proof_bytes",
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_stablecoin",
         "Hegemon.Transaction.ProofStatementBinding.bindingMessage_accepts_valid",
@@ -1165,7 +1161,7 @@
       ],
       "assumptions": [
         "The Lean model treats 48-byte commitments as abstract byte arrays generated from deterministic seeds; it does not prove Poseidon2/BLAKE3 implementation equivalence or digest collision resistance.",
-        "Generated Lean conformance vectors cover the statement-hash domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian fee/version/stablecoin fields, two's-complement signed value-balance and stablecoin issuance encoding, rejection for over-wide vectors or invalid signed-magnitude flags, the `tx-public-inputs-digest-v1` postcard byte preimage for serialized verifier inputs, and the `tx-proof-digest-v1` domain plus backend wire byte plus exact proof bytes for Plonky3 and SmallWood proof digest cases.",
+        "Generated Lean conformance vectors cover the statement-hash domain separator, merkle root, padded nullifier/commitment/ciphertext-hash lists, little-endian fee/version/stablecoin fields, two's-complement signed value-balance and stablecoin issuance encoding, rejection for over-wide vectors or invalid signed-magnitude flags, the `tx-public-inputs-digest-v1` postcard byte preimage for serialized verifier inputs, and the `tx-proof-digest-v1` domain plus the SmallWood backend wire byte and exact proof bytes.",
         "Generated proof-binding vectors cover the binding-hash-v3 transcript message for nullifier/commitment/ciphertext partition lengths, repartitioning of the same digest bytes across nullifier and commitment vectors, fee, signed value balance, balance-slot assets, stablecoin payloads, chunk-domain-separated BLAKE2 preimages, and the distinction between the u64::MAX padding sentinel and the Goldilocks field-padding collision value.",
         "The proof binding-hash-v3 transcript does not include transaction balance_tag, circuit_version, or crypto_suite; those fields are covered by the transaction statement-hash vectors and consensus tx-leaf binding checks.",
         "The theorem covers the byte preimage grammar and Rust hash invocations over checked preimages, not BLAKE2/BLAKE3 cryptographic security, note commitment hashing, nullifier derivation, ciphertext hash derivation, STARK verifier soundness, SmallWood soundness, or complete Rust refinement."
@@ -2430,6 +2426,7 @@
         "Hegemon.Consensus.nonempty_rejects_tx_artifact_count_mismatch",
         "Hegemon.Consensus.nonempty_requires_proven_batch",
         "Hegemon.Consensus.nonempty_requires_tx_artifacts",
+        "Hegemon.Consensus.receipt_root_is_retired",
         "Hegemon.Consensus.recursive_complete_accepts",
         "Hegemon.Consensus.recursive_rejects_commitment_proof_bytes",
         "Hegemon.Consensus.recursive_requires_block_artifact",
@@ -2450,7 +2447,7 @@
       ],
       "assumptions": [
         "The Lean model represents the consensus proof payload availability and route-shape decision before cryptographic artifact verification.",
-        "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, missing recursive block artifacts, and receipt-root payload requirements.",
+        "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, explicit ReceiptRoot retirement with and without its payload, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, and missing recursive block artifacts.",
         "Generated TxValidityClaim matching vectors cover exact acceptance plus claim-count, receipt statement hash, proof digest, public-input digest, verifier-profile, binding statement hash, anchor/root, fee, circuit-version, and rejection-precedence mismatches against the production consensus helper.",
         "The theorem covers executable proof policy admission semantics and deterministic provided-claim/verified-artifact equality gates, not proven-batch binding, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, DA root derivation, or native backend security. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
       ],
@@ -2860,10 +2857,10 @@
       "id": "consensus.receipt-root-admission",
       "component": "receipt-root proof payload and block-artifact admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean receipt-root admission kernel proves executable fail-closed facts for receipt-root payload leaf/receipt agreement, tx-validity claim agreement, transaction artifact availability, receipt_root envelope kind, native verifier-profile agreement, artifact size caps, tx-artifact count agreement, statement-commitment agreement, and verified leaf-count agreement; generated Lean vectors are checked against the production consensus helpers.",
-      "status": "enforced",
+      "summary": "The Lean receipt-root admission kernel proves executable fail-closed facts for receipt-root payload leaf/receipt agreement, tx-validity claim agreement, transaction artifact availability, receipt_root envelope kind, native verifier-profile agreement, artifact size caps, tx-artifact count agreement, statement-commitment agreement, and verified leaf-count agreement; generated Lean vectors are checked against the retained research/test helpers, while production proof policy independently rejects the retired ReceiptRoot route.",
+      "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
-      "production_eligible": true,
+      "production_eligible": false,
       "lean_theorems": [
         "Hegemon.Consensus.ReceiptRootAdmission.artifact_accepts_iff_preconditions",
         "Hegemon.Consensus.ReceiptRootAdmission.artifact_missing_tx_artifacts_rejects",
@@ -2888,7 +2885,7 @@
         "Hegemon.Consensus.ReceiptRootAdmission.verified_metadata_accepts_iff_preconditions"
       ],
       "assumptions": [
-        "The Lean model represents the cheap consensus admission and binding tables around receipt-root block artifact verification, including the checks that run before native tx-leaf verification, before backend root verification, and after root metadata is returned.",
+        "The Lean model represents retained receipt-root research/test admission and binding tables. Production block admission rejects ReceiptRoot at the earlier self-contained proof-policy gate.",
         "Generated Lean conformance vectors cover valid payload/artifact/statement/metadata cases plus payload leaf-count mismatch, receipt-count mismatch, missing tx-validity claims, payload receipt mismatch, missing transaction artifacts, wrong artifact kind, verifier-profile mismatch, artifact size cap rejection, tx-artifact count mismatch, statement-commitment mismatch, verified leaf-count mismatch, and exact-size-limit acceptance.",
         "The theorem covers executable receipt-root payload/envelope/size/count/statement/metadata admission only. It does not prove native tx-leaf proof soundness, native receipt-root byte parsing, native receipt-root cryptographic fold soundness, backend transcript challenge derivation, BLAKE3 security or implementation equivalence, or complete block proof validity. Native tx-leaf admission, native receipt-root wire grammar, and proven-batch binding are covered separately."
       ],
@@ -2904,7 +2901,14 @@
         "HEGEMON_LEAN_RECEIPT_ROOT_ADMISSION_VECTORS=<generated-json> cargo test -p consensus lean_generated_receipt_root_admission_vectors_match_production -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
-      "residual_risks": []
+      "residual_risks": [
+        {
+          "id": "receipt-root-research-only",
+          "description": "ReceiptRoot helper semantics remain research-only and are not evidence for an admitted block-proof route; production safety relies on the separately mechanized early proof-policy rejection.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        }
+      ]
     },
     {
       "id": "consensus.aggregation-v5-header-admission",
@@ -3058,7 +3062,7 @@
       "id": "consensus.supply-chain-invariant",
       "component": "PoW accepted-chain supply accounting",
       "claim_class": "lean_theorem",
-      "summary": "The Lean supply-chain invariant kernel proves that accepted claimed supply steps replay to the same final supply as the executable expected-delta sequence; generated Lean chain vectors are checked against the production consensus supply transition helper used by PoW validation. Existing cross-layer theorems package accepted native transaction-chain delta authorization or canonical no-theft/public-field facts with claimed-supply replay under an explicit fee/native-delta binding, while separate coinbase certificates bind one-coinbase minting to subsidy and no-coinbase minting to zero. This claim does not close same-block composition: minted value, burns, the complete ordered fee source, and the supply step still must be projected from the same accepted block artifact.",
+      "summary": "The Lean supply-chain invariant kernel proves accepted claimed supply steps replay to the executable expected-delta sequence. AcceptedSmallWoodBlockComposition now closes the same-block projection: the exact ordered transaction fees, deployed empty independent-burn list, zero-or-one coinbase count and observed amount, parent supply, height, and claimed supply are all fields of the same accepted canonical block object, and the final supply equals the production subsidy-plus-fee transition. The composed no-counterfeit certificate is explicitly scoped to active SmallWood V3/Beta transactions. Lean-generated identity, active-version, and supply mutations are checked against the production consensus identity projection, production default binding, native ingress manifest, and native supply-composition helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3097,31 +3101,38 @@
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_one_coinbase_accounting_yields_supply_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_yields_supply_certificate",
         "Hegemon.Native.CoinbaseSupplyConservation.accepted_one_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
-        "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate"
+        "Hegemon.Native.CoinbaseSupplyConservation.accepted_no_coinbase_accounting_and_canonical_boundary_yields_supply_integrity_certificate",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path"
       ],
       "assumptions": [
         "The Lean model represents a chain prefix as an ordered list of claimed supply steps carrying minted amount, signed fees, burns, and the claimed post-block supply digest.",
         "Generated Lean conformance vectors cover valid multi-step replay, claimed-supply counterfeiting, burn underflow, and supply overflow rejection.",
-        "The cross-layer supply theorems consume accepted transaction-chain native delta authorization or canonical no-theft/public-field boundary facts and expose the matching claimed-supply step under an explicit fee/native-delta binding. The native coinbase supply certificates additionally consume accepted coinbase-accounting admission and prove one-coinbase observed amount equals checked subsidy plus fees, while no-coinbase certificates bind zero modeled mint. They do not prove the production fee aggregator or full block-construction path by themselves.",
-        "The theorem covers executable supply-chain replay and claimed supply matching. It does not prove transaction proof soundness, privacy, hash implementation equivalence, monetary policy economics beyond the current subsidy/delta helpers, production block construction, or complete native-node equivalence.",
-        "The production supply conservation certificates keep the fee/native-delta binding and remaining block construction equivalence explicit while proving claimed supply replay follows accepted native deltas and canonical no-theft/public-field facts.",
-        "The cross-layer coinbase/canonical supply-integrity theorems bind accepted coinbase accounting and canonical no-theft/public-balance facts in one package, while still leaving the production block-construction witness and fee/native-delta equality as explicit premises.",
-        "No theorem in this claim proves that minted value, burns, fees, the ordered accepted transaction list, and the claimed supply step were projected from the same accepted block artifact. That accepted-chain composition track remains open.",
-        "The toy SmallWood note commitment uses modulo-65537 digest arithmetic. Production no-counterfeit lifting therefore also requires a production-refined note-opening commitment binding or an explicit cryptographic collision-resistance assumption."
+        "The deployed native action grammar has no independent burn action, so the exact accepted burn projection is the empty list; no-coinbase fees remain unminted under the existing supply helper.",
+        "The final no-counterfeit theorem retains deployed SmallWood proof-system soundness and production note-hash collision resistance as explicit cryptographic assumptions. It does not assume fee linkage, coinbase linkage, burn linkage, transaction ordering, or claimed-supply equality.",
+        "The final composed no-counterfeit certificate covers only circuit version 3 with crypto suite Beta (numeric suite 2). Historical V2/Beta recursive replay remains a network-compatibility surface outside that certificate and requires a coordinated activation or checkpoint policy before it can be retired from block import.",
+        "Primitive cryptographic security, privacy, monetary-policy economics beyond the current subsidy helper, and complete arbitrary native-node refinement remain outside this claim."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/SupplyInvariant.lean",
         "formal/lean/Hegemon/Consensus/GenerateSupplyInvariantVectors.lean",
         "formal/lean/Hegemon/Consensus/Supply.lean",
         "formal/lean/Hegemon/Native/CoinbaseSupplyConservation.lean",
+        "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
+        "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
         "consensus/src/reward.rs",
         "consensus/src/pow.rs",
+        "consensus/src/proof.rs",
+        "node/src/native/block_flow.rs",
+        "node/src/native/tests.rs",
         "scripts/check_formal_core.sh",
         "scripts/check_lean_formal.sh"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "HEGEMON_LEAN_SUPPLY_INVARIANT_VECTORS=<generated-json> cargo test -p consensus lean_generated_supply_invariant_vectors_match_production -- --nocapture",
+        "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS=<generated-json> cargo test -p consensus lean_generated_accepted_smallwood_block_identity_vectors_match_production --lib -- --nocapture",
+        "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_accepted_smallwood_block_supply_vectors_match_production --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
       "residual_risks": []
@@ -6501,7 +6512,7 @@
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
-        "Hegemon.Native.TxLeafArtifact.legacy_missing_backend_defaults_to_plonky3",
+        "Hegemon.Native.TxLeafArtifact.retired_version_missing_backend_defaults_to_smallwood",
         "Hegemon.Native.TxLeafArtifact.missing_backend_defaults_to_current_backend",
         "Hegemon.Native.TxLeafArtifact.valid_projection_counts_accept",
         "Hegemon.Native.TxLeafArtifact.input_count_mismatch_projection_rejects",
@@ -6510,6 +6521,7 @@
         "Hegemon.Native.TxLeafArtifact.nonbinary_input_flag_projection_rejects",
         "Hegemon.Native.TxLeafArtifact.nonbinary_output_flag_projection_rejects",
         "Hegemon.Native.TxLeafArtifact.rejects_bad_backend",
+        "Hegemon.Native.TxLeafArtifact.rejects_retired_backend",
         "Hegemon.Native.TxLeafArtifact.rejects_oversized_proof_len",
         "Hegemon.Native.TxLeafArtifact.rejects_too_many_balance_slots",
         "Hegemon.Native.TxLeafArtifact.rejects_too_many_ciphertext_hashes",
@@ -6521,7 +6533,7 @@
         "Hegemon.Native.TxLeafArtifact.rejects_too_many_rows",
         "Hegemon.Native.TxLeafArtifact.rejects_trailing_after_backend",
         "Hegemon.Native.TxLeafArtifact.rejects_truncated_artifact",
-        "Hegemon.Native.TxLeafArtifact.strict_legacy_missing_backend_rejects",
+        "Hegemon.Native.TxLeafArtifact.strict_retired_version_missing_backend_rejects",
         "Hegemon.Native.TxLeafArtifact.strict_missing_backend_rejects",
         "Hegemon.Native.TxLeafArtifact.strict_valid_artifact_parses",
         "Hegemon.Native.TxLeafArtifactProjectionRefinement.accepted_native_tx_leaf_artifact_resource_exposes_bounds",
@@ -6529,7 +6541,7 @@
       ],
       "assumptions": [
         "The Lean model covers the native tx-leaf artifact byte grammar and parser control flow, not lattice commitment security, STARK proof soundness, or statement-digest collision resistance.",
-        "Generated Lean conformance vectors cover valid explicit-backend artifacts, permissive parser missing-backend default behavior, strict canonical rejection of missing-backend artifacts, legacy Plonky3 default behavior, trailing bytes, bad backend IDs, every bounded vector count, active input/output flag count agreement with nullifier/commitment/ciphertext-hash counts, non-binary active flag rejection, proof-length cap rejection, row/coeff caps, and truncation rejection.",
+        "Generated Lean conformance vectors cover valid explicit SmallWood artifacts, permissive missing-backend defaulting to SmallWood, strict canonical rejection of missing-backend artifacts, explicit retired-backend rejection, trailing bytes, bad backend IDs, every bounded vector count, active input/output flag count agreement with nullifier/commitment/ciphertext-hash counts, non-binary active flag rejection, proof-length cap rejection, row/coeff caps, and truncation rejection.",
         "The production conformance test checks decoder agreement, strict canonical decoder agreement, canonical re-encoding behavior, active-count projection behavior, and the Lean resource projection for raw bytes, decoded bytes, dynamic item count, max proof bytes, aggregate bytes, and work units in superneo-hegemon; production verification uses the strict canonical admission path before proof verification, while consensus receipt binding and statement-hash semantics are covered by separate claims.",
         "The independent raw-byte oracle corpus covers valid explicit backend bytes, missing-backend permissive defaulting, trailing bytes, truncation, bad-backend mutation, over-cap serialized/public/commitment counts, oversized declared STARK proof length, summary projection, and canonical re-encoding. This is parser-drift evidence and not a proof of the Rust parser implementation."
       ],
@@ -6744,21 +6756,21 @@
         "scripts/check_native_backend_review_policy_vectors.py",
         "tools/native-backend-ref/src/lib.rs",
         "testdata/native_backend_vectors/bundle.json",
-    "scripts/check_formal_core.sh",
-    "scripts/check_lean_formal.sh",
-    "scripts/native_backend_review_package.py",
-    "scripts/package_native_backend_review.sh",
-    "scripts/verify_native_backend_review_package.sh",
-    "scripts/test_verify_native_backend_review_package.py"
+        "scripts/check_formal_core.sh",
+        "scripts/check_lean_formal.sh",
+        "scripts/native_backend_review_package.py",
+        "scripts/package_native_backend_review.sh",
+        "scripts/verify_native_backend_review_package.sh",
+        "scripts/test_verify_native_backend_review_package.py"
       ],
       "gates": [
         "bash scripts/check_lean_formal.sh",
         "python3 scripts/check_native_backend_review_policy_vectors.py <generated-json> testdata/native_backend_vectors/bundle.json",
-    "cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors",
-    "bash scripts/check_formal_core.sh",
-    "bash scripts/verify_native_backend_review_package.sh",
-    "python3 scripts/test_verify_native_backend_review_package.py",
-    "HEGEMON_LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS=<generated-json> cargo test -p superneo-backend-lattice --lib tests::lean_generated_native_backend_algebra_vectors_match_production -- --exact --nocapture"
+        "cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors",
+        "bash scripts/check_formal_core.sh",
+        "bash scripts/verify_native_backend_review_package.sh",
+        "python3 scripts/test_verify_native_backend_review_package.py",
+        "HEGEMON_LEAN_NATIVE_BACKEND_ALGEBRA_VECTORS=<generated-json> cargo test -p superneo-backend-lattice --lib tests::lean_generated_native_backend_algebra_vectors_match_production -- --exact --nocapture"
       ],
       "residual_risks": []
     },
@@ -7680,6 +7692,108 @@
           "description": "The gate makes environmental assumptions fail-closed and monitored, but external DA retention, storage hardware behavior, GitHub enforcement, advisory-feed completeness, global traffic privacy, and performance drift remain outside Lean's direct proof scope.",
           "status": "open",
           "tracking": "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md"
+        }
+      ]
+    },
+    {
+      "id": "formal.deployed-smallwood-no-counterfeit-critical-path",
+      "component": "deployed SmallWood accepted-block no-counterfeit critical path",
+      "claim_class": "lean_theorem",
+      "summary": "The deployed SmallWood closure proves one production-bound theorem chain for active circuit version 3 and crypto suite Beta from an accepted canonical block and named cryptographic boundaries to exact evaluation of the generated SmallWood constraint program, same-witness spend/output/balance equation relations for every ordered transaction, exact verified-claim/canonical-identity/proven-batch/statement/order/DA binding, and the same block's fee, burn, coinbase, and claimed-supply transition. The generated semantic map covers every public field, both exact sparse linear tables, all 11,604 nonlinear expression nodes, all 1,722 ordered roots, eight disjoint constraint-family spans, and the program digest. An independent sparse-linear objective requires 30 exact output-note-hash bindings per active output, both input value/asset-to-note-hash bindings per active input, and all seven input/output/public monetary range-reconstruction equations. The output bindings reconstruct the deployed 18-word Poseidon2 opening from three exact sponge chunks and derive value/asset uniqueness only from primitive Poseidon2 collision resistance. A generated 16-mask Rust contract is compiled into the V3 prover, verifier, and formal map API; for every actual public vector it checks the complete constraint structure and every normalized public-value target, so value-specific drift outside the generator probes fails closed. The exact-table digest remains audit metadata rather than a semantic map field or accepted-proof premise. Production conformance gates compare the full linear and nonlinear maps plus the exact ordered identity, active-version, and supply projections, including explicit V2/Beta rejection from the claimed closure scope, wrapper cross-encoding, input/output hash binding substitution, monetary reconstruction substitution, value-specific target/structure drift, expression/root/digest drift, omission, reordering, substitution, duplication, wrapping, truncation, DA mismatch, fee-order mismatch, coinbase mismatch, and claimed-supply mismatch.",
+      "status": "enforced",
+      "proof_model": "lean4_theorem_no_sorry_exact_production_map_generated_rust_conformance_vectors",
+      "production_eligible": true,
+      "lean_theorems": [
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.active_public_field_map_covers_every_deployed_index_exactly_once",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_transaction_relation",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_accepted_transaction_relation_exposes_same_witness_semantics",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_required_linear_spec_count_is_exact",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_spec_count_is_exact",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_spec_count_is_exact",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_preimage_has_exact_deployed_word_count",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
+        "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.deployed_smallwood_proof_yields_transaction_relation",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.active_smallwood_version_accepts_iff",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.production_composition_field_map_is_complete",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.omitted_claim_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.reordered_claim_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.substituted_claim_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.duplicated_claim_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.wrapped_recursive_identity_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.truncated_recursive_identity_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_da_identity_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_fee_order_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_coinbase_amount_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_claimed_supply_rejects"
+      ],
+      "assumptions": [
+        "`DeployedSmallWoodProofSystemSoundnessAssumption` is the explicit deployed STARK/FRI/PCS cryptographic boundary: accepted proof verification implies the exact production SmallWood relation evaluates true. It does not assume spend authorization, output validity, balance conservation, exact extraction, or row equivalence as separate conclusions.",
+        "`ProductionPoseidon2HashCollisionResistance` is the explicit primitive note-hash assumption. It applies only after `ProductionAcceptedOutputHashImage` proves the exact production map, 18-word three-chunk preimage, frame and continuation constraints, authorization-key bindings, all Poseidon transition equations, and six public commitment bindings; Lean then derives value/asset equality by projecting the first two preimage words rather than assuming output binding as a separate relation.",
+        "The exact-table BLAKE3 digest is audit-only conformance metadata. The accepted-proof theorem reconstructs the complete semantic map from canonical public values and does not accept a candidate digest.",
+        "The compiled Rust runtime contract is generated from the reviewed 16-mask map templates but is enforced against every actual V3 public vector. Its complete structure digest and normalized-target digest convert unsupported value-dependent builder behavior into verifier rejection rather than extrapolating four probes into a universal equivalence claim.",
+        "The production identity functions are instantiated by the shipped transaction, statement, proof, public-input, statement-commitment, DA-root, and DA-chunk-count helpers; their primitive collision resistance remains a cryptographic assumption rather than a Lean theorem.",
+        "`DeployedSmallWoodProofAccepted` requires circuit version 3 and crypto suite Beta (numeric suite 2), and the final certificate exposes that fact for every accepted transaction. Generated scope vectors bind those constants to the production default and native action-ingress manifest. Permissionless historical V2/Beta block replay is intentionally outside this bounded theorem until a coordinated network activation or checkpoint policy retires it.",
+        "The current native action grammar has no independent burn action, so the accepted burn list is exactly empty. A future burn action requires extending both the production projection and this theorem before admission.",
+        "Complete arbitrary Rust compiler semantics and whole-node refinement remain outside this bounded theorem; generated vectors and mutation gates bind the exact shipped projection helpers used on the accepted path."
+      ],
+      "evidence_paths": [
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintModel.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintTableGenerated.lean",
+        "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+        "formal/lean/Hegemon/Transaction/GenerateSmallWoodProductionConstraintRefinementVectors.lean",
+        "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
+        "formal/lean/Hegemon/Consensus/GenerateAcceptedSmallWoodBlockCompositionVectors.lean",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "circuits/transaction/src/smallwood_production_constraint_contract_generated.rs",
+        "consensus/src/proof.rs",
+        "node/src/native/block_flow.rs",
+        "node/src/native/tests.rs",
+        "protocol/versioning/src/lib.rs",
+        "scripts/check_lean_formal.sh",
+        "scripts/check_smallwood_production_constraint_table.sh",
+        "scripts/check_formal_core.sh",
+        "config/highest-standard-formal-verification-matrix.json",
+        ".agent/DEPLOYED_SMALLWOOD_NO_COUNTERFEIT_CLOSURE_EXECPLAN.md"
+      ],
+      "gates": [
+        "cd formal/lean && lake build Hegemon",
+        "bash scripts/check_smallwood_production_constraint_table.sh",
+        "HEGEMON_LEAN_SMALLWOOD_PRODUCTION_CONSTRAINT_REFINEMENT_VECTORS=<generated-json> cargo test -p transaction-circuit lean_generated_smallwood_production_constraint_maps_match_every_production_row --lib -- --nocapture",
+        "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS=<generated-json> cargo test -p consensus lean_generated_accepted_smallwood_block_identity_vectors_match_production --lib -- --nocapture",
+        "HEGEMON_LEAN_ACCEPTED_SMALLWOOD_BLOCK_COMPOSITION_VECTORS=<generated-json> cargo test -p hegemon-node lean_generated_accepted_smallwood_block_supply_vectors_match_production --lib --no-default-features -- --nocapture",
+        "bash scripts/check_lean_formal.sh",
+        "bash scripts/check_formal_core.sh"
+      ],
+      "residual_risks": [
+        {
+          "id": "smallwood-primitive-and-proof-system-security",
+          "description": "Production note/statement/hash collision resistance and deployed STARK/FRI/PCS soundness remain explicit cryptographic assumptions.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "smallwood-complete-rust-refinement",
+          "description": "The bounded production projection is conformance-gated over every mapped row and field, but complete arbitrary Rust/compiler and whole-node refinement remains a separate open track.",
+          "status": "open",
+          "tracking": "config/highest-standard-formal-verification-matrix.json"
+        },
+        {
+          "id": "smallwood-v2-replay-outside-closure",
+          "description": "The final no-counterfeit certificate covers active V3/Beta transactions. Historical V2/Beta block replay remains accepted for chain compatibility and needs a coordinated activation or checkpoint before retirement.",
+          "status": "open",
+          "tracking": ".agent/DEPLOYED_SMALLWOOD_NO_COUNTERFEIT_CLOSURE_EXECPLAN.md"
         }
       ]
     },

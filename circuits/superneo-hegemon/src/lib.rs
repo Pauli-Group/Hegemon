@@ -5,8 +5,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock};
 
 use anyhow::{ensure, Result};
 use blake3::Hasher;
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
 };
@@ -25,7 +24,6 @@ use transaction_circuit::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_circuit::hashing_pq::{bytes48_to_felts, felts_to_bytes48};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, OutputNoteWitness, MERKLE_TREE_DEPTH};
-use transaction_circuit::p3_prover::TransactionProofParams;
 use transaction_circuit::proof::{
     prove_with_params as prove_transaction_with_params,
     prove_with_params_and_smallwood_auth as prove_transaction_with_params_and_smallwood_auth,
@@ -33,11 +31,13 @@ use transaction_circuit::proof::{
     transaction_proof_digest_from_parts, transaction_public_inputs_digest,
     transaction_public_inputs_digest_from_serialized, transaction_statement_hash_checked,
     transaction_statement_hash_from_parts, transaction_statement_hash_from_public_inputs_checked,
-    transaction_verifier_profile_digest, verify as verify_transaction_proof,
-    verify_transaction_proof_bytes_for_backend, SerializedStarkInputs, TransactionProof,
+    transaction_verifier_profile_digest, validate_serialized_stark_monetary_ranges,
+    verify as verify_transaction_proof, verify_transaction_proof_bytes_for_backend,
+    SerializedStarkInputs, TransactionProof,
 };
 use transaction_circuit::public_inputs::TransactionPublicInputs;
-use transaction_circuit::TransactionPublicInputsP3;
+use transaction_circuit::TransactionProofParams;
+use transaction_circuit::TransactionVerifierInputs;
 use transaction_circuit::TransactionWitness;
 use transaction_circuit::{SmallwoodArithmetization, SmallwoodPrivateAuthWitness};
 
@@ -1579,8 +1579,8 @@ pub fn recursive_leaf_payload_limbs_v1(
     let witness = tx_leaf_public_witness_from_parts(
         &payload.tx,
         &payload.stark_public_inputs,
-        TxProofBackend::Plonky3Fri,
-        None,
+        TxProofBackend::SmallwoodCandidate,
+        Some(SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1),
     );
     let assignment = relation.build_assignment(&payload.receipt, &witness)?;
     ensure!(
@@ -1675,6 +1675,7 @@ pub fn tx_leaf_public_witness_from_transaction_proof(
         smallwood_arithmetization: smallwood_arithmetization_from_backend_and_proof_bytes(
             proof.proof_backend(),
             proof.proof_bytes(),
+            proof.version_binding(),
         )
         .map_err(|err| anyhow::anyhow!("failed to decode tx proof arithmetization: {err}"))?,
     })
@@ -1728,10 +1729,12 @@ fn native_tx_leaf_receipt_from_parts(
     })
 }
 
-fn transaction_public_inputs_p3_from_tx_leaf_public(
+fn transaction_verifier_inputs_from_tx_leaf_public(
     tx: &TxLeafPublicTx,
     stark_inputs: &SerializedStarkInputs,
-) -> Result<TransactionPublicInputsP3> {
+) -> Result<TransactionVerifierInputs> {
+    validate_serialized_stark_monetary_ranges(stark_inputs)
+        .map_err(|err| anyhow::anyhow!("invalid tx-leaf monetary range: {err}"))?;
     ensure!(
         tx.nullifiers.len() <= MAX_INPUTS,
         "tx nullifier length {} exceeds {}",
@@ -1767,7 +1770,7 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         "tx-leaf ciphertext-hash list length does not match active output flags"
     );
 
-    let mut public = TransactionPublicInputsP3 {
+    let mut public = TransactionVerifierInputs {
         input_flags: stark_inputs
             .input_flags
             .iter()
@@ -1780,7 +1783,7 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
             .copied()
             .map(|flag| Goldilocks::from_u64(u64::from(flag)))
             .collect(),
-        ..TransactionPublicInputsP3::default()
+        ..TransactionVerifierInputs::default()
     };
     for (slot, value) in public_nullifier_slots.iter().enumerate() {
         public.nullifiers[slot] = bytes48_to_felts(value)
@@ -1820,6 +1823,9 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         bytes48_to_felts(&stark_inputs.stablecoin_attestation_commitment).ok_or_else(|| {
             anyhow::anyhow!("native tx-leaf stablecoin attestation commitment is non-canonical")
         })?;
+    public
+        .validate()
+        .map_err(|err| anyhow::anyhow!("invalid native tx-leaf verifier inputs: {err}"))?;
     Ok(public)
 }
 
@@ -3541,12 +3547,12 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         artifact.receipt == expected_receipt,
         "native tx-leaf canonical receipt mismatch"
     );
-    let p3_public_inputs =
-        transaction_public_inputs_p3_from_tx_leaf_public(tx, &artifact.stark_public_inputs)?;
+    let verifier_inputs =
+        transaction_verifier_inputs_from_tx_leaf_public(tx, &artifact.stark_public_inputs)?;
     verify_transaction_proof_bytes_for_backend(
         artifact.proof_backend,
         &artifact.stark_proof,
-        &p3_public_inputs,
+        &verifier_inputs,
         tx.version,
     )
     .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))?;
@@ -3558,6 +3564,7 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
         smallwood_arithmetization_from_backend_and_proof_bytes(
             artifact.proof_backend,
             &artifact.stark_proof,
+            tx.version,
         )
         .map_err(|err| {
             anyhow::anyhow!("failed to decode native tx-leaf proof arithmetization: {err}")
@@ -5420,9 +5427,7 @@ fn blake3_384_bytes(bytes: &[u8]) -> [u8; 48] {
 mod tests {
     use std::{fs, path::PathBuf};
 
-    use protocol_versioning::{
-        LEGACY_PLONKY3_FRI_VERSION_BINDING, SMALLWOOD_CANDIDATE_VERSION_BINDING,
-    };
+    use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
     use superneo_backend_lattice::BackendManifest;
     use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
     use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -5600,7 +5605,7 @@ mod tests {
     const TX_LEAF_ORACLE_MATRIX_ROWS: usize = 11;
     const TX_LEAF_ORACLE_MATRIX_COLS: usize = 54;
     const TX_LEAF_ORACLE_MAX_PROOF_BYTES: usize = 512 * 1024;
-    const TX_LEAF_ORACLE_PLONKY3_BACKEND: u8 = 1;
+    const TX_LEAF_ORACLE_RETIRED_BACKEND: u8 = 1;
     const TX_LEAF_ORACLE_SMALLWOOD_BACKEND: u8 = 2;
     const TX_LEAF_ORACLE_CIRCUIT_V2: u16 = 2;
     const TX_LEAF_ORACLE_CRYPTO_GAMMA: u16 = 3;
@@ -5819,13 +5824,8 @@ mod tests {
     }
 
     fn tx_leaf_oracle_default_backend(circuit_version: u16, crypto_suite: u16) -> u8 {
-        if circuit_version == TX_LEAF_ORACLE_CIRCUIT_V2
-            && crypto_suite == TX_LEAF_ORACLE_CRYPTO_GAMMA
-        {
-            TX_LEAF_ORACLE_PLONKY3_BACKEND
-        } else {
-            TX_LEAF_ORACLE_SMALLWOOD_BACKEND
-        }
+        let _ = (circuit_version, crypto_suite);
+        TX_LEAF_ORACLE_SMALLWOOD_BACKEND
     }
 
     fn tx_leaf_oracle_parse(bytes: &[u8]) -> Option<TxLeafOracleSummary> {
@@ -5880,9 +5880,7 @@ mod tests {
             0 => (false, default_backend),
             1 => {
                 let backend = cursor.read_u8()?;
-                if backend == TX_LEAF_ORACLE_PLONKY3_BACKEND
-                    || backend == TX_LEAF_ORACLE_SMALLWOOD_BACKEND
-                {
+                if backend == TX_LEAF_ORACLE_SMALLWOOD_BACKEND {
                     (true, backend)
                 } else {
                     return None;
@@ -5930,12 +5928,19 @@ mod tests {
             tx_leaf_oracle_artifact_bytes(&missing_backend),
         ));
 
-        let mut legacy_missing_backend = missing_backend.clone();
-        legacy_missing_backend.circuit_version = TX_LEAF_ORACLE_CIRCUIT_V2;
-        legacy_missing_backend.crypto_suite = TX_LEAF_ORACLE_CRYPTO_GAMMA;
+        let mut retired_version_missing_backend = missing_backend.clone();
+        retired_version_missing_backend.circuit_version = TX_LEAF_ORACLE_CIRCUIT_V2;
+        retired_version_missing_backend.crypto_suite = TX_LEAF_ORACLE_CRYPTO_GAMMA;
         cases.push((
-            "valid-legacy-missing-backend-defaults-plonky3",
-            tx_leaf_oracle_artifact_bytes(&legacy_missing_backend),
+            "retired-version-missing-backend-defaults-smallwood",
+            tx_leaf_oracle_artifact_bytes(&retired_version_missing_backend),
+        ));
+
+        let mut retired_backend = valid.clone();
+        retired_backend.proof_backend = Some(TX_LEAF_ORACLE_RETIRED_BACKEND);
+        cases.push((
+            "retired-backend-rejected",
+            tx_leaf_oracle_artifact_bytes(&retired_backend),
         ));
 
         let mut trailing = tx_leaf_oracle_artifact_bytes(&valid);
@@ -6301,6 +6306,38 @@ mod tests {
     }
 
     #[test]
+    fn native_tx_leaf_rejects_oversized_monetary_inputs_before_field_reduction() {
+        let proof = sample_transaction_proof(17);
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let mut stark_public_inputs = proof
+            .stark_public_inputs
+            .expect("sample proof carries serialized public inputs");
+        stark_public_inputs.fee = transaction_circuit::constants::MAX_NOTE_VALUE as u64 + 1;
+
+        let err = transaction_verifier_inputs_from_tx_leaf_public(&tx, &stark_public_inputs)
+            .expect_err("oversized native tx-leaf fee reached Goldilocks reduction");
+        assert!(err.to_string().contains("monetary range"));
+    }
+
+    #[test]
+    fn native_tx_leaf_projection_rejects_duplicate_balance_slots() {
+        let proof = sample_transaction_proof(18);
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
+        let mut stark_public_inputs = proof
+            .stark_public_inputs
+            .expect("sample proof carries serialized public inputs");
+        stark_public_inputs.balance_slot_asset_ids = vec![0, 4_242, 4_242, u64::MAX];
+
+        let err = transaction_verifier_inputs_from_tx_leaf_public(&tx, &stark_public_inputs)
+            .expect_err("native projection must reject duplicate non-native balance slots");
+        assert!(
+            err.to_string()
+                .contains("balance slot assets must be strictly increasing"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
     fn superneo_receipts_use_shared_statement_hash_helper() {
         let proof = sample_transaction_proof(17);
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
@@ -6368,7 +6405,7 @@ mod tests {
             commitments: Vec::new(),
             ciphertext_hashes: Vec::new(),
             balance_tag: [0u8; 48],
-            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+            version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
         };
         let stark_public_inputs = SerializedStarkInputs {
             input_flags: vec![0, 1],
@@ -6433,11 +6470,11 @@ mod tests {
         assert_eq!(projected_hash, expected_hash);
         assert_ne!(projected_hash, prefix_alias_hash);
 
-        let p3_public_inputs =
-            transaction_public_inputs_p3_from_tx_leaf_public(&tx, &stark_public_inputs).unwrap();
-        p3_public_inputs.validate().unwrap();
-        assert_eq!(felts_to_bytes48(&p3_public_inputs.nullifiers[0]), [0u8; 48]);
-        assert_eq!(felts_to_bytes48(&p3_public_inputs.nullifiers[1]), nullifier);
+        let verifier_inputs =
+            transaction_verifier_inputs_from_tx_leaf_public(&tx, &stark_public_inputs).unwrap();
+        verifier_inputs.validate().unwrap();
+        assert_eq!(felts_to_bytes48(&verifier_inputs.nullifiers[0]), [0u8; 48]);
+        assert_eq!(felts_to_bytes48(&verifier_inputs.nullifiers[1]), nullifier);
     }
 
     #[test]
@@ -6524,7 +6561,7 @@ mod tests {
             native_backend_params().parameter_fingerprint()
         );
         assert_eq!(metadata.spec_digest, native_backend_params().spec_digest());
-        assert_eq!(metadata.proof_backend, TxProofBackend::Plonky3Fri);
+        assert_eq!(metadata.proof_backend, TxProofBackend::SmallwoodCandidate);
     }
 
     #[test]
@@ -6639,7 +6676,7 @@ mod tests {
         let mut legacy_bytes = built.artifact_bytes.clone();
         legacy_bytes.pop().expect("proof backend byte");
         let decoded = decode_native_tx_leaf_artifact_bytes(&legacy_bytes).unwrap();
-        assert_eq!(decoded.proof_backend, TxProofBackend::Plonky3Fri);
+        assert_eq!(decoded.proof_backend, TxProofBackend::SmallwoodCandidate);
         let err = verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &legacy_bytes)
             .expect_err("release verifier must reject missing-backend alternate encoding");
         assert!(
@@ -6679,17 +6716,17 @@ mod tests {
             BALANCE_SLOTS
         );
 
-        let p3_public_inputs = transaction_public_inputs_p3_from_tx_leaf_public(
+        let verifier_inputs = transaction_verifier_inputs_from_tx_leaf_public(
             &artifact.tx,
             &artifact.stark_public_inputs,
         )
         .unwrap();
         assert_eq!(
-            p3_public_inputs.input_flags.len(),
+            verifier_inputs.input_flags.len(),
             artifact.stark_public_inputs.input_flags.len()
         );
         assert_eq!(
-            p3_public_inputs.output_flags.len(),
+            verifier_inputs.output_flags.len(),
             artifact.stark_public_inputs.output_flags.len()
         );
 
@@ -6833,7 +6870,7 @@ mod tests {
                     commitments: Vec::new(),
                     ciphertext_hashes: Vec::new(),
                     balance_tag: [0u8; 48],
-                    version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+                    version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
                 };
                 let stark_public_inputs = SerializedStarkInputs {
                     input_flags: case.input_flags,
@@ -6852,20 +6889,20 @@ mod tests {
                     stablecoin_oracle_commitment: [0u8; 48],
                     stablecoin_attestation_commitment: [0u8; 48],
                 };
-                let p3_public_inputs =
-                    transaction_public_inputs_p3_from_tx_leaf_public(&tx, &stark_public_inputs)
-                        .expect("valid Lean projection case must materialize P3 inputs");
-                p3_public_inputs
+                let verifier_inputs =
+                    transaction_verifier_inputs_from_tx_leaf_public(&tx, &stark_public_inputs)
+                        .expect("valid Lean projection case must materialize verifier inputs");
+                verifier_inputs
                     .validate()
-                    .expect("valid Lean projection case must satisfy P3 public-input shape");
-                let observed = p3_public_inputs
+                    .expect("valid Lean projection case must satisfy verifier public-input shape");
+                let observed = verifier_inputs
                     .nullifiers
                     .iter()
                     .map(felts_to_bytes48)
                     .collect::<Vec<_>>();
                 assert_eq!(
                     observed, expected_public_nullifiers,
-                    "{}: P3 public nullifier slots drifted from Lean projection",
+                    "{}: verifier public nullifier slots drifted from Lean projection",
                     case.name
                 );
             }
@@ -7625,10 +7662,10 @@ mod tests {
             &smallwood_proof,
         )
         .unwrap();
-        let plonky3_leaf = sample_native_tx_leaf_artifact(46);
+        let second_smallwood_leaf = sample_native_tx_leaf_artifact(46);
         let artifacts = vec![
             decode_native_tx_leaf_artifact_bytes(&smallwood_leaf.artifact_bytes).unwrap(),
-            decode_native_tx_leaf_artifact_bytes(&plonky3_leaf.artifact_bytes).unwrap(),
+            decode_native_tx_leaf_artifact_bytes(&second_smallwood_leaf.artifact_bytes).unwrap(),
         ];
         let built = build_native_tx_leaf_receipt_root_artifact_bytes(&artifacts).unwrap();
         let metadata =
@@ -7972,8 +8009,8 @@ mod tests {
 
     fn oversized_public_inputs_proof() -> TransactionProof {
         let mut public_inputs = TransactionPublicInputs {
-            circuit_version: LEGACY_PLONKY3_FRI_VERSION_BINDING.circuit,
-            crypto_suite: LEGACY_PLONKY3_FRI_VERSION_BINDING.crypto,
+            circuit_version: SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit,
+            crypto_suite: SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto,
             ..TransactionPublicInputs::default()
         };
         let top_level_nullifiers = public_inputs.nullifiers.clone();
@@ -7985,7 +8022,7 @@ mod tests {
             nullifiers: top_level_nullifiers,
             commitments: top_level_commitments,
             balance_slots: top_level_balance_slots,
-            backend: TxProofBackend::Plonky3Fri,
+            backend: TxProofBackend::SmallwoodCandidate,
             stark_proof: vec![1, 2, 3, 4],
             stark_public_inputs: Some(serialized_stark_inputs_for_receipt_hash_regression()),
         }
@@ -8161,10 +8198,7 @@ mod tests {
             fee: 5,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            // Keep the default crate test lane on the historical Plonky3 binding so
-            // generic regression tests do not accidentally become release-grade
-            // SmallWood proving runs. Dedicated SmallWood tests opt in explicitly.
-            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+            version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
         }
     }
 

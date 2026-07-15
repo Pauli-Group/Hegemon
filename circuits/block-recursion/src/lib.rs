@@ -1,5 +1,10 @@
 #![forbid(unsafe_code)]
 
+// Recursive block artifact formats retain their original descriptor domain. A transaction
+// circuit upgrade must not retag existing recursive proofs or announced blocks.
+pub(crate) const SMALLWOOD_RECURSION_VERSION_BINDING: protocol_versioning::VersionBinding =
+    protocol_versioning::LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING;
+
 mod artifacts;
 mod local_smallwood_poseidon2;
 mod prover;

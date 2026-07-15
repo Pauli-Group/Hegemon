@@ -56,7 +56,23 @@ def vectorJson : String :=
         (patternedBytes 32 250)
         (patternedBytes 32 77)
         (patternedBytes 32 33)
-        (patternedBytes 32 155) ++ "\n"
+        (patternedBytes 32 155) ++ ",\n"
+    ++ noteCaseJson
+        "zero-randomness-limb"
+        42
+        7
+        zeroBytes32
+        zeroBytes32
+        zeroBytes32
+        zeroBytes32 ++ ",\n"
+    ++ noteCaseJson
+        "field-modulus-randomness-limb-alias"
+        42
+        7
+        zeroBytes32
+        zeroBytes32
+        zeroBytes32
+        fieldModulusLowLimbBytes32 ++ "\n"
     ++ "  ],\n"
     ++ "  \"asset_id_cases\": [\n"
     ++ assetCaseJson "native" 0 ++ ",\n"

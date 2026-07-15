@@ -1,21 +1,26 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
+    SMALLWOOD_CANDIDATE_VERSION_BINDING,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::{fs, path::Path};
+use sha2::{Digest, Sha256};
+use std::{collections::HashSet, fs, path::Path};
 use superneo_ccs::{
     digest_shape, digest_statement, Assignment, CcsShape, Relation, RelationId, ShapeDigest,
     SparseEntry, SparseMatrix, StatementDigest, StatementEncoding, WitnessField, WitnessSchema,
 };
 use superneo_core::{validate_fold_pair, FoldedInstance, LeafArtifact, SecurityParams};
-use transaction_circuit::proof::verify_transaction_proof_bytes_for_backend;
+use transaction_circuit::proof::{
+    smallwood_arithmetization_from_backend_and_proof_bytes, transaction_proof_digest_from_parts,
+    transaction_verifier_profile_digest_for_version, verify_transaction_proof_bytes_for_backend,
+};
+use transaction_circuit::SmallwoodArithmetization;
 use transaction_core::constants::{BALANCE_SLOTS, MAX_INPUTS, MAX_OUTPUTS};
 use transaction_core::hashing_pq::bytes48_to_felts;
-use transaction_core::TransactionPublicInputsP3;
+use transaction_core::TransactionVerifierInputs;
 
 const CANONICAL_RECEIPT_WIRE_BYTES: usize = 48 * 4;
 const LEAF_ARTIFACT_WIRE_BYTES: usize = 2 + 32 + 32 + 48 + 48 + 48;
@@ -717,10 +722,23 @@ impl LatticeBackend {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewVectorBundle {
+    pub schema_version: u32,
+    pub generator_id: String,
+    pub active_tx_profile: ReviewActiveTxProfile,
     pub parameter_fingerprint: String,
     pub native_backend_params: ReviewBackendParams,
     pub native_security_claim: ReviewSecurityClaim,
     pub cases: Vec<ReviewVectorCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewActiveTxProfile {
+    pub circuit_version: u16,
+    pub crypto_suite: u16,
+    pub proof_backend: String,
+    pub arithmetization: String,
+    pub public_value_count: usize,
+    pub verifier_profile_sha384_hex: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -792,12 +810,88 @@ pub struct ReviewSecurityClaim {
 pub struct ReviewVectorCase {
     pub name: String,
     pub kind: String,
+    pub mutation_id: String,
+    pub artifact_sha256: String,
     pub expected_valid: bool,
     pub expected_error_substring: Option<String>,
     pub artifact_hex: String,
     pub tx_context: Option<ReviewTxContext>,
     pub block_context: Option<ReviewBlockContext>,
 }
+
+const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 1;
+const REVIEW_VECTOR_GENERATOR_ID: &str = "hegemon.superneo-bench.native-review";
+const ACTIVE_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
+    SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+const ACTIVE_REVIEW_PUBLIC_VALUE_COUNT: usize = 78;
+
+const REQUIRED_REVIEW_CASES: [(&str, &str, bool, Option<&str>, &str); 11] = [
+    ("native_tx_leaf_valid", "native_tx_leaf", true, None, "none"),
+    (
+        "native_tx_leaf_invalid_spec_digest",
+        "native_tx_leaf",
+        false,
+        Some("spec digest mismatch"),
+        "native_tx_leaf.spec_digest.byte0.xor01",
+    ),
+    (
+        "native_tx_leaf_invalid_params_fingerprint",
+        "native_tx_leaf",
+        false,
+        Some("parameter fingerprint mismatch"),
+        "native_tx_leaf.params_fingerprint.byte0.xor01",
+    ),
+    (
+        "native_tx_leaf_invalid_stark_proof",
+        "native_tx_leaf",
+        false,
+        Some("proof verification failed"),
+        "native_tx_leaf.stark_proof.byte0.xor80.receipt_rebound",
+    ),
+    (
+        "native_tx_leaf_invalid_proof_digest",
+        "native_tx_leaf",
+        false,
+        Some("proof digest mismatch"),
+        "native_tx_leaf.leaf.proof_digest.byte0.xor01",
+    ),
+    (
+        "native_tx_leaf_invalid_trailing_bytes",
+        "native_tx_leaf",
+        false,
+        Some("trailing bytes"),
+        "native_tx_leaf.trailing.append_ff",
+    ),
+    ("receipt_root_valid", "receipt_root", true, None, "none"),
+    (
+        "receipt_root_invalid_spec_digest",
+        "receipt_root",
+        false,
+        Some("spec digest mismatch"),
+        "receipt_root.spec_digest.byte0.xor01",
+    ),
+    (
+        "receipt_root_invalid_fold_rows",
+        "receipt_root",
+        false,
+        Some("parent rows mismatch"),
+        "receipt_root.fold0.parent_row0.coeff0.xor01",
+    ),
+    (
+        "receipt_root_invalid_root_commitment",
+        "receipt_root",
+        false,
+        Some("root commitment mismatch"),
+        "receipt_root.root_commitment.byte0.xor01",
+    ),
+    (
+        "receipt_root_invalid_trailing_bytes",
+        "receipt_root",
+        false,
+        Some("trailing bytes"),
+        "receipt_root.trailing.append_aa",
+    ),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewReceipt {
@@ -853,10 +947,9 @@ pub struct ReviewTxContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewReceiptLeafContext {
-    pub statement_digest_hex: String,
-    pub witness_commitment_hex: String,
-    pub proof_digest_hex: String,
-    pub commitment_rows: Vec<Vec<u64>>,
+    pub artifact_sha256: String,
+    pub artifact_hex: String,
+    pub tx_context: ReviewTxContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1336,11 +1429,229 @@ pub fn load_bundle(bundle_path: &Path) -> Result<ReviewVectorBundle> {
     })
 }
 
+fn ref_review_case_by_name<'a>(
+    bundle: &'a ReviewVectorBundle,
+    name: &str,
+) -> Result<&'a ReviewVectorCase> {
+    bundle
+        .cases
+        .iter()
+        .find(|case| case.name == name)
+        .ok_or_else(|| anyhow!("review bundle is missing case {name}"))
+}
+
+fn ref_review_case_artifact_bytes(case: &ReviewVectorCase) -> Result<Vec<u8>> {
+    hex::decode(&case.artifact_hex)
+        .with_context(|| format!("review case {} artifact_hex is invalid", case.name))
+}
+
+fn ref_review_contexts_match<T: Serialize>(left: &Option<T>, right: &Option<T>) -> Result<bool> {
+    Ok(serde_json::to_vec(left)? == serde_json::to_vec(right)?)
+}
+
+fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()> {
+    ensure!(
+        bundle.schema_version == REVIEW_VECTOR_SCHEMA_VERSION,
+        "review bundle schema_version must be {REVIEW_VECTOR_SCHEMA_VERSION}"
+    );
+    ensure!(
+        bundle.generator_id == REVIEW_VECTOR_GENERATOR_ID,
+        "review bundle generator_id mismatch"
+    );
+    ensure!(
+        bundle.cases.len() == REQUIRED_REVIEW_CASES.len(),
+        "review bundle must contain exactly {} cases",
+        REQUIRED_REVIEW_CASES.len()
+    );
+
+    let mut artifact_digests = HashSet::with_capacity(bundle.cases.len());
+    for (case, (name, kind, expected_valid, expected_error, mutation_id)) in
+        bundle.cases.iter().zip(REQUIRED_REVIEW_CASES)
+    {
+        ensure!(case.name == name, "review case name/order mismatch");
+        ensure!(case.kind == kind, "review case {} kind mismatch", case.name);
+        ensure!(
+            case.expected_valid == expected_valid,
+            "review case {} validity expectation mismatch",
+            case.name
+        );
+        ensure!(
+            case.expected_error_substring.as_deref() == expected_error,
+            "review case {} error expectation mismatch",
+            case.name
+        );
+        ensure!(
+            case.mutation_id == mutation_id,
+            "review case {} mutation identity mismatch",
+            case.name
+        );
+        let artifact_bytes = ref_review_case_artifact_bytes(case)?;
+        let digest = hex::encode(Sha256::digest(&artifact_bytes));
+        ensure!(
+            case.artifact_sha256 == digest,
+            "review case {} artifact SHA-256 mismatch",
+            case.name
+        );
+        ensure!(
+            artifact_digests.insert(digest),
+            "review case {} aliases another case artifact",
+            case.name
+        );
+    }
+
+    let valid_leaf_case = ref_review_case_by_name(bundle, "native_tx_leaf_valid")?;
+    let valid_leaf_bytes = ref_review_case_artifact_bytes(valid_leaf_case)?;
+    let valid_leaf_ctx = valid_leaf_case
+        .tx_context
+        .as_ref()
+        .ok_or_else(|| anyhow!("valid native tx-leaf case is missing tx_context"))?;
+    let leaf_params = review_params_to_native(&valid_leaf_ctx.backend_params)?;
+    let valid_leaf = parse_native_tx_leaf_artifact(&leaf_params, &valid_leaf_bytes)?;
+    ensure!(
+        valid_leaf.tx.version == SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        "review vectors must exercise active SmallWood V3"
+    );
+    ensure!(
+        valid_leaf.proof_backend == TxProofBackend::SmallwoodCandidate,
+        "review vectors must exercise the SmallWood proof backend"
+    );
+    let arithmetization = smallwood_arithmetization_from_backend_and_proof_bytes(
+        valid_leaf.proof_backend,
+        &valid_leaf.stark_proof,
+        valid_leaf.tx.version,
+    )?
+    .ok_or_else(|| anyhow!("review SmallWood artifact has no arithmetization"))?;
+    ensure!(
+        arithmetization == ACTIVE_REVIEW_ARITHMETIZATION,
+        "review vectors must exercise the active V3 arithmetization"
+    );
+    let expected_profile = ReviewActiveTxProfile {
+        circuit_version: SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit,
+        crypto_suite: SMALLWOOD_CANDIDATE_VERSION_BINDING.crypto,
+        proof_backend: format!("{:?}", valid_leaf.proof_backend),
+        arithmetization: format!("{arithmetization:?}"),
+        public_value_count: ACTIVE_REVIEW_PUBLIC_VALUE_COUNT,
+        verifier_profile_sha384_hex: hex::encode(transaction_verifier_profile_digest_for_version(
+            SMALLWOOD_CANDIDATE_VERSION_BINDING,
+        )),
+    };
+    ensure!(
+        bundle.active_tx_profile == expected_profile,
+        "review bundle active transaction profile mismatch"
+    );
+
+    let valid_root_case = ref_review_case_by_name(bundle, "receipt_root_valid")?;
+    let valid_root_bytes = ref_review_case_artifact_bytes(valid_root_case)?;
+    let valid_root_ctx = valid_root_case
+        .block_context
+        .as_ref()
+        .ok_or_else(|| anyhow!("valid receipt-root case is missing block_context"))?;
+    let root_params = review_params_to_native(&valid_root_ctx.backend_params)?;
+    let valid_root = parse_receipt_root_artifact(&root_params, &valid_root_bytes)?;
+
+    for case in &bundle.cases {
+        let actual = ref_review_case_artifact_bytes(case)?;
+        match case.name.as_str() {
+            "native_tx_leaf_valid" => ensure!(actual == valid_leaf_bytes),
+            "native_tx_leaf_invalid_spec_digest" => {
+                let mut expected = valid_leaf.clone();
+                expected.spec_digest[0] ^= 0x01;
+                ensure!(parse_native_tx_leaf_artifact(&leaf_params, &actual)? == expected);
+            }
+            "native_tx_leaf_invalid_params_fingerprint" => {
+                let mut expected = valid_leaf.clone();
+                expected.params_fingerprint[0] ^= 0x01;
+                ensure!(parse_native_tx_leaf_artifact(&leaf_params, &actual)? == expected);
+            }
+            "native_tx_leaf_invalid_stark_proof" => {
+                let mut expected = valid_leaf.clone();
+                let first = expected
+                    .stark_proof
+                    .first_mut()
+                    .ok_or_else(|| anyhow!("valid review STARK proof is empty"))?;
+                *first ^= 0x80;
+                expected.receipt.proof_digest = transaction_proof_digest_from_parts(
+                    expected.proof_backend,
+                    &expected.stark_proof,
+                );
+                ensure!(parse_native_tx_leaf_artifact(&leaf_params, &actual)? == expected);
+            }
+            "native_tx_leaf_invalid_proof_digest" => {
+                let mut expected = valid_leaf.clone();
+                expected.leaf.proof.proof_digest[0] ^= 0x01;
+                ensure!(parse_native_tx_leaf_artifact(&leaf_params, &actual)? == expected);
+            }
+            "native_tx_leaf_invalid_trailing_bytes" => {
+                ensure!(actual.len() == valid_leaf_bytes.len() + 1);
+                ensure!(actual.starts_with(&valid_leaf_bytes));
+                ensure!(actual.last() == Some(&0xff));
+            }
+            "receipt_root_valid" => ensure!(actual == valid_root_bytes),
+            "receipt_root_invalid_spec_digest" => {
+                let mut expected = valid_root.clone();
+                expected.spec_digest[0] ^= 0x01;
+                ensure!(parse_receipt_root_artifact(&root_params, &actual)? == expected);
+            }
+            "receipt_root_invalid_fold_rows" => {
+                let mut expected = valid_root.clone();
+                let coeff = expected
+                    .folds
+                    .first_mut()
+                    .and_then(|fold| fold.parent_rows.first_mut())
+                    .and_then(|row| row.coeffs.first_mut())
+                    .ok_or_else(|| anyhow!("valid review receipt root has no fold row"))?;
+                *coeff ^= 0x01;
+                ensure!(parse_receipt_root_artifact(&root_params, &actual)? == expected);
+            }
+            "receipt_root_invalid_root_commitment" => {
+                let mut expected = valid_root.clone();
+                expected.root_commitment[0] ^= 0x01;
+                ensure!(parse_receipt_root_artifact(&root_params, &actual)? == expected);
+            }
+            "receipt_root_invalid_trailing_bytes" => {
+                ensure!(actual.len() == valid_root_bytes.len() + 1);
+                ensure!(actual.starts_with(&valid_root_bytes));
+                ensure!(actual.last() == Some(&0xaa));
+            }
+            other => return Err(anyhow!("unsupported review case {other}")),
+        }
+
+        if case.kind == "native_tx_leaf" {
+            if case.name == "native_tx_leaf_invalid_stark_proof" {
+                let artifact = parse_native_tx_leaf_artifact(&leaf_params, &actual)?;
+                let mut expected_context = valid_leaf_ctx.clone();
+                expected_context.receipt.proof_digest_hex =
+                    hex::encode(artifact.receipt.proof_digest);
+                ensure!(
+                    ref_review_contexts_match(&case.tx_context, &Some(expected_context))?,
+                    "review invalid-STARK case does not bind its mutated canonical receipt"
+                );
+            } else {
+                ensure!(
+                    ref_review_contexts_match(&case.tx_context, &valid_leaf_case.tx_context)?,
+                    "review case {} does not share the canonical tx context",
+                    case.name
+                );
+            }
+            ensure!(case.block_context.is_none());
+        } else {
+            ensure!(
+                ref_review_contexts_match(&case.block_context, &valid_root_case.block_context)?,
+                "review case {} does not share the canonical block context",
+                case.name
+            );
+            ensure!(case.tx_context.is_none());
+        }
+    }
+    Ok(())
+}
+
 pub fn verify_bundle_dir(
     bundle_dir: &Path,
 ) -> Result<(ReviewVerificationSummary, Vec<ReviewCaseResult>)> {
     let bundle_path = bundle_dir.join("bundle.json");
     let bundle = load_bundle(&bundle_path)?;
+    validate_ref_review_bundle_contract(&bundle)?;
     let mut results = Vec::with_capacity(bundle.cases.len());
     let mut passed_cases = 0usize;
     for case in &bundle.cases {
@@ -1501,14 +1812,14 @@ fn verify_native_tx_leaf_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) ->
         "canonical receipt mismatch"
     );
 
-    let p3_public_inputs = transaction_public_inputs_p3_from_tx_leaf_public(
+    let verifier_inputs = transaction_verifier_inputs_from_tx_leaf_public(
         &artifact.tx,
         &artifact.stark_public_inputs,
     )?;
     verify_transaction_proof_bytes_for_backend(
         artifact.proof_backend,
         &artifact.stark_proof,
-        &p3_public_inputs,
+        &verifier_inputs,
         artifact.tx.version,
     )
     .map_err(|err| anyhow!("tx proof verification failed: {err}"))?;
@@ -1629,29 +1940,50 @@ fn verify_receipt_root_case(case: &ReviewVectorCase, artifact_bytes: &[u8]) -> R
 
     let mut current = Vec::with_capacity(artifact.leaves.len());
     for (leaf, expected) in artifact.leaves.iter().zip(&ctx.leaves) {
+        let child_bytes = hex::decode(&expected.artifact_hex)
+            .context("receipt-root child artifact_hex must be valid hex")?;
         ensure!(
-            leaf.statement_digest == decode_hex_array::<48>(&expected.statement_digest_hex)?,
+            hex::encode(Sha256::digest(&child_bytes)) == expected.artifact_sha256,
+            "receipt-root child artifact SHA-256 mismatch"
+        );
+        let child_case = ReviewVectorCase {
+            name: "receipt_root_child".to_owned(),
+            kind: "native_tx_leaf".to_owned(),
+            mutation_id: "none".to_owned(),
+            artifact_sha256: expected.artifact_sha256.clone(),
+            expected_valid: true,
+            expected_error_substring: None,
+            artifact_hex: expected.artifact_hex.clone(),
+            tx_context: Some(expected.tx_context.clone()),
+            block_context: None,
+        };
+        verify_native_tx_leaf_case(&child_case, &child_bytes)
+            .context("receipt-root child tx-leaf verification failed")?;
+        let child = parse_native_tx_leaf_artifact(&params, &child_bytes)?;
+        ensure!(
+            child.params_fingerprint == artifact.params_fingerprint
+                && child.spec_digest == artifact.spec_digest
+                && child.relation_id == artifact.relation_id
+                && child.shape_digest == artifact.shape_digest,
+            "receipt-root child artifact uses different backend parameters"
+        );
+        ensure!(
+            leaf.statement_digest == child.statement_digest,
             "leaf statement digest mismatch"
         );
         ensure!(
-            leaf.witness_commitment == decode_hex_array::<48>(&expected.witness_commitment_hex)?,
+            leaf.witness_commitment == child.commitment.digest,
             "leaf witness commitment mismatch"
         );
         ensure!(
-            leaf.proof_digest == decode_hex_array::<48>(&expected.proof_digest_hex)?,
+            leaf.proof_digest == child.leaf.proof.proof_digest,
             "leaf proof digest mismatch"
-        );
-        let commitment =
-            commitment_from_review_rows(&expected.commitment_rows, "receipt-root leaf")?;
-        ensure!(
-            commitment.digest == leaf.witness_commitment,
-            "leaf commitment rows mismatch"
         );
         current.push(FoldedInstance {
             relation_id: relation.relation_id(),
             shape_digest: pk.shape_digest,
-            statement_digest: StatementDigest(leaf.statement_digest),
-            witness_commitment: commitment,
+            statement_digest: child.leaf.statement_digest,
+            witness_commitment: child.commitment,
         });
     }
 
@@ -1955,10 +2287,10 @@ fn validate_tx_leaf_public_witness_with_expected_profile(
     Ok(())
 }
 
-fn transaction_public_inputs_p3_from_tx_leaf_public(
+fn transaction_verifier_inputs_from_tx_leaf_public(
     tx: &RefTxLeafPublicTx,
     stark_inputs: &SerializedStarkInputs,
-) -> Result<TransactionPublicInputsP3> {
+) -> Result<TransactionVerifierInputs> {
     ensure!(
         tx.nullifiers.len() <= MAX_INPUTS,
         "tx nullifier length {} exceeds {}",
@@ -1996,7 +2328,7 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
         "tx ciphertext-hash list length does not match active output flags"
     );
 
-    let mut public = TransactionPublicInputsP3 {
+    let mut public = TransactionVerifierInputs {
         input_flags: stark_inputs
             .input_flags
             .iter()
@@ -2009,7 +2341,7 @@ fn transaction_public_inputs_p3_from_tx_leaf_public(
             .copied()
             .map(|flag| Goldilocks::new(u64::from(flag)))
             .collect(),
-        ..TransactionPublicInputsP3::default()
+        ..TransactionVerifierInputs::default()
     };
     public.nullifiers = tx
         .nullifiers
@@ -4063,6 +4395,16 @@ mod tests {
     use hex::encode as hex_encode;
     use std::path::{Path, PathBuf};
 
+    fn checked_in_review_bundle() -> ReviewVectorBundle {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("tools dir")
+            .parent()
+            .expect("repo root")
+            .join("testdata/native_backend_vectors/bundle.json");
+        load_bundle(&path).expect("load checked-in review bundle")
+    }
+
     #[test]
     fn parses_and_verifies_bundle_from_testdata() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -4079,6 +4421,49 @@ mod tests {
             summary.failed_cases, 0,
             "unexpected vector failures: {:?}",
             results
+        );
+    }
+
+    #[test]
+    fn reference_contract_rejects_historical_v2_profile() {
+        let mut bundle = checked_in_review_bundle();
+        bundle.active_tx_profile.circuit_version = 2;
+        let err = validate_ref_review_bundle_contract(&bundle)
+            .expect_err("historical V2 review profile must fail closed");
+        assert!(err.to_string().contains("active transaction profile"));
+    }
+
+    #[test]
+    fn reference_contract_rejects_aliased_negative_artifact() {
+        let mut bundle = checked_in_review_bundle();
+        bundle.cases[2].artifact_hex = bundle.cases[1].artifact_hex.clone();
+        bundle.cases[2].artifact_sha256 = bundle.cases[1].artifact_sha256.clone();
+        let err = validate_ref_review_bundle_contract(&bundle)
+            .expect_err("aliased negative artifact must fail closed");
+        assert!(err.to_string().contains("aliases another case artifact"));
+    }
+
+    #[test]
+    fn reference_verifier_rejects_receipt_root_leaf_receipt_mismatch() {
+        let bundle = checked_in_review_bundle();
+        let mut case = bundle
+            .cases
+            .into_iter()
+            .find(|case| case.name == "receipt_root_valid")
+            .expect("valid receipt-root case");
+        case.block_context
+            .as_mut()
+            .expect("receipt-root context")
+            .leaves[0]
+            .tx_context
+            .receipt
+            .statement_hash_hex = "00".repeat(48);
+
+        let err = verify_case(&case).expect_err("detached leaf receipt must fail closed");
+        let error_chain = format!("{err:#}");
+        assert!(
+            error_chain.contains("receipt mismatch"),
+            "unexpected error: {error_chain}"
         );
     }
 

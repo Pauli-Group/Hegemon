@@ -43,6 +43,36 @@ fn generate_and_address_round_trip() {
 }
 
 #[test]
+fn retired_payment_proof_commands_fail_closed() {
+    cargo_bin_cmd!("wallet")
+        .args([
+            "payment-proof",
+            "create",
+            "--store",
+            "unused.wallet",
+            "--tx",
+            &format!("0x{}", "00".repeat(32)),
+            "--output",
+            "0",
+            "--out",
+            "unused.json",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "retired disclosure proof backend is not linked",
+        ));
+
+    cargo_bin_cmd!("wallet")
+        .args(["payment-proof", "verify", "--proof", "unused.json"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "retired disclosure proof backend is not linked",
+        ));
+}
+
+#[test]
 fn tx_craft_and_scan_flow() {
     let temp = tempdir().expect("tempdir");
     let inputs_path = temp.path().join("inputs.json");

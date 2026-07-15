@@ -10,8 +10,7 @@ repository.workspace = true
 anyhow = "1"
 blake3 = "1"
 bincode = "1.3"
-p3-field = { workspace = true }
-p3-goldilocks = { workspace = true }
+hegemon-field = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
 rayon = "1"
 serde = { version = "1", features = ["derive"] }

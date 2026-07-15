@@ -3,6 +3,11 @@
 use super::*;
 
 pub async fn run(cli: NativeCli) -> Result<()> {
+    if cli.print_crypto_profile {
+        let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
+        println!("{}", serde_json::to_string(&profile)?);
+        return Ok(());
+    }
     let config = NativeConfig::from_cli(cli)?;
     let node = NativeNode::open(config.clone())?;
     start_native_p2p(Arc::clone(&node), &config)?;

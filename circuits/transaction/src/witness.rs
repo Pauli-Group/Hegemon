@@ -7,7 +7,6 @@ use crate::{
     note::{InputNoteWitness, OutputNoteWitness},
     public_inputs::{BalanceSlot, StablecoinPolicyBinding, TransactionPublicInputs},
 };
-use p3_field::PrimeCharacteristicRing;
 use protocol_versioning::{VersionBinding, DEFAULT_VERSION_BINDING};
 use serde::{Deserialize, Serialize};
 

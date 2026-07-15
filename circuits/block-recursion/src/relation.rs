@@ -11,10 +11,10 @@ use crate::{
         canonical_verified_leaf_record_bytes_v1, BlockLeafRecordV1, RecursiveBlockPublicV1,
     },
     statement::{recursive_prefix_statement_bytes_v1, RecursivePrefixStatementV1},
-    BlockRecursionError, Digest32, Digest48,
+    BlockRecursionError, Digest32, Digest48, SMALLWOOD_RECURSION_VERSION_BINDING,
 };
-use p3_goldilocks::Goldilocks;
-use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
+use hegemon_field::Goldilocks;
+use protocol_versioning::VersionBinding;
 use superneo_ccs::{
     digest_shape, Assignment, CcsShape, RelationId, ShapeDigest, SparseMatrix, WitnessField,
     WitnessSchema,
@@ -500,10 +500,10 @@ fn hosted_recursive_profile_v1(
 ) -> RecursiveSmallwoodProfileV1 {
     match profile {
         SmallwoodRecursiveProfileTagV1::A => {
-            recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_a_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
         SmallwoodRecursiveProfileTagV1::B => {
-            recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_b_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
     }
 }

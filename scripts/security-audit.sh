@@ -12,7 +12,7 @@
 #   ./scripts/security-audit.sh           # Full audit
 #   ./scripts/security-audit.sh --quick   # Skip cargo.lock (faster)
 #   ./scripts/security-audit.sh --fix     # Show suggested fixes
-#   ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+#   ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
 #
 # Exit codes:
 #   0 - Audit passed (no forbidden primitives)
@@ -34,11 +34,12 @@ QUICK=false
 FIX=false
 REQUIRE_BINARY=false
 NODE_BIN=""
+BINARY_MANIFEST=""
 BINARY_BINS=()
 
 usage() {
     cat <<'USAGE'
-usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--node-bin PATH] [--binary PATH ...]
+usage: scripts/security-audit.sh [--quick] [--fix] [--require-binary] [--binary-manifest PATH] [--node-bin PATH] [--binary PATH ...]
 USAGE
 }
 
@@ -54,6 +55,22 @@ while [ "$#" -gt 0 ]; do
             ;;
         --require-binary)
             REQUIRE_BINARY=true
+            shift
+            ;;
+        --binary-manifest)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                usage >&2
+                exit 2
+            fi
+            BINARY_MANIFEST="$2"
+            shift 2
+            ;;
+        --binary-manifest=*)
+            BINARY_MANIFEST="${1#*=}"
+            if [ -z "$BINARY_MANIFEST" ]; then
+                usage >&2
+                exit 2
+            fi
             shift
             ;;
         --node-bin)
@@ -113,6 +130,9 @@ for binary_path in "${BINARY_BINS[@]}"; do
     fi
     RELEASE_BINS+=("$binary_path")
 done
+if [ -n "$BINARY_MANIFEST" ] && [[ "$BINARY_MANIFEST" != /* ]]; then
+    BINARY_MANIFEST="$PROJECT_ROOT/$BINARY_MANIFEST"
+fi
 
 cd "$PROJECT_ROOT"
 
@@ -126,6 +146,7 @@ echo ""
 
 VIOLATIONS=0
 WARNINGS=0
+BINARY_PROFILE_ATTESTED=false
 
 if [ -n "${HEGEMON_LEAN_RELEASE_PQ_BINARY_POLICY_VECTORS:-}" ]; then
     echo "=== Step 0: Lean Release PQ Binary Policy Vector Check ==="
@@ -302,6 +323,31 @@ fi
 echo "=== Step 3: Native Binary Symbol Scan ==="
 echo ""
 
+if [ "$REQUIRE_BINARY" = true ]; then
+    if [ -z "$BINARY_MANIFEST" ]; then
+        echo -e "${RED}❌ RELEASE MANIFEST REQUIRED${NC}"
+        echo "  --require-binary requires --binary-manifest"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    elif [ "${#RELEASE_BINS[@]}" -ne 3 ]; then
+        echo -e "${RED}❌ EXACT ARTIFACT SET REQUIRED${NC}"
+        echo "  Expected node, wallet, and walletd paths"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    elif python3 "$PROJECT_ROOT/scripts/release_artifact_manifest.py" verify \
+        --manifest "$BINARY_MANIFEST" \
+        --expect "hegemon-node:hegemon-node:${RELEASE_BINS[0]}" \
+        --expect "wallet:wallet:${RELEASE_BINS[1]}" \
+        --expect "walletd:walletd:${RELEASE_BINS[2]}" >/dev/null && \
+        python3 "$PROJECT_ROOT/scripts/check_release_crypto_profile.py" \
+          --manifest "$BINARY_MANIFEST" \
+          --require-executed >/dev/null; then
+        echo -e "${GREEN}✅ Release manifest and executed crypto profile verified${NC}"
+        BINARY_PROFILE_ATTESTED=true
+    else
+        echo -e "${RED}❌ RELEASE ARTIFACT ATTESTATION FAILED${NC}"
+        VIOLATIONS=$((VIOLATIONS + 1))
+    fi
+fi
+
 for release_bin in "${RELEASE_BINS[@]}"; do
 if [ -f "$release_bin" ]; then
     echo "Checking: $release_bin"
@@ -368,13 +414,25 @@ else
     WARNINGS=$((WARNINGS + 1))
 fi
 
-# Check shielded protocol uses STARK (not Groth16)
-echo -n "Checking shielded protocol uses STARK proofs... "
-if grep -q "STARK\|stark" "$PROJECT_ROOT/circuits/transaction/Cargo.toml" "$PROJECT_ROOT/consensus/src"/*.rs 2>/dev/null; then
-    echo -e "${GREEN}✅ Uses STARK (Plonky3)${NC}"
+# Check the exact release artifacts report the production SmallWood path.
+echo -n "Checking shielded protocol uses SmallWood STARK/FRI proofs... "
+if [ "$BINARY_PROFILE_ATTESTED" = true ]; then
+    echo -e "${GREEN}✅ Compiled V3 SmallWood profile attested${NC}"
+elif [ "$REQUIRE_BINARY" = true ]; then
+    echo -e "${RED}❌ ACTIVE PROFILE NOT ATTESTED${NC}"
+    VIOLATIONS=$((VIOLATIONS + 1))
 else
-    echo -e "${YELLOW}⚠️  Could not verify STARK usage${NC}"
+    echo -e "${YELLOW}⚠️  Requires --require-binary with an attested release manifest${NC}"
     WARNINGS=$((WARNINGS + 1))
+fi
+
+echo -n "Checking shipped runtime graphs exclude Plonky3... "
+if runtime_dependency_report=$(bash "$PROJECT_ROOT/scripts/check_native_runtime_dependencies.sh" 2>&1); then
+    echo -e "${GREEN}✅ No Plonky3 runtime dependency${NC}"
+else
+    echo -e "${RED}❌ FOUND${NC}"
+    printf '%s\n' "$runtime_dependency_report" | sed 's/^/  /'
+    VIOLATIONS=$((VIOLATIONS + 1))
 fi
 
 echo ""
@@ -420,8 +478,9 @@ else
     echo -e "${YELLOW}⚠️  Not found (optional)${NC}"
 fi
 
-echo -n "Plonky3 (STARK proofs)... "
-if grep -q "p3-uni-stark" "$PROJECT_ROOT/Cargo.lock" 2>/dev/null; then
+echo -n "Hegemon SmallWood (STARK/FRI proofs)... "
+if grep -q "DEFAULT_TX_PROOF_BACKEND: TxProofBackend = TxProofBackend::SmallwoodCandidate" \
+       "$PROJECT_ROOT/protocol/versioning/src/lib.rs" 2>/dev/null; then
     echo -e "${GREEN}✅ Present${NC}"
     APPROVED_FOUND=$((APPROVED_FOUND + 1))
 else
@@ -458,7 +517,7 @@ if [ $VIOLATIONS -eq 0 ]; then
     echo "  ✓ ML-KEM-1024 (P2P handshake and note encryption)"
     echo "  ✓ ML-DSA-65 (Signatures, identity)"
     echo "  ✓ SLH-DSA (Long-term trust roots)"
-    echo "  ✓ STARK/FRI (Zero-knowledge proofs)"
+    echo "  ✓ Hegemon SmallWood STARK/FRI (Zero-knowledge proofs)"
     echo "  ✓ Poseidon (STARK-friendly hashing)"
     
     exit 0
@@ -475,7 +534,7 @@ else
         echo "Suggested Fixes:"
         echo "  - Replace Ed25519 → ML-DSA-65"
         echo "  - Replace X25519 → ML-KEM-1024"
-        echo "  - Replace Groth16 → STARK (Plonky3)"
+        echo "  - Replace Groth16 → Hegemon SmallWood STARK/FRI"
         echo "  - Replace ECDSA → ML-DSA-65"
         echo "  - Remove all *-dalek crates"
         echo "  - Remove all ark-* ECC crates"

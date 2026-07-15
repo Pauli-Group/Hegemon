@@ -81,8 +81,17 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
             "Hegemon.Consensus.ProvenBatchBinding.accepts_iff_binding_preconditions",
         ],
     ),
-    ("transaction.recursive-cross-object-identity-refinement", &[]),
-    ("consensus.accepted-chain-supply-composition", &[]),
+    (
+        "transaction.recursive-cross-object-identity-refinement",
+        &["Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block"],
+    ),
+    (
+        "consensus.accepted-chain-supply-composition",
+        &[
+            "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
+            "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path",
+        ],
+    ),
     (
         "native.raw-ingress-canonical-publication",
         &["Hegemon.Native.RawIngressFullBytePublicationSurface.accepted_raw_ingress_full_byte_publication_surface_binds_production_projection_rows"],
@@ -126,8 +135,25 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
         "proof.statement-wrapper-binding",
         &["Hegemon.Transaction.ProofWrapperAdmission.proofWrapperAccepts_implies_no_metadata_projection_or_row_extension"],
     ),
-    ("transaction.accepted-proof-exact-constraint-extraction", &[]),
-    ("transaction.smallwood-air-row-implementation-equivalence", &[]),
+    (
+        "transaction.accepted-proof-exact-constraint-extraction",
+        &[
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_semantic_constraints",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_counterfeit_critical_linear_bindings_are_map_bound",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_linear_bindings_are_map_bound",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_linear_bindings_are_map_bound",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_bindings_are_map_bound",
+        ],
+    ),
+    (
+        "transaction.smallwood-air-row-implementation-equivalence",
+        &[
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_smallwood_air_rows_are_implementation_equivalent",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_input_hash_required_linear_binding_executes",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_monetary_reconstruction_required_linear_binding_executes",
+        ],
+    ),
     ("native.complete-parser-node-refinement", &[]),
     ("native.low-degree-unit-irreducibility", &[]),
     ("native.backend-collision-reduction-and-pok", &[]),
@@ -136,9 +162,9 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("system.da-storage-runtime-semantics", &[]),
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
-    "7ac75c373061e05bc3131e336f2e20505dc1192cba4af2175595c6f5e705359a";
+    "48241181e5d729f606709afbb568c1074d2852de838c13bacadd7a519aa6f9b5";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "d2c9b8c4f9c6a61f04b2b6d97656e922d150b67793bf3a3837b08b37b0c74163";
+    "ac8698e700262a49b65538267b0906227c2cdbedd73e01adc9fd2c8369be6a54";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]

@@ -1,0 +1,14 @@
+[package]
+name = "hegemon-field"
+version = "0.1.0"
+edition = "2021"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hegemon-owned Goldilocks field arithmetic for shipped proof systems"
+
+[dependencies]
+serde = { version = "1", default-features = false, features = ["derive"] }
+
+[lints]
+workspace = true

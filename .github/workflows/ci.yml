@@ -127,13 +127,14 @@ jobs:
           shared-key: "native-path-tests"
       - name: Native shipped-path integration gate
         run: |
-          cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads -- --nocapture
-          cargo test -p hegemon-node submit_action_stages_and_imports_shielded_transfer -- --nocapture
-          cargo test -p hegemon-node coinbase_action_mints_shielded_output_and_updates_supply -- --nocapture
-          cargo test -p consensus --test raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
-          cargo test -p consensus --test raw_active_mode receipt_root_ -- --ignored --nocapture
-          cargo test -p hegemon-node imported_block_actions_require_canonical_transfer_order -- --nocapture
-          cargo test -p hegemon-node receipt_root -- --nocapture
+          ./scripts/run_exact_cargo_lib_test.sh wallet tx_builder::tests::build_transaction_can_emit_native_tx_leaf_payloads
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::submit_action_stages_and_imports_shielded_transfer --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::coinbase_action_mints_shielded_output_and_updates_supply --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh transaction-circuit smallwood_engine::tests::verifier_rejects_forged_self_consistent_pcs_layer
+          ./scripts/run_exact_cargo_lib_test.sh block-recursion tests::recursive_proof_envelope_component_checks_reject_tampered_envelope
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::imported_block_actions_require_canonical_transfer_order --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh hegemon-node native::tests::block_artifact_binding_rejects_candidate_artifact_mismatches_in_order --no-default-features
+          ./scripts/run_exact_cargo_lib_test.sh consensus proof::tests::recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations
 
   app-no-ssh-e2e:
     runs-on: ubuntu-latest
@@ -277,4 +278,4 @@ jobs:
         run: ./scripts/check-core.sh build
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd

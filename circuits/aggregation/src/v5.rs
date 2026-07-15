@@ -638,7 +638,7 @@ fn decode_child_context(bytes: &[u8]) -> Result<AggregationChildContext, Aggrega
                         "leaf representative transaction encoding invalid".to_string(),
                     )
                 })?;
-            let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
+            let pub_inputs = transaction_verifier_inputs(&representative_tx).map_err(|err| {
                 AggregationError::InvalidAggregationPayload(format!(
                     "representative transaction public inputs invalid: {err}"
                 ))
@@ -833,7 +833,7 @@ pub fn prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Aggregati
     }
     let started = Instant::now();
     let representative = build_sample_recursion_representative_proof()?;
-    let representative_public = stark_public_inputs_p3(&representative).map_err(|err| {
+    let representative_public = transaction_verifier_inputs(&representative).map_err(|err| {
         AggregationError::InvalidPublicInputs {
             index: 0,
             message: err.to_string(),
@@ -943,11 +943,12 @@ pub fn prove_leaf_aggregation(
     let mut expected_log_blowup: Option<usize> = None;
     let decode_started = Instant::now();
     for (index, proof) in transaction_proofs.iter().enumerate() {
-        let pub_inputs =
-            stark_public_inputs_p3(proof).map_err(|err| AggregationError::InvalidPublicInputs {
+        let pub_inputs = transaction_verifier_inputs(proof).map_err(|err| {
+            AggregationError::InvalidPublicInputs {
                 index,
                 message: err.to_string(),
-            })?;
+            }
+        })?;
         let pub_inputs_vec = pub_inputs.to_vec();
         if let Some(expected) = expected_inputs_len {
             if expected != pub_inputs_vec.len() {

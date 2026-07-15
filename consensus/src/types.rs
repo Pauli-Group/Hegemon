@@ -191,23 +191,44 @@ fn compute_transaction_id(
     version: VersionBinding,
     ciphertext_hashes: &[[u8; 48]],
 ) -> BlockHash {
+    let preimage = transaction_hash_preimage(
+        nullifiers,
+        commitments,
+        balance_tag,
+        version,
+        ciphertext_hashes,
+    );
     let mut hasher = Sha384::new();
-    hasher.update(version.circuit.to_le_bytes());
-    hasher.update(version.crypto.to_le_bytes());
-    for nf in nullifiers {
-        hasher.update(nf);
-    }
-    for cm in commitments {
-        hasher.update(cm);
-    }
-    for ct_hash in ciphertext_hashes {
-        hasher.update(ct_hash);
-    }
-    hasher.update(balance_tag);
+    hasher.update(preimage);
     let digest = hasher.finalize();
     let mut out = [0u8; 32];
     out.copy_from_slice(&sha256(digest.as_slice()));
     out
+}
+
+pub fn transaction_hash_preimage(
+    nullifiers: &[Nullifier],
+    commitments: &[Commitment],
+    balance_tag: &BalanceTag,
+    version: VersionBinding,
+    ciphertext_hashes: &[[u8; 48]],
+) -> Vec<u8> {
+    let mut preimage = Vec::with_capacity(
+        4 + (nullifiers.len() + commitments.len() + ciphertext_hashes.len() + 1) * 48,
+    );
+    preimage.extend_from_slice(&version.circuit.to_le_bytes());
+    preimage.extend_from_slice(&version.crypto.to_le_bytes());
+    for nf in nullifiers {
+        preimage.extend_from_slice(nf);
+    }
+    for cm in commitments {
+        preimage.extend_from_slice(cm);
+    }
+    for ct_hash in ciphertext_hashes {
+        preimage.extend_from_slice(ct_hash);
+    }
+    preimage.extend_from_slice(balance_tag);
+    preimage
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

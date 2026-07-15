@@ -30,7 +30,6 @@ run_lint() {
     -p synthetic-crypto \
     -p transaction-circuit \
     -p block-circuit \
-    -p disclosure-circuit \
     -p cashvm-bridge \
     --all-targets -- -D warnings
   cargo clippy \
@@ -51,7 +50,6 @@ run_test() {
   cargo test -p consensus
   cargo test -p transaction-circuit
   cargo test -p block-circuit
-  cargo test -p disclosure-circuit
   cargo test -p network
   cargo test -p protocol-kernel
   cargo test -p protocol-shielded-pool
@@ -60,11 +58,12 @@ run_test() {
   cargo test -p hegemon-node --lib
   cargo test -p hegemon-node --lib --no-default-features
   cargo test --test security_pipeline -- --nocapture
+  python3 -B scripts/test_release_artifact_manifest.py
+  python3 -B scripts/test_check_release_crypto_profile.py
 }
 
 run_build() {
-  cargo build -p hegemon-node --bin hegemon-node --no-default-features --release
-  cargo build -p wallet -p walletd --release
+  ./scripts/build_release_artifacts.sh
 }
 
 case "${1:-all}" in

@@ -8,8 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1"
-p3-field = { workspace = true }
-p3-goldilocks = { workspace = true }
+hegemon-field = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 superneo-ccs = { path = "../superneo-ccs" }
 

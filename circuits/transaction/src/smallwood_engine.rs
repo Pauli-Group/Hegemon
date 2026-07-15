@@ -5,8 +5,7 @@ use std::time::Instant;
 
 use blake3::Hasher;
 use getrandom::fill as getrandom_fill;
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use transaction_core::poseidon2::{poseidon2_permutation, Felt};
@@ -56,6 +55,18 @@ pub const LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
 
 pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
     SmallwoodNoGrindingProfileV1 {
+        rho: 3,
+        nb_opened_evals: 3,
+        beta: 2,
+        opening_pow_bits: 0,
+        decs_nb_evals: 32768,
+        decs_nb_opened_evals: 24,
+        decs_eta: 3,
+        decs_pow_bits: 0,
+    };
+
+const HISTORICAL_SMALLWOOD_V2_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
         rho: 2,
         nb_opened_evals: 3,
         beta: 2,
@@ -73,8 +84,9 @@ pub const SMALLWOOD_BETA: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta;
 pub const SMALLWOOD_DECS_NB_EVALS: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals;
 pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize =
     ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
-const SMALLWOOD_DECS_ETA: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_eta;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_pow_bits;
+const MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1: usize =
+    LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
 static CONSECUTIVE_LAGRANGE_BASIS_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<u64>>>>>> =
     OnceLock::new();
@@ -89,6 +101,7 @@ pub enum SmallwoodArithmetization {
     DirectPacked64CompactBindingsSkipInitialMdsV1,
     DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
     DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+    DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
 }
 
 pub fn smallwood_no_grinding_profile_for_arithmetization(
@@ -96,6 +109,9 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
 ) -> SmallwoodNoGrindingProfileV1 {
     match arithmetization {
         SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+            HISTORICAL_SMALLWOOD_V2_NO_GRINDING_PROFILE_V1
+        }
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
             ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1
         }
         SmallwoodArithmetization::Bridge64V1
@@ -307,7 +323,7 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         epsilon3_floor_bits,
         epsilon4_floor_bits,
         security_floor_bits,
-        meets_128_bit_floor: security_floor_bits + 1e-6 >= 128.0,
+        meets_128_bit_floor: security_floor_bits >= 128.0,
     }
 }
 
@@ -459,6 +475,27 @@ fn decode_matrix_u64_v1(
 ) -> Result<Vec<Vec<u64>>, TransactionCircuitError> {
     let rows = read_u16_v1(bytes, cursor)? as usize;
     let cols = read_u16_v1(bytes, cursor)? as usize;
+    if rows > MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix row count exceeds supported profile maximum",
+        ));
+    }
+    if (rows == 0) != (cols == 0) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix must have either two zero dimensions or two non-zero dimensions",
+        ));
+    }
+    let encoded_bytes = rows
+        .checked_mul(cols)
+        .and_then(|values| values.checked_mul(std::mem::size_of::<u64>()))
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix dimensions overflow encoded length",
+        ))?;
+    if encoded_bytes > bytes.len().saturating_sub(*cursor) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof matrix dimensions exceed remaining bytes",
+        ));
+    }
     let mut out = Vec::with_capacity(rows);
     for _ in 0..rows {
         let mut row = Vec::with_capacity(cols);
@@ -522,9 +559,32 @@ fn decode_auth_paths_v1(
     cursor: &mut usize,
 ) -> Result<Vec<Vec<[u8; DIGEST_BYTES]>>, TransactionCircuitError> {
     let rows = read_u16_v1(bytes, cursor)? as usize;
+    if rows > MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof auth-path count exceeds supported profile maximum",
+        ));
+    }
     let mut lengths = Vec::with_capacity(rows);
     for _ in 0..rows {
-        lengths.push(read_u8_v1(bytes, cursor)? as usize);
+        let length = read_u8_v1(bytes, cursor)? as usize;
+        if length == 0 {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood proof auth paths must not be empty",
+            ));
+        }
+        lengths.push(length);
+    }
+    let encoded_bytes = lengths
+        .iter()
+        .try_fold(0usize, |total, length| total.checked_add(*length))
+        .and_then(|nodes| nodes.checked_mul(DIGEST_BYTES))
+        .ok_or(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof auth-path dimensions overflow encoded length",
+        ))?;
+    if encoded_bytes > bytes.len().saturating_sub(*cursor) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof auth-path dimensions exceed remaining bytes",
+        ));
     }
     let mut out = Vec::with_capacity(rows);
     for len in lengths {
@@ -606,6 +666,21 @@ fn decode_opened_witness_v1(
             let row_scalars = decode_matrix_u64_v1(bytes, cursor)?;
             let auxiliary_word_count = read_u32_v1(bytes, cursor)? as usize;
             let auxiliary_limb_count = read_u32_v1(bytes, cursor)? as usize;
+            if auxiliary_limb_count > auxiliary_word_count {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary limb count exceeds word count",
+                ));
+            }
+            let encoded_bytes = auxiliary_word_count
+                .checked_mul(std::mem::size_of::<u64>())
+                .ok_or(TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary witness count overflows encoded length",
+                ))?;
+            if encoded_bytes > bytes.len().saturating_sub(*cursor) {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood proof auxiliary witness count exceeds remaining bytes",
+                ));
+            }
             let mut auxiliary_words = Vec::with_capacity(auxiliary_word_count);
             for _ in 0..auxiliary_word_count {
                 auxiliary_words.push(read_u64_v1(bytes, cursor)?);
@@ -786,6 +861,7 @@ pub struct SmallwoodPiopVerifierTraceV1 {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SmallwoodVerifierTraceV1 {
+    pub profile: SmallwoodNoGrindingProfileV1,
     pub proof: SmallwoodProofTraceV1,
     pub binding_words: Vec<u64>,
     pub eval_points: Vec<u64>,
@@ -876,7 +952,7 @@ impl SmallwoodVerifierTraceV1 {
     }
 
     pub fn validate_transcript_section_v1(&self) -> Result<(), TransactionCircuitError> {
-        if self.eval_points.len() != SMALLWOOD_NB_OPENED_EVALS {
+        if self.eval_points.len() != self.profile.nb_opened_evals {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood verifier trace transcript eval-point count mismatch",
             ));
@@ -886,7 +962,7 @@ impl SmallwoodVerifierTraceV1 {
                 "smallwood verifier trace transcript row-scalar count mismatch",
             ));
         }
-        if self.piop_gamma_prime.len() != SMALLWOOD_RHO {
+        if self.piop_gamma_prime.len() != self.profile.rho {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood verifier trace gamma-prime count mismatch",
             ));
@@ -968,7 +1044,7 @@ impl SmallwoodVerifierTraceV1 {
                 "smallwood verifier trace PCS coefficients missing",
             ));
         }
-        if self.proof.pcs.partial_evals.len() != SMALLWOOD_NB_OPENED_EVALS
+        if self.proof.pcs.partial_evals.len() != self.profile.nb_opened_evals
             || self.proof.pcs.rcombi_tails.len() != opened_combi_count
             || self.pcs_trace.combi_heads.len() != opened_combi_count
         {
@@ -1066,7 +1142,7 @@ impl SmallwoodVerifierTraceV1 {
                 "smallwood verifier trace DECS section count mismatch",
             ));
         }
-        if self.proof.pcs.decs.high_coeffs.len() != SMALLWOOD_DECS_ETA {
+        if self.proof.pcs.decs.high_coeffs.len() != self.profile.decs_eta {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood verifier trace DECS high-coefficient count mismatch",
             ));
@@ -1235,7 +1311,8 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
             Ok(())
         }
     }
@@ -1785,6 +1862,7 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         decs_commitment_transcript,
     };
     Ok(SmallwoodVerifierTraceV1 {
+        profile,
         proof: proof_trace,
         binding_words,
         eval_points,
@@ -4902,15 +4980,16 @@ mod tests {
     use crate::smallwood_frontend::{
         build_packed_smallwood_bridge_material_from_witness,
         build_packed_smallwood_frontend_material_from_witness,
-        prove_smallwood_candidate_with_arithmetization,
-        verify_smallwood_candidate_transaction_proof, SmallwoodCandidateProof,
-        SMALLWOOD_BRIDGE_PACKING_FACTOR, SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
+        build_production_smallwood_frontend_material_from_witness,
+        encode_smallwood_candidate_proof, prove_smallwood_candidate_with_arithmetization,
+        verify_smallwood_candidate_transaction_proof, PackedSmallwoodAuxFrontendMaterial,
+        SmallwoodCandidateProof, SMALLWOOD_BRIDGE_PACKING_FACTOR,
+        SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE,
     };
     use crate::smallwood_semantics::{
         PackedStatement, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
     };
     use crate::witness::TransactionWitness;
-    use p3_field::PrimeCharacteristicRing;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
     fn transcript_xof_words_blake3_reference(
@@ -4975,17 +5054,6 @@ mod tests {
                 auxiliary_witness_words: Vec::new(),
             }
         })
-    }
-
-    fn encode_smallwood_candidate_proof_for_test(proof: &SmallwoodCandidateProof) -> Vec<u8> {
-        if proof.auxiliary_witness_words.is_empty() {
-            return bincode::serialize(&LegacySmallwoodCandidateProofForTest {
-                arithmetization: proof.arithmetization,
-                ark_proof: proof.ark_proof.clone(),
-            })
-            .expect("encode legacy smallwood candidate proof");
-        }
-        bincode::serialize(proof).expect("encode smallwood candidate proof")
     }
 
     fn merkle_build_levels_blake3_reference(
@@ -5092,6 +5160,22 @@ mod tests {
         }
     }
 
+    fn production_statement(material: &PackedSmallwoodAuxFrontendMaterial) -> PackedStatement<'_> {
+        PackedStatement::new_with_auxiliary(
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+            &material.public_statement.public_values,
+            material.public_statement.lppc_row_count as usize,
+            material.public_statement.lppc_packing_factor as usize,
+            material.public_statement.effective_constraint_degree as usize,
+            &material.linear_constraints.term_offsets,
+            &material.linear_constraints.term_indices,
+            &material.linear_constraints.term_coefficients,
+            &material.linear_constraints.targets,
+            &material.auxiliary_witness_words,
+            material.auxiliary_witness_words.len(),
+        )
+    }
+
     struct FakeIdentityWitnessStatement {
         row_count: usize,
         packing_factor: usize,
@@ -5178,20 +5262,89 @@ mod tests {
     }
 
     #[test]
+    fn compact_matrix_decoder_rejects_impossible_dimensions_before_allocation() {
+        let bytes = [25, 0, 0xff, 0xff];
+        let err = decode_matrix_u64_v1(&bytes, &mut 0usize)
+            .expect_err("truncated supported-row matrix dimensions must reject");
+        assert!(
+            err.to_string()
+                .contains("dimensions exceed remaining bytes"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compact_matrix_decoder_rejects_zero_width_and_excessive_rows_before_allocation() {
+        let zero_width = [0xff, 0xff, 0, 0];
+        let err = decode_matrix_u64_v1(&zero_width, &mut 0usize)
+            .expect_err("zero-width maximal-row matrix must reject");
+        assert!(
+            err.to_string()
+                .contains("row count exceeds supported profile maximum"),
+            "unexpected error: {err:?}"
+        );
+
+        let mixed_zero = [1, 0, 0, 0];
+        let err = decode_matrix_u64_v1(&mixed_zero, &mut 0usize)
+            .expect_err("mixed zero matrix dimensions must reject");
+        assert!(
+            err.to_string().contains("two zero dimensions"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compact_auth_path_decoder_rejects_impossible_dimensions_before_allocation() {
+        let bytes = [1, 0, 255];
+        let err = decode_auth_paths_v1(&bytes, &mut 0usize)
+            .expect_err("truncated maximal auth path must reject");
+        assert!(
+            err.to_string()
+                .contains("dimensions exceed remaining bytes"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compact_auth_path_decoder_rejects_excessive_count_and_empty_paths_before_allocation() {
+        let excessive_count = [0xff, 0xff];
+        let err = decode_auth_paths_v1(&excessive_count, &mut 0usize)
+            .expect_err("maximal auth-path count must reject");
+        assert!(
+            err.to_string()
+                .contains("count exceeds supported profile maximum"),
+            "unexpected error: {err:?}"
+        );
+
+        let empty_path = [1, 0, 0];
+        let err = decode_auth_paths_v1(&empty_path, &mut 0usize)
+            .expect_err("zero-length auth path must reject");
+        assert!(
+            err.to_string().contains("must not be empty"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn compact_auxiliary_decoder_rejects_impossible_count_before_allocation() {
+        let mut bytes = vec![SMALLWOOD_OPENED_WITNESS_MODE_ROW_SCALARS_V1];
+        push_u16_v1(&mut bytes, 0);
+        push_u16_v1(&mut bytes, 0);
+        push_u32_v1(&mut bytes, u32::MAX);
+        push_u32_v1(&mut bytes, 0);
+        let err = decode_opened_witness_v1(&bytes, &mut 0usize)
+            .expect_err("truncated maximal auxiliary count must reject");
+        assert!(
+            err.to_string().contains("count exceeds remaining bytes"),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
     fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
         let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
+        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = production_statement(&material);
         let proof = prove_candidate(
             &statement,
             &material.packed_expanded_witness,
@@ -5213,8 +5366,8 @@ mod tests {
             } => {
                 assert_eq!(row_scalars.len(), SMALLWOOD_NB_OPENED_EVALS);
                 assert!(row_scalars.iter().all(|row| row.len() == cfg.nb_polys));
-                assert!(auxiliary_words.is_empty());
-                assert_eq!(auxiliary_limb_count, 0);
+                assert_eq!(auxiliary_words, material.auxiliary_witness_words);
+                assert_eq!(auxiliary_limb_count, material.auxiliary_witness_words.len());
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
@@ -5276,18 +5429,8 @@ mod tests {
     #[test]
     fn direct_packed_arithmetization_rejects_opened_witness_mode_mismatch() {
         let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
+        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = production_statement(&material);
         let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
@@ -5310,18 +5453,8 @@ mod tests {
     #[test]
     fn direct_packed_arithmetization_rejects_auxiliary_witness_limb_count_overflow() {
         let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
+        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = production_statement(&material);
         let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
@@ -5337,8 +5470,11 @@ mod tests {
                 auxiliary_limb_count,
                 ..
             } => {
-                assert!(auxiliary_words.is_empty());
-                *auxiliary_limb_count = 1;
+                assert_eq!(
+                    auxiliary_words.len(),
+                    material.auxiliary_witness_words.len()
+                );
+                *auxiliary_limb_count = auxiliary_words.len() + 1;
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
@@ -5354,18 +5490,8 @@ mod tests {
     #[test]
     fn direct_packed_arithmetization_rejects_nonzero_auxiliary_padding() {
         let witness = sample_witness();
-        let material = build_packed_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::DirectPacked64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
+        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = production_statement(&material);
         let mut proof = decode_smallwood_proof_bytes_v1(
             &prove_candidate(
                 &statement,
@@ -5381,7 +5507,7 @@ mod tests {
                 auxiliary_limb_count,
                 ..
             } => {
-                *auxiliary_limb_count = 0;
+                *auxiliary_limb_count = auxiliary_words.len();
                 auxiliary_words.push(1);
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
@@ -5398,22 +5524,12 @@ mod tests {
     #[test]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();
-        let material = build_packed_smallwood_bridge_material_from_witness(&witness).unwrap();
-        let statement = PackedStatement::new(
-            SmallwoodArithmetization::Bridge64V1,
-            &material.public_statement.public_values,
-            material.public_statement.lppc_row_count as usize,
-            SMALLWOOD_BRIDGE_PACKING_FACTOR,
-            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
-            &material.linear_constraints.term_offsets,
-            &material.linear_constraints.term_indices,
-            &material.linear_constraints.term_coefficients,
-            &material.linear_constraints.targets,
-        );
+        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+        let statement = production_statement(&material);
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         let mut proof = prove_smallwood_candidate_with_arithmetization(
             &witness,
-            SmallwoodArithmetization::Bridge64V1,
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
         )
         .unwrap();
         let mut outer = decode_smallwood_candidate_proof_for_test(&proof.stark_proof);
@@ -5470,7 +5586,12 @@ mod tests {
         };
 
         outer.ark_proof = encode_smallwood_proof_bytes_v1(&inner).unwrap();
-        proof.stark_proof = encode_smallwood_candidate_proof_for_test(&outer);
+        proof.stark_proof = encode_smallwood_candidate_proof(
+            outer.arithmetization,
+            outer.ark_proof,
+            &outer.auxiliary_witness_words,
+        )
+        .unwrap();
 
         let err = verify_smallwood_candidate_transaction_proof(&proof)
             .expect_err("forged self-consistent PCS layer unexpectedly verified");

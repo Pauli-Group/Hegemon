@@ -1,4 +1,3 @@
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::VersionBinding;
 use serde::{Deserialize, Serialize};
 use synthetic_crypto::hashes::blake3_384;
@@ -13,8 +12,9 @@ use crate::{
     hashing_pq::{bytes48_to_felts, felts_to_bytes48, merkle_node, Commitment, Felt, HashFelt},
     note::{InputNoteWitness, OutputNoteWitness},
     proof::{
-        transaction_public_inputs_digest_from_serialized, transaction_public_inputs_p3_from_parts,
-        transaction_statement_hash_from_public_inputs, SerializedStarkInputs,
+        transaction_public_inputs_digest_from_serialized,
+        transaction_statement_hash_from_public_inputs, transaction_verifier_inputs_from_parts,
+        SerializedStarkInputs,
     },
     public_inputs::TransactionPublicInputs,
     smallwood_engine::{
@@ -716,9 +716,9 @@ pub fn build_smallwood_semantic_bridge_lower_bound_material_from_witness(
     witness.validate()?;
     let public_inputs = witness.public_inputs()?;
     let stark_public_inputs = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
-    let public_inputs_p3 =
-        transaction_public_inputs_p3_from_parts(&public_inputs, &stark_public_inputs)?;
-    let public_values: Vec<u64> = public_inputs_p3
+    let verifier_inputs =
+        transaction_verifier_inputs_from_parts(&public_inputs, &stark_public_inputs)?;
+    let public_values: Vec<u64> = verifier_inputs
         .to_vec()
         .into_iter()
         .map(|felt| felt.as_canonical_u64())
@@ -858,9 +858,9 @@ pub fn build_smallwood_semantic_helper_floor_material_from_witness(
     witness.validate()?;
     let public_inputs = witness.public_inputs()?;
     let stark_public_inputs = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
-    let public_inputs_p3 =
-        transaction_public_inputs_p3_from_parts(&public_inputs, &stark_public_inputs)?;
-    let public_values: Vec<u64> = public_inputs_p3
+    let verifier_inputs =
+        transaction_verifier_inputs_from_parts(&public_inputs, &stark_public_inputs)?;
+    let public_values: Vec<u64> = verifier_inputs
         .to_vec()
         .into_iter()
         .map(|felt| felt.as_canonical_u64())
@@ -1010,9 +1010,9 @@ pub fn build_smallwood_semantic_helper_aux_material_from_witness(
     witness.validate()?;
     let public_inputs = witness.public_inputs()?;
     let stark_public_inputs = serialized_stark_inputs_from_witness(witness, &public_inputs)?;
-    let public_inputs_p3 =
-        transaction_public_inputs_p3_from_parts(&public_inputs, &stark_public_inputs)?;
-    let public_values: Vec<u64> = public_inputs_p3
+    let verifier_inputs =
+        transaction_verifier_inputs_from_parts(&public_inputs, &stark_public_inputs)?;
+    let public_values: Vec<u64> = verifier_inputs
         .to_vec()
         .into_iter()
         .map(|felt| felt.as_canonical_u64())

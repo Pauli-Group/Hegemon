@@ -1,4 +1,3 @@
-use p3_field::PrimeCharacteristicRing;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -311,7 +310,6 @@ mod tests {
     use crate::hashing_pq::{
         note_commitment, note_commitment_inputs, nullifier_inputs, Felt, HashFelt,
     };
-    use p3_field::{PrimeCharacteristicRing, PrimeField64};
     use std::collections::BTreeSet;
 
     #[derive(Debug, Deserialize)]
@@ -597,6 +595,22 @@ mod tests {
             ),
             "single-key NoteData commitment must remain the legacy helper result"
         );
+    }
+
+    #[test]
+    fn note_commitment_inputs_canonicalize_field_modulus_limb_alias() {
+        let zero = [0u8; 32];
+        let mut modulus_alias = zero;
+        modulus_alias[24..].copy_from_slice(&crate::constants::FIELD_MODULUS_U64.to_be_bytes());
+        assert_ne!(modulus_alias, zero);
+
+        let canonical = |randomness: &[u8; 32]| {
+            note_commitment_inputs(42, 7, &zero, &zero, randomness, &zero)
+                .into_iter()
+                .map(|felt| felt.as_canonical_u64())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(canonical(&modulus_alias), canonical(&zero));
     }
 
     #[test]

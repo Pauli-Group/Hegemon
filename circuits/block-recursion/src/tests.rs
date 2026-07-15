@@ -11,6 +11,7 @@ use crate::tree_v2::{
     verify_block_recursive_v2_with_versioned_artifact_cap,
 };
 
+use super::SMALLWOOD_RECURSION_VERSION_BINDING as SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use super::{
     compose_recursive_segment_statements_v1, derive_tree_projection_point_v2,
     deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
@@ -37,7 +38,6 @@ use super::{
     StepARelationV1, StepBRelationV1, RECURSIVE_BLOCK_HEADER_BYTES_V1,
     RECURSIVE_BLOCK_PROOF_BYTES_V1, RECURSIVE_BLOCK_PUBLIC_BYTES_V1, TREE_RECURSIVE_CHUNK_SIZE_V2,
 };
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     decode_smallwood_proof_trace_v1, decode_smallwood_recursive_proof_envelope_v1,
     encode_smallwood_recursive_proof_envelope_v1, projected_smallwood_recursive_proof_bytes_v1,
@@ -1055,7 +1055,7 @@ fn recursive_block_v2_surface_fixture_for_case(
             );
             artifact.artifact.proof_bytes[padding_index] ^= 1;
         }
-        "proof_projection_failed" => {
+        "proof_aux_limb_count_overflow" => {
             mutate_recursive_block_v2_aux_limb_count(&mut artifact, u32::MAX);
         }
         "proof_projected_width_mismatch" => {

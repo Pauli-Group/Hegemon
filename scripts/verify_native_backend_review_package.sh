@@ -195,13 +195,17 @@ mkdir -p \
   "$REGENERATED_ROOT/testdata/native_backend_vectors" \
   "$VERIFIED_SOURCE_ROOT"
 cp -a "$SOURCE_ROOT/." "$VERIFIED_SOURCE_ROOT/"
-cp \
-  "$PACKAGE_ROOT/testdata/native_backend_vectors/bundle.json" \
-  "$REGENERATED_ROOT/testdata/native_backend_vectors/bundle.json"
 
 (
   cd "$VERIFIED_SOURCE_ROOT"
   export CARGO_TARGET_DIR="$WORKDIR/cargo-target"
+  cargo run --locked -p native-backend-ref -- verify-vectors \
+    "$PACKAGE_ROOT/testdata/native_backend_vectors" >/dev/null
+  cargo run --locked -p superneo-bench -- --verify-review-bundle-production \
+    "$PACKAGE_ROOT/testdata/native_backend_vectors" >/dev/null
+  cargo run --locked -p superneo-bench -- --emit-review-vectors \
+    "$REGENERATED_ROOT/testdata/native_backend_vectors" \
+    > "$WORKDIR/review_vector_regeneration.json"
   cargo run --locked -p superneo-bench -- --print-native-security-claim \
     > "$REGENERATED_ROOT/current_claim.json"
   cargo run --locked -p superneo-bench -- --print-native-review-manifest \
@@ -233,6 +237,9 @@ cp \
 python3 -I "$PACKAGE_HELPER" normalize-json-reports --root "$REGENERATED_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-evidence-semantics \
   --root "$REGENERATED_ROOT"
+python3 -I "$PACKAGE_HELPER" verify-vector-semantic-equivalence \
+  --package-root "$PACKAGE_ROOT" \
+  --regenerated-root "$REGENERATED_ROOT"
 python3 -I "$PACKAGE_HELPER" verify-generated-evidence \
   --package-root "$PACKAGE_ROOT" \
   --regenerated-root "$REGENERATED_ROOT"

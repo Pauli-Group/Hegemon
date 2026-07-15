@@ -4,9 +4,9 @@
 //!
 //! ## Main API (Real Transaction Proofs)
 //!
-//! - [`proof::prove`] - Generate transaction proofs using the version-bound backend
-//! - [`proof::verify`] - Verify transaction proofs using the version-bound backend
-//! - [`protocol_versioning::TxProofBackend`] - Backend selector carried by the proof
+//! - [`proof::prove`] - Generate SmallWood transaction proofs
+//! - [`proof::verify`] - Verify SmallWood transaction proofs
+//! - [`protocol_versioning::TxProofBackend`] - Backend identifier carried by the proof
 //!
 //! ## Batch Proofs
 //!
@@ -15,13 +15,10 @@
 //!
 //! ## Implementation
 //!
-//! SmallWood is the active default backend today, while Plonky3 remains
-//! available behind an explicit legacy version binding. The proof object
-//! carries an explicit backend identifier so the tx-leaf / receipt-root
-//! aggregation interfaces stay stable across backend swaps.
+//! SmallWood is the only accepted transaction proof backend. The proof object
+//! carries an explicit backend identifier so retired wire values fail closed.
 
 pub mod constants;
-pub mod dimensions;
 pub mod error;
 pub mod hashing;
 pub mod hashing_pq;
@@ -29,21 +26,18 @@ pub mod keys;
 pub mod note;
 pub mod private_multisig_accumulator;
 pub mod proof;
+pub mod proof_options;
 pub mod public_inputs;
 mod smallwood_engine;
 pub mod smallwood_frontend;
 pub mod smallwood_lppc_frontend;
 pub mod smallwood_native;
+mod smallwood_production_constraint_contract_generated;
 pub mod smallwood_recursive;
 mod smallwood_semantics;
 pub mod trace;
 pub mod witness;
 pub use transaction_core::poseidon_constants;
-
-// Legacy Plonky3 implementation
-pub mod p3_config;
-pub mod p3_prover;
-pub mod p3_verifier;
 
 pub use error::TransactionCircuitError;
 pub use keys::{generate_keys, ProvingKey, VerifyingKey};
@@ -52,6 +46,7 @@ pub use note::{
     PredicateThresholdSpendWitness,
 };
 pub use proof::{TransactionProof, VerificationReport};
+pub use proof_options::TransactionProofParams;
 pub use protocol_versioning::TxProofBackend;
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_engine::{
@@ -84,6 +79,7 @@ pub use smallwood_engine::{
     SMALLWOOD_DECS_POW_BITS, SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
 };
 pub use smallwood_frontend::{
+    active_smallwood_production_profile_attestation,
     analyze_smallwood_candidate_profile_for_arithmetization,
     analyze_smallwood_candidate_profile_surface,
     build_packed_smallwood_frontend_material_with_shape_from_witness,
@@ -98,15 +94,25 @@ pub use smallwood_frontend::{
     prove_smallwood_candidate_with_arithmetization_and_auth, prove_smallwood_candidate_with_auth,
     report_smallwood_candidate_proof_size, smallwood_accumulator_auth_key_bytes,
     smallwood_policy_root_bytes, smallwood_private_auth_intent_digest_bytes,
-    smallwood_public_statement_values_for_p3, smallwood_signer_tag_from_spend_key,
-    smallwood_value_lock_auth_key_bytes, verify_smallwood_candidate_proof_bytes,
-    SmallwoodAccumulatorAuthOpening, SmallwoodCandidateBackendOpeningSurfaceReport,
-    SmallwoodCandidateExactProfileReport, SmallwoodCandidateLvcsPlannerProjectionEntry,
-    SmallwoodCandidateLvcsPlannerProjectionReport, SmallwoodCandidateProfileAnalysisReport,
-    SmallwoodCandidateProfileSurface, SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport,
-    SmallwoodFrontendShape, SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode,
-    SmallwoodPrivateAuthWitness, SmallwoodPublicBindingMode, SmallwoodSignerTag,
+    smallwood_production_constraint_map, smallwood_production_constraint_map_for_public_values,
+    smallwood_production_constraint_map_for_verifier_inputs,
+    smallwood_production_public_field_ranges, smallwood_public_statement_values,
+    smallwood_signer_tag_from_spend_key, smallwood_value_lock_auth_key_bytes,
+    verify_smallwood_candidate_proof_bytes, SmallwoodAccumulatorAuthOpening,
+    SmallwoodCandidateBackendOpeningSurfaceReport, SmallwoodCandidateExactProfileReport,
+    SmallwoodCandidateLvcsPlannerProjectionEntry, SmallwoodCandidateLvcsPlannerProjectionReport,
+    SmallwoodCandidateProfileAnalysisReport, SmallwoodCandidateProfileSurface,
+    SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport, SmallwoodFrontendShape,
+    SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
+    SmallwoodProductionConstraintMap, SmallwoodProductionProfileAttestation,
+    SmallwoodProductionPublicFieldRange, SmallwoodPublicBindingMode, SmallwoodSignerTag,
     SMALLWOOD_MULTISIG_MAX_SIGNERS, SMALLWOOD_SIGNER_TAG_WORDS,
+};
+#[cfg(feature = "formal-generator")]
+pub use smallwood_frontend::{
+    smallwood_production_constraint_map_for_public_values_unchecked_for_generation,
+    smallwood_production_constraint_map_unchecked_for_generation,
+    smallwood_production_runtime_contract_digests_for_generation,
 };
 pub use smallwood_lppc_frontend::{
     analyze_smallwood_semantic_bridge_lower_bound_from_witness,
@@ -156,18 +162,12 @@ pub use smallwood_recursive::{
 pub use smallwood_semantics::{
     SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNonlinearEvalView,
 };
+pub use smallwood_semantics::{
+    SmallwoodConstraintExpression, SmallwoodProductionConstraintProgram,
+};
 pub use witness::TransactionWitness;
 
-// Legacy Plonky3 exports
-pub use p3_prover::{prewarm_transaction_prover_cache_p3, TransactionProverP3};
-pub use p3_verifier::{
-    prewarm_transaction_verifier_cache_p3, verify_transaction_proof_bytes_p3,
-    TransactionVerifyErrorP3,
-};
-pub use transaction_core::p3_air::{
-    TransactionAirP3, TransactionPublicInputsP3, MIN_TRACE_LENGTH as P3_MIN_TRACE_LENGTH,
-    TRACE_WIDTH as P3_TRACE_WIDTH,
-};
+pub use transaction_core::TransactionVerifierInputs;
 
 // Re-export circuit versioning and AIR identification
 pub use constants::{compute_air_hash, expected_air_hash, CIRCUIT_VERSION};
