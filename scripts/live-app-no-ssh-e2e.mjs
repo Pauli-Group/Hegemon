@@ -4,10 +4,12 @@ import {
   createWriteStream,
   existsSync,
   mkdtempSync,
+  readFileSync,
+  realpathSync,
   rmSync
 } from 'node:fs';
 import http from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,6 +18,7 @@ import { createInterface } from 'node:readline';
 const ROOT_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const NODE_BIN = process.env.HEGEMON_NODE_BIN ?? path.join(ROOT_DIR, 'target/release/hegemon-node');
 const WALLETD_BIN = process.env.HEGEMON_WALLETD_BIN ?? path.join(ROOT_DIR, 'target/release/walletd');
+const RELEASE_MANIFEST = process.env.HEGEMON_RELEASE_MANIFEST;
 const PASSPHRASE = process.env.HEGEMON_E2E_WALLET_PASSPHRASE ?? randomBytes(32).toString('hex');
 const KEEP_TMP = process.env.HEGEMON_E2E_KEEP === '1';
 const SMALL_TX_COUNT = Number.parseInt(process.env.HEGEMON_E2E_SMALL_TX_COUNT ?? '3', 10);
@@ -43,6 +46,62 @@ function log(message) {
 function fail(message) {
   throw new Error(message);
 }
+
+function sha256File(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+function loadBinaryProvenance() {
+  if (!RELEASE_MANIFEST) {
+    fail('HEGEMON_RELEASE_MANIFEST is required');
+  }
+  const manifestPath = realpathSync(RELEASE_MANIFEST);
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (manifest.schema_version !== 1 || !Array.isArray(manifest.artifacts)) {
+    fail('release artifact manifest schema is invalid');
+  }
+  const expected = [
+    ['hegemon-node', 'hegemon-node', NODE_BIN],
+    ['walletd', 'walletd', WALLETD_BIN]
+  ];
+  const artifacts = expected.map(([packageName, binaryName, selectedPath]) => {
+    const artifact = manifest.artifacts.find(
+      (candidate) => candidate.package === packageName && candidate.binary === binaryName
+    );
+    if (!artifact) {
+      fail(`release artifact manifest lacks ${packageName}/${binaryName}`);
+    }
+    const artifactPath = realpathSync(path.resolve(ROOT_DIR, artifact.path));
+    if (artifactPath !== realpathSync(selectedPath)) {
+      fail(`${binaryName} selected path does not match the release artifact manifest`);
+    }
+    const digest = sha256File(artifactPath);
+    if (digest !== artifact.sha256) {
+      fail(`${binaryName} SHA-256 does not match the release artifact manifest`);
+    }
+    return {
+      package: packageName,
+      binary: binaryName,
+      path: artifactPath,
+      sha256: digest
+    };
+  });
+  for (const field of ['source_head', 'source_index_tree', 'source_tree_sha256', 'target_triple']) {
+    if (typeof manifest[field] !== 'string' || manifest[field].length === 0) {
+      fail(`release artifact manifest lacks ${field}`);
+    }
+  }
+  return {
+    manifestPath,
+    sourceHead: manifest.source_head,
+    sourceIndexTree: manifest.source_index_tree,
+    sourceTreeSha256: manifest.source_tree_sha256,
+    targetTriple: manifest.target_triple,
+    artifacts
+  };
+}
+
+const BINARY_PROVENANCE = loadBinaryProvenance();
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -390,7 +449,28 @@ async function sendAndConfirm(sender, recipient, relayRpcPort, recipientAddress,
   return result;
 }
 
-async function runDisclosureFlow(sender, relayRpcPort, txHash, recipientAddress, amount, memo) {
+async function runDisclosureRecordFlow(sender, txHash, recipientAddress, amount, memo) {
+  const status = await sender.request('status.get');
+  if (status.capabilities?.disclosure !== false) {
+    fail('walletd must advertise disclosure proof generation as unavailable');
+  }
+  for (const method of ['disclosure.create', 'disclosure.verify']) {
+    let rejection;
+    try {
+      await sender.request(method, {});
+    } catch (error) {
+      rejection = error;
+    }
+    if (!rejection) {
+      fail(`${method} unexpectedly succeeded in the release E2E`);
+    }
+    if (
+      rejection.response?.error_code !== 'unknown_method' ||
+      !String(rejection.response?.error ?? '').includes('unavailable')
+    ) {
+      fail(`${method} did not fail closed with the retired-method response: ${rejection.message}`);
+    }
+  }
   const record = await retry(`wait disclosure record for ${txHash}`, WAIT_TIMEOUT_MS, 3000, async () => {
     const records = await sender.request('disclosure.list');
     return (records ?? []).find((entry) => String(entry.txId).toLowerCase() === txHash.toLowerCase()) ?? null;
@@ -408,40 +488,13 @@ async function runDisclosureFlow(sender, relayRpcPort, txHash, recipientAddress,
     fail(`disclosure memo mismatch: ${record.memo} != ${memo}`);
   }
 
-  const disclosurePackage = await sender.request('disclosure.create', {
-    ws_url: walletRpcUrl(relayRpcPort),
-    tx_id: txHash,
-    output: Number(record.outputIndex)
-  });
-  if (disclosurePackage.disclosed_memo !== memo) {
-    fail(`disclosure package memo mismatch: ${disclosurePackage.disclosed_memo} != ${memo}`);
-  }
-  const verified = await sender.request('disclosure.verify', {
-    ws_url: walletRpcUrl(relayRpcPort),
-    package: disclosurePackage
-  });
-  if (!verified.verified) {
-    fail(`disclosure package did not verify for ${txHash}`);
-  }
-  if (verified.recipient_address !== recipientAddress) {
-    fail(`verified disclosure recipient mismatch: ${verified.recipient_address} != ${recipientAddress}`);
-  }
-  if (Number(verified.value) !== amount) {
-    fail(`verified disclosure value mismatch: ${verified.value} != ${amount}`);
-  }
-  if (Number(verified.asset_id) !== 0) {
-    fail(`verified disclosure asset mismatch: ${verified.asset_id} != 0`);
-  }
-  if (String(verified.commitment).toLowerCase() !== String(record.commitment).toLowerCase()) {
-    fail(`verified disclosure commitment mismatch: ${verified.commitment} != ${record.commitment}`);
-  }
-  log(`disclosure verified for ${txHash} output ${record.outputIndex}`);
+  log(`outgoing disclosure record retained for ${txHash} output ${record.outputIndex}`);
   return {
     txHash,
     outputIndex: Number(record.outputIndex),
     commitment: record.commitment,
     value: Number(record.value),
-    verified: true
+    proofAvailable: false
   };
 }
 
@@ -757,9 +810,8 @@ async function main() {
       )
     );
   }
-  const disclosure = await runDisclosureFlow(
+  const outgoingDisclosureRecord = await runDisclosureRecordFlow(
     miner,
-    relayRpcPort,
     smallTxs[0].txHash,
     recipientAddress,
     SMALL_AMOUNT,
@@ -790,6 +842,7 @@ async function main() {
 
   const summary = {
     ok: true,
+    binaryProvenance: BINARY_PROVENANCE,
     durationSeconds: Math.round((Date.now() - startedAt) / 1000),
     runDir,
     seedRpcPort,
@@ -807,7 +860,7 @@ async function main() {
       recipientSpendable: restart.recipientSpendableAfterRestart
     },
     smallTxs: smallTxs.map((tx) => tx.txHash),
-    disclosure,
+    outgoingDisclosureRecord,
     consolidation,
     multisig
   };

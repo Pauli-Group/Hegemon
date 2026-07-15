@@ -12,9 +12,8 @@ use crate::{
     statement::{
         recursive_prefix_statement_digest32_v1, recursive_prefix_statement_from_public_v1,
     },
-    BlockRecursionError,
+    BlockRecursionError, SMALLWOOD_RECURSION_VERSION_BINDING,
 };
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     decode_smallwood_proof_trace_prefix_v1, decode_smallwood_proof_trace_v1,
     encode_smallwood_proof_trace_v1, projected_smallwood_recursive_proof_bytes_v1,
@@ -96,10 +95,10 @@ fn build_terminal_relation_v1(
     let descriptor = hosted_recursive_descriptor_v1(profile_tag, relation_kind);
     let profile = match profile_tag {
         SmallwoodRecursiveProfileTagV1::A => {
-            recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_a_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
         SmallwoodRecursiveProfileTagV1::B => {
-            recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_b_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
     };
     let relation: Box<dyn SmallwoodConstraintAdapter + Sync> = match relation_kind {

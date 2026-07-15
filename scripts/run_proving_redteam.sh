@@ -36,6 +36,24 @@ declare -a CAMPAIGNS=()
 declare -a RESULTS=()
 declare -a LOGS=()
 
+require_filter_execution_summary() {
+  local label="$1"
+  local expected="$2"
+  local output="$3"
+  local counts
+  counts="$(printf '%s\n' "$output" | awk '
+    /test result:/ { passed += $4; failed += $6; ignored += $8; summaries += 1 }
+    END { print passed + 0, failed + 0, ignored + 0, summaries + 0 }')"
+  local passed failed ignored summaries
+  read -r passed failed ignored summaries <<<"$counts"
+  if [[ "$summaries" -eq 0 || "$passed" -ne "$expected" || "$failed" -ne 0 || "$ignored" -ne 0 ]]; then
+    printf 'red-team gate execution mismatch for %s: expected=%s passed=%s failed=%s ignored=%s summaries=%s\n' \
+      "$label" "$expected" "$passed" "$failed" "$ignored" "$summaries" >&2
+    return 97
+  fi
+}
+export -f require_filter_execution_summary
+
 cargo_test_filter() {
   local package="$1"
   local filter="$2"
@@ -47,14 +65,28 @@ cargo_test_filter() {
     return 1
   fi
 
-  local matches
-  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
-  if [[ "$matches" -eq 0 ]]; then
-    echo "red-team gate matched zero tests: cargo test -p $package $filter" >&2
+  local total_matches ignored_matches expected_matches
+  total_matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  local ignored_list
+  if ! ignored_list="$(cargo test -p "$package" "$filter" -- --ignored --list 2>&1)"; then
+    printf '%s\n' "$ignored_list" >&2
+    return 1
+  fi
+  ignored_matches="$(printf '%s\n' "$ignored_list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  expected_matches=$((total_matches - ignored_matches))
+  if [[ "$expected_matches" -le 0 ]]; then
+    printf 'red-team gate matched no nonignored tests: cargo test -p %s %s (total=%s ignored=%s)\n' \
+      "$package" "$filter" "$total_matches" "$ignored_matches" >&2
     return 97
   fi
 
-  cargo test -p "$package" "$filter" "$@"
+  local output
+  if ! output="$(CARGO_TERM_COLOR=never cargo test -p "$package" "$filter" "$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+  require_filter_execution_summary "$package $filter" "$expected_matches" "$output"
 }
 export -f cargo_test_filter
 
@@ -69,14 +101,28 @@ cargo_test_lib_filter() {
     return 1
   fi
 
-  local matches
-  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
-  if [[ "$matches" -eq 0 ]]; then
-    echo "red-team gate matched zero tests: cargo test -p $package --lib $filter" >&2
+  local total_matches ignored_matches expected_matches
+  total_matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  local ignored_list
+  if ! ignored_list="$(cargo test -p "$package" --lib "$filter" -- --ignored --list 2>&1)"; then
+    printf '%s\n' "$ignored_list" >&2
+    return 1
+  fi
+  ignored_matches="$(printf '%s\n' "$ignored_list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  expected_matches=$((total_matches - ignored_matches))
+  if [[ "$expected_matches" -le 0 ]]; then
+    printf 'red-team gate matched no nonignored tests: cargo test -p %s --lib %s (total=%s ignored=%s)\n' \
+      "$package" "$filter" "$total_matches" "$ignored_matches" >&2
     return 97
   fi
 
-  cargo test -p "$package" --lib "$filter" "$@"
+  local output
+  if ! output="$(CARGO_TERM_COLOR=never cargo test -p "$package" --lib "$filter" "$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+  require_filter_execution_summary "$package --lib $filter" "$expected_matches" "$output"
 }
 export -f cargo_test_lib_filter
 
@@ -125,20 +171,59 @@ cargo_test_target() {
   local target="$2"
   shift 2
 
+  local cargo_filter_args=()
+  local cargo_filter_count=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      break
+    fi
+    cargo_filter_args+=("$arg")
+    cargo_filter_count=$((cargo_filter_count + 1))
+  done
+
   local list
-  if ! list="$(cargo test -p "$package" --test "$target" -- --list 2>&1)"; then
-    printf '%s\n' "$list" >&2
-    return 1
+  if [[ "$cargo_filter_count" -eq 0 ]]; then
+    if ! list="$(cargo test -p "$package" --test "$target" -- --list 2>&1)"; then
+      printf '%s\n' "$list" >&2
+      return 1
+    fi
+  else
+    if ! list="$(cargo test -p "$package" --test "$target" "${cargo_filter_args[@]}" -- --list 2>&1)"; then
+      printf '%s\n' "$list" >&2
+      return 1
+    fi
   fi
 
-  local matches
-  matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
-  if [[ "$matches" -eq 0 ]]; then
-    echo "red-team gate matched zero tests: cargo test -p $package --test $target" >&2
+  local total_matches ignored_matches expected_matches
+  total_matches="$(printf '%s\n' "$list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  local ignored_list
+  if [[ "$cargo_filter_count" -eq 0 ]]; then
+    if ! ignored_list="$(cargo test -p "$package" --test "$target" -- --ignored --list 2>&1)"; then
+      printf '%s\n' "$ignored_list" >&2
+      return 1
+    fi
+  else
+    if ! ignored_list="$(cargo test -p "$package" --test "$target" "${cargo_filter_args[@]}" -- --ignored --list 2>&1)"; then
+      printf '%s\n' "$ignored_list" >&2
+      return 1
+    fi
+  fi
+  ignored_matches="$(printf '%s\n' "$ignored_list" | awk '/: test$/ { count++ } END { print count + 0 }')"
+  expected_matches=$((total_matches - ignored_matches))
+  if [[ "$expected_matches" -le 0 ]]; then
+    printf 'red-team gate matched no nonignored tests: cargo test -p %s --test %s (total=%s ignored=%s)\n' \
+      "$package" "$target" "$total_matches" "$ignored_matches" >&2
     return 97
   fi
 
-  cargo test -p "$package" --test "$target" "$@"
+  local output
+  if ! output="$(CARGO_TERM_COLOR=never cargo test -p "$package" --test "$target" "$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+  printf '%s\n' "$output"
+  require_filter_execution_summary "$package --test $target" "$expected_matches" "$output"
 }
 export -f cargo_test_target
 
@@ -196,15 +281,18 @@ EOF
       cat <<'EOF'
 cargo_test_lib_filter consensus recursive_block_v1_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
 cargo_test_lib_filter consensus recursive_block_v2_direct_verifier_requires_semantic_replay_before_tx_count_mismatch -- --nocapture
-cargo_test_target consensus raw_active_mode raw_active_rejects_bad_tx_proof -- --ignored --nocapture
+cargo_test_lib_exact consensus proof::tests::recursive_block_v2_product_wrapper_rejects_independent_artifact_mutations --nocapture
+cargo_test_filter block-recursion recursive_proof_envelope_component_checks_reject_tampered_envelope -- --nocapture
+cargo_test_filter hegemon-node block_artifact_binding_rejects_candidate_artifact_mismatches_in_order -- --nocapture
 EOF
       ;;
     receipt-root-tamper)
       cat <<'EOF'
-cargo_test_lib_filter consensus parallel_receipt_root_payload_mismatches_reject_before_backend -- --nocapture
 cargo_test_lib_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
 cargo_test_lib_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
-cargo_test_target consensus raw_active_mode receipt_root_ -- --ignored --nocapture
+cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_fold_rows -- --nocapture
+cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_spec_digest_mismatch -- --nocapture
+cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_leaf_statement_digest -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi

@@ -45,58 +45,10 @@
       "kind": "unmaintained",
       "expires": "2026-08-31",
       "tracking": "DEP-2026-0006",
-      "reason": "Transitive macro dependency through arkworks/RISC0/Plonky3. It is not a runtime trust-boundary parser; remove with upstream dependency lifts.",
+      "reason": "Transitive macro dependency through arkworks and RISC0. It is not a runtime trust-boundary parser; remove with upstream dependency lifts.",
       "owner": "release-engineering",
       "reviewed_at": "2026-06-18",
-      "remediation": "Remove paste 1.0.15 by lifting arkworks, RISC0, or Plonky3 dependency paths once upstream releases clear the macro dependency."
-    },
-    {
-      "id": "RUSTSEC-2026-0012",
-      "package": "keccak",
-      "version": "0.1.5",
-      "kind": "unsound",
-      "expires": "2026-08-31",
-      "tracking": "DEP-2026-0008",
-      "reason": "The advisory is for the opt-in ARMv8 assembly backend. This build path does not enable that backend, but keccak 0.1.5 also remains yanked and must be removed by moving sha3/merlin dependents off this version.",
-      "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
-      "remediation": "Move sha3/merlin dependents off keccak 0.1.5 or replace that dependency path, then remove the unsound waiver."
-    },
-    {
-      "id": "yanked:keccak:0.1.5",
-      "package": "keccak",
-      "version": "0.1.5",
-      "kind": "yanked",
-      "expires": "2026-08-31",
-      "tracking": "DEP-2026-0008",
-      "reason": "Yanked keccak 0.1.5 remains through sha3 0.10 and merlin. Remove by lifting dependents to the keccak 0.2 line or replacing the path.",
-      "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
-      "remediation": "Lift dependents to keccak 0.2 or replace the yanked sha3/merlin path, then remove this yanked-crate waiver."
-    },
-    {
-      "id": "RUSTSEC-2026-0097",
-      "package": "rand",
-      "version": "0.8.5",
-      "kind": "unsound",
-      "expires": "2026-08-31",
-      "tracking": "DEP-2026-0009",
-      "reason": "No code in this repo uses the affected custom-logger rand::rng path for protocol randomness. Migrate remaining rand 0.8 users to rand 0.9 or direct rand_core/getrandom calls.",
-      "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
-      "remediation": "Migrate remaining rand 0.8 users to rand 0.9 or direct rand_core/getrandom calls once the upstream unsoundness fix is available."
-    },
-    {
-      "id": "RUSTSEC-2026-0097",
-      "package": "rand",
-      "version": "0.9.2",
-      "kind": "unsound",
-      "expires": "2026-08-31",
-      "tracking": "DEP-2026-0009",
-      "reason": "No code in this repo uses the affected custom-logger rand::rng path for protocol randomness. Track upstream fix and pin once released.",
-      "owner": "release-engineering",
-      "reviewed_at": "2026-06-18",
-      "remediation": "Pin the rand 0.9 fixed release when upstream publishes it, then remove this waiver from the release policy."
+      "remediation": "Remove paste 1.0.15 by lifting arkworks or RISC0 dependency paths once upstream releases clear the macro dependency."
     }
   ]
 }

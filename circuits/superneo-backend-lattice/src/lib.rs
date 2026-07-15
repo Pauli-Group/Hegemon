@@ -1,8 +1,7 @@
 use anyhow::{anyhow, ensure, Context, Result};
 use blake3::Hasher;
 use getrandom::getrandom;
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     cell::RefCell,
@@ -3730,8 +3729,7 @@ fn hex_nibble(value: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use p3_field::PrimeField64;
-    use p3_goldilocks::Goldilocks;
+    use hegemon_field::Goldilocks;
     use superneo_ccs::{
         digest_statement, Assignment, CcsShape, RelationId, ShapeDigest, SparseEntry, SparseMatrix,
         StatementDigest, StatementEncoding, WitnessField, WitnessSchema,

@@ -105,8 +105,6 @@ def vectorJson : String :=
         stablecoinSerializedPublicInputs ++ "\n"
     ++ "  ],\n"
     ++ "  \"proof_digest_cases\": [\n"
-    ++ proofDigestCaseJson "plonky3-proof-digest"
-        plonky3ProofDigestFields ++ ",\n"
     ++ proofDigestCaseJson "smallwood-proof-digest-binds-backend"
         smallwoodProofDigestFields ++ ",\n"
     ++ proofDigestCaseJson "smallwood-proof-digest-binds-proof-bytes"

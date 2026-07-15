@@ -9,12 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-p3-goldilocks = { workspace = true }
-protocol-versioning = { path = "../protocol/versioning" }
-superneo-backend-lattice = { path = "../circuits/superneo-backend-lattice" }
 superneo-hegemon = { path = "../circuits/superneo-hegemon" }
-superneo-ring = { path = "../circuits/superneo-ring" }
-transaction-circuit = { path = "../circuits/transaction" }
 
 [[bin]]
 name = "native_tx_leaf_artifact"

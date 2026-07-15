@@ -625,7 +625,6 @@ mod serde_bytes_vec {
 
 #[cfg(test)]
 mod tests {
-    use p3_field::PrimeField64;
     use rand::{rngs::StdRng, SeedableRng};
     use serde::Deserialize;
     use std::collections::BTreeSet;

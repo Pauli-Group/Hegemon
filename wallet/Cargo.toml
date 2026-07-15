@@ -29,9 +29,8 @@ sha2 = "0.10"
 state-merkle = { path = "../state/merkle" }
 thiserror = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
-transaction-circuit = { path = "../circuits/transaction", default-features = false, features = ["plonky3"] }
-disclosure-circuit = { path = "../circuits/disclosure" }
-batch-circuit = { path = "../circuits/batch", default-features = false, features = ["plonky3"], optional = true }
+transaction-circuit = { path = "../circuits/transaction", default-features = false }
+hegemon-field = { workspace = true }
 superneo-hegemon = { path = "../circuits/superneo-hegemon" }
 synthetic-crypto = { path = "../crypto" }
 protocol-versioning = { path = "../protocol/versioning" }
@@ -42,7 +41,6 @@ zeroize = { version = "1.8", features = ["derive"] }
 
 [dev-dependencies]
 assert_cmd = "2"
-p3-field = { workspace = true }
 predicates = "3"
 tempfile = "3"
 proptest = "1"
@@ -50,7 +48,11 @@ proptest = "1"
 [features]
 default = ["rpc-client"]
 rpc-client = ["dep:jsonrpsee-core", "dep:jsonrpsee-http-client", "dep:jsonrpsee-ws-client"]
-batch-proofs = ["batch-circuit"]
+
+[[bin]]
+name = "wallet"
+path = "src/bin/wallet.rs"
+required-features = ["rpc-client"]
 
 [lints]
 workspace = true

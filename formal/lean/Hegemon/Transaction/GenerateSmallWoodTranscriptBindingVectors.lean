@@ -65,7 +65,9 @@ def deployedArithmetizationCases : List (String × Nat) :=
     ("direct-packed64-inline-merkle-compact-bindings-skip-initial-mds-v1-profile-material",
       arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1),
     ("direct-packed128-inline-merkle-compact-bindings-skip-initial-mds-v1-profile-material",
-      arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1) ]
+      arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1),
+    ("direct-packed64-committed-inline-merkle-bindings-v2-profile-material",
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2) ]
 
 def deployedArithmetizationCaseJsons : List String :=
   deployedArithmetizationCases.map fun case =>
@@ -119,19 +121,19 @@ def vectorJson : String :=
         "active-inline-merkle-binding"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         activeCaseStatement,
       transcriptCaseJson
         "statement-byte-mutation-changes-binding"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         statementMutationBytes,
       transcriptCaseJson
         "version-mutation-changes-profile-material"
         (activeCircuitVersion + 1)
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         activeCaseStatement,
       transcriptCaseJson
         "legacy-direct-packed-arithmetization-changes-profile-material"
@@ -143,7 +145,7 @@ def vectorJson : String :=
         "padding-boundary-statement-remains-eight-byte-aligned"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         paddingBoundaryStatementBytes ]
   let cases := coreCases ++ deployedArithmetizationCaseJsons
   "{\n"

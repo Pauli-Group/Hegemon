@@ -1,9 +1,6 @@
 use crate::types::VerifierProfileDigest;
 
-pub use block_circuit::{
-    CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs,
-    verify_block_commitment,
-};
+pub use block_circuit::{CommitmentBlockProof, CommitmentBlockProver, CommitmentBlockPublicInputs};
 pub use block_recursion::{
     BlockLeafRecordV1, BlockRecursiveProverInputV1, BlockRecursiveProverInputV2,
     BlockSemanticInputsV1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1,
@@ -30,21 +27,16 @@ pub use superneo_hegemon::{
     verify_verified_tx_proof_receipt_root_artifact_bytes,
 };
 pub use transaction_circuit::hashing_pq::felts_to_bytes48;
-pub use transaction_circuit::p3_config::{
-    Challenge, Compress, Config, DIGEST_ELEMS, FRI_POW_BITS, Hash, POSEIDON2_RATE,
-    TransactionProofP3, Val, config_with_fri, default_build_tx_fri_profile,
-};
-pub use transaction_circuit::p3_verifier::verify_transaction_proof_p3;
 pub use transaction_circuit::proof::{
     SerializedStarkInputs, TX_STATEMENT_HASH_DOMAIN, TransactionProof,
-    decode_transaction_proof_bytes_exact, prove, stark_public_inputs_p3, transaction_proof_digest,
+    decode_transaction_proof_bytes_exact, prove, transaction_proof_digest,
     transaction_public_inputs_digest, transaction_public_inputs_digest_from_serialized,
     transaction_statement_hash, transaction_statement_hash_checked,
     transaction_statement_hash_from_parts, transaction_statement_preimage_from_parts,
-    transaction_verifier_profile_digest, transaction_verifier_profile_digest_for_version,
-    verify as verify_transaction_proof,
+    transaction_verifier_inputs, transaction_verifier_profile_digest,
+    transaction_verifier_profile_digest_for_version, verify as verify_transaction_proof,
 };
-pub use transaction_circuit::{TransactionAirP3, TransactionPublicInputsP3};
+pub use transaction_core::TransactionVerifierInputs;
 
 pub fn experimental_receipt_root_verifier_profile_digest() -> VerifierProfileDigest {
     superneo_hegemon::experimental_receipt_root_verifier_profile()

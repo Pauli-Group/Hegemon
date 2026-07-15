@@ -1,12 +1,12 @@
 # Proving Attack Matrix
 
-This matrix records the exploit families the repository actively exercises against the shipped proving path. For `0.10.0`, the default block-proof lane is `tx_leaf -> recursive_block`, with `receipt_root` retained as an explicit alternate lane that still needs hostile coverage. The point of this file is operational: every row maps an attack family to the current mechanical guardrails and the command that proves those guardrails still hold.
+This matrix records the exploit families the repository actively exercises against the shipped proving path. For `0.10.0`, the block-proof lane is `tx_leaf -> recursive_block`; `receipt_root` is retained only as decode/research data and is tested for early policy rejection plus direct helper robustness. The point of this file is operational: every row maps an attack family to the current mechanical guardrails and the command that proves those guardrails still hold.
 
 ## Shipped path
 
 - Default tx-proof artifact: canonical native `tx_leaf`
 - Default block-proof artifact: canonical native `recursive_block`
-- Alternate block-proof lane: explicit native `receipt_root`
+- Retired block-proof value: decode-only native `receipt_root`
 - Staged sidecar material: proposer-local only, never network truth
 
 ## Matrix
@@ -17,7 +17,7 @@ This matrix records the exploit families the repository actively exercises again
 | `semantic-aliasing` | Two byte-different artifacts that try to claim the same semantic statement set | binding hashes, duplicate proof identities, conflicting shielded transfers | binding-hash derivation from canonical public inputs, duplicate-binding rejection, tx-level conflict filtering before authoring, and Lean projection from accepted decoded native artifact equality gates to statement preimage, proof binding-message, public-input binding, wrapper-surface, and payload equality facts | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `staged-proof-abuse` | DA/staging memory pressure, restart confusion, or conflicting restaged bytes | pending ciphertext/proof stores and proposer-local staging | count caps, byte-budget caps, conflicting-byte rejection, and fail-closed restart behavior | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `recursive-block-mismatch` | Block artifact with mismatched tx count, statement commitment, or verifier profile | shipped `recursive_block` verifier path | verifier-profile pinning, tx-count equality, statement-commitment equality, and public replay over already-verified tx-leaf records | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
-| `receipt-root-tamper` | Alternate-lane artifact that replays the wrong receipts or wrong statement set | explicit `receipt_root` lane | native receipt replay and exact receipt/statement matching before acceptance | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
+| `receipt-root-tamper` | Retired artifact that replays the wrong receipts or wrong statement set | decode-only `receipt_root` value | proof-policy rejection before verification; direct helper tests retain exact receipt/statement mismatch coverage | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `prover-configuration-downgrade` | Wallet prover silently slipping below the production floor | local prover configuration and post-prove checks | production floor clamp unless `HEGEMON_WALLET_PROVER_FAST=1` is set explicitly, plus local self-check defaulting to `Always` | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `review-package-parity` | Review package diverges from the code and vectors the verifier actually ships | native backend review package, vectors, and parity scripts | packaged review artifact, vector verification, and review-package verification script | `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh` |
 | `poseidon2-degree-annihilation` | Algebraic degree-collapse attacks against Poseidon2 note/Merkle/nullifier hashing or SmallWood transcript paths | Poseidon2-384 sponge and Poseidon2 transcript/XOF usage | checked-in Hegemon parameter extraction, degree-annihilation budget report, and mandatory external review scope for degree-annihilation/skipping-class/CICO-k adaptations | `python3 scripts/analyze_poseidon2_degree_annihilation.py --check` |

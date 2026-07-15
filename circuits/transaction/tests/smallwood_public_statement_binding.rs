@@ -1,4 +1,3 @@
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
 use protocol_versioning::{VersionBinding, SMALLWOOD_CANDIDATE_VERSION_BINDING};
 use serde::Deserialize;
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
@@ -6,10 +5,10 @@ use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::{
     build_smallwood_candidate_profile_surface_for_arithmetization,
-    smallwood_public_statement_values_for_p3, InputNoteWitness, OutputNoteWitness,
-    SmallwoodArithmetization, StablecoinPolicyBinding, TransactionProverP3,
-    TransactionPublicInputsP3, TransactionWitness,
+    smallwood_public_statement_values, InputNoteWitness, OutputNoteWitness,
+    SmallwoodArithmetization, StablecoinPolicyBinding, TransactionWitness,
 };
+use transaction_core::TransactionVerifierInputs;
 
 #[derive(Debug, Deserialize)]
 struct SmallwoodPublicStatementBindingVectors {
@@ -201,16 +200,17 @@ fn assert_witness_public_statement_binding(
     expected_base_len: usize,
     expected_statement_len: usize,
 ) {
-    let prover = TransactionProverP3::new();
-    let p3_public_inputs = prover.public_inputs(witness).expect("p3 public inputs");
-    let p3_values = p3_public_inputs.to_vec();
+    let verifier_inputs =
+        transaction_circuit::proof::transaction_verifier_field_inputs_from_witness(witness)
+            .expect("verifier field inputs");
+    let verifier_values = verifier_inputs.to_vec();
     assert_eq!(
-        p3_values.len(),
+        verifier_values.len(),
         expected_base_len,
         "{label}: P3 public vector length drift"
     );
     let expected_statement_values =
-        smallwood_public_statement_values_for_p3(&p3_public_inputs, witness.version);
+        smallwood_public_statement_values(&verifier_inputs, witness.version);
     assert_eq!(
         expected_statement_values.len(),
         expected_statement_len,
@@ -218,7 +218,7 @@ fn assert_witness_public_statement_binding(
     );
     assert_eq!(
         &expected_statement_values[..expected_base_len],
-        p3_values
+        verifier_values
             .iter()
             .map(|felt| felt.as_canonical_u64())
             .collect::<Vec<_>>()
@@ -280,9 +280,9 @@ fn lean_generated_smallwood_public_statement_binding_vectors_match_production() 
                 .copied()
                 .map(Felt::from_u64)
                 .collect();
-            let p3 = TransactionPublicInputsP3::try_from_slice(&felts)
+            let p3 = TransactionVerifierInputs::try_from_slice(&felts)
                 .unwrap_or_else(|err| panic!("{}: decode P3 vector: {err}", case.name));
-            let actual_statement_values = smallwood_public_statement_values_for_p3(&p3, version);
+            let actual_statement_values = smallwood_public_statement_values(&p3, version);
             assert_eq!(
                 actual_statement_values, case.expected_statement_values,
                 "{}: Lean expected statement values drift from production helper",

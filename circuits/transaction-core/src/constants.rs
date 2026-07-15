@@ -96,6 +96,13 @@ pub const CIRCUIT_VERSION: u32 = 10;
 /// AIR constraint domain separator for hashing.
 pub const AIR_DOMAIN_TAG: &[u8] = b"SHPC-TRANSACTION-AIR-V10";
 
+// Frozen identifiers for the retired P3 AIR. They remain in the historical AIR
+// hash so existing statement/profile digests do not change when that backend is
+// removed from production builds.
+const RETIRED_AIR_TRACE_WIDTH: u32 = 146;
+const RETIRED_AIR_CYCLE_LENGTH: u32 = 32;
+const RETIRED_AIR_MIN_TRACE_LENGTH: u32 = 8192;
+
 /// Compute the AIR hash that uniquely identifies this circuit's constraints.
 /// This hash commits to:
 /// - Trace width and layout
@@ -117,9 +124,9 @@ pub fn compute_air_hash() -> [u8; 32] {
     hasher.update(&CIRCUIT_VERSION.to_le_bytes());
 
     // Trace configuration
-    hasher.update(&(crate::p3_air::TRACE_WIDTH as u32).to_le_bytes());
-    hasher.update(&(crate::p3_air::CYCLE_LENGTH as u32).to_le_bytes());
-    hasher.update(&(crate::p3_air::MIN_TRACE_LENGTH as u32).to_le_bytes());
+    hasher.update(&RETIRED_AIR_TRACE_WIDTH.to_le_bytes());
+    hasher.update(&RETIRED_AIR_CYCLE_LENGTH.to_le_bytes());
+    hasher.update(&RETIRED_AIR_MIN_TRACE_LENGTH.to_le_bytes());
 
     // Circuit parameters
     hasher.update(&(MAX_INPUTS as u32).to_le_bytes());

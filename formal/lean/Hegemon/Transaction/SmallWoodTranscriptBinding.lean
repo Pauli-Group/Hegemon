@@ -15,7 +15,7 @@ def smallwoodPublicStatementDomain : List Byte :=
 def smallwoodFieldXofDomain : List Byte :=
   asciiBytes "hegemon.blake3-field-xof.v1"
 
-def activeCircuitVersion : Nat := 2
+def activeCircuitVersion : Nat := 3
 def activeCryptoSuite : Nat := 2
 
 def arithBridge64V1 : Nat := 0
@@ -27,6 +27,7 @@ def arithDirectPacked32CompactBindingsV1 : Nat := 5
 def arithDirectPacked64CompactBindingsSkipInitialMdsV1 : Nat := 6
 def arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 7
 def arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 8
+def arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 : Nat := 9
 
 def effectiveConstraintDegree : Nat := 8
 def poseidonWidth : Nat := 12
@@ -47,21 +48,26 @@ structure NoGrindingProfile where
 deriving DecidableEq, Repr
 
 def activeProfile : NoGrindingProfile :=
-  { rho := 2,
+  { rho := 3,
     nbOpenedEvals := 3,
     beta := 2,
     openingPowBits := 0,
     decsNbEvals := 32768,
-    decsNbOpenedEvals := 23,
+    decsNbOpenedEvals := 24,
     decsEta := 3,
     decsPowBits := 0 }
 
+def historicalV2Profile : NoGrindingProfile :=
+  { activeProfile with rho := 2, decsNbOpenedEvals := 23 }
+
 def legacyProfile : NoGrindingProfile :=
-  { activeProfile with decsNbOpenedEvals := 25 }
+  { activeProfile with rho := 2, decsNbOpenedEvals := 25 }
 
 def profileForArithmetization (arithmetization : Nat) : NoGrindingProfile :=
-  if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
+  if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
     activeProfile
+  else if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
+    historicalV2Profile
   else
     legacyProfile
 
@@ -84,6 +90,8 @@ def arithmetizationLabel (arithmetization : Nat) : List Byte :=
     asciiBytes "candidate-smallwood-direct-packed-64-inline-merkle-compact-bindings-skip-initial-mds"
   else if arithmetization = arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 then
     asciiBytes "candidate-smallwood-direct-packed-128-inline-merkle-compact-bindings-skip-initial-mds"
+  else if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
+    asciiBytes "candidate-smallwood-direct-packed-64-committed-inline-merkle-bindings-v2"
   else
     asciiBytes "candidate-smallwood-unknown"
 
@@ -93,6 +101,8 @@ def poseidonRowsPerPermutation (arithmetization : Nat) : Nat :=
   else if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
     skipInitialMdsRowsPerPermutation
   else if arithmetization = arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 then
+    skipInitialMdsRowsPerPermutation
+  else if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
     skipInitialMdsRowsPerPermutation
   else
     groupedRowsPerPermutation
@@ -106,7 +116,8 @@ def deployedSmallwoodArithmetizationTags : List Nat :=
     arithDirectPacked32CompactBindingsV1,
     arithDirectPacked64CompactBindingsSkipInitialMdsV1,
     arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
-    arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 ]
+    arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
+    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 ]
 
 def legacyProfileArithmetizationTags : List Nat :=
   [ arithBridge64V1,
@@ -166,7 +177,7 @@ def activeProfileBindingParameters : ProfileBindingParameters :=
   { circuitVersion := activeCircuitVersion,
     cryptoSuite := activeCryptoSuite,
     arithmetization :=
-      arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
     constraintDegree := effectiveConstraintDegree,
     profile := activeProfile,
     poseidonWidth := poseidonWidth,
@@ -433,7 +444,7 @@ def activeProfileMaterial : List Byte :=
   smallwoodProfileMaterial
     activeCircuitVersion
     activeCryptoSuite
-    arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
 
 def legacyDirectProfileMaterial : List Byte :=
   smallwoodProfileMaterial
@@ -448,14 +459,14 @@ def sampleTranscriptBinding : List Byte :=
   smallwoodTranscriptBinding
     activeCircuitVersion
     activeCryptoSuite
-    arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
     sampleStatementBytes
 
 def sampleSurface : TranscriptSurface :=
   { circuitVersion := activeCircuitVersion,
     cryptoSuite := activeCryptoSuite,
     arithmetization :=
-      arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
     statementBytes := sampleStatementBytes,
     transcriptBytes := sampleTranscriptBinding }
 
@@ -465,11 +476,11 @@ theorem smallwood_profile_material_binds_version :
     activeProfileMaterial =
       smallwoodPublicStatementDomain
         ++ arithmetizationLabel
-          arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+          arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         ++ smallwoodFieldXofDomain
         ++ u16le activeCircuitVersion
         ++ u16le activeCryptoSuite
-        ++ u64le arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        ++ u64le arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         ++ u64le effectiveConstraintDegree
         ++ profileBytes activeProfile
         ++ u64le poseidonWidth
@@ -483,6 +494,21 @@ theorem smallwood_profile_material_binds_arithmetization :
   decide
 
 theorem active_inline_merkle_profile_uses_active_decs_opening_count :
+    (profileForArithmetization
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2).decsNbOpenedEvals = 24 := by
+  rfl
+
+theorem active_inline_merkle_profile_uses_strict_rho_three_floor :
+    (profileForArithmetization
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2).rho = 3 := by
+  rfl
+
+theorem historical_v2_inline_merkle_profile_preserves_rho_two :
+    (profileForArithmetization
+      arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1).rho = 2 := by
+  rfl
+
+theorem historical_v2_inline_merkle_profile_uses_historical_decs_opening_count :
     (profileForArithmetization
       arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1).decsNbOpenedEvals = 23 := by
   rfl
@@ -505,7 +531,7 @@ theorem smallwood_transcript_binding_starts_with_domain :
     ⟨transcriptAfterDomain
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         sampleStatementBytes,
       rfl⟩
 
@@ -519,7 +545,7 @@ theorem smallwood_transcript_binding_includes_profile_material :
       transcriptAfterProfile
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         sampleStatementBytes,
       rfl⟩
 
@@ -533,11 +559,11 @@ theorem smallwood_transcript_binding_includes_statement_bytes :
         ++ smallwoodProfileMaterial
           activeCircuitVersion
           activeCryptoSuite
-          arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
+          arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
       transcriptAfterStatement
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         sampleStatementBytes,
       rfl⟩
 
@@ -546,13 +572,13 @@ theorem smallwood_transcript_binding_padding_aligned_to_eight :
       unpaddedTranscript
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
         sampleStatementBytes
         ++ paddingBytes
           (unpaddedTranscript
             activeCircuitVersion
             activeCryptoSuite
-            arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
+            arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
             sampleStatementBytes) := by
   unfold sampleTranscriptBinding smallwoodTranscriptBinding transcriptAfterDomain
   unfold transcriptAfterProfile transcriptAfterStatement transcriptPadding

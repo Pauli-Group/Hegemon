@@ -9,11 +9,8 @@ repository.workspace = true
 [dependencies]
 anyhow = "1"
 blake3 = "1"
-p3-field = { workspace = true }
+hegemon-field = { workspace = true }
 serde = { version = "1", features = ["derive"] }
-
-[dev-dependencies]
-p3-goldilocks = { workspace = true }
 
 [lints]
 workspace = true

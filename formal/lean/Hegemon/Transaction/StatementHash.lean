@@ -234,10 +234,6 @@ def stablecoinSerializedPublicInputs : SerializedPublicInputsFields :=
     stablecoinOracleCommitmentSeed := 72
     stablecoinAttestationCommitmentSeed := 73 }
 
-def plonky3ProofDigestFields : ProofDigestFields :=
-  { backendWireId := 1
-    proofBytes := [0, 1, 2, 3, 255] }
-
 def smallwoodProofDigestFields : ProofDigestFields :=
   { backendWireId := 2
     proofBytes := [0, 1, 2, 3, 255] }
@@ -298,17 +294,8 @@ theorem proofDigestPreimage_length (fields : ProofDigestFields) :
       proofDigestDomain.length + 1 + fields.proofBytes.length := by
   simp [proofDigestPreimage, Nat.add_comm, Nat.add_left_comm]
 
-theorem proofDigestPreimage_valid_plonky3_length :
-    (proofDigestPreimage plonky3ProofDigestFields).length = 24 := by
-  decide
-
 theorem proofDigestPreimage_valid_smallwood_length :
     (proofDigestPreimage smallwoodProofDigestFields).length = 24 := by
-  decide
-
-theorem proofDigestPreimage_binds_backend_wire_id :
-    proofDigestPreimage plonky3ProofDigestFields !=
-      proofDigestPreimage smallwoodProofDigestFields := by
   decide
 
 theorem proofDigestPreimage_binds_proof_bytes :

@@ -373,6 +373,12 @@ lean_exe gen_smallwood_public_statement_binding_vectors where
 lean_exe gen_smallwood_verifier_statement_projection_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodVerifierStatementProjectionVectors
 
+lean_exe gen_smallwood_production_constraint_refinement_vectors where
+  root := `Hegemon.Transaction.GenerateSmallWoodProductionConstraintRefinementVectors
+
+lean_exe gen_accepted_smallwood_block_composition_vectors where
+  root := `Hegemon.Consensus.GenerateAcceptedSmallWoodBlockCompositionVectors
+
 lean_exe gen_smallwood_recursive_envelope_wire_vectors where
   root := `Hegemon.Transaction.GenerateSmallWoodRecursiveEnvelopeWireVectors
 

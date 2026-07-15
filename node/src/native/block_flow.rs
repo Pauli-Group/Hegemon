@@ -765,14 +765,15 @@ pub(crate) fn native_block_replay_supply_parts(
     actions: &[PendingAction],
     height: u64,
 ) -> Result<(u64, bool)> {
-    validate_coinbase_accounting(actions, height)?;
-    let has_coinbase = actions.iter().any(is_coinbase_action);
-    let fee_total = if has_coinbase {
-        checked_transfer_fee_total(actions).ok_or_else(|| anyhow!("block fee total overflow"))?
+    let projection = native_supply_composition_projection(actions, height)?;
+    let fee_total = if projection.has_coinbase {
+        projection
+            .checked_transfer_fee_total
+            .ok_or_else(|| anyhow!("block fee total overflow"))?
     } else {
-        checked_transfer_fee_total(actions).unwrap_or(0)
+        projection.checked_transfer_fee_total.unwrap_or(0)
     };
-    Ok((fee_total, has_coinbase))
+    Ok((fee_total, projection.has_coinbase))
 }
 
 pub(crate) fn evaluate_native_block_replay_refinement_for_actions(
@@ -1766,11 +1767,67 @@ pub(crate) fn validate_coinbase_accounting(actions: &[PendingAction], height: u6
     .map_err(native_coinbase_accounting_admission_error)
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NativeSupplyCompositionProjection {
+    pub(crate) ordered_transfer_fees: Vec<u64>,
+    pub(crate) exact_transfer_fee_total: u128,
+    pub(crate) checked_transfer_fee_total: Option<u64>,
+    pub(crate) accepted_burn_amounts: Vec<u128>,
+    pub(crate) coinbase_count: usize,
+    pub(crate) observed_coinbase_amount: Option<u64>,
+    pub(crate) expected_coinbase_amount: Option<u64>,
+    pub(crate) has_coinbase: bool,
+    pub(crate) supply_delta: u128,
+}
+
+pub(crate) fn native_supply_composition_projection(
+    actions: &[PendingAction],
+    height: u64,
+) -> Result<NativeSupplyCompositionProjection> {
+    validate_coinbase_accounting(actions, height)?;
+    let ordered_transfer_fees = actions
+        .iter()
+        .filter(|action| is_shielded_transfer_action(action))
+        .map(|action| action.fee)
+        .collect::<Vec<_>>();
+    let exact_transfer_fee_total = ordered_transfer_fees
+        .iter()
+        .try_fold(0u128, |total, fee| total.checked_add(u128::from(*fee)))
+        .ok_or_else(|| anyhow!("exact block fee total overflow"))?;
+    let checked_transfer_fee_total = checked_transfer_fee_total(actions);
+    let coinbase_actions = actions
+        .iter()
+        .filter(|action| is_coinbase_action(action))
+        .collect::<Vec<_>>();
+    let coinbase_count = coinbase_actions.len();
+    let has_coinbase = coinbase_count == 1;
+    let observed_coinbase_amount = coinbase_actions
+        .first()
+        .map(|action| coinbase_action_amount(action))
+        .transpose()?;
+    let expected_coinbase_amount = if has_coinbase {
+        Some(expected_coinbase_amount(actions, height)?)
+    } else {
+        None
+    };
+    let supply_delta = expected_coinbase_amount.map(u128::from).unwrap_or(0);
+
+    Ok(NativeSupplyCompositionProjection {
+        ordered_transfer_fees,
+        exact_transfer_fee_total,
+        checked_transfer_fee_total,
+        // The deployed native action grammar has no independent burn action.
+        accepted_burn_amounts: Vec::new(),
+        coinbase_count,
+        observed_coinbase_amount,
+        expected_coinbase_amount,
+        has_coinbase,
+        supply_delta,
+    })
+}
+
 pub(crate) fn native_block_supply_delta(actions: &[PendingAction], height: u64) -> Result<u128> {
-    if actions.iter().any(is_coinbase_action) {
-        return expected_coinbase_amount(actions, height).map(u128::from);
-    }
-    Ok(0)
+    native_supply_composition_projection(actions, height).map(|projection| projection.supply_delta)
 }
 
 pub(crate) fn advance_native_supply_digest(
@@ -2460,7 +2517,9 @@ pub(crate) fn consensus_block_artifact_from_candidate(
 pub(crate) fn consensus_batch_mode(mode: BlockProofMode) -> Result<consensus::ProvenBatchMode> {
     match mode {
         BlockProofMode::InlineTx => Ok(consensus::ProvenBatchMode::InlineTx),
-        BlockProofMode::ReceiptRoot => Ok(consensus::ProvenBatchMode::ReceiptRoot),
+        BlockProofMode::ReceiptRoot => Err(anyhow!(
+            "receipt-root proof mode is decode-only and retired from block admission"
+        )),
         BlockProofMode::RecursiveBlock => Ok(consensus::ProvenBatchMode::RecursiveBlock),
     }
 }

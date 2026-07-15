@@ -25,25 +25,25 @@ State-transition Merkle updates are deterministic and computed by consensus at i
 - **Row budget constraints**: In-circuit Merkle updates exceed the ~2^14 row target (each depth-32 append costs ~10k rows), so state transitions are verified outside the proof. This is sound because state updates are deterministic given valid transactions.
 - **Nullifier-free blocks**: Blocks with no shielded transactions (coinbase-only) do not carry a commitment proof; they are validated via standard consensus rules.
 
-### Recursive Proofs (Removed)
+### Recursive Proofs
 
-Recursive block proofs are currently disabled and the old recursion path has been removed. Reintroducing recursion requires a Plonky3-native design and new AIRs; no legacy recursion feature flags remain.
+The shipped non-empty shielded-block path uses the native SmallWood `recursive_block_v2` artifact. The old Plonky3 recursion path and recursive epoch proofs remain removed. Plonky3 workspace crates are retained only as non-executable research material and are forbidden from the normal/build dependency graphs of `hegemon-node`, `wallet`, and `walletd` by `scripts/check_native_runtime_dependencies.sh`.
 
 ### PQ Security Margins
 
 - Note encryption and PQ transport handshake use ML-KEM-1024 (NIST Level 5) with 32-byte shared secrets.
 - Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
-- Production FRI parameters use log_blowup = 4 (16x) and num_queries = 32, giving an engineering soundness estimate of 128 bits under the ethSTARK conjecture (see `circuits/transaction-core/src/p3_config.rs` and `p3_fri::FriParameters::conjectured_soundness_bits`).
+- Local production proving and native action submission use the SmallWood V3 no-grinding profile with 24 distinct DECS openings. The production profile guard computes the exact statement geometry and rejects any profile below the 128-bit engineering floor. V2 verification remains executable so new nodes can replay existing chain data; excluding newly mined V2 blocks requires a separately coordinated consensus activation checkpoint or height.
 
 ### Soundness Accounting (Engineering Estimate)
 
-For this repository we track soundness as the minimum of (a) hash-based binding security (Merkle commitments + Fiat–Shamir transcript), and (b) the statistical IOP soundness from FRI.
+For this repository we track soundness as the minimum of (a) hash-based binding security for Merkle commitments and the Fiat-Shamir transcript and (b) the SmallWood PCS/PIOP/DECS soundness terms for the exact shipped statement geometry.
 
 Hash binding (PQ): for a sponge with capacity `c` bits, generic quantum collision search costs `O(2^{c/3})`, so the engineering security level is approximately `c/3` bits. With 6 Goldilocks field elements of capacity, `c ≈ 6 × 64 = 384` bits, giving ~128-bit post-quantum collision resistance.
 
-FRI IOP soundness (engineering, current): Plonky3’s `p3-fri` exposes this directly as `FriParameters::conjectured_soundness_bits()` (based on the ethSTARK conjecture). With `log_blowup = 4`, `num_queries = 32`, and `pow_bits = 0`, this is 128 bits.
+SmallWood soundness (engineering, current): the V3 profile fixes `rho = 3`, three PIOP openings, `beta = 2`, a 32,768-point DECS domain, 24 distinct DECS openings, `eta = 3`, and zero grinding bits. `ensure_production_smallwood_soundness_floor` derives the four SmallWood error terms from the exact production statement and fails closed below 128 bits.
 
-Therefore, with the current production parameters, the limiting factor is the shared 128-bit target itself: hash binding ≈128-bit PQ and FRI IOP ≈128-bit (engineering estimate).
+Therefore, with the current production parameters, the limiting factor is the shared 128-bit target itself: hash binding is approximately 128-bit post-quantum and the exact SmallWood statement guard enforces at least a 128-bit engineering floor.
 
 Formal caveat: this is not a formal post-quantum proof in the quantum random-oracle model; it is an engineering-level accounting. A dedicated PQ analysis is required before making stronger external claims.
 
@@ -52,9 +52,7 @@ Formal caveat: this is not a formal post-quantum proof in the quantum random-ora
 - Quantum collision finding (collision problem): https://arxiv.org/abs/quant-ph/9705002
 - Fiat–Shamir in the quantum random oracle model (QROM): https://eprint.iacr.org/2014/587
 - Post-quantum security of Fiat–Shamir: https://eprint.iacr.org/2017/398
-- STARK construction + ALI context (includes FRI/IOP composition): https://eprint.iacr.org/2018/046
-- DEEP-FRI soundness amplification: https://eprint.iacr.org/2019/336
-- ethSTARK conjectured FRI soundness accounting (used by `p3-fri`): https://eprint.iacr.org/2021/582
+- SmallWood transparent arguments for small circuits: https://eprint.iacr.org/2025/1085
 - Tip5 (Triton/Neptune) sponge capacity and PQ collision discussion: https://eprint.iacr.org/2023/107.pdf
 - RPO (Miden) security levels and 256-bit vs 384-bit capacity variants: https://eprint.iacr.org/2022/1577.pdf
 - Poseidon2 design and security discussion: https://eprint.iacr.org/2023/323.pdf

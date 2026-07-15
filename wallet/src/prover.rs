@@ -2,16 +2,13 @@
 //!
 //! This module provides the transaction prover for generating zero-knowledge proofs
 //! for shielded transactions. The concrete backend is version-owned in
-//! `protocol-versioning`; the current default witness path resolves to
-//! `SmallwoodCandidate`, while legacy Plonky3 support remains available for
-//! historical decoding and comparison work.
+//! `protocol-versioning`; the witness path resolves only to SmallWood.
 //!
 //! ## Design
 //!
 //! - **Transparent Setup**: No ceremony or trusted parameters needed
 //! - **Post-Quantum Security**: Based on hash functions only (Poseidon/Blake3)
-//! - **Version-owned backend**: the active default is SmallWood, with legacy
-//!   Plonky3/FRI support retained behind explicit version bindings.
+//! - **Version-owned backend**: SmallWood is the only accepted backend.
 //!
 //! ## Usage
 //!
@@ -28,8 +25,6 @@
 //! ## Security
 //!
 //! The active transaction-proof path remains post-quantum and transparent.
-//! Legacy Plonky3 proofs are still much larger than the current SmallWood
-//! default, but they remain decodable for compatibility and comparison.
 
 use std::time::{Duration, Instant};
 
@@ -37,9 +32,9 @@ use protocol_versioning::{tx_proof_backend_for_version, DEFAULT_TX_PROOF_BACKEND
 use serde::{Deserialize, Serialize};
 use transaction_circuit::{
     keys::{generate_keys, ProvingKey, VerifyingKey},
-    p3_prover::TransactionProofParams,
     proof,
     witness::TransactionWitness,
+    TransactionProofParams,
 };
 
 use crate::error::WalletError;
@@ -65,17 +60,15 @@ pub enum LocalProofSelfCheckPolicy {
 /// Configuration for the STARK prover.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StarkProverConfig {
-    /// Advisory blowup factor for legacy Plonky3/FRI paths.
+    /// Advisory proof-resource blowup factor retained for API compatibility.
     ///
-    /// Note: the active default backend is SmallWood, so this field is
-    /// advisory/UX-only unless the caller intentionally uses a Plonky3 binding.
+    /// This field cannot select or weaken the SmallWood backend.
     ///
     /// Default: 16 (log_blowup = 4).
     pub blowup_factor: usize,
-    /// Advisory FRI query-round count for legacy Plonky3 paths.
+    /// Advisory query-round count retained for API compatibility.
     ///
-    /// Note: the active default backend is SmallWood, so this field is
-    /// advisory/UX-only unless the caller intentionally uses a Plonky3 binding.
+    /// This field cannot select or weaken the SmallWood backend.
     ///
     /// Default: 32 (128-bit engineering target at log_blowup = 4).
     pub num_queries: usize,

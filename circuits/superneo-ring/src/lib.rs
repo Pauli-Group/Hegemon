@@ -1,6 +1,5 @@
 use anyhow::{bail, ensure, Result};
-use p3_field::PrimeField64;
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use serde::{Deserialize, Serialize};
 use superneo_ccs::{ensure_assignment_matches_shape, Assignment, CcsShape};
 
@@ -270,7 +269,7 @@ mod tests {
     use superneo_ccs::{Assignment, CcsShape, SparseMatrix, WitnessField, WitnessSchema};
 
     use super::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
-    use p3_goldilocks::Goldilocks;
+    use hegemon_field::Goldilocks;
 
     fn shape() -> CcsShape<Goldilocks> {
         CcsShape {

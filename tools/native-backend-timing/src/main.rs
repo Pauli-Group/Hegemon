@@ -1,5 +1,5 @@
 use anyhow::Result;
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use serde::Serialize;
 use std::{hint::black_box, time::Instant};
 use superneo_backend_lattice::NativeBackendParams;

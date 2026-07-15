@@ -12,8 +12,7 @@ description = "Recursive block-proof scaffolding for Hegemon"
 anyhow = "1"
 bincode = "1.3"
 blake3 = "1"
-p3-field = { workspace = true }
-p3-goldilocks = { workspace = true }
+hegemon-field = { workspace = true }
 rayon = "1"
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
 superneo-ccs = { path = "../superneo-ccs" }

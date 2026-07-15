@@ -1,4 +1,3 @@
-use p3_field::PrimeField64;
 use protocol_versioning::TxProofBackend;
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
@@ -286,10 +285,7 @@ fn summarize_entries(
         if proof.public_inputs != entry.public_inputs {
             return Err(TxProofManifestError::EntryPublicInputsMismatch);
         }
-        let backend_supported = matches!(
-            proof.backend,
-            TxProofBackend::Plonky3Fri | TxProofBackend::SmallwoodCandidate
-        );
+        let backend_supported = matches!(proof.backend, TxProofBackend::SmallwoodCandidate);
         let stark_public_inputs =
             transaction_proof_wrapper_public_inputs_for_admission(&proof, backend_supported)
                 .map_err(|err| {
@@ -398,16 +394,15 @@ mod tests {
         verify_tx_proof_manifest, TxProofManifest, TxProofManifestEntry,
         TxProofManifestPublicInputs,
     };
-    use p3_field::PrimeCharacteristicRing;
-    use protocol_versioning::{TxProofBackend, LEGACY_PLONKY3_FRI_VERSION_BINDING};
+    use protocol_versioning::{TxProofBackend, SMALLWOOD_CANDIDATE_VERSION_BINDING};
     use transaction_circuit::{
         generate_keys,
         hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_key_bytes},
         note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness, MERKLE_TREE_DEPTH},
-        p3_prover::TransactionProofParams,
         proof::{decode_transaction_proof_bytes_exact, prove_with_params, TransactionProof},
         public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs},
         witness::TransactionWitness,
+        TransactionProofParams,
     };
 
     fn sample_witness() -> TransactionWitness {
@@ -487,7 +482,7 @@ mod tests {
             fee: 5,
             value_balance: 0,
             stablecoin: StablecoinPolicyBinding::default(),
-            version: LEGACY_PLONKY3_FRI_VERSION_BINDING,
+            version: SMALLWOOD_CANDIDATE_VERSION_BINDING,
         }
     }
 
@@ -499,7 +494,7 @@ mod tests {
         prove_with_params(
             &witness,
             &proving_key,
-            TransactionProofParams::release_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
+            TransactionProofParams::release_for_version(SMALLWOOD_CANDIDATE_VERSION_BINDING),
         )
         .expect("sample tx proof")
     }
@@ -613,8 +608,8 @@ mod tests {
         assert_manifest_rejects_nested_mutation(
             &proof,
             &public_inputs,
-            |proof| proof.backend = TxProofBackend::SmallwoodCandidate,
-            "smallwood",
+            |proof| proof.backend = TxProofBackend::RetiredUnsupported,
+            "unsupported backend",
         );
         assert_manifest_rejects_nested_mutation(
             &proof,

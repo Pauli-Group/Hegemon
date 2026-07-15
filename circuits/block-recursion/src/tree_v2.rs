@@ -1,3 +1,4 @@
+use crate::SMALLWOOD_RECURSION_VERSION_BINDING;
 use crate::{
     fold_digest32, fold_digest48,
     public_replay::{
@@ -7,7 +8,6 @@ use crate::{
     statement::RecursivePrefixStatementV1,
     BlockRecursionError, Digest32, Digest48,
 };
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use rayon::prelude::*;
 use std::sync::OnceLock;
 use transaction_circuit::{
@@ -1246,10 +1246,10 @@ fn tree_recursive_profile_v2(
 ) -> transaction_circuit::RecursiveSmallwoodProfileV1 {
     match profile {
         SmallwoodRecursiveProfileTagV1::A => {
-            recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_a_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
         SmallwoodRecursiveProfileTagV1::B => {
-            recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING)
+            recursive_profile_b_v1(SMALLWOOD_RECURSION_VERSION_BINDING)
         }
     }
 }
@@ -1294,6 +1294,24 @@ fn tree_recursive_descriptor_v2(
         shape_digest,
         vk_digest,
     )
+}
+
+#[cfg(test)]
+#[test]
+fn recursive_artifact_profile_and_descriptor_keep_their_deployed_domain() {
+    let profile = tree_recursive_profile_v2(SmallwoodRecursiveProfileTagV1::A);
+    let descriptor = tree_recursive_descriptor_v2(
+        SmallwoodRecursiveProfileTagV1::A,
+        SmallwoodRecursiveRelationKindV1::ChunkA,
+        0,
+    );
+
+    assert_eq!(profile.version, SMALLWOOD_RECURSION_VERSION_BINDING);
+    assert_eq!(descriptor.version, SMALLWOOD_RECURSION_VERSION_BINDING);
+    assert_ne!(
+        profile.version,
+        protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING
+    );
 }
 
 fn rebuild_tree_relation_from_proof_v2(

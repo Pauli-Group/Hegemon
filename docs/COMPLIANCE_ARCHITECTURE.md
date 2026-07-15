@@ -36,13 +36,13 @@ HEGEMON provides **privacy by default** with **disclosure by choice**. This inve
 
 3. **Compliance at the edges** — Regulated entities (exchanges, custodians) implement compliance at their layer, not at the protocol layer. The protocol remains neutral infrastructure.
 
-4. **Auditability without surveillance** — Users can prove specific properties (balance, source of funds, sanctions clearance) without revealing their entire transaction history.
+4. **Auditability without surveillance** — The shipped wallet supports viewing-key and offline-record disclosure. Property-specific proofs such as source-of-funds or sanctions-clearance attestations are future designs, not current capabilities.
 
 ---
 
 ## 2. Selective Disclosure via Viewing Keys
 
-HEGEMON's key hierarchy (defined in `DESIGN.md §4`) enables granular disclosure:
+HEGEMON's key hierarchy (defined in `DESIGN.md §4`) enables incoming-only or full-wallet disclosure. It does not yet implement cryptographic account/height scoping:
 
 ### Key Types and Disclosure Scope
 
@@ -51,57 +51,25 @@ HEGEMON's key hierarchy (defined in `DESIGN.md §4`) enables granular disclosure
 | `sk_spend` | Full control (spend + view) | User only |
 | `vk_full` | All incoming and outgoing transactions | Tax auditor, estate executor |
 | `vk_incoming` | Only incoming transactions | Payment processor, accountant |
-| Scoped viewing key | Specific accounts + time range | Regulator for targeted investigation |
+| Separate-wallet incoming key | Incoming notes for a deliberately isolated wallet/account | Auditor with a pre-arranged limited scope |
 
-### Scoped Viewing Keys
+### Current Scoping Limit
 
-Users can derive viewing keys with built-in limitations:
-
-```
-vk_scoped = KDF("scope" || vk_full || account_filter || start_height || end_height)
-```
-
-Properties:
-- **Account-limited**: Only reveals transactions for specified diversified addresses
-- **Time-bounded**: Viewing capability expires at `end_height`
-- **Non-transferable**: Derived key cannot be used to create broader viewing keys
-- **Revocable**: User can rotate to new addresses, making old scoped keys useless for future transactions
+The shipped wallet exports incoming and full viewing keys. Those keys have no built-in account filter, start height, end height, expiry, or revocation mechanism. Operational scoping requires a separately derived wallet/account before receiving funds; contractual handling rules can limit use of an exported key but do not cryptographically limit it. A real scoped-viewing-key format remains future work and must not be represented as available.
 
 ### Disclosure Workflow
 
 1. Regulator/auditor requests transaction visibility with legal basis
-2. User (or custodian on user's behalf) generates scoped viewing key
+2. User (or custodian on user's behalf) selects an incoming/full key for a deliberately isolated wallet/account, or prepares offline records
 3. Viewing key is transmitted via encrypted channel
 4. Auditor scans the chain using the viewing key
-5. Auditor sees only the scoped transactions; all other chain activity remains private
+5. Auditor sees everything the exported key can decrypt; any narrower limit is operational, not cryptographic
 
 This mirrors traditional subpoena processes—targeted, documented, and proportionate.
 
-### Payment Proofs (Disclosure on Demand)
+### Payment Proofs (Unavailable)
 
-In addition to sharing viewing keys, users can generate one-time **payment proofs** that reveal only a specific claim, e.g.:
-
-> "Transaction `T` contains an output note paying exactly `X` of asset `A` to address `Y`."
-
-This supports exchange deposits, invoices/receipts, and dispute resolution without granting broad viewing-key access.
-
-A payment-proof package is verified against on-chain commitments and includes:
-- `version`
-- `chain.genesis_hash` (binds the proof to a specific chain)
-- `claim`: `recipient_address`, `pk_recipient`, `value`, `asset_id`, `commitment`
-- `confirmation`: `anchor`, `leaf_index`, `siblings` (Merkle inclusion against the commitment tree)
-- `proof`: `air_hash` plus proof bytes (base64)
-- `disclosed_memo` (optional, non-ZK-bound context)
-
-Verification requires:
-1. Decode `recipient_address` and confirm the derived `pk_recipient` matches the package.
-2. Verify the disclosure STARK proof against `(value, asset_id, pk_recipient, commitment)`.
-3. Verify the Merkle path from `commitment` to `anchor`, and ensure `hegemon_isValidAnchor(anchor)` returns true.
-4. Compare `chain.genesis_hash` with `chain_getBlockHash(0)` to prevent cross-chain reuse.
-
-Field encodings for `commitment`, `anchor`, and `siblings` are canonical 48-byte encodings with six big-endian 64-bit limbs (each limb must be < the field modulus); `pk_recipient` and `genesis_hash` remain raw 32-byte values.
-
-Payment proofs keep the protocol neutral (no transparent pool) while enabling "warrants, not backdoors" style oversight.
+Targeted payment-proof creation and verification are not shipped in the SmallWood-only release. The prior disclosure proof backend is excluded from the `wallet` and `walletd` dependency graphs, walletd reports `capabilities.disclosure = false`, and compatibility method names fail closed. Encrypted outgoing records remain local and can be listed or purged, but they are not cryptographic receipts. Current compliance workflows must use incoming/full viewing keys with their actual broad scope, separately isolated wallets, or offline records until a replacement disclosure proof or scoped-key format receives its own security and formal review.
 
 ---
 
@@ -164,7 +132,7 @@ OFAC and similar authorities maintain sanctions lists (SDN, etc.). Regulated ent
 ### Solution 1: Edge Screening (Current Best Practice)
 
 Screening occurs at the VASP/exchange boundary:
-- Deposits: Screen the source (if transparent) or require attestation (if shielded)
+- Deposits: Screen the source when transparent; for shielded deposits, apply off-chain customer due diligence and request supported disclosure records when needed
 - Withdrawals: Screen the destination address before allowing withdrawal
 - Internal transfers: VASP knows both parties via KYC
 
@@ -192,11 +160,11 @@ Properties:
 
 For targeted investigations (not bulk surveillance):
 1. Court order specifies target addresses or transaction hashes
-2. User or custodian provides scoped viewing keys
-3. Investigator examines specific transactions
-4. No bulk decryption capability exists
+2. User or custodian provides offline records or an incoming/full key for a separately isolated wallet/account
+3. Investigator examines the disclosed material
+4. The exported key is not cryptographically time- or address-scoped, so its full implemented scope must be documented
 
-This mirrors traditional financial investigation—subpoenas, not dragnet surveillance.
+This supports a targeted operational process, but the current key format alone does not enforce the subpoena scope.
 
 ---
 
@@ -263,7 +231,7 @@ HEGEMON uses exclusively post-quantum cryptography:
 Compliance benefits:
 1. **Durable confidentiality**: Records encrypted today remain confidential in 2050
 2. **Regulatory certainty**: No need to re-encrypt or migrate when quantum arrives
-3. **Audit integrity**: Historical viewing key disclosures remain bounded to their scope
+3. **Audit integrity**: Historical disclosures remain attributable to the exact key or records supplied, with the broad scope of current viewing keys documented
 4. **Future-proof travel rule**: VASP-to-VASP communications stay confidential
 
 ### Positioning
@@ -272,60 +240,11 @@ Compliance benefits:
 
 ---
 
-## 7. Optional Compliance Attestation Circuits
+## 7. Future Compliance Attestation Research
 
-The protocol supports optional attestation circuits that allow users to attach compliance proofs without revealing underlying data.
+No compliance-attestation action, transaction-witness field, proof type, or consensus circuit is shipped. Current nodes do not accept a VASP-screening, sanctions non-inclusion, source-of-funds, tax-residency, or accredited-investor proof as a protocol object.
 
-### Attestation Types
-
-| Attestation | Proves | Use Case |
-|-------------|--------|----------|
-| VASP Screening | "VASP X has screened this transaction" | Travel Rule |
-| Sanctions Non-Inclusion | "My addresses are not on list L" | OFAC compliance |
-| Source of Funds | "Funds derive from addresses in set S" | AML |
-| Tax Residency | "I am a tax resident of jurisdiction J" | Tax reporting |
-| Accredited Investor | "I meet accreditation criteria" | Securities |
-
-### Technical Design
-
-Attestations are implemented as optional fields in the transaction witness:
-
-```rust
-pub struct ComplianceAttestation {
-    /// Type of attestation
-    pub attestation_type: AttestationType,
-    /// Commitment to the claim (hides details)
-    pub claim_commitment: [u8; 32],
-    /// STARK proof that claim is valid
-    pub proof: StarkProof,
-    /// Optional: encrypted payload for authorized parties
-    pub encrypted_details: Option<Vec<u8>>,
-    /// Attestor identity (e.g., VASP public key)
-    pub attestor: Option<[u8; 32]>,
-    /// Expiration height
-    pub valid_until: Option<u64>,
-}
-```
-
-### Release Coordination Integration
-
-New attestation types are introduced via `VersionProposal`:
-
-```rust
-// Example: Adding sanctions attestation circuit
-VersionProposal {
-    binding: VersionBinding::new(CIRCUIT_V3, CRYPTO_SUITE_ALPHA),
-    activates_at: 500_000,
-    retires_at: None,
-    description: "Optional OFAC non-inclusion attestation circuit",
-}
-```
-
-Properties:
-- **Opt-in only**: Users choose whether to attach attestations
-- **Protocol-neutral**: Core consensus does not require attestations
-- **VASP-enforceable**: VASPs can require attestations for their customers
-- **Upgradeable**: New attestation types added via release coordination, not hard forks
+A future design could add an opt-in proof only after its statement, wire format, version binding, verifier, privacy leakage, denial-of-service bounds, and activation policy receive implementation, formal review, and security review. Until then, VASPs must use off-chain controls plus the viewing-key and record-disclosure capabilities described above. A release-coordination document or `VersionProposal` by itself would not implement or activate such a circuit.
 
 ---
 
@@ -338,13 +257,13 @@ Exchanges integrating HEGEMON should implement:
 1. **Deposit screening**
    - Issue per-customer deposit addresses (diversified shielded addresses)
    - Credit deposits by scanning incoming notes to those addresses (exchange-controlled incoming viewing keys)
-   - When additional evidence is needed (reconciliation, audits, legal process), request a payment proof and/or a scoped viewing key
+   - When additional evidence is needed, request offline records or an incoming/full viewing key and document its actual scope
    - Apply standard AML/KYC to the customer, not the chain
 
 2. **Withdrawal processing**
    - Screen destination context off-chain (counterparty policy, sanctions program)
    - Attach Travel Rule memo for VASP-to-VASP transfers
-   - Retain transaction records per custody agreement (internal logs, viewing escrow, and/or scoped disclosures)
+   - Retain transaction records per custody agreement (internal logs and explicitly scoped operational access)
 
 3. **Internal transfers**
    - Between exchange customers: off-chain ledger (no chain visibility needed)
@@ -353,7 +272,7 @@ Exchanges integrating HEGEMON should implement:
 4. **Regulatory reporting**
    - SAR filing: Use customer viewing keys to document suspicious activity
    - Tax reporting: Provide customers with transaction history via their keys
-   - Audit response: Provide scoped viewing keys per subpoena scope
+   - Audit response: Provide offline records or an appropriate incoming/full key; do not claim cryptographic height/account scoping
 
 ### Viewing Key Custody
 
@@ -365,7 +284,7 @@ Exchanges holding customer funds typically also hold viewing keys:
 | **Spend custody** | Exchange holds spend, customer holds view | Customer controls disclosure |
 | **Viewing escrow** | Customer holds both, escrows view key | Disclosure on demand |
 
-Recommended (for custodians): **Viewing escrow** — Exchange can fulfill regulatory obligations on request without continuous surveillance of customer activity. For non-custodial use, prefer per-request payment proofs or scoped viewing keys.
+Recommended (for custodians): **Viewing escrow** — An exchange can fulfill regulatory obligations on request, but the escrowed key exposes its full implemented scope. For narrower future disclosure, isolate customer activity into separate wallets/accounts and retain offline records; per-request payment proofs and cryptographically scoped viewing keys are not currently shipped.
 
 ---
 
@@ -377,7 +296,7 @@ HEGEMON's versioning system (`governance/VERSIONING.md`) enables protocol adapta
 
 | Regulatory Scenario | Release Coordination Response |
 |---------------------|-------------------------------|
-| New attestation requirement | Add optional circuit via `VersionProposal` |
+| New attestation requirement | Use off-chain controls; evaluate a future circuit only through full implementation, review, and coordinated activation |
 | Cryptographic vulnerability | Emergency primitive swap via `UpgradeDirective` |
 | Jurisdiction-specific rule | Application-layer enforcement, not protocol change |
 | Outright ban | No protocol response possible; user/VASP responsibility |
@@ -424,10 +343,7 @@ Transparent chains appear more "compliant" but create problems:
 4. **Chilling effects**: Legal activities (donations, healthcare, legal fees) become surveilled
 5. **Quantum vulnerability**: Today's compliance records become tomorrow's privacy breaches
 
-HEGEMON's model provides **necessary and sufficient** disclosure:
-- Regulators get what they need (via viewing keys, attestations)
-- Users retain privacy for everything else
-- Records remain confidential even as technology evolves
+HEGEMON's current model supports user-controlled disclosure through broad-scope viewing keys and offline records. Whether that evidence satisfies a particular regulator or jurisdiction is an edge-operator and legal determination; no attestation circuit or cryptographically scoped disclosure key is currently shipped.
 
 ---
 
@@ -437,7 +353,7 @@ HEGEMON's model provides **necessary and sufficient** disclosure:
 |------------|-------------|------------------|
 | Bank Secrecy Act | Record keeping, SAR filing | Viewing key escrow, transaction records |
 | FATF Travel Rule | Originator/beneficiary info | Encrypted memo channel |
-| OFAC Sanctions | Screen prohibited parties | Edge screening, optional non-inclusion proofs |
+| OFAC Sanctions | Screen prohibited parties | Edge screening; non-inclusion proofs remain future research |
 | GDPR | Data minimization, right to erasure | Privacy by default, no unnecessary data on-chain |
 | MiCA (EU) | VASP licensing, Travel Rule | Standard VASP compliance, memo channel |
 | FinCEN MSB Rules | Registration if money transmitter | Protocol layer is not MSB (see §5) |
@@ -445,7 +361,7 @@ HEGEMON's model provides **necessary and sufficient** disclosure:
 ## Appendix B: Document Maintenance
 
 This document must be updated when:
-- New attestation circuits are proposed via `VersionProposal`
+- A compliance-attestation design reaches implementation or formal review
 - Regulatory guidance changes (FinCEN, FATF, SEC, etc.)
 - Viewing key derivation or memo structure changes in `DESIGN.md`
 - Exchange integration patterns evolve

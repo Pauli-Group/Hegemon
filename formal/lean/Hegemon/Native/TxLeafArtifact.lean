@@ -13,7 +13,7 @@ def matrixRows : Nat := 11
 def matrixCols : Nat := 54
 def maxNativeTxStarkProofBytes : Nat := 512 * 1024
 
-def txProofBackendPlonky3 : Nat := 1
+def txProofBackendRetired : Nat := 1
 def txProofBackendSmallwood : Nat := 2
 def circuitV2 : Nat := 2
 def cryptoSuiteBeta : Nat := 2
@@ -153,15 +153,12 @@ def parseLeafArtifact (input : List Byte) : Option (Nat × List Byte) := do
   some (leafVersion, rest5)
 
 def validBackendWire (wire : Nat) : Bool :=
-  wire = txProofBackendPlonky3 || wire = txProofBackendSmallwood
+  wire = txProofBackendSmallwood
 
 def defaultBackendForVersion (circuitVersion cryptoSuite : Nat) : Nat :=
-  if circuitVersion = circuitV2 && cryptoSuite = cryptoSuiteGamma then
-    txProofBackendPlonky3
-  else if circuitVersion = circuitV2 && cryptoSuite = cryptoSuiteBeta then
-    txProofBackendSmallwood
-  else
-    txProofBackendSmallwood
+  let _ := circuitVersion
+  let _ := cryptoSuite
+  txProofBackendSmallwood
 
 def parseBackend (defaultBackend : Nat) (input : List Byte) : Option (Bool × Nat) :=
   match input with
@@ -398,19 +395,22 @@ def missingBackendArtifact : List Byte :=
 def missingBackendSummary : TxLeafSummary :=
   { validSummary with hasExplicitBackend := false, proofBackend := txProofBackendSmallwood }
 
-def legacyMissingBackendArtifact : List Byte :=
+def retiredVersionMissingBackendArtifact : List Byte :=
   artifactBytes { validFields with
     circuitVersion := circuitV2,
     cryptoSuite := cryptoSuiteGamma,
     proofBackend := none
   }
 
-def legacyMissingBackendSummary : TxLeafSummary :=
+def retiredVersionMissingBackendSummary : TxLeafSummary :=
   { validSummary with
     publicTx := { validSummary.publicTx with circuitVersion := circuitV2, cryptoSuite := cryptoSuiteGamma },
     hasExplicitBackend := false,
-    proofBackend := txProofBackendPlonky3
+    proofBackend := txProofBackendSmallwood
   }
+
+def retiredBackendArtifact : List Byte :=
+  artifactBytes { validFields with proofBackend := some txProofBackendRetired }
 
 def badBackendArtifact : List Byte :=
   artifactBytes { validFields with proofBackend := some 9 }
@@ -501,8 +501,9 @@ theorem missing_backend_defaults_to_current_backend :
   set_option maxRecDepth 50000 in
   decide
 
-theorem legacy_missing_backend_defaults_to_plonky3 :
-    parseNativeTxLeafArtifact legacyMissingBackendArtifact = some legacyMissingBackendSummary := by
+theorem retired_version_missing_backend_defaults_to_smallwood :
+    parseNativeTxLeafArtifact retiredVersionMissingBackendArtifact =
+      some retiredVersionMissingBackendSummary := by
   set_option maxRecDepth 50000 in
   decide
 
@@ -516,8 +517,8 @@ theorem strict_missing_backend_rejects :
   set_option maxRecDepth 50000 in
   decide
 
-theorem strict_legacy_missing_backend_rejects :
-    parseNativeTxLeafArtifactStrict legacyMissingBackendArtifact = none := by
+theorem strict_retired_version_missing_backend_rejects :
+    parseNativeTxLeafArtifactStrict retiredVersionMissingBackendArtifact = none := by
   set_option maxRecDepth 50000 in
   decide
 
@@ -528,6 +529,11 @@ theorem rejects_trailing_after_backend :
 
 theorem rejects_bad_backend :
     parseNativeTxLeafArtifact badBackendArtifact = none := by
+  set_option maxRecDepth 50000 in
+  decide
+
+theorem rejects_retired_backend :
+    parseNativeTxLeafArtifact retiredBackendArtifact = none := by
   set_option maxRecDepth 50000 in
   decide
 

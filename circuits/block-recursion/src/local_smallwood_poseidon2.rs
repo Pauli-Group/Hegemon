@@ -1,8 +1,7 @@
 use std::cmp::min;
 use std::collections::{BTreeMap, BTreeSet};
 
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
-use p3_goldilocks::Goldilocks;
+use hegemon_field::Goldilocks;
 use transaction_circuit::{
     smallwood_no_grinding_profile_for_arithmetization, SmallwoodArithmetization,
     SmallwoodConstraintAdapter, SmallwoodLinearConstraintForm, SmallwoodNoGrindingProfileV1,
@@ -238,7 +237,8 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked32CompactBindingsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 => {
+        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
             Ok(())
         }
     }

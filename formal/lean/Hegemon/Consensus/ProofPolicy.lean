@@ -20,10 +20,10 @@ inductive ProofPolicyReject where
   | missingProvenBatch
   | missingTransactionValidityClaims
   | legacyInlineBatch
+  | retiredReceiptRoot
   | recursiveBlockCommitmentProofBytes
   | recursiveBlockReceiptRootPayload
   | missingRecursiveBlockArtifact
-  | missingReceiptRootPayload
 deriving DecidableEq, Repr
 
 structure ProofPolicyInput where
@@ -66,10 +66,7 @@ def evaluateProofPolicy (input : ProofPolicyInput) : Option ProofPolicyReject :=
     | BatchMode.inlineTx =>
         some ProofPolicyReject.legacyInlineBatch
     | BatchMode.receiptRoot =>
-        if input.hasReceiptRoot then
-          none
-        else
-          some ProofPolicyReject.missingReceiptRootPayload
+        some ProofPolicyReject.retiredReceiptRoot
     | BatchMode.recursiveBlock =>
         if input.commitmentProofBytes != 0 then
           some ProofPolicyReject.recursiveBlockCommitmentProofBytes
@@ -156,6 +153,20 @@ theorem recursive_rejects_commitment_proof_bytes
       some ProofPolicyReject.recursiveBlockCommitmentProofBytes := by
   unfold evaluateProofPolicy
   simp [nonzero, hasArtifacts, countMatch, mode, hasBatch, hasClaims, batchMode, hasBytes]
+
+theorem receipt_root_is_retired
+    {input : ProofPolicyInput}
+    (nonzero : input.txCount ≠ 0)
+    (hasArtifacts : input.hasTxValidityArtifacts = true)
+    (countMatch : input.txValidityArtifactCount = input.txCount)
+    (mode : input.verificationMode = VerificationMode.selfContained)
+    (hasBatch : input.hasProvenBatch = true)
+    (hasClaims : input.hasTxValidityClaims = true)
+    (batchMode : input.batchMode = BatchMode.receiptRoot) :
+    evaluateProofPolicy input =
+      some ProofPolicyReject.retiredReceiptRoot := by
+  unfold evaluateProofPolicy
+  simp [nonzero, hasArtifacts, countMatch, mode, hasBatch, hasClaims, batchMode]
 
 theorem recursive_requires_block_artifact
     {input : ProofPolicyInput}

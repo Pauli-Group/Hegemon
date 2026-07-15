@@ -1,9 +1,6 @@
 use alloc::vec::Vec;
 use core::convert::{TryFrom, TryInto};
 
-use blake3::Hasher as Blake3Hasher;
-use p3_field::{PrimeCharacteristicRing, PrimeField64};
-
 use crate::constants::{
     BALANCE_DOMAIN_TAG, FIELD_MODULUS, MERKLE_DOMAIN_TAG, NOTE_DOMAIN_TAG, NULLIFIER_DOMAIN_TAG,
     POSEIDON2_RATE, POSEIDON2_WIDTH,
@@ -11,6 +8,7 @@ use crate::constants::{
 use crate::poseidon2::poseidon2_permutation;
 pub use crate::poseidon2::Felt;
 use crate::types::BalanceSlot;
+use blake3::Hasher as Blake3Hasher;
 
 pub type HashFelt = [Felt; 6];
 pub type Commitment = [u8; 48];

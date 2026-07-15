@@ -19,9 +19,8 @@ use crate::{
         recursive_prefix_statement_digest32_v1, recursive_prefix_statement_from_parts_v1,
         recursive_prefix_statement_from_public_v1, RecursivePrefixStatementV1,
     },
-    BlockRecursionError,
+    BlockRecursionError, SMALLWOOD_RECURSION_VERSION_BINDING,
 };
-use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use transaction_circuit::{
     encode_smallwood_recursive_proof_envelope_v1, prove_recursive_statement_v1,
     recursive_profile_a_v1, recursive_profile_b_v1, SmallwoodRecursiveProfileTagV1,
@@ -96,7 +95,7 @@ fn prove_base_context_v1(
     );
     let binding = hosted_base_binding_bytes_v1(statement);
     let proof = prove_recursive_statement_v1(
-        &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+        &recursive_profile_a_v1(SMALLWOOD_RECURSION_VERSION_BINDING),
         &descriptor,
         &relation,
         &[0u64; 64],
@@ -141,7 +140,7 @@ fn prove_step_context_v1(
         );
         let binding = hosted_step_binding_bytes_v1(target_statement);
         let proof = prove_recursive_statement_v1(
-            &recursive_profile_b_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+            &recursive_profile_b_v1(SMALLWOOD_RECURSION_VERSION_BINDING),
             &descriptor,
             &relation,
             relation.fixed_witness_words(),
@@ -178,7 +177,7 @@ fn prove_step_context_v1(
         );
         let binding = hosted_step_binding_bytes_v1(target_statement);
         let proof = prove_recursive_statement_v1(
-            &recursive_profile_a_v1(SMALLWOOD_CANDIDATE_VERSION_BINDING),
+            &recursive_profile_a_v1(SMALLWOOD_RECURSION_VERSION_BINDING),
             &descriptor,
             &relation,
             relation.fixed_witness_words(),

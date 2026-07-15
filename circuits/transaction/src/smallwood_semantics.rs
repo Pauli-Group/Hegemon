@@ -1,8 +1,17 @@
 use blake3::Hasher;
-use p3_field::{Field, PrimeCharacteristicRing, PrimeField64};
+use hegemon_field::PrimeCharacteristicRing;
+use serde::{Deserialize, Serialize};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt,
+    iter::{Product, Sum},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 use transaction_core::{
     constants::POSEIDON2_WIDTH,
-    poseidon2::{poseidon2_step, Felt},
+    poseidon2::{poseidon2_step_ring, Felt},
+    range::{RANGE_LIMB_BITS, RANGE_LIMB_COUNT, RANGE_TOP_LIMB_MAX},
 };
 
 use crate::{
@@ -20,6 +29,9 @@ const MERKLE_DEPTH: usize = 32;
 const POSEIDON_STEPS: usize = 31;
 const POSEIDON_ROWS_PER_PERMUTATION: usize = POSEIDON_STEPS + 1;
 const HASH_LIMBS: usize = 6;
+const INLINE_MERKLE_BINDING_SLOTS: usize = MAX_INPUTS * MERKLE_DEPTH * HASH_LIMBS;
+const INLINE_MERKLE_ROWS_PER_GROUP: usize = 4;
+const INLINE_POLICY_BINDING_ROWS: usize = 3;
 const INPUT_ROWS: usize = 130;
 const PUBLIC_ROWS: usize = 0;
 const PUBLIC_VALUE_COUNT: usize = 78;
@@ -98,13 +110,263 @@ const PUB_STABLE_ORACLE: usize = 64;
 const PUB_STABLE_ATTESTATION: usize = 70;
 const EFFECTIVE_CONSTRAINT_DEGREE: usize = 8;
 const BASE_INPUT_ROWS: usize = 1 + 1 + MERKLE_DEPTH;
+const PUBLIC_VALUE_RANGE_VALUE_COUNT: usize = 3;
+const VALUE_RANGE_VALUE_COUNT: usize = MAX_INPUTS + MAX_OUTPUTS + PUBLIC_VALUE_RANGE_VALUE_COUNT;
+const VALUE_RANGE_ROWS: usize = VALUE_RANGE_VALUE_COUNT * RANGE_LIMB_COUNT;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum SmallwoodConstraintExpression {
+    Constant(u64),
+    PublicValue(u32),
+    WitnessRow(u32),
+    SlotDenominatorInverse(u8),
+    StableSelectorBit(u8),
+    Add { left: u32, right: u32 },
+    Sub { left: u32, right: u32 },
+    Mul { left: u32, right: u32 },
+    Neg { value: u32 },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodProductionConstraintProgram {
+    pub public_value_count: usize,
+    pub witness_row_count: usize,
+    pub packing_factor: usize,
+    pub nonlinear_constraint_count: usize,
+    pub expressions: Vec<SmallwoodConstraintExpression>,
+    pub constraint_roots: Vec<u32>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SmallwoodProductionConstraintFamilyRange {
+    pub name: &'static str,
+    pub start: usize,
+    pub count: usize,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+struct SymbolicValue(u32);
+
+impl fmt::Debug for SymbolicValue {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "e{}", self.0)
+    }
+}
+
+struct SymbolicArena {
+    expressions: Vec<SmallwoodConstraintExpression>,
+    interned: HashMap<SmallwoodConstraintExpression, u32>,
+}
+
+impl SymbolicArena {
+    fn new() -> Self {
+        let mut arena = Self {
+            expressions: Vec::new(),
+            interned: HashMap::new(),
+        };
+        for value in [0, 1, 2, hegemon_field::GOLDILOCKS_MODULUS - 1] {
+            arena.intern(SmallwoodConstraintExpression::Constant(value));
+        }
+        arena
+    }
+
+    fn intern(&mut self, expression: SmallwoodConstraintExpression) -> SymbolicValue {
+        if let Some(index) = self.interned.get(&expression) {
+            return SymbolicValue(*index);
+        }
+        let index = u32::try_from(self.expressions.len())
+            .expect("SmallWood symbolic expression table fits u32");
+        self.expressions.push(expression);
+        self.interned.insert(expression, index);
+        SymbolicValue(index)
+    }
+}
+
+thread_local! {
+    static SYMBOLIC_ARENA: RefCell<Option<SymbolicArena>> = const { RefCell::new(None) };
+}
+
+impl SymbolicValue {
+    const ZERO: Self = Self(0);
+    const ONE: Self = Self(1);
+    const TWO: Self = Self(2);
+    const NEG_ONE: Self = Self(3);
+
+    fn intern(expression: SmallwoodConstraintExpression) -> Self {
+        SYMBOLIC_ARENA.with(|slot| {
+            slot.borrow_mut()
+                .as_mut()
+                .expect("SmallWood symbolic arena is active")
+                .intern(expression)
+        })
+    }
+
+    fn public_value(index: usize) -> Self {
+        Self::intern(SmallwoodConstraintExpression::PublicValue(
+            u32::try_from(index).expect("SmallWood public index fits u32"),
+        ))
+    }
+
+    fn witness_row(index: usize) -> Self {
+        Self::intern(SmallwoodConstraintExpression::WitnessRow(
+            u32::try_from(index).expect("SmallWood witness row index fits u32"),
+        ))
+    }
+
+    fn slot_denominator_inverse(slot: usize) -> Self {
+        Self::intern(SmallwoodConstraintExpression::SlotDenominatorInverse(
+            u8::try_from(slot).expect("SmallWood slot index fits u8"),
+        ))
+    }
+
+    fn stable_selector_bit(bit: usize) -> Self {
+        Self::intern(SmallwoodConstraintExpression::StableSelectorBit(
+            u8::try_from(bit).expect("SmallWood stable selector bit fits u8"),
+        ))
+    }
+}
+
+impl Add for SymbolicValue {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        if self == Self::ZERO {
+            return rhs;
+        }
+        if rhs == Self::ZERO {
+            return self;
+        }
+        let (left, right) = if self.0 <= rhs.0 {
+            (self.0, rhs.0)
+        } else {
+            (rhs.0, self.0)
+        };
+        Self::intern(SmallwoodConstraintExpression::Add { left, right })
+    }
+}
+
+impl AddAssign for SymbolicValue {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl Sub for SymbolicValue {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        if rhs == Self::ZERO {
+            return self;
+        }
+        if self == rhs {
+            return Self::ZERO;
+        }
+        Self::intern(SmallwoodConstraintExpression::Sub {
+            left: self.0,
+            right: rhs.0,
+        })
+    }
+}
+
+impl SubAssign for SymbolicValue {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl Mul for SymbolicValue {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        if self == Self::ZERO || rhs == Self::ZERO {
+            return Self::ZERO;
+        }
+        if self == Self::ONE {
+            return rhs;
+        }
+        if rhs == Self::ONE {
+            return self;
+        }
+        let (left, right) = if self.0 <= rhs.0 {
+            (self.0, rhs.0)
+        } else {
+            (rhs.0, self.0)
+        };
+        Self::intern(SmallwoodConstraintExpression::Mul { left, right })
+    }
+}
+
+impl MulAssign for SymbolicValue {
+    fn mul_assign(&mut self, rhs: Self) {
+        *self = *self * rhs;
+    }
+}
+
+impl Neg for SymbolicValue {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        if self == Self::ZERO {
+            return self;
+        }
+        Self::intern(SmallwoodConstraintExpression::Neg { value: self.0 })
+    }
+}
+
+impl Sum for SymbolicValue {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ZERO, Add::add)
+    }
+}
+
+impl<'a> Sum<&'a SymbolicValue> for SymbolicValue {
+    fn sum<I: Iterator<Item = &'a SymbolicValue>>(iter: I) -> Self {
+        iter.copied().sum()
+    }
+}
+
+impl Product for SymbolicValue {
+    fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
+        iter.fold(Self::ONE, Mul::mul)
+    }
+}
+
+impl<'a> Product<&'a SymbolicValue> for SymbolicValue {
+    fn product<I: Iterator<Item = &'a SymbolicValue>>(iter: I) -> Self {
+        iter.copied().product()
+    }
+}
+
+impl PrimeCharacteristicRing for SymbolicValue {
+    const ZERO: Self = Self::ZERO;
+    const ONE: Self = Self::ONE;
+    const TWO: Self = Self::TWO;
+    const NEG_ONE: Self = Self::NEG_ONE;
+
+    fn from_bool(value: bool) -> Self {
+        if value {
+            Self::ONE
+        } else {
+            Self::ZERO
+        }
+    }
+
+    fn from_u64(value: u64) -> Self {
+        Self::intern(SmallwoodConstraintExpression::Constant(
+            value % hegemon_field::GOLDILOCKS_MODULUS,
+        ))
+    }
+}
 
 #[derive(Clone, Copy)]
 struct PackedRowLayout {
     input_rows: usize,
     output_rows: usize,
     stable_binding_rows: usize,
+    value_range_rows: usize,
     inline_merkle_aggregates: bool,
+    committed_inline_bindings: bool,
     poseidon_rows_per_permutation: usize,
     skip_initial_mds_poseidon: bool,
 }
@@ -117,7 +379,9 @@ impl PackedRowLayout {
                     input_rows: INPUT_ROWS,
                     output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 1 + (HASH_LIMBS * 3),
+                    value_range_rows: 0,
                     inline_merkle_aggregates: false,
+                    committed_inline_bindings: false,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
                     skip_initial_mds_poseidon: false,
                 }
@@ -129,7 +393,9 @@ impl PackedRowLayout {
                 input_rows: INPUT_ROWS,
                 output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
+                value_range_rows: 0,
                 inline_merkle_aggregates: false,
+                committed_inline_bindings: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION,
                 skip_initial_mds_poseidon: false,
             },
@@ -137,7 +403,9 @@ impl PackedRowLayout {
                 input_rows: INPUT_ROWS,
                 output_rows: 2 + OUTPUT_AUTH_KEY_ROWS,
                 stable_binding_rows: 0,
+                value_range_rows: 0,
                 inline_merkle_aggregates: false,
+                committed_inline_bindings: false,
                 poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                 skip_initial_mds_poseidon: true,
             },
@@ -147,7 +415,21 @@ impl PackedRowLayout {
                     input_rows: BASE_INPUT_ROWS,
                     output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
                     stable_binding_rows: 0,
+                    value_range_rows: 0,
                     inline_merkle_aggregates: true,
+                    committed_inline_bindings: false,
+                    poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
+                    skip_initial_mds_poseidon: true,
+                }
+            }
+            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
+                Self {
+                    input_rows: BASE_INPUT_ROWS,
+                    output_rows: 2 + HASH_LIMBS + OUTPUT_AUTH_KEY_ROWS,
+                    stable_binding_rows: 0,
+                    value_range_rows: VALUE_RANGE_ROWS,
+                    inline_merkle_aggregates: true,
+                    committed_inline_bindings: true,
                     poseidon_rows_per_permutation: POSEIDON_ROWS_PER_PERMUTATION - 1,
                     skip_initial_mds_poseidon: true,
                 }
@@ -159,6 +441,7 @@ impl PackedRowLayout {
         (MAX_INPUTS * self.input_rows)
             + (MAX_OUTPUTS * self.output_rows)
             + self.stable_binding_rows
+            + self.value_range_rows
             + AUTH_ROWS
     }
 
@@ -655,10 +938,6 @@ fn nontrivial_challenge(statement: &PackedStatement<'_>, tag: u64, a: u64, b: u6
     Felt::from_u64(output[0])
 }
 
-fn public_value(statement: &PackedStatement<'_>, row: usize) -> Felt {
-    Felt::from_u64(statement.public_values[row])
-}
-
 #[inline]
 fn row_input_base(statement: &PackedStatement<'_>, input: usize) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
@@ -727,12 +1006,53 @@ fn row_output_auth_key(statement: &PackedStatement<'_>, output: usize, limb: usi
 }
 
 #[inline]
-fn row_auth_base(statement: &PackedStatement<'_>) -> usize {
+fn row_value_range_base(statement: &PackedStatement<'_>) -> usize {
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
     PUBLIC_ROWS
         + MAX_INPUTS * layout.input_rows
         + MAX_OUTPUTS * layout.output_rows
         + layout.stable_binding_rows
+}
+
+#[inline]
+fn row_input_value_range_limb(statement: &PackedStatement<'_>, input: usize, limb: usize) -> usize {
+    debug_assert!(
+        PackedRowLayout::for_arithmetization(statement.arithmetization).value_range_rows > 0
+    );
+    row_value_range_base(statement) + input * RANGE_LIMB_COUNT + limb
+}
+
+#[inline]
+fn row_output_value_range_limb(
+    statement: &PackedStatement<'_>,
+    output: usize,
+    limb: usize,
+) -> usize {
+    debug_assert!(
+        PackedRowLayout::for_arithmetization(statement.arithmetization).value_range_rows > 0
+    );
+    row_value_range_base(statement) + (MAX_INPUTS + output) * RANGE_LIMB_COUNT + limb
+}
+
+#[inline]
+fn row_public_value_range_limb(
+    statement: &PackedStatement<'_>,
+    public_value: usize,
+    limb: usize,
+) -> usize {
+    debug_assert!(
+        PackedRowLayout::for_arithmetization(statement.arithmetization).value_range_rows > 0
+    );
+    debug_assert!(public_value < PUBLIC_VALUE_RANGE_VALUE_COUNT);
+    row_value_range_base(statement)
+        + (MAX_INPUTS + MAX_OUTPUTS + public_value) * RANGE_LIMB_COUNT
+        + limb
+}
+
+#[inline]
+fn row_auth_base(statement: &PackedStatement<'_>) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    row_value_range_base(statement) + layout.value_range_rows
 }
 
 #[inline]
@@ -1013,8 +1333,45 @@ fn bridge_auth_value_lock_permutation(chunk: usize) -> usize {
 }
 
 #[inline]
-fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
+fn inline_merkle_binding_group_count(packing_factor: usize) -> usize {
+    INLINE_MERKLE_BINDING_SLOTS.div_ceil(packing_factor)
+}
+
+#[inline]
+fn inline_binding_row_count(layout: PackedRowLayout, packing_factor: usize) -> usize {
+    if layout.committed_inline_bindings {
+        inline_merkle_binding_group_count(packing_factor) * INLINE_MERKLE_ROWS_PER_GROUP
+            + INLINE_POLICY_BINDING_ROWS
+    } else {
+        0
+    }
+}
+
+#[inline]
+fn inline_binding_rows_start(statement: &PackedStatement<'_>) -> usize {
     PUBLIC_ROWS + PackedRowLayout::for_arithmetization(statement.arithmetization).secret_rows()
+}
+
+#[inline]
+fn row_inline_merkle_binding(
+    statement: &PackedStatement<'_>,
+    group: usize,
+    component: usize,
+) -> usize {
+    inline_binding_rows_start(statement) + group * INLINE_MERKLE_ROWS_PER_GROUP + component
+}
+
+#[inline]
+fn row_inline_policy_binding(statement: &PackedStatement<'_>, component: usize) -> usize {
+    inline_binding_rows_start(statement)
+        + inline_merkle_binding_group_count(statement.packing_factor) * INLINE_MERKLE_ROWS_PER_GROUP
+        + component
+}
+
+#[inline]
+fn poseidon_rows_start(statement: &PackedStatement<'_>) -> usize {
+    let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
+    PUBLIC_ROWS + layout.secret_rows() + inline_binding_row_count(layout, statement.packing_factor)
 }
 #[inline]
 fn poseidon_group_row(
@@ -1028,6 +1385,7 @@ fn poseidon_group_row(
         + (group * layout.poseidon_rows_per_permutation + step_row) * POSEIDON2_WIDTH
         + limb
 }
+
 #[inline]
 fn poseidon_transition_challenge_index(
     layout: PackedRowLayout,
@@ -1038,14 +1396,26 @@ fn poseidon_transition_challenge_index(
 }
 
 #[inline]
-fn felt_bool_v(bit: Felt) -> Felt {
-    bit * (bit - Felt::ONE)
+fn felt_bool_v<R: PrimeCharacteristicRing>(bit: R) -> R {
+    bit * (bit - R::ONE)
 }
 
 #[inline]
-fn selected_slot_weight(bit0: Felt, bit1: Felt, slot: usize) -> Felt {
-    let inv0 = Felt::ONE - bit0;
-    let inv1 = Felt::ONE - bit1;
+fn bounded_value_limb_zero<R: PrimeCharacteristicRing>(limb: R, limb_index: usize) -> R {
+    if limb_index + 1 == RANGE_LIMB_COUNT {
+        debug_assert_eq!(RANGE_TOP_LIMB_MAX, 1);
+        return felt_bool_v(limb);
+    }
+    let radix = 1usize << RANGE_LIMB_BITS;
+    (0..radix).fold(R::ONE, |acc, digit| {
+        acc * (limb - R::from_u64(digit as u64))
+    })
+}
+
+#[inline]
+fn selected_slot_weight<R: PrimeCharacteristicRing>(bit0: R, bit1: R, slot: usize) -> R {
+    let inv0 = R::ONE - bit0;
+    let inv1 = R::ONE - bit1;
     match slot {
         0 => inv0 * inv1,
         1 => bit0 * inv1,
@@ -1054,11 +1424,11 @@ fn selected_slot_weight(bit0: Felt, bit1: Felt, slot: usize) -> Felt {
     }
 }
 
-fn selected_slot_asset(statement: &PackedStatement<'_>, bit0: Felt, bit1: Felt) -> Felt {
-    let mut result = Felt::ZERO;
+fn selected_slot_asset<R: PrimeCharacteristicRing>(public_values: &[R], bit0: R, bit1: R) -> R {
+    let mut result = R::ZERO;
     for slot in 0..BALANCE_SLOTS {
         let weight = selected_slot_weight(bit0, bit1, slot);
-        result += weight * public_value(statement, PUB_SLOT_ASSETS + slot);
+        result += weight * public_values[PUB_SLOT_ASSETS + slot];
     }
     result
 }
@@ -1079,32 +1449,36 @@ fn derive_slot_denominator_inverses(public_values: &[u64]) -> [Felt; BALANCE_SLO
     inverses
 }
 
-fn slot_membership_weights(statement: &PackedStatement<'_>, asset: Felt) -> [Felt; BALANCE_SLOTS] {
-    let mut weights = [Felt::ZERO; BALANCE_SLOTS];
+fn slot_membership_weights<R: PrimeCharacteristicRing>(
+    public_values: &[R],
+    slot_denominator_inverses: &[R; BALANCE_SLOTS],
+    asset: R,
+) -> [R; BALANCE_SLOTS] {
+    let mut weights = [R::ZERO; BALANCE_SLOTS];
     for (slot, weight) in weights.iter_mut().enumerate().take(BALANCE_SLOTS) {
-        let mut numerator = Felt::ONE;
+        let mut numerator = R::ONE;
         for other in 0..BALANCE_SLOTS {
             if other == slot {
                 continue;
             }
-            numerator *= asset - public_value(statement, PUB_SLOT_ASSETS + other);
+            numerator *= asset - public_values[PUB_SLOT_ASSETS + other];
         }
-        *weight = numerator * statement.slot_denominator_inverses[slot];
+        *weight = numerator * slot_denominator_inverses[slot];
     }
     weights
 }
 
-fn slot_membership_zero(statement: &PackedStatement<'_>, asset: Felt) -> Felt {
-    let mut acc = Felt::ONE;
+fn slot_membership_zero<R: PrimeCharacteristicRing>(public_values: &[R], asset: R) -> R {
+    let mut acc = R::ONE;
     for slot in 0..BALANCE_SLOTS {
-        acc *= asset - public_value(statement, PUB_SLOT_ASSETS + slot);
+        acc *= asset - public_values[PUB_SLOT_ASSETS + slot];
     }
     acc
 }
 
-fn aggregate_hash_limbs(challenge: Felt, limbs: &[Felt; HASH_LIMBS]) -> Felt {
-    let mut acc = Felt::ZERO;
-    let mut power = Felt::ONE;
+fn aggregate_hash_limbs<R: PrimeCharacteristicRing>(challenge: R, limbs: &[R; HASH_LIMBS]) -> R {
+    let mut acc = R::ZERO;
+    let mut power = R::ONE;
     for limb in limbs {
         acc += power * *limb;
         power *= challenge;
@@ -1124,9 +1498,13 @@ fn auxiliary_input_right_agg(input: usize, level: usize) -> usize {
     input * MERKLE_DEPTH * 3 + level * 3 + 2
 }
 
-fn aggregate_weighted_differences(challenge: Felt, lhs: &[Felt], rhs: &[Felt]) -> Felt {
-    let mut acc = Felt::ZERO;
-    let mut power = Felt::ONE;
+fn aggregate_weighted_differences<R: PrimeCharacteristicRing>(
+    challenge: R,
+    lhs: &[R],
+    rhs: &[R],
+) -> R {
+    let mut acc = R::ZERO;
+    let mut power = R::ONE;
     for (&left, &right) in lhs.iter().zip(rhs.iter()) {
         acc += power * (left - right);
         power *= challenge;
@@ -1148,21 +1526,21 @@ fn derive_stable_selector_bits(public_values: &[u64]) -> [Felt; 2] {
     ]
 }
 
-fn signed_from_parts(sign: Felt, magnitude: Felt) -> Felt {
+fn signed_from_parts<R: PrimeCharacteristicRing>(sign: R, magnitude: R) -> R {
     magnitude - (sign + sign) * magnitude
 }
 
-fn apply_poseidon_transition(
+fn apply_poseidon_transition<R: PrimeCharacteristicRing>(
     layout: PackedRowLayout,
     logical_step: usize,
-    state: &mut [Felt; POSEIDON2_WIDTH],
+    state: &mut [R; POSEIDON2_WIDTH],
 ) {
     if layout.skip_initial_mds_poseidon && logical_step == 0 {
-        poseidon2_step(state, 0);
-        poseidon2_step(state, 1);
+        poseidon2_step_ring(state, 0);
+        poseidon2_step_ring(state, 1);
         return;
     }
-    poseidon2_step(state, layout.poseidon_trace_row(logical_step));
+    poseidon2_step_ring(state, layout.poseidon_trace_row(logical_step));
 }
 
 #[allow(dead_code)]
@@ -1208,20 +1586,78 @@ pub(crate) fn compute_bridge_constraints_u64(
 fn constraint_count(arithmetization: SmallwoodArithmetization, packing_factor: usize) -> usize {
     let layout = PackedRowLayout::for_arithmetization(arithmetization);
     let public_bools = MAX_INPUTS + MAX_OUTPUTS + 3;
-    let input_constraints = MAX_INPUTS * (MERKLE_DEPTH + 1 + MERKLE_DEPTH);
-    let output_constraints = MAX_OUTPUTS * (1 + 1);
-    let stablecoin_constraints = 1 + 1 + 7;
+    let merkle_selection_constraints = if layout.committed_inline_bindings {
+        inline_merkle_binding_group_count(packing_factor)
+    } else {
+        MAX_INPUTS * MERKLE_DEPTH
+    };
+    let input_constraints = MAX_INPUTS * (MERKLE_DEPTH + 1) + merkle_selection_constraints;
+    let output_constraints = if layout.committed_inline_bindings {
+        MAX_OUTPUTS * (1 + HASH_LIMBS)
+    } else {
+        MAX_OUTPUTS * (1 + 1)
+    };
+    let stablecoin_constraints = if layout.committed_inline_bindings {
+        6 + HASH_LIMBS * 3
+    } else {
+        1 + 1 + 7
+    };
     let balance_constraints = BALANCE_SLOTS;
+    let value_range_constraints = layout.value_range_rows;
     let auth_constraints = AUTH_CONSTRAINTS;
-    let poseidon_transition =
-        poseidon_group_count(packing_factor) * layout.poseidon_transition_count();
+    let poseidon_transition = poseidon_group_count(packing_factor)
+        * layout.poseidon_transition_count()
+        * if layout.committed_inline_bindings {
+            POSEIDON2_WIDTH
+        } else {
+            1
+        };
     public_bools
         + input_constraints
         + output_constraints
         + stablecoin_constraints
         + balance_constraints
+        + value_range_constraints
         + auth_constraints
         + poseidon_transition
+}
+
+#[cfg(test)]
+pub(crate) fn production_constraint_family_ranges() -> Vec<SmallwoodProductionConstraintFamilyRange>
+{
+    let arithmetization =
+        SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    let packing_factor = 64;
+    let layout = PackedRowLayout::for_arithmetization(arithmetization);
+    let counts = [
+        ("public_shape", MAX_INPUTS + MAX_OUTPUTS + 3),
+        (
+            "input_spend",
+            MAX_INPUTS * (MERKLE_DEPTH + 1) + inline_merkle_binding_group_count(packing_factor),
+        ),
+        ("output_validity", MAX_OUTPUTS * (1 + HASH_LIMBS)),
+        ("stablecoin", 6 + HASH_LIMBS * 3),
+        ("balance_conservation", BALANCE_SLOTS),
+        ("value_ranges", layout.value_range_rows),
+        ("spend_authorization", AUTH_CONSTRAINTS),
+        (
+            "poseidon_transitions",
+            poseidon_group_count(packing_factor)
+                * layout.poseidon_transition_count()
+                * POSEIDON2_WIDTH,
+        ),
+    ];
+    let mut start = 0;
+    let ranges = counts
+        .into_iter()
+        .map(|(name, count)| {
+            let range = SmallwoodProductionConstraintFamilyRange { name, start, count };
+            start += count;
+            range
+        })
+        .collect::<Vec<_>>();
+    debug_assert_eq!(start, constraint_count(arithmetization, packing_factor));
+    ranges
 }
 
 fn compute_constraints(
@@ -1230,213 +1666,260 @@ fn compute_constraints(
     auxiliary_words: &[Felt],
     out: &mut [Felt],
 ) {
+    let public_values = statement
+        .public_values
+        .iter()
+        .copied()
+        .map(Felt::from_u64)
+        .collect::<Vec<_>>();
+    compute_constraints_ring(
+        statement,
+        &public_values,
+        rows,
+        auxiliary_words,
+        &statement.output_ciphertext_challenges,
+        &statement.slot_denominator_inverses,
+        statement.stable_selector_bits,
+        statement.stable_policy_hash_challenge,
+        statement.stable_oracle_challenge,
+        statement.stable_attestation_challenge,
+        &statement.poseidon_transition_challenges,
+        out,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_constraints_ring<R: PrimeCharacteristicRing>(
+    statement: &PackedStatement<'_>,
+    public_values: &[R],
+    rows: &[R],
+    auxiliary_words: &[R],
+    output_ciphertext_challenges: &[R; MAX_OUTPUTS],
+    slot_denominator_inverses: &[R; BALANCE_SLOTS],
+    stable_selector_bits: [R; 2],
+    stable_policy_hash_challenge: R,
+    stable_oracle_challenge: R,
+    stable_attestation_challenge: R,
+    poseidon_transition_challenges: &[R],
+    out: &mut [R],
+) {
     let mut c = 0usize;
     let layout = PackedRowLayout::for_arithmetization(statement.arithmetization);
 
     for input in 0..MAX_INPUTS {
-        out[c] = felt_bool_v(public_value(statement, PUB_INPUT_FLAG0 + input));
+        out[c] = felt_bool_v(public_values[PUB_INPUT_FLAG0 + input]);
         c += 1;
     }
     for output in 0..MAX_OUTPUTS {
-        out[c] = felt_bool_v(public_value(statement, PUB_OUTPUT_FLAG0 + output));
+        out[c] = felt_bool_v(public_values[PUB_OUTPUT_FLAG0 + output]);
         c += 1;
     }
-    out[c] = felt_bool_v(public_value(statement, PUB_VALUE_BALANCE_SIGN));
+    out[c] = felt_bool_v(public_values[PUB_VALUE_BALANCE_SIGN]);
     c += 1;
-    out[c] = felt_bool_v(public_value(statement, PUB_STABLE_ENABLED));
+    out[c] = felt_bool_v(public_values[PUB_STABLE_ENABLED]);
     c += 1;
-    out[c] = felt_bool_v(public_value(statement, PUB_STABLE_ISSUANCE_SIGN));
+    out[c] = felt_bool_v(public_values[PUB_STABLE_ISSUANCE_SIGN]);
     c += 1;
 
     for input in 0..MAX_INPUTS {
         let asset = rows[row_input_asset(statement, input)];
-        let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
+        let flag = public_values[PUB_INPUT_FLAG0 + input];
         for bit in 0..MERKLE_DEPTH {
             out[c] = felt_bool_v(rows[row_input_direction(statement, input, bit)]);
             c += 1;
         }
-        let mut position_sum = Felt::ZERO;
+        let mut position_sum = R::ZERO;
         for bit in 0..MERKLE_DEPTH {
             position_sum +=
-                rows[row_input_direction(statement, input, bit)] * Felt::from_u64(1u64 << bit);
+                rows[row_input_direction(statement, input, bit)] * R::from_u64(1u64 << bit);
         }
         let _ = position_sum;
-        out[c] = flag * slot_membership_zero(statement, asset);
+        out[c] = flag * slot_membership_zero(public_values, asset);
         c += 1;
 
-        for level in 0..MERKLE_DEPTH {
-            let dir = rows[row_input_direction(statement, input, level)];
-            let (current, left, right) = if layout.inline_merkle_aggregates {
-                let challenge = nontrivial_challenge(statement, 9, input as u64, level as u64);
-                let current_source = if level == 0 {
-                    bridge_input_commitment_permutation(input, 2)
+        if !layout.committed_inline_bindings {
+            for level in 0..MERKLE_DEPTH {
+                let dir = rows[row_input_direction(statement, input, level)];
+                let (current, left, right) = if layout.inline_merkle_aggregates {
+                    let challenge = R::from_u64(
+                        nontrivial_challenge(statement, 9, input as u64, level as u64)
+                            .as_canonical_u64(),
+                    );
+                    let current_source = if level == 0 {
+                        bridge_input_commitment_permutation(input, 2)
+                    } else {
+                        bridge_input_merkle_permutation(input, level - 1, 1)
+                    };
+                    let merkle0 = bridge_input_merkle_permutation(input, level, 0);
+                    let merkle1 = bridge_input_merkle_permutation(input, level, 1);
+                    let mut current_hash = [R::ZERO; HASH_LIMBS];
+                    let mut left_hash = [R::ZERO; HASH_LIMBS];
+                    let mut right_hash = [R::ZERO; HASH_LIMBS];
+                    for limb in 0..HASH_LIMBS {
+                        current_hash[limb] = rows[poseidon_group_row(
+                            statement,
+                            current_source / statement.packing_factor,
+                            layout.poseidon_last_row(),
+                            limb,
+                        )];
+                        left_hash[limb] = rows[poseidon_group_row(
+                            statement,
+                            merkle0 / statement.packing_factor,
+                            layout.poseidon_last_row(),
+                            limb,
+                        )];
+                        right_hash[limb] = rows[poseidon_group_row(
+                            statement,
+                            merkle1 / statement.packing_factor,
+                            layout.poseidon_last_row(),
+                            limb,
+                        )];
+                    }
+                    let current =
+                        if auxiliary_words.len() > auxiliary_input_current_agg(input, level) {
+                            auxiliary_words[auxiliary_input_current_agg(input, level)]
+                        } else {
+                            aggregate_hash_limbs(challenge, &current_hash)
+                        };
+                    let left = if auxiliary_words.len() > auxiliary_input_left_agg(input, level) {
+                        auxiliary_words[auxiliary_input_left_agg(input, level)]
+                    } else {
+                        aggregate_hash_limbs(challenge, &left_hash)
+                    };
+                    let right = if auxiliary_words.len() > auxiliary_input_right_agg(input, level) {
+                        auxiliary_words[auxiliary_input_right_agg(input, level)]
+                    } else {
+                        aggregate_hash_limbs(challenge, &right_hash)
+                    };
+                    (current, left, right)
                 } else {
-                    bridge_input_merkle_permutation(input, level - 1, 1)
+                    (
+                        rows[row_input_current_agg(statement, input, level)],
+                        rows[row_input_left_agg(statement, input, level)],
+                        rows[row_input_right_agg(statement, input, level)],
+                    )
                 };
-                let merkle0 = bridge_input_merkle_permutation(input, level, 0);
-                let merkle1 = bridge_input_merkle_permutation(input, level, 1);
-                let mut current_hash = [Felt::ZERO; HASH_LIMBS];
-                let mut left_hash = [Felt::ZERO; HASH_LIMBS];
-                let mut right_hash = [Felt::ZERO; HASH_LIMBS];
-                for limb in 0..HASH_LIMBS {
-                    current_hash[limb] = rows[poseidon_group_row(
-                        statement,
-                        current_source / statement.packing_factor,
-                        layout.poseidon_last_row(),
-                        limb,
-                    )];
-                    left_hash[limb] = rows[poseidon_group_row(
-                        statement,
-                        merkle0 / statement.packing_factor,
-                        layout.poseidon_last_row(),
-                        limb,
-                    )];
-                    right_hash[limb] = rows[poseidon_group_row(
-                        statement,
-                        merkle1 / statement.packing_factor,
-                        layout.poseidon_last_row(),
-                        limb,
-                    )];
-                }
-                let current = if matches!(
-                    statement.arithmetization,
-                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-                )
-                    && auxiliary_words.len() > auxiliary_input_current_agg(input, level)
-                {
-                    auxiliary_words[auxiliary_input_current_agg(input, level)]
-                } else {
-                    aggregate_hash_limbs(challenge, &current_hash)
-                };
-                let left = if matches!(
-                    statement.arithmetization,
-                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-                )
-                    && auxiliary_words.len() > auxiliary_input_left_agg(input, level)
-                {
-                    auxiliary_words[auxiliary_input_left_agg(input, level)]
-                } else {
-                    aggregate_hash_limbs(challenge, &left_hash)
-                };
-                let right = if matches!(
-                    statement.arithmetization,
-                    SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
-                        | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-                )
-                    && auxiliary_words.len() > auxiliary_input_right_agg(input, level)
-                {
-                    auxiliary_words[auxiliary_input_right_agg(input, level)]
-                } else {
-                    aggregate_hash_limbs(challenge, &right_hash)
-                };
-                (current, left, right)
-            } else {
-                (
-                    rows[row_input_current_agg(statement, input, level)],
-                    rows[row_input_left_agg(statement, input, level)],
-                    rows[row_input_right_agg(statement, input, level)],
-                )
-            };
-            out[c] = flag * (current - (left + dir * (right - left)));
+                out[c] = flag * (current - (left + dir * (right - left)));
+                c += 1;
+            }
+        }
+    }
+
+    if layout.committed_inline_bindings {
+        for group in 0..inline_merkle_binding_group_count(statement.packing_factor) {
+            let current = rows[row_inline_merkle_binding(statement, group, 0)];
+            let left = rows[row_inline_merkle_binding(statement, group, 1)];
+            let right = rows[row_inline_merkle_binding(statement, group, 2)];
+            let direction = rows[row_inline_merkle_binding(statement, group, 3)];
+            out[c] = current - (left + direction * (right - left));
             c += 1;
         }
     }
 
     for output_idx in 0..MAX_OUTPUTS {
         let asset = rows[row_output_asset(statement, output_idx)];
-        let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
-        let inactive = Felt::ONE - flag;
-        out[c] = flag * slot_membership_zero(statement, asset);
+        let flag = public_values[PUB_OUTPUT_FLAG0 + output_idx];
+        let inactive = R::ONE - flag;
+        out[c] = flag * slot_membership_zero(public_values, asset);
         c += 1;
 
-        let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
-        let rhs_hash = [Felt::ZERO; HASH_LIMBS];
-        for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
-            *lhs_limb = inactive
-                * public_value(
-                    statement,
-                    PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb,
-                );
+        if layout.committed_inline_bindings {
+            for limb in 0..HASH_LIMBS {
+                out[c] = inactive
+                    * public_values[PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb];
+                c += 1;
+            }
+        } else {
+            let mut lhs_hash = [R::ZERO; HASH_LIMBS];
+            let rhs_hash = [R::ZERO; HASH_LIMBS];
+            for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate() {
+                *lhs_limb = inactive
+                    * public_values[PUB_CIPHERTEXT_HASHES + output_idx * HASH_LIMBS + limb];
+            }
+            out[c] = aggregate_weighted_differences(
+                output_ciphertext_challenges[output_idx],
+                &lhs_hash,
+                &rhs_hash,
+            );
+            c += 1;
         }
-        out[c] = aggregate_weighted_differences(
-            statement.output_ciphertext_challenges[output_idx],
-            &lhs_hash,
-            &rhs_hash,
-        );
-        c += 1;
     }
 
-    let stable_selector0 = statement.stable_selector_bits[0];
-    let stable_selector1 = statement.stable_selector_bits[1];
-    let stable_enabled = public_value(statement, PUB_STABLE_ENABLED);
-    let stable_disabled = Felt::ONE - stable_enabled;
-    out[c] = selected_slot_asset(statement, stable_selector0, stable_selector1)
-        - public_value(statement, PUB_STABLE_ASSET);
+    let stable_selector0 = stable_selector_bits[0];
+    let stable_selector1 = stable_selector_bits[1];
+    let stable_enabled = public_values[PUB_STABLE_ENABLED];
+    let stable_disabled = R::ONE - stable_enabled;
+    out[c] = selected_slot_asset(public_values, stable_selector0, stable_selector1)
+        - public_values[PUB_STABLE_ASSET];
     c += 1;
     out[c] = stable_enabled * selected_slot_weight(stable_selector0, stable_selector1, 0);
     c += 1;
-    out[c] = stable_disabled * public_value(statement, PUB_STABLE_ASSET);
+    out[c] = stable_disabled * public_values[PUB_STABLE_ASSET];
     c += 1;
-    out[c] = stable_disabled * public_value(statement, PUB_STABLE_POLICY_VERSION);
+    out[c] = stable_disabled * public_values[PUB_STABLE_POLICY_VERSION];
     c += 1;
-    out[c] = stable_disabled * public_value(statement, PUB_STABLE_ISSUANCE_SIGN);
+    out[c] = stable_disabled * public_values[PUB_STABLE_ISSUANCE_SIGN];
     c += 1;
-    out[c] = stable_disabled * public_value(statement, PUB_STABLE_ISSUANCE_MAG);
+    out[c] = stable_disabled * public_values[PUB_STABLE_ISSUANCE_MAG];
     c += 1;
 
-    let mut lhs_hash = [Felt::ZERO; HASH_LIMBS];
-    let rhs_hash = [Felt::ZERO; HASH_LIMBS];
-    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
-        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_POLICY_HASH + limb);
+    if layout.committed_inline_bindings {
+        for limb in 0..HASH_LIMBS {
+            out[c] = stable_disabled * public_values[PUB_STABLE_POLICY_HASH + limb];
+            c += 1;
+        }
+        for limb in 0..HASH_LIMBS {
+            out[c] = stable_disabled * public_values[PUB_STABLE_ORACLE + limb];
+            c += 1;
+        }
+        for limb in 0..HASH_LIMBS {
+            out[c] = stable_disabled * public_values[PUB_STABLE_ATTESTATION + limb];
+            c += 1;
+        }
+    } else {
+        let rhs_hash = [R::ZERO; HASH_LIMBS];
+        let mut lhs_hash: [R; HASH_LIMBS] = core::array::from_fn(|limb| {
+            stable_disabled * public_values[PUB_STABLE_POLICY_HASH + limb]
+        });
+        out[c] = aggregate_weighted_differences(stable_policy_hash_challenge, &lhs_hash, &rhs_hash);
+        c += 1;
+        lhs_hash =
+            core::array::from_fn(|limb| stable_disabled * public_values[PUB_STABLE_ORACLE + limb]);
+        out[c] = aggregate_weighted_differences(stable_oracle_challenge, &lhs_hash, &rhs_hash);
+        c += 1;
+        lhs_hash = core::array::from_fn(|limb| {
+            stable_disabled * public_values[PUB_STABLE_ATTESTATION + limb]
+        });
+        out[c] = aggregate_weighted_differences(stable_attestation_challenge, &lhs_hash, &rhs_hash);
+        c += 1;
     }
-    out[c] = aggregate_weighted_differences(
-        statement.stable_policy_hash_challenge,
-        &lhs_hash,
-        &rhs_hash,
-    );
-    c += 1;
-    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
-        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_ORACLE + limb);
-    }
-    out[c] =
-        aggregate_weighted_differences(statement.stable_oracle_challenge, &lhs_hash, &rhs_hash);
-    c += 1;
-    for (limb, lhs_limb) in lhs_hash.iter_mut().enumerate().take(HASH_LIMBS) {
-        *lhs_limb = stable_disabled * public_value(statement, PUB_STABLE_ATTESTATION + limb);
-    }
-    out[c] = aggregate_weighted_differences(
-        statement.stable_attestation_challenge,
-        &lhs_hash,
-        &rhs_hash,
-    );
-    c += 1;
 
     let signed_value_balance = signed_from_parts(
-        public_value(statement, PUB_VALUE_BALANCE_SIGN),
-        public_value(statement, PUB_VALUE_BALANCE_MAG),
+        public_values[PUB_VALUE_BALANCE_SIGN],
+        public_values[PUB_VALUE_BALANCE_MAG],
     );
     let signed_stable_issuance = signed_from_parts(
-        public_value(statement, PUB_STABLE_ISSUANCE_SIGN),
-        public_value(statement, PUB_STABLE_ISSUANCE_MAG),
+        public_values[PUB_STABLE_ISSUANCE_SIGN],
+        public_values[PUB_STABLE_ISSUANCE_MAG],
     );
-    let native_expected = public_value(statement, PUB_FEE) - signed_value_balance;
+    let native_expected = public_values[PUB_FEE] - signed_value_balance;
 
     for slot in 0..BALANCE_SLOTS {
-        let mut delta = Felt::ZERO;
+        let mut delta = R::ZERO;
         for input in 0..MAX_INPUTS {
-            let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
+            let flag = public_values[PUB_INPUT_FLAG0 + input];
             let value = rows[row_input_value(statement, input)];
             let asset = rows[row_input_asset(statement, input)];
-            let weight = slot_membership_weights(statement, asset)[slot];
+            let weight =
+                slot_membership_weights(public_values, slot_denominator_inverses, asset)[slot];
             delta += flag * value * weight;
         }
         for output_idx in 0..MAX_OUTPUTS {
-            let flag = public_value(statement, PUB_OUTPUT_FLAG0 + output_idx);
+            let flag = public_values[PUB_OUTPUT_FLAG0 + output_idx];
             let value = rows[row_output_value(statement, output_idx)];
             let asset = rows[row_output_asset(statement, output_idx)];
-            let weight = slot_membership_weights(statement, asset)[slot];
+            let weight =
+                slot_membership_weights(public_values, slot_denominator_inverses, asset)[slot];
             delta -= flag * value * weight;
         }
         out[c] = if slot == 0 {
@@ -1449,19 +1932,49 @@ fn compute_constraints(
         c += 1;
     }
 
+    if layout.value_range_rows > 0 {
+        for input in 0..MAX_INPUTS {
+            for limb in 0..RANGE_LIMB_COUNT {
+                out[c] = bounded_value_limb_zero(
+                    rows[row_input_value_range_limb(statement, input, limb)],
+                    limb,
+                );
+                c += 1;
+            }
+        }
+        for output in 0..MAX_OUTPUTS {
+            for limb in 0..RANGE_LIMB_COUNT {
+                out[c] = bounded_value_limb_zero(
+                    rows[row_output_value_range_limb(statement, output, limb)],
+                    limb,
+                );
+                c += 1;
+            }
+        }
+        for public_value in 0..PUBLIC_VALUE_RANGE_VALUE_COUNT {
+            for limb in 0..RANGE_LIMB_COUNT {
+                out[c] = bounded_value_limb_zero(
+                    rows[row_public_value_range_limb(statement, public_value, limb)],
+                    limb,
+                );
+                c += 1;
+            }
+        }
+    }
+
     let auth_start = c;
     let mode_single = rows[row_auth_mode(statement, 0)];
     let mode_approval = rows[row_auth_mode(statement, 1)];
     let mode_final = rows[row_auth_mode(statement, 2)];
-    let input0_flag = public_value(statement, PUB_INPUT_FLAG0);
-    let input1_flag = public_value(statement, PUB_INPUT_FLAG0 + 1);
-    let output0_flag = public_value(statement, PUB_OUTPUT_FLAG0);
+    let input0_flag = public_values[PUB_INPUT_FLAG0];
+    let input1_flag = public_values[PUB_INPUT_FLAG0 + 1];
+    let output0_flag = public_values[PUB_OUTPUT_FLAG0];
     let non_single = mode_approval + mode_final;
     for mode in [mode_single, mode_approval, mode_final] {
         out[c] = felt_bool_v(mode);
         c += 1;
     }
-    out[c] = mode_single + mode_approval + mode_final - Felt::ONE;
+    out[c] = mode_single + mode_approval + mode_final - R::ONE;
     c += 1;
 
     let threshold = rows[row_auth_threshold(statement)];
@@ -1498,11 +2011,11 @@ fn compute_constraints(
         core::array::from_fn::<_, AUTH_POLICY_DISTINCT_INVERSE_ROWS, _>(|pair| {
             rows[row_auth_policy_distinct_inverse(statement, pair)]
         });
-    let slot_active = |slot: usize| -> Felt {
+    let slot_active = |slot: usize| -> R {
         signer_count_flags[slot..]
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, value| acc + value)
+            .fold(R::ZERO, |acc, value| acc + value)
     };
 
     for limb in 0..HASH_LIMBS {
@@ -1610,9 +2123,18 @@ fn compute_constraints(
                     )]);
             c += 1;
         }
+    } else if layout.committed_inline_bindings {
+        for _ in 0..(5 + HASH_LIMBS * 4) {
+            out[c] = R::ZERO;
+            c += 1;
+        }
+        out[c] = rows[row_inline_policy_binding(statement, 2)]
+            * (rows[row_inline_policy_binding(statement, 0)]
+                - rows[row_inline_policy_binding(statement, 1)]);
+        c += 1;
     } else {
         for _ in 0..(5 + HASH_LIMBS * 5) {
-            out[c] = Felt::ZERO;
+            out[c] = R::ZERO;
             c += 1;
         }
     }
@@ -1621,7 +2143,7 @@ fn compute_constraints(
     let current_prf = rows[row_auth_current_digest(statement, 4)];
     let value_lock_prf = rows[row_auth_value_lock_digest(statement, 4)];
     for input in 0..MAX_INPUTS {
-        let flag = public_value(statement, PUB_INPUT_FLAG0 + input);
+        let flag = public_values[PUB_INPUT_FLAG0 + input];
         let approval_prf = if input == 0 { current_prf } else { legacy_prf };
         let final_prf = if input == 0 {
             value_lock_prf
@@ -1650,15 +2172,15 @@ fn compute_constraints(
             c += 1;
         }
     }
-    out[c] = mode_approval * (input0_flag - Felt::ONE);
+    out[c] = mode_approval * (input0_flag - R::ONE);
     c += 1;
-    out[c] = mode_approval * (input1_flag - Felt::ONE);
+    out[c] = mode_approval * (input1_flag - R::ONE);
     c += 1;
-    out[c] = mode_approval * (output0_flag - Felt::ONE);
+    out[c] = mode_approval * (output0_flag - R::ONE);
     c += 1;
-    out[c] = mode_final * (input0_flag - Felt::ONE);
+    out[c] = mode_final * (input0_flag - R::ONE);
     c += 1;
-    out[c] = mode_final * (input1_flag - Felt::ONE);
+    out[c] = mode_final * (input1_flag - R::ONE);
     c += 1;
     for limb in 0..4 {
         out[c] = mode_approval
@@ -1675,16 +2197,16 @@ fn compute_constraints(
         * (threshold_flags
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit)
-            - Felt::ONE);
+            .fold(R::ZERO, |acc, bit| acc + bit)
+            - R::ONE);
     c += 1;
     out[c] = non_single
         * (threshold
             - threshold_flags
                 .iter()
                 .enumerate()
-                .fold(Felt::ZERO, |acc, (idx, bit)| {
-                    acc + *bit * Felt::from_u64((idx + 1) as u64)
+                .fold(R::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * R::from_u64((idx + 1) as u64)
                 }));
     c += 1;
     for bit in signer_count_flags {
@@ -1695,24 +2217,24 @@ fn compute_constraints(
         * (signer_count_flags
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit)
-            - Felt::ONE);
+            .fold(R::ZERO, |acc, bit| acc + bit)
+            - R::ONE);
     c += 1;
     out[c] = non_single
         * (signer_count
             - signer_count_flags
                 .iter()
                 .enumerate()
-                .fold(Felt::ZERO, |acc, (idx, bit)| {
-                    acc + *bit * Felt::from_u64((idx + 1) as u64)
+                .fold(R::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * R::from_u64((idx + 1) as u64)
                 }));
     c += 1;
-    let mut threshold_exceeds_signer_count = Felt::ZERO;
+    let mut threshold_exceeds_signer_count = R::ZERO;
     for (threshold_idx, threshold_flag) in threshold_flags.iter().enumerate() {
         let invalid_signer_counts = signer_count_flags[..threshold_idx]
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit);
+            .fold(R::ZERO, |acc, bit| acc + bit);
         threshold_exceeds_signer_count += *threshold_flag * invalid_signer_counts;
     }
     out[c] = non_single * threshold_exceeds_signer_count;
@@ -1725,16 +2247,16 @@ fn compute_constraints(
         * (count_flags
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit)
-            - Felt::ONE);
+            .fold(R::ZERO, |acc, bit| acc + bit)
+            - R::ONE);
     c += 1;
     out[c] = non_single
         * (count
             - count_flags
                 .iter()
                 .enumerate()
-                .fold(Felt::ZERO, |acc, (idx, bit)| {
-                    acc + *bit * Felt::from_u64(idx as u64)
+                .fold(R::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * R::from_u64(idx as u64)
                 }));
     c += 1;
     for bit in next_count_flags {
@@ -1745,26 +2267,26 @@ fn compute_constraints(
         * (next_count_flags
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit)
-            - Felt::ONE);
+            .fold(R::ZERO, |acc, bit| acc + bit)
+            - R::ONE);
     c += 1;
     out[c] = mode_approval
         * (next_count
             - next_count_flags
                 .iter()
                 .enumerate()
-                .fold(Felt::ZERO, |acc, (idx, bit)| {
-                    acc + *bit * Felt::from_u64(idx as u64)
+                .fold(R::ZERO, |acc, (idx, bit)| {
+                    acc + *bit * R::from_u64(idx as u64)
                 }));
     c += 1;
-    out[c] = mode_approval * (next_count - count - Felt::ONE);
+    out[c] = mode_approval * (next_count - count - R::ONE);
     c += 1;
     out[c] = mode_approval * count_flags[MULTISIG_MAX_SIGNERS];
     c += 1;
     for (slot, approved) in approved_slots.iter().copied().enumerate() {
         out[c] = non_single * felt_bool_v(approved);
         c += 1;
-        out[c] = non_single * approved * (Felt::ONE - slot_active(slot));
+        out[c] = non_single * approved * (R::ONE - slot_active(slot));
         c += 1;
     }
     out[c] = non_single
@@ -1772,12 +2294,12 @@ fn compute_constraints(
             - approved_slots
                 .iter()
                 .copied()
-                .fold(Felt::ZERO, |acc, bit| acc + bit));
+                .fold(R::ZERO, |acc, bit| acc + bit));
     c += 1;
     for (slot, approved) in next_approved_slots.iter().copied().enumerate() {
         out[c] = mode_approval * felt_bool_v(approved);
         c += 1;
-        out[c] = mode_approval * approved * (Felt::ONE - slot_active(slot));
+        out[c] = mode_approval * approved * (R::ONE - slot_active(slot));
         c += 1;
     }
     out[c] = mode_approval
@@ -1785,7 +2307,7 @@ fn compute_constraints(
             - next_approved_slots
                 .iter()
                 .copied()
-                .fold(Felt::ZERO, |acc, bit| acc + bit));
+                .fold(R::ZERO, |acc, bit| acc + bit));
     c += 1;
     for slot in 0..MULTISIG_MAX_SIGNERS {
         out[c] = mode_approval * membership_flags[slot] * approved_slots[slot];
@@ -1806,11 +2328,11 @@ fn compute_constraints(
         * (membership_flags
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit)
-            - Felt::ONE);
+            .fold(R::ZERO, |acc, bit| acc + bit)
+            - R::ONE);
     c += 1;
     for (slot, membership) in membership_flags.iter().copied().enumerate() {
-        out[c] = mode_approval * membership * (Felt::ONE - slot_active(slot));
+        out[c] = mode_approval * membership * (R::ONE - slot_active(slot));
         c += 1;
         for limb in 0..SIGNER_TAG_WORDS {
             out[c] = mode_approval
@@ -1823,9 +2345,8 @@ fn compute_constraints(
     for slot in 0..MULTISIG_MAX_SIGNERS {
         let active = slot_active(slot);
         for limb in 0..SIGNER_TAG_WORDS {
-            out[c] = non_single
-                * (Felt::ONE - active)
-                * policy_signer_tags[slot * SIGNER_TAG_WORDS + limb];
+            out[c] =
+                non_single * (R::ONE - active) * policy_signer_tags[slot * SIGNER_TAG_WORDS + limb];
             c += 1;
         }
     }
@@ -1836,20 +2357,20 @@ fn compute_constraints(
             let diff = policy_signer_tags[left * SIGNER_TAG_WORDS]
                 - policy_signer_tags[right * SIGNER_TAG_WORDS];
             let inverse = policy_distinct_inverses[pair];
-            out[c] = non_single * active_pair * (diff * inverse - Felt::ONE);
+            out[c] = non_single * active_pair * (diff * inverse - R::ONE);
             c += 1;
-            out[c] = non_single * (Felt::ONE - active_pair) * inverse;
+            out[c] = non_single * (R::ONE - active_pair) * inverse;
             c += 1;
             pair += 1;
         }
     }
 
-    let mut final_below_threshold = Felt::ZERO;
+    let mut final_below_threshold = R::ZERO;
     for (threshold_idx, threshold_flag) in threshold_flags.iter().enumerate() {
         let below = count_flags[..=threshold_idx]
             .iter()
             .copied()
-            .fold(Felt::ZERO, |acc, bit| acc + bit);
+            .fold(R::ZERO, |acc, bit| acc + bit);
         final_below_threshold += *threshold_flag * below;
     }
     out[c] = mode_final * final_below_threshold;
@@ -1870,7 +2391,7 @@ fn compute_constraints(
     c += 1;
     out[c] = mode_final * reserved_duplicate_inverse;
     c += 1;
-    out[c] = mode_final * (next_count_flags[0] - Felt::ONE);
+    out[c] = mode_final * (next_count_flags[0] - R::ONE);
     c += 1;
     for flag in next_count_flags.iter().skip(1) {
         out[c] = mode_final * *flag;
@@ -1881,26 +2402,110 @@ fn compute_constraints(
         c += 1;
     }
     while c < auth_start + AUTH_CONSTRAINTS {
-        out[c] = Felt::ZERO;
+        out[c] = R::ZERO;
         c += 1;
     }
 
     for group in 0..poseidon_group_count(statement.packing_factor) {
         for step in 0..layout.poseidon_transition_count() {
-            let mut state = [Felt::ZERO; POSEIDON2_WIDTH];
-            let mut next_actual = [Felt::ZERO; POSEIDON2_WIDTH];
+            let mut state = [R::ZERO; POSEIDON2_WIDTH];
+            let mut next_actual = [R::ZERO; POSEIDON2_WIDTH];
             for limb in 0..POSEIDON2_WIDTH {
                 state[limb] = rows[poseidon_group_row(statement, group, step, limb)];
                 next_actual[limb] = rows[poseidon_group_row(statement, group, step + 1, limb)];
             }
             apply_poseidon_transition(layout, step, &mut state);
-            out[c] = aggregate_weighted_differences(
-                statement.poseidon_transition_challenges
-                    [poseidon_transition_challenge_index(layout, group, step)],
-                &next_actual,
-                &state,
-            );
-            c += 1;
+            if layout.committed_inline_bindings {
+                for limb in 0..POSEIDON2_WIDTH {
+                    out[c] = next_actual[limb] - state[limb];
+                    c += 1;
+                }
+            } else {
+                out[c] = aggregate_weighted_differences(
+                    poseidon_transition_challenges
+                        [poseidon_transition_challenge_index(layout, group, step)],
+                    &next_actual,
+                    &state,
+                );
+                c += 1;
+            }
         }
     }
+}
+
+pub(crate) fn production_constraint_program(
+    statement: &PackedStatement<'_>,
+) -> Result<SmallwoodProductionConstraintProgram, TransactionCircuitError> {
+    if statement.arithmetization
+        != SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "production constraint program requires the deployed committed SmallWood relation",
+        ));
+    }
+    if statement.public_values.len() != PUBLIC_VALUE_COUNT
+        || statement.packing_factor != 64
+        || statement.auxiliary_limb_count != 0
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "production constraint program geometry does not match the deployed SmallWood relation",
+        ));
+    }
+
+    SYMBOLIC_ARENA.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_some() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SmallWood symbolic constraint program generation is already active",
+            ));
+        }
+        *slot = Some(SymbolicArena::new());
+        Ok(())
+    })?;
+
+    let public_values = (0..PUBLIC_VALUE_COUNT)
+        .map(SymbolicValue::public_value)
+        .collect::<Vec<_>>();
+    let rows = (0..statement.row_count)
+        .map(SymbolicValue::witness_row)
+        .collect::<Vec<_>>();
+    let output_ciphertext_challenges = [SymbolicValue::ZERO; MAX_OUTPUTS];
+    let slot_denominator_inverses = core::array::from_fn(SymbolicValue::slot_denominator_inverse);
+    let stable_selector_bits = core::array::from_fn(SymbolicValue::stable_selector_bit);
+    let poseidon_transition_challenges =
+        vec![
+            SymbolicValue::ZERO;
+            poseidon_group_count(statement.packing_factor)
+                * PackedRowLayout::for_arithmetization(statement.arithmetization)
+                    .poseidon_transition_count()
+        ];
+    let mut constraint_roots = vec![SymbolicValue::ZERO; statement.constraint_count];
+    compute_constraints_ring(
+        statement,
+        &public_values,
+        &rows,
+        &[],
+        &output_ciphertext_challenges,
+        &slot_denominator_inverses,
+        stable_selector_bits,
+        SymbolicValue::ZERO,
+        SymbolicValue::ZERO,
+        SymbolicValue::ZERO,
+        &poseidon_transition_challenges,
+        &mut constraint_roots,
+    );
+
+    let arena = SYMBOLIC_ARENA.with(|slot| {
+        slot.borrow_mut()
+            .take()
+            .expect("SmallWood symbolic constraint arena remains active")
+    });
+    Ok(SmallwoodProductionConstraintProgram {
+        public_value_count: PUBLIC_VALUE_COUNT,
+        witness_row_count: statement.row_count,
+        packing_factor: statement.packing_factor,
+        nonlinear_constraint_count: statement.constraint_count,
+        expressions: arena.expressions,
+        constraint_roots: constraint_roots.into_iter().map(|value| value.0).collect(),
+    })
 }

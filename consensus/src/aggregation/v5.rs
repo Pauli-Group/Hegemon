@@ -289,7 +289,7 @@ fn decode_leaf_representative_tx(
             "leaf representative transaction encoding invalid".to_string(),
         )
     })?;
-    let pub_inputs = stark_public_inputs_p3(&representative_tx).map_err(|err| {
+    let pub_inputs = transaction_verifier_inputs(&representative_tx).map_err(|err| {
         ProofError::AggregationProofV5Binding(format!(
             "representative transaction public inputs invalid: {err}"
         ))

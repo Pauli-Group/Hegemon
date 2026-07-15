@@ -21,8 +21,8 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 ## `circuits/`
 
-- `transaction-circuit` crate exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport`. The direct STARK path is `TransactionProverP3::prove_transaction(witness)` and `p3_verifier::verify_transaction_proof_bytes_p3(proof_bytes, pub_inputs)`. Production verification rejects missing STARK proof bytes/public inputs, and commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
-- `disclosure-circuit` crate exposes `prove_payment_disclosure(claim, witness) -> PaymentDisclosureProofBundle` and `verify_payment_disclosure(bundle)`. The claim binds `value`, `asset_id`, `pk_recipient`, and `commitment`; the witness supplies `rho` and `r`. `PaymentDisclosureProofBundle` carries `proof_bytes` plus the `air_hash` used for verifier binding.
+- `transaction-circuit` exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport` on the SmallWood-only production path. Production verification rejects retired backend identifiers, missing proof bytes, and malformed public inputs; commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
+- `circuits/disclosure` is retired source and is excluded from shipped executable dependency graphs and release tests.
 - `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
 
@@ -35,7 +35,7 @@ hen assembling payloads.
   - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
   - `TxValidityArtifact { receipt, proof }`
   - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
-- Import routes proof checks through `VerifierRegistry`, which currently has adapters for the shipped `RecursiveBlockV1` lane, the explicit native `ReceiptRoot` compatibility lane, and the experimental `RecursiveBlockV2` lane.
+- Import admits only the shipped `RecursiveBlockV2` route. `VerifierRegistry` retains direct research/test adapters for historical recursive and receipt-root artifacts, but proof policy prevents those adapters from becoming block-import routes.
 - The consensus crate also exposes the temporary receipt-root backend façade:
   - `experimental_receipt_root_verifier_profile()`
   - `build_experimental_receipt_root_artifact(receipts)`
@@ -48,8 +48,8 @@ p budgets.
 
 ## `wallet/`
 
-- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers, native node RPC flows, and disclosure tooling.
-- `wallet payment-proof create|verify|purge` generates and verifies proofs of disclosure and manages stored outgoing disclosure records.
+- Rust crate `wallet` exposes CLI subcommands via `clap` definitions in `wallet/src/bin/wallet.rs`, covering offline helpers and native node RPC flows.
+- `wallet payment-proof purge` manages retained outgoing disclosure records. `payment-proof create|verify` are fail-closed compatibility tombstones because no disclosure proof backend ships.
 - `wallet node-sync`, `wallet node-daemon`, and `wallet node-send` are the native node RPC paths for live wallets. One-shot commands accept the native node's plaintext `http://` JSON-RPC endpoint as well as `ws://`; subscription-backed daemon mode still requires `ws://`. PQ-only release wallets reject `https://` and `wss://`; put remote access behind an external PQ-safe transport or host control plane.
 - Wallet sync falls back to archive providers for ciphertext recovery when hot DA is pruned. Configure `HEGEMON_WALLET_ARCHIVE_WS_URL` or ensure providers are discoverable via `archive_listProviders`.
 - `wallet::disclosure::{DisclosurePackage, DisclosureClaim, DisclosureConfirmation, DisclosureProof}` defines the JSON schema and encoding helpers used to serialize/deserialize proof-of-disclosure packages.
@@ -61,7 +61,7 @@ p budgets.
 - `walletd` is a sidecar daemon that speaks newline-delimited JSON over stdin/stdout for GUI clients.
 - Requests: `{ id, method, params }`. Responses: `{ id, ok, result?, error?, error_code? }`. `error_code` is snake_case.
 - `status.get` returns `protocolVersion`, `capabilities`, `walletMode`, `storePath`, balances, `pending` entries (still in mempool), `recent` confirmed outgoing entries, note summary, `noteDetails` for recovered inbound notes, `noteAccounting` totals by asset/status, and `genesisHash`.
-- `sync.once`, `tx.send`, `disclosure.create`, and `disclosure.verify` mirror the wallet CLI flows without log parsing.
+- `sync.once` and `tx.send` mirror the wallet CLI flows without log parsing. `disclosure.list` remains available for local records; `disclosure.create|verify` return an unavailable error and `status.get` reports `capabilities.disclosure = false`.
 - Private multisig requests are `multisig.localSignerTag`, `multisig.accountCreate`, `multisig.accountExportPrivate`, `multisig.accountImportPrivate`, `multisig.accountList`, `multisig.noteList`, `multisig.openingExportPrivate`, `multisig.openingImportPrivate`, `multisig.valueLockSubmit`, `multisig.finalPlan`, `multisig.setupSubmit`, `multisig.approvalSubmit`, `multisig.finalSubmit`, `multisig.approvalCreate`, `multisig.approvalImport`, and `multisig.finalize`. The canonical custody flow is value-lock submit, setup submit for the returned `intentDigest`, approval submit until the hidden threshold is reached, then final submit. `multisig.localSignerTag` returns each signer-tag limb as a fixed-width hex string so JavaScript clients do not lose `u64` precision. `multisig.accountCreate` accepts `policySignerTags: [[hex-string; 5]; 1..=6]` and `threshold: 1..=policySignerTags.length`; legacy numeric limbs are still accepted for non-JavaScript callers. The scalar signer-id API is not exposed. The `*Private` methods move encrypted-wallet private descriptors/openings between signer wallets over an operator-controlled off-chain channel and must not be published as transaction data.
 - The daemon holds an exclusive `<store>.lock` file to prevent concurrent access to the same wallet store.
 
@@ -230,7 +230,7 @@ Prepared-artifact discovery RPC methods exposed on the native node:
 
 These prover RPCs now expose only reusable prepared artifacts on the live native-only branch. The external work-package / standalone-worker market surface was removed with the dead recursive proof lanes.
 
-Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed; recursive epoch proofs are temporarily disabled until a Plonky3 recursion path is reintroduced.
+Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed. The shipped recursive-block-v2 path is SmallWood-native; recursive epoch proofs remain removed and have no runtime endpoint.
 
 Artifact market RPC notes:
 

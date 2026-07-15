@@ -1,26 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use chrono::Utc;
 use clap::{Parser, Subcommand};
-use disclosure_circuit::{
-    prove_payment_disclosure, verify_payment_disclosure, PaymentDisclosureClaim,
-    PaymentDisclosureProofBundle, PaymentDisclosureWitness,
-};
 use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tokio::runtime::Builder as RuntimeBuilder;
 use transaction_circuit::{
-    hashing_pq::{
-        bytes48_to_felts, ciphertext_hash_bytes, is_canonical_bytes48, note_commitment_bytes,
-    },
-    note::{InputNoteWitness, MerklePath, OutputNoteWitness},
+    hashing_pq::ciphertext_hash_bytes,
+    note::{InputNoteWitness, OutputNoteWitness},
     witness::TransactionWitness,
     StablecoinPolicyBinding,
 };
@@ -28,19 +19,12 @@ use wallet::{
     address::ShieldedAddress,
     async_sync::AsyncWalletSyncEngine,
     build_stablecoin_burn, build_transaction, build_transaction_with_binding,
-    disclosure::{
-        decode_base64, encode_base64, DisclosureChainInfo, DisclosureClaim, DisclosureConfirmation,
-        DisclosurePackage, DisclosureProof,
-    },
     is_ambiguous_submission_error,
     keys::{DerivedKeys, RootSecret},
     node_rpc::NodeRpcClient,
     notes::{MemoPlaintext, NoteCiphertext, NotePlaintext},
     parse_recipients, precheck_nullifiers_with_binding, provisional_pending_tx_id,
-    store::{
-        open_private_append_file, write_private_file, OutgoingDisclosureRecord, PendingStatus,
-        TransferRecipient, WalletMode, WalletStore,
-    },
+    store::{write_private_file, PendingStatus, TransferRecipient, WalletMode, WalletStore},
     transfer_recipients_from_specs,
     tx_builder::Recipient,
     viewing::{IncomingViewingKey, OutgoingViewingKey},
@@ -56,6 +40,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Print the compiled production cryptographic profile as JSON.
+    #[command(name = "print-crypto-profile")]
+    PrintCryptoProfile,
     Generate {
         #[arg(long, default_value_t = 1)]
         count: u32,
@@ -385,6 +372,11 @@ fn get_new_passphrase() -> Result<String> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
+        Commands::PrintCryptoProfile => {
+            let profile = transaction_circuit::proof::production_crypto_profile_attestation()?;
+            println!("{}", serde_json::to_string(&profile)?);
+            Ok(())
+        }
         Commands::Generate { count, out } => cmd_generate(count, out),
         Commands::Address { root, index } => cmd_address(&root, index),
         Commands::TxCraft {
@@ -780,7 +772,14 @@ fn cmd_payment_proof(args: PaymentProofCommands) -> Result<()> {
     }
 }
 
-fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
+fn cmd_payment_proof_create(_args: PaymentProofCreateArgs) -> Result<()> {
+    anyhow::bail!(
+        "payment-proof create is unavailable: the retired disclosure proof backend is not linked"
+    )
+}
+
+#[cfg(any())]
+fn retired_cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
     let passphrase = get_passphrase("Enter wallet passphrase: ")?;
     let store = WalletStore::open(&args.store, &passphrase)?;
     if store.mode()? == WalletMode::WatchOnly {
@@ -889,7 +888,14 @@ fn cmd_payment_proof_create(args: PaymentProofCreateArgs) -> Result<()> {
     })
 }
 
-fn cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
+fn cmd_payment_proof_verify(_args: PaymentProofVerifyArgs) -> Result<()> {
+    anyhow::bail!(
+        "payment-proof verify is unavailable: the retired disclosure proof backend is not linked"
+    )
+}
+
+#[cfg(any())]
+fn retired_cmd_payment_proof_verify(args: PaymentProofVerifyArgs) -> Result<()> {
     let data = fs::read_to_string(&args.proof)
         .with_context(|| format!("failed to read {}", args.proof.display()))?;
     let package = DisclosurePackage::from_json_str(&data)?;
@@ -1031,6 +1037,7 @@ fn cmd_payment_proof_purge(args: PaymentProofPurgeArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any())]
 fn memo_to_disclosed_string(record: &OutgoingDisclosureRecord) -> Option<String> {
     let memo = record.memo.as_ref()?;
     if memo.as_bytes().is_empty() {
@@ -1042,6 +1049,7 @@ fn memo_to_disclosed_string(record: &OutgoingDisclosureRecord) -> Option<String>
     }
 }
 
+#[cfg(any())]
 fn ensure_canonical_bytes48(label: &str, bytes: &[u8; 48]) -> Result<()> {
     if !is_canonical_bytes48(bytes) {
         anyhow::bail!("{} is not a canonical field encoding", label);
@@ -1049,6 +1057,7 @@ fn ensure_canonical_bytes48(label: &str, bytes: &[u8; 48]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any())]
 fn ensure_canonical_asset_id(asset_id: u64) -> Result<()> {
     if !transaction_circuit::constants::is_canonical_asset_id(asset_id) {
         anyhow::bail!("asset_id is not a canonical circuit asset identifier");
@@ -1056,6 +1065,7 @@ fn ensure_canonical_asset_id(asset_id: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any())]
 fn decode_bound_recipient_address(claim: &DisclosureClaim) -> Result<ShieldedAddress> {
     let recipient = ShieldedAddress::decode(&claim.recipient_address)?;
     if recipient.pk_recipient != claim.pk_recipient {
@@ -1110,6 +1120,7 @@ fn parse_merkle_root(input: &str) -> Result<[u8; 48]> {
     parse_hex_48(trimmed)
 }
 
+#[cfg(any())]
 fn append_credit_record(
     path: &Path,
     package: &DisclosurePackage,
@@ -1154,6 +1165,7 @@ fn append_credit_record(
     Ok(())
 }
 
+#[cfg(any())]
 fn proof_bound_recipient_id(claim: &PaymentDisclosureClaim) -> String {
     format!(
         "disclosure-v1:{}:{}",
@@ -1162,241 +1174,8 @@ fn proof_bound_recipient_id(claim: &PaymentDisclosureClaim) -> String {
     )
 }
 
-fn cmd_node_batch_send(args: NodeBatchSendArgs) -> Result<()> {
-    if !cfg!(feature = "batch-proofs") {
-        anyhow::bail!(
-            "node-batch-send requires --features batch-proofs (disabled in production builds)"
-        );
-    }
-
-    let batch_size = args.recipients.len();
-
-    // Validate batch size (must be power of 2: 2, 4, 8, or 16)
-    if !batch_size.is_power_of_two() || !(2..=16).contains(&batch_size) {
-        anyhow::bail!(
-            "Batch size must be 2, 4, 8, or 16 (got {} recipient files)",
-            batch_size
-        );
-    }
-
-    let passphrase = get_passphrase("Enter wallet passphrase: ")?;
-    let store = WalletStore::open(&args.store, &passphrase)?;
-    if store.mode()? == WalletMode::WatchOnly {
-        anyhow::bail!("watch-only wallets cannot send");
-    }
-
-    let runtime = RuntimeBuilder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("failed to create tokio runtime")?;
-
-    runtime.block_on(async {
-        // Connect and sync first
-        println!("Connecting to {}...", args.ws_url);
-        let client = Arc::new(
-            NodeRpcClient::connect(&args.ws_url)
-                .await
-                .map_err(|e| anyhow!("Failed to connect: {}", e))?,
-        );
-
-        let store_arc = Arc::new(store);
-        let engine = AsyncWalletSyncEngine::new(client.clone(), store_arc.clone());
-
-        println!("Syncing wallet...");
-        engine
-            .sync_once()
-            .await
-            .map_err(|e| anyhow!("Sync failed: {}", e))?;
-
-        // Parse all recipient files
-        println!(
-            "Building batch of {} transactions...",
-            args.recipients.len()
-        );
-        let mut all_recipients = Vec::new();
-        let mut total_value = 0u64;
-
-        for (i, path) in args.recipients.iter().enumerate() {
-            let specs: Vec<RecipientSpec> = read_json(path)?;
-            let recipients =
-                parse_recipients(&specs).map_err(|e| anyhow!("Recipients file {}: {}", i, e))?;
-            let tx_value: u64 = recipients.iter().map(|r| r.value).sum();
-            total_value += tx_value;
-            all_recipients.push(recipients);
-            println!(
-                "  TX {}: {} recipients, {} HGM",
-                i,
-                specs.len(),
-                tx_value as f64 / 100_000_000.0
-            );
-        }
-
-        // Check if consolidation is needed for any transaction
-        // We need to estimate notes required for the total value across all transactions
-        let fee_per_tx = args.fee / batch_size as u64;
-        let total_needed = total_value + args.fee;
-
-        let mut notes = store_arc.spendable_notes(0)?; // 0 = native asset
-        notes.sort_by(|a, b| b.recovered.note.value.cmp(&a.recovered.note.value));
-
-        // Count how many notes we'd need for total value
-        let mut selected_count = 0;
-        let mut selected_value = 0u64;
-        for note in &notes {
-            if selected_value >= total_needed {
-                break;
-            }
-            selected_value += note.recovered.note.value;
-            selected_count += 1;
-        }
-
-        // Each transaction in the batch can use MAX_INPUTS notes
-        // Total notes available for batch = batch_size * MAX_INPUTS
-        let max_notes_for_batch = batch_size * wallet::MAX_INPUTS;
-        let needs_consolidation = selected_count > max_notes_for_batch;
-
-        if needs_consolidation {
-            let plan = wallet::ConsolidationPlan::estimate(selected_count);
-
-            if args.dry_run {
-                println!("\n=== DRY RUN ===");
-                println!("Would submit batch of {} transactions", batch_size);
-                println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
-                println!("\n⚠️  Consolidation needed:");
-                println!(
-                    "  Need {} notes but batch of {} can use max {} notes",
-                    selected_count, batch_size, max_notes_for_batch
-                );
-                println!(
-                    "  ~{} consolidation transactions needed first",
-                    plan.txs_needed
-                );
-                println!("\nRe-run with --auto-consolidate to execute.");
-                return Ok(());
-            }
-
-            if !args.auto_consolidate {
-                eprintln!(
-                    "Error: Need {} notes but batch of {} transactions can use max {} notes",
-                    selected_count, batch_size, max_notes_for_batch
-                );
-                eprintln!(
-                    "Suggestion: Add --auto-consolidate flag to automatically merge notes first"
-                );
-                eprintln!(
-                    "  Consolidation would take ~{} transactions",
-                    plan.txs_needed
-                );
-                return Err(anyhow!(wallet::WalletError::TooManyInputs {
-                    needed: selected_count,
-                    max: max_notes_for_batch,
-                }));
-            }
-
-            // Execute consolidation
-            println!(
-                "\nConsolidating {} notes to cover {} HGM...",
-                selected_count,
-                total_needed as f64 / 100_000_000.0
-            );
-            wallet::execute_consolidation(
-                store_arc.clone(),
-                &client,
-                total_needed,
-                fee_per_tx,
-                true, // verbose
-            )
-            .await
-            .map_err(|e| anyhow!("Consolidation failed: {}", e))?;
-
-            // Re-sync after consolidation
-            println!("\nRe-syncing wallet after consolidation...");
-            engine
-                .sync_once()
-                .await
-                .map_err(|e| anyhow!("Post-consolidation sync failed: {}", e))?;
-
-            println!("\nProceeding with batch transfer...");
-        }
-
-        if args.dry_run {
-            println!("\n=== DRY RUN ===");
-            println!("Would submit batch of {} transactions", batch_size);
-            println!("Total value: {} HGM", total_value as f64 / 100_000_000.0);
-            println!("Fee: {} HGM", args.fee as f64 / 100_000_000.0);
-            println!(
-                "\nNote: Batch proving generates a single STARK proof covering all transactions."
-            );
-            println!("Expected proof size savings: ~{}x", batch_size);
-            return Ok(());
-        }
-
-        // Build individual transaction bundles
-        println!("Building transaction bundles...");
-        let mut bundles = Vec::with_capacity(batch_size);
-        let mut all_spent_indexes = Vec::new();
-
-        for (i, recipients) in all_recipients.iter().enumerate() {
-            let built = build_transaction(&store_arc, recipients, fee_per_tx)?;
-            all_spent_indexes.extend(built.spent_note_indexes.iter().cloned());
-            bundles.push(built);
-            println!(
-                "  Built TX {} with {} nullifiers",
-                i,
-                bundles[i].nullifiers.len()
-            );
-        }
-
-        // Mark notes as pending
-        store_arc.mark_notes_pending(&all_spent_indexes, true)?;
-
-        // Collect all nullifiers, commitments, and ciphertexts
-        let mut all_nullifiers = Vec::new();
-        let mut all_commitments = Vec::new();
-        let mut all_ciphertexts = Vec::new();
-
-        for built in &bundles {
-            all_nullifiers.extend(built.nullifiers.iter().cloned());
-            all_commitments.extend(built.bundle.commitments.iter().cloned());
-            all_ciphertexts.extend(built.bundle.ciphertexts.iter().cloned());
-        }
-
-        // Get anchor from first bundle (all should use same anchor after sync)
-        let anchor = bundles[0].bundle.anchor;
-
-        println!(
-            "Submitting batch: {} nullifiers, {} commitments",
-            all_nullifiers.len(),
-            all_commitments.len()
-        );
-
-        // Submit batch transaction
-        let result = client
-            .submit_batch_shielded_transfer(
-                batch_size as u32,
-                all_nullifiers.clone(),
-                all_commitments.clone(),
-                all_ciphertexts,
-                anchor,
-                args.fee as u128,
-            )
-            .await;
-
-        match result {
-            Ok(tx_hash) => {
-                println!("✓ Batch transaction submitted successfully!");
-                println!("  TX Hash: 0x{}", hex::encode(tx_hash));
-                println!("  Batch size: {} transactions", batch_size);
-                println!("  Total nullifiers: {}", all_nullifiers.len());
-                println!("  Total commitments: {}", all_commitments.len());
-                Ok(())
-            }
-            Err(e) => {
-                store_arc.mark_notes_pending(&all_spent_indexes, false)?;
-                Err(anyhow!("Batch submission failed: {}", e))
-            }
-        }
-    })
+fn cmd_node_batch_send(_args: NodeBatchSendArgs) -> Result<()> {
+    anyhow::bail!("node-batch-send was retired with the unsupported batch proof backend")
 }
 
 /// Sync wallet using native node RPC

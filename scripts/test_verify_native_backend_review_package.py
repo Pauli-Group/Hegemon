@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -120,6 +121,20 @@ def expect_semantic_rejection(root: Path, expected_message: str) -> None:
         raise SystemExit("invalid review evidence unexpectedly accepted")
 
 
+def expect_vector_equivalence_rejection(
+    package_root: Path, regenerated_root: Path
+) -> None:
+    try:
+        review.verify_vector_semantic_equivalence(package_root, regenerated_root)
+    except review.ReviewPackageError as exc:
+        if "semantic manifest differs" not in str(exc):
+            raise SystemExit(
+                f"review vectors rejected for wrong reason: {exc}"
+            ) from exc
+    else:
+        raise SystemExit("semantically mutated review vectors unexpectedly matched")
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="hegemon-native-review-package-") as raw:
         temp = Path(raw)
@@ -128,6 +143,61 @@ def main() -> None:
         review.verify_source_snapshot(ROOT, package_root)
         review.verify_package_layout(package_root)
         review.verify_evidence_semantics(package_root)
+
+        regenerated_vectors = temp / "regenerated-vectors"
+        vector_relative = Path("testdata/native_backend_vectors/bundle.json")
+        regenerated_vector_path = regenerated_vectors / vector_relative
+        regenerated_vector_path.parent.mkdir(parents=True)
+        shutil.copyfile(package_root / vector_relative, regenerated_vector_path)
+        review.verify_vector_semantic_equivalence(package_root, regenerated_vectors)
+
+        regenerated_payload = json.loads(
+            regenerated_vector_path.read_text(encoding="utf-8")
+        )
+        tx_case = next(
+            case for case in regenerated_payload["cases"] if case["tx_context"] is not None
+        )
+        original_balance_tag = tx_case["tx_context"]["tx"]["balance_tag_hex"]
+        tx_case["tx_context"]["tx"]["balance_tag_hex"] = "00" * 48
+        regenerated_vector_path.write_text(
+            json.dumps(regenerated_payload), encoding="utf-8"
+        )
+        expect_vector_equivalence_rejection(package_root, regenerated_vectors)
+        tx_case["tx_context"]["tx"]["balance_tag_hex"] = original_balance_tag
+
+        block_case = next(
+            case
+            for case in regenerated_payload["cases"]
+            if case["block_context"] is not None
+        )
+        block_leaf = block_case["block_context"]["leaves"][0]
+        block_receipt = block_leaf["tx_context"]["receipt"]
+        original_statement_hash = block_receipt["statement_hash_hex"]
+        block_receipt["statement_hash_hex"] = "11" * 48
+        regenerated_vector_path.write_text(
+            json.dumps(regenerated_payload), encoding="utf-8"
+        )
+        expect_vector_equivalence_rejection(package_root, regenerated_vectors)
+        block_receipt["statement_hash_hex"] = original_statement_hash
+
+        tx_case["tx_context"]["statement_digest_hex"] = "11" * 48
+        tx_case["tx_context"]["receipt"]["proof_digest_hex"] = "22" * 48
+        tx_case["tx_context"]["commitment_rows"] = []
+        block_case["block_context"]["root_statement_digest_hex"] = "22" * 48
+        block_case["block_context"]["root_commitment_hex"] = "33" * 48
+        block_leaf["tx_context"]["statement_digest_hex"] = "44" * 48
+        block_leaf["tx_context"]["receipt"][
+            "proof_digest_hex"
+        ] = "55" * 48
+        block_leaf["tx_context"]["commitment_rows"] = []
+        child_artifact = bytes.fromhex(block_leaf["artifact_hex"])
+        mutated_child = bytes([child_artifact[0] ^ 1]) + child_artifact[1:]
+        block_leaf["artifact_hex"] = mutated_child.hex()
+        block_leaf["artifact_sha256"] = hashlib.sha256(mutated_child).hexdigest()
+        regenerated_vector_path.write_text(
+            json.dumps(regenerated_payload), encoding="utf-8"
+        )
+        expect_vector_equivalence_rejection(package_root, regenerated_vectors)
 
         reference_report_path = package_root / "reference_verifier_report.json"
         reference_report = json.loads(reference_report_path.read_text(encoding="utf-8"))

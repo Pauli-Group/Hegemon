@@ -18,10 +18,10 @@ def beBytesToNat : List Byte -> Nat
 
 def bytes32ToFelts (bytes : List Byte) : List Nat :=
   [
-    beBytesToNat (bytes.take 8),
-    beBytesToNat ((bytes.drop 8).take 8),
-    beBytesToNat ((bytes.drop 16).take 8),
-    beBytesToNat ((bytes.drop 24).take 8)
+    beBytesToNat (bytes.take 8) % fieldModulus,
+    beBytesToNat ((bytes.drop 8).take 8) % fieldModulus,
+    beBytesToNat ((bytes.drop 16).take 8) % fieldModulus,
+    beBytesToNat ((bytes.drop 24).take 8) % fieldModulus
   ]
 
 def noteCommitmentInputs
@@ -63,6 +63,17 @@ theorem note_commitment_inputs_absorb_recipient_rho_randomness_auth
         ++ bytes32ToFelts randomness
         ++ bytes32ToFelts pkAuth := by
   simp [noteCommitmentInputs, bytes32ToFelts]
+
+def zeroBytes32 : List Byte :=
+  List.replicate 32 0
+
+def fieldModulusLowLimbBytes32 : List Byte :=
+  List.replicate 24 0 ++ [255, 255, 255, 255, 0, 0, 0, 1]
+
+theorem raw_field_modulus_limb_aliases_zero_after_production_reduction :
+    fieldModulusLowLimbBytes32 ≠ zeroBytes32
+      ∧ bytes32ToFelts fieldModulusLowLimbBytes32 = bytes32ToFelts zeroBytes32 := by
+  native_decide
 
 theorem native_asset_id_is_canonical :
     canonicalAssetId 0 = true := by

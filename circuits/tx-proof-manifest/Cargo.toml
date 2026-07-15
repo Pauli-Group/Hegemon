@@ -13,7 +13,7 @@ blake3 = "1.5"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
 transaction-circuit = { path = "../transaction", default-features = false }
-p3-field = { workspace = true }
+hegemon-field = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
 
 [lints]

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crypto",
+    "circuits/hegemon-field",
     "circuits/transaction",
     "circuits/transaction-core",
     "circuits/batch",
@@ -62,6 +63,7 @@ repository = "https://github.com/Pauli-Group/Hegemon"
 # --- Common Dependencies ---
 codec = { package = "parity-scale-codec", version = "3", default-features = false, features = ["derive"] }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
+hegemon-field = { path = "circuits/hegemon-field" }
 
 # --- Plonky3 Dependencies ---
 p3-air = { git = "https://github.com/Plonky3/Plonky3", rev = "7895d23" }

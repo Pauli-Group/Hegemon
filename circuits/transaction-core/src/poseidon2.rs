@@ -1,7 +1,6 @@
-//! Poseidon2 permutation helpers for the Plonky3 in-circuit sponge.
+//! Poseidon2 permutation helpers for the deployed transaction sponge.
 
-use p3_field::PrimeCharacteristicRing;
-use p3_goldilocks::Goldilocks;
+use hegemon_field::{Goldilocks, PrimeCharacteristicRing};
 
 use crate::constants::{
     POSEIDON2_EXTERNAL_ROUNDS, POSEIDON2_INTERNAL_ROUNDS, POSEIDON2_STEPS, POSEIDON2_WIDTH,
@@ -16,7 +15,7 @@ pub type Felt = Goldilocks;
 pub const POSEIDON2_SEED: [u8; 32] = *b"hegemon-tx-poseidon2-seed-2026!!";
 
 #[inline(always)]
-fn sbox(x: Felt) -> Felt {
+fn sbox<R: PrimeCharacteristicRing>(x: R) -> R {
     let x2 = x * x;
     let x4 = x2 * x2;
     let x6 = x4 * x2;
@@ -24,7 +23,7 @@ fn sbox(x: Felt) -> Felt {
 }
 
 #[inline(always)]
-fn apply_mds4(x: &mut [Felt; 4]) {
+fn apply_mds4<R: PrimeCharacteristicRing>(x: &mut [R; 4]) {
     let x0 = x[0];
     let x1 = x[1];
     let x2 = x[2];
@@ -43,16 +42,16 @@ fn apply_mds4(x: &mut [Felt; 4]) {
 }
 
 #[inline(always)]
-fn mds_light(state: &mut [Felt; POSEIDON2_WIDTH]) {
+fn mds_light<R: PrimeCharacteristicRing>(state: &mut [R; POSEIDON2_WIDTH]) {
     for chunk in state.chunks_exact_mut(4) {
         let mut tmp = [chunk[0], chunk[1], chunk[2], chunk[3]];
         apply_mds4(&mut tmp);
         chunk.copy_from_slice(&tmp);
     }
 
-    let mut sums = [Felt::ZERO; 4];
+    let mut sums = [R::ZERO; 4];
     for (k, sum) in sums.iter_mut().enumerate() {
-        let mut acc = Felt::ZERO;
+        let mut acc = R::ZERO;
         let mut idx = k;
         while idx < POSEIDON2_WIDTH {
             acc += state[idx];
@@ -67,33 +66,39 @@ fn mds_light(state: &mut [Felt; POSEIDON2_WIDTH]) {
 }
 
 #[inline(always)]
-fn matmul_internal(state: &mut [Felt; POSEIDON2_WIDTH]) {
-    let mut sum = Felt::ZERO;
+fn matmul_internal<R: PrimeCharacteristicRing>(state: &mut [R; POSEIDON2_WIDTH]) {
+    let mut sum = R::ZERO;
     for elem in state.iter() {
         sum += *elem;
     }
 
     for (idx, elem) in state.iter_mut().enumerate() {
-        let diag = Felt::from_u64(INTERNAL_MATRIX_DIAG[idx]);
+        let diag = R::from_u64(INTERNAL_MATRIX_DIAG[idx]);
         *elem = *elem * diag + sum;
     }
 }
 
 #[inline(always)]
-fn external_round(state: &mut [Felt; POSEIDON2_WIDTH], rc: &[u64; POSEIDON2_WIDTH]) {
+fn external_round<R: PrimeCharacteristicRing>(
+    state: &mut [R; POSEIDON2_WIDTH],
+    rc: &[u64; POSEIDON2_WIDTH],
+) {
     for (idx, elem) in state.iter_mut().enumerate() {
-        *elem = sbox(*elem + Felt::from_u64(rc[idx]));
+        *elem = sbox(*elem + R::from_u64(rc[idx]));
     }
     mds_light(state);
 }
 
 #[inline(always)]
-fn internal_round(state: &mut [Felt; POSEIDON2_WIDTH], rc: u64) {
-    state[0] = sbox(state[0] + Felt::from_u64(rc));
+fn internal_round<R: PrimeCharacteristicRing>(state: &mut [R; POSEIDON2_WIDTH], rc: u64) {
+    state[0] = sbox(state[0] + R::from_u64(rc));
     matmul_internal(state);
 }
 
-pub fn poseidon2_step(state: &mut [Felt; POSEIDON2_WIDTH], step: usize) {
+pub fn poseidon2_step_ring<R: PrimeCharacteristicRing>(
+    state: &mut [R; POSEIDON2_WIDTH],
+    step: usize,
+) {
     debug_assert!(step < POSEIDON2_STEPS);
     if step == 0 {
         mds_light(state);
@@ -118,8 +123,16 @@ pub fn poseidon2_step(state: &mut [Felt; POSEIDON2_WIDTH], step: usize) {
     }
 }
 
-pub fn poseidon2_permutation(state: &mut [Felt; POSEIDON2_WIDTH]) {
+pub fn poseidon2_step(state: &mut [Felt; POSEIDON2_WIDTH], step: usize) {
+    poseidon2_step_ring(state, step);
+}
+
+pub fn poseidon2_permutation_ring<R: PrimeCharacteristicRing>(state: &mut [R; POSEIDON2_WIDTH]) {
     for step in 0..POSEIDON2_STEPS {
-        poseidon2_step(state, step);
+        poseidon2_step_ring(state, step);
     }
+}
+
+pub fn poseidon2_permutation(state: &mut [Felt; POSEIDON2_WIDTH]) {
+    poseidon2_permutation_ring(state);
 }

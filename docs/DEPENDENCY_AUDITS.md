@@ -35,11 +35,7 @@ as of 2026-06-18:
 | RUSTSEC-2025-0141 | bincode | 1.3.3 | unmaintained | 2026-08-31 | DEP-2026-0002 | release-engineering | 2026-06-18 | Remaining uses are consensus/proof artifact compatibility surfaces after network trust-boundary encoding moved to bounded HNW1/postcard; replace with versioned canonical codecs before expiry. |
 | RUSTSEC-2025-0057 | fxhash | 0.2.1 | unmaintained | 2026-08-31 | DEP-2026-0004 | release-engineering | 2026-06-18 | Transitive through sled; Hegemon does not use it as a cryptographic hash; remove by replacing or upgrading node storage dependencies. |
 | RUSTSEC-2024-0384 | instant | 0.1.13 | unmaintained | 2026-08-31 | DEP-2026-0005 | release-engineering | 2026-06-18 | Transitive through parking_lot 0.11 via sled/reed-solomon-erasure; remove by lifting dependencies to parking_lot 0.12+ paths. |
-| RUSTSEC-2024-0436 | paste | 1.0.15 | unmaintained | 2026-08-31 | DEP-2026-0006 | release-engineering | 2026-06-18 | Transitive macro dependency through arkworks/RISC0/Plonky3; not a runtime trust-boundary parser; remove with upstream dependency lifts. |
-| RUSTSEC-2026-0012 | keccak | 0.1.5 | unsound | 2026-08-31 | DEP-2026-0008 | release-engineering | 2026-06-18 | Advisory targets the opt-in ARMv8 assembly backend, which this build path does not enable; move sha3/merlin dependents off this version. |
-| yanked:keccak:0.1.5 | keccak | 0.1.5 | yanked | 2026-08-31 | DEP-2026-0008 | release-engineering | 2026-06-18 | Yanked through sha3 0.10 and merlin; remove by lifting dependents to keccak 0.2 or replacing the path. |
-| RUSTSEC-2026-0097 | rand | 0.8.5 | unsound | 2026-08-31 | DEP-2026-0009 | release-engineering | 2026-06-18 | Repo code does not use the affected custom-logger `rand::rng` path for protocol randomness; migrate remaining rand 0.8 users to rand 0.9 or direct rand_core/getrandom calls. |
-| RUSTSEC-2026-0097 | rand | 0.9.2 | unsound | 2026-08-31 | DEP-2026-0009 | release-engineering | 2026-06-18 | Repo code does not use the affected custom-logger `rand::rng` path for protocol randomness; track upstream fix and pin once released. |
+| RUSTSEC-2024-0436 | paste | 1.0.15 | unmaintained | 2026-08-31 | DEP-2026-0006 | release-engineering | 2026-06-18 | Transitive macro dependency through arkworks and RISC0; not a runtime trust-boundary parser; remove with upstream dependency lifts. |
 
 Run:
 

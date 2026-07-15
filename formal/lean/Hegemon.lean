@@ -19,6 +19,7 @@ import Hegemon.Consensus.NativeTxLeafAdmission
 import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.ProvenBatchBinding
+import Hegemon.Consensus.AcceptedSmallWoodBlockComposition
 import Hegemon.Consensus.ReceiptRootAdmission
 import Hegemon.Consensus.RecursiveBlockAdmission
 import Hegemon.Consensus.RecursiveBlockV2VerifierSurface
@@ -174,6 +175,8 @@ import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
 import Hegemon.Transaction.SmallWoodNoCounterfeit
 import Hegemon.Transaction.SmallWoodPublicStatementBinding
+import Hegemon.Transaction.SmallWoodProductionConstraintRefinement
+import Hegemon.Transaction.SmallWoodProductionSemanticSpec
 import Hegemon.Transaction.SmallWoodRecursiveEnvelopeWire
 import Hegemon.Transaction.SmallWoodSemanticClosure
 import Hegemon.Transaction.SmallWoodSpendAuthorization

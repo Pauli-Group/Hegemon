@@ -16,7 +16,8 @@ pub type CryptoSuiteId = u16;
 )]
 #[repr(u8)]
 pub enum TxProofBackend {
-    Plonky3Fri = 1,
+    /// Reserved to preserve the historical bincode discriminant. Never accepted.
+    RetiredUnsupported = 1,
     SmallwoodCandidate = 2,
 }
 
@@ -27,7 +28,7 @@ impl TxProofBackend {
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Plonky3Fri => "plonky3_fri",
+            Self::RetiredUnsupported => "retired_unsupported",
             Self::SmallwoodCandidate => "smallwood_candidate",
         }
     }
@@ -44,7 +45,6 @@ impl TryFrom<u8> for TxProofBackend {
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            1 => Ok(Self::Plonky3Fri),
             2 => Ok(Self::SmallwoodCandidate),
             _ => Err(()),
         }
@@ -166,18 +166,19 @@ where
 
 pub const CIRCUIT_V1: CircuitVersion = 1;
 pub const CIRCUIT_V2: CircuitVersion = 2;
+pub const CIRCUIT_V3: CircuitVersion = 3;
 
 pub const CRYPTO_SUITE_ALPHA: CryptoSuiteId = 1;
 pub const CRYPTO_SUITE_BETA: CryptoSuiteId = 2;
 pub const CRYPTO_SUITE_GAMMA: CryptoSuiteId = 3;
 
-pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+pub const LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_BETA,
 };
-pub const LEGACY_PLONKY3_FRI_VERSION_BINDING: VersionBinding = VersionBinding {
-    circuit: CIRCUIT_V2,
-    crypto: CRYPTO_SUITE_GAMMA,
+pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+    circuit: CIRCUIT_V3,
+    crypto: CRYPTO_SUITE_BETA,
 };
 pub const DEFAULT_VERSION_BINDING: VersionBinding = SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
@@ -186,17 +187,14 @@ pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
 
 pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
     match (version.circuit, version.crypto) {
-        (CIRCUIT_V2, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
-        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(TxProofBackend::Plonky3Fri),
+        (CIRCUIT_V2 | CIRCUIT_V3, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
         _ => None,
     }
 }
 
 pub const fn tx_fri_profile_for_version(version: VersionBinding) -> Option<TxFriProfile> {
-    match (version.circuit, version.crypto) {
-        (CIRCUIT_V2, CRYPTO_SUITE_GAMMA) => Some(DEFAULT_TX_FRI_PROFILE),
-        _ => None,
-    }
+    let _ = version;
+    None
 }
 
 #[cfg(test)]
@@ -215,14 +213,27 @@ mod tests {
     }
 
     #[test]
-    fn legacy_plonky3_binding_still_maps_to_fri_profile() {
+    fn legacy_smallwood_binding_remains_decodable_for_chain_compatibility() {
         assert_eq!(
-            tx_proof_backend_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
-            Some(TxProofBackend::Plonky3Fri)
+            tx_proof_backend_for_version(LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING),
+            Some(TxProofBackend::SmallwoodCandidate)
+        );
+        assert_ne!(
+            LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
+            DEFAULT_VERSION_BINDING
+        );
+    }
+
+    #[test]
+    fn retired_backend_wire_id_and_version_are_rejected() {
+        assert_eq!(TxProofBackend::try_from(1), Err(()));
+        assert_eq!(
+            tx_proof_backend_for_version(VersionBinding::new(CIRCUIT_V2, CRYPTO_SUITE_GAMMA)),
+            None
         );
         assert_eq!(
-            tx_fri_profile_for_version(LEGACY_PLONKY3_FRI_VERSION_BINDING),
-            Some(DEFAULT_TX_FRI_PROFILE)
+            tx_fri_profile_for_version(VersionBinding::new(CIRCUIT_V2, CRYPTO_SUITE_GAMMA)),
+            None
         );
     }
 }

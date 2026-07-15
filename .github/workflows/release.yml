@@ -110,23 +110,17 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
-      - name: Build node binary
-        run: cargo build -p hegemon-node --release
+      - name: Build attested release artifacts
+        run: ./scripts/build_release_artifacts.sh
 
-      - name: Build wallet binaries
-        run: cargo build -p wallet -p walletd --release
+      - name: Verify release artifact manifest
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
-      - name: Package binary
-        run: |
-          mkdir -p release
-          cp target/release/hegemon-node release/hegemon-node-linux-x86_64
-          cp target/release/wallet release/wallet-linux-x86_64
-          cd release
-          sha256sum hegemon-node-linux-x86_64 > hegemon-node-linux-x86_64.sha256
-          sha256sum wallet-linux-x86_64 > wallet-linux-x86_64.sha256
+      - name: Package manifest-bound release assets
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-linux-x86_64 --asset wallet:wallet:wallet-linux-x86_64 --asset walletd:walletd:walletd-linux-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-linux-x86_64.json
       
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -134,7 +128,7 @@ jobs:
           path: release/
 
   build-macos-intel:
-    runs-on: macos-15  # Cross-compile for Intel from ARM runner
+    runs-on: macos-15-intel
     needs:
       - security-gates
       - app-no-ssh-e2e
@@ -153,23 +147,17 @@ jobs:
           targets: x86_64-apple-darwin
           components: rust-src
       
-      - name: Build node binary (cross-compile for Intel)
-        run: cargo build -p hegemon-node --release --target x86_64-apple-darwin
+      - name: Build attested release artifacts
+        run: ./scripts/build_release_artifacts.sh --target x86_64-apple-darwin
 
-      - name: Build wallet binaries (cross-compile for Intel)
-        run: cargo build -p wallet -p walletd --release --target x86_64-apple-darwin
+      - name: Verify release artifact manifest
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --node-bin target/x86_64-apple-darwin/release/hegemon-node --binary target/x86_64-apple-darwin/release/wallet --binary target/x86_64-apple-darwin/release/walletd
       
-      - name: Package binary
-        run: |
-          mkdir -p release
-          cp target/x86_64-apple-darwin/release/hegemon-node release/hegemon-node-macos-x86_64
-          cp target/x86_64-apple-darwin/release/wallet release/wallet-macos-x86_64
-          cd release
-          shasum -a 256 hegemon-node-macos-x86_64 > hegemon-node-macos-x86_64.sha256
-          shasum -a 256 wallet-macos-x86_64 > wallet-macos-x86_64.sha256
+      - name: Package manifest-bound release assets
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/x86_64-apple-darwin/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/x86_64-apple-darwin/release/hegemon-node --expect wallet:wallet:target/x86_64-apple-darwin/release/wallet --expect walletd:walletd:target/x86_64-apple-darwin/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-macos-x86_64 --asset wallet:wallet:wallet-macos-x86_64 --asset walletd:walletd:walletd-macos-x86_64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-x86_64.json
       
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -195,23 +183,17 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
-      - name: Build node binary
-        run: cargo build -p hegemon-node --release
+      - name: Build attested release artifacts
+        run: ./scripts/build_release_artifacts.sh
 
-      - name: Build wallet binaries
-        run: cargo build -p wallet -p walletd --release
+      - name: Verify release artifact manifest
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd
 
       - name: Release PQ binary audit
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
       
-      - name: Package binary
-        run: |
-          mkdir -p release
-          cp target/release/hegemon-node release/hegemon-node-macos-arm64
-          cp target/release/wallet release/wallet-macos-arm64
-          cd release
-          shasum -a 256 hegemon-node-macos-arm64 > hegemon-node-macos-arm64.sha256
-          shasum -a 256 wallet-macos-arm64 > wallet-macos-arm64.sha256
+      - name: Package manifest-bound release assets
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node --expect wallet:wallet:target/release/wallet --expect walletd:walletd:target/release/walletd --asset hegemon-node:hegemon-node:hegemon-node-macos-arm64 --asset wallet:wallet:wallet-macos-arm64 --asset walletd:walletd:walletd-macos-arm64 --output-dir release --asset-manifest-name hegemon-release-assets-macos-arm64.json
       
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -239,25 +221,21 @@ jobs:
           toolchain: "1.91.1"
           components: rust-src
       
-      - name: Build node binary
-        run: cargo build -p hegemon-node --release
+      - name: Build attested release artifacts
+        shell: bash
+        run: ./scripts/build_release_artifacts.sh
 
-      - name: Build wallet binaries
-        run: cargo build -p wallet -p walletd --release
+      - name: Verify release artifact manifest
+        shell: bash
+        run: python3 scripts/release_artifact_manifest.py verify --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe
 
       - name: Release PQ binary audit
         shell: bash
-        run: ./scripts/security-audit.sh --require-binary --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe
+        run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node.exe --binary target/release/wallet.exe --binary target/release/walletd.exe
       
-      - name: Package binary
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path release
-          Copy-Item target\release\hegemon-node.exe release\hegemon-node-windows-x86_64.exe
-          Copy-Item target\release\wallet.exe release\wallet-windows-x86_64.exe
-          cd release
-          Get-FileHash hegemon-node-windows-x86_64.exe -Algorithm SHA256 | Format-List > hegemon-node-windows-x86_64.exe.sha256
-          Get-FileHash wallet-windows-x86_64.exe -Algorithm SHA256 | Format-List > wallet-windows-x86_64.exe.sha256
+      - name: Package manifest-bound release assets
+        shell: bash
+        run: python3 scripts/release_artifact_manifest.py package --manifest target/release/hegemon-release-artifacts.json --expect hegemon-node:hegemon-node:target/release/hegemon-node.exe --expect wallet:wallet:target/release/wallet.exe --expect walletd:walletd:target/release/walletd.exe --asset hegemon-node:hegemon-node:hegemon-node-windows-x86_64.exe --asset wallet:wallet:wallet-windows-x86_64.exe --asset walletd:walletd:walletd-windows-x86_64.exe --output-dir release --asset-manifest-name hegemon-release-assets-windows-x86_64.json
       
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -279,14 +257,8 @@ jobs:
         with:
           path: artifacts
       
-      - name: Prepare release assets
-        run: |
-          mkdir -p release-assets
-          cp artifacts/linux-binary/* release-assets/
-          cp artifacts/macos-intel-binary/* release-assets/
-          cp artifacts/macos-arm-binary/* release-assets/
-          cp artifacts/windows-binary/* release-assets/
-          ls -la release-assets/
+      - name: Verify and assemble manifest-bound release assets
+        run: python3 scripts/release_artifact_manifest.py assemble --bundle-manifest artifacts/linux-binary/hegemon-release-assets-linux-x86_64.json --bundle-manifest artifacts/macos-intel-binary/hegemon-release-assets-macos-x86_64.json --bundle-manifest artifacts/macos-arm-binary/hegemon-release-assets-macos-arm64.json --bundle-manifest artifacts/windows-binary/hegemon-release-assets-windows-x86_64.json --output-dir release-assets
       
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65

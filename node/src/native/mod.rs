@@ -178,6 +178,9 @@ pub(crate) const NATIVE_EMPTY_DIGEST48: [u8; 48] = [0u8; 48];
 #[command(name = "hegemon-node")]
 #[command(about = "Native Hegemon node")]
 pub struct NativeCli {
+    /// Print the compiled production cryptographic profile as JSON and exit.
+    #[arg(long)]
+    pub print_crypto_profile: bool,
     /// Run an ephemeral development chain.
     #[arg(long)]
     pub dev: bool,

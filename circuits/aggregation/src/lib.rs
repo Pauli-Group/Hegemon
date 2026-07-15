@@ -36,7 +36,7 @@ use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof;
-use transaction_circuit::proof::stark_public_inputs_p3;
+use transaction_circuit::proof::transaction_verifier_inputs;
 use transaction_circuit::{
     p3_config::{
         config_with_fri, default_release_tx_fri_profile, Challenge, Compress, Config, Hash,
@@ -1096,7 +1096,7 @@ fn legacy_v4_prewarm_thread_local_aggregation_cache_from_env() -> Result<(), Agg
 
     let started = Instant::now();
     let representative = build_sample_representative_proof()?;
-    let pub_inputs = stark_public_inputs_p3(&representative).map_err(|err| {
+    let pub_inputs = transaction_verifier_inputs(&representative).map_err(|err| {
         AggregationError::InvalidPublicInputs {
             index: 0,
             message: err.to_string(),
@@ -1388,11 +1388,12 @@ fn legacy_v4_prove_aggregation(
         if proof.stark_proof.is_empty() {
             return Err(AggregationError::MissingProof { index });
         }
-        let pub_inputs =
-            stark_public_inputs_p3(proof).map_err(|err| AggregationError::InvalidPublicInputs {
+        let pub_inputs = transaction_verifier_inputs(proof).map_err(|err| {
+            AggregationError::InvalidPublicInputs {
                 index,
                 message: err.to_string(),
-            })?;
+            }
+        })?;
         let pub_inputs_vec = pub_inputs.to_vec();
 
         if let Some(expected) = expected_inputs_len {

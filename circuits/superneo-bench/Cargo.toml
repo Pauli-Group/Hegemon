@@ -14,10 +14,11 @@ clap = { version = "4", features = ["derive"] }
 consensus = { path = "../../consensus" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 libc = "0.2"
 hex = "0.4"
+hegemon-field = { workspace = true }
 native-backend-ref = { path = "../../tools/native-backend-ref" }
-p3-goldilocks = { workspace = true }
 protocol-versioning = { path = "../../protocol/versioning" }
 rayon = "1"
 superneo-backend-lattice = { path = "../superneo-backend-lattice" }
