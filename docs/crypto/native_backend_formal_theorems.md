@@ -1,6 +1,8 @@
 # Native Backend Formal Theorems
 
-This note records the mathematical argument and the exact machine-checked boundary for Hegemon's active native backend family. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript cap with checked arithmetic for the implemented five-challenge schedule, but it does not present every argument below as already mechanized.
+This note records research mathematics for Hegemon's native compatibility envelope. It replaces the old ad hoc `floor(challenge_bits * fold_challenge_count / 2)` transcript calculation with checked arithmetic for the implemented five-challenge schedule, but it does not make the lattice layer a production proof system.
+
+Production authority is deliberately elsewhere: native transaction-leaf acceptance requires successful embedded SmallWood proof verification before deterministic commitment or lattice-leaf checks, verified-cache reuse inherits that earlier acceptance, and ReceiptRoot/native folding is both policy-rejected and absent from the production verifier registry. The unresolved results below are therefore research targets, not conditions silently assumed by deployed consensus.
 
 ## Verification status
 
@@ -13,7 +15,7 @@ This note records the mathematical argument and the exact machine-checked bounda
 - the centered difference bound for 8-bit digits,
 - and equality and uniqueness of two supplied fold-output records.
 
-Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the production Rust backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the production recomputation algorithm and proving `verify_fold` equivalent to that model remain open. The reducer theorems classify bounded `64`-bit inputs arithmetically, but interpreting five indexed BLAKE3 XOF outputs as independent uniform words remains an explicit random-oracle assumption. Other open mathematical or cryptographic obligations include finite-field factorization and irreducibility, the resulting unconditional low-degree-unit corollary, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend therefore remains `candidate_under_review`.
+Lean-generated edge vectors check the active constants, challenge reducer, and canonical coefficient operation against the Rust research backend. They do not include fold cases. The Lean fold theorem compares a caller-supplied candidate record with a caller-supplied recomputed record; modeling the recomputation algorithm and proving `verify_fold` equivalent remain open. Interpreting five indexed BLAKE3 XOF outputs as independent uniform words also remains a random-oracle assumption. Other open obligations include finite-field factorization and irreducibility, the unconditional low-degree-unit corollary, the deterministic-commitment collision-to-BK-MSIS reduction, coefficient-space flattening, estimator validity, external cryptanalysis, and any Neo/SuperNeo CCS proof-of-knowledge claim. The backend remains non-production `candidate_under_review`; none of these gaps is used to authorize a deployed transaction or block.
 
 ## Scope
 

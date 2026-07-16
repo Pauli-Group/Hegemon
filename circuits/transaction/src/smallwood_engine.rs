@@ -6,6 +6,7 @@ use std::time::Instant;
 use blake3::Hasher;
 use getrandom::fill as getrandom_fill;
 use hegemon_field::Goldilocks;
+use num_bigint::BigUint;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use transaction_core::poseidon2::{poseidon2_permutation, Felt};
@@ -308,10 +309,11 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         (n_cols + profile.decs_nb_opened_evals - 1) as u128,
         profile.decs_nb_opened_evals,
     );
-    let security_floor_bits = epsilon1_floor_bits
-        .min(epsilon2_floor_bits)
-        .min(epsilon3_floor_bits)
-        .min(epsilon4_floor_bits);
+    let aggregate_error =
+        epsilon1 + epsilon2 + 2.0f64.powf(-epsilon3_floor_bits) + 2.0f64.powf(-epsilon4_floor_bits);
+    let security_floor_bits = -aggregate_error.log2();
+    let exact_aggregate_check =
+        smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(cfg, public_value_count);
     SmallwoodNoGrindingSoundnessReportV1 {
         profile,
         n_pcs,
@@ -323,8 +325,98 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         epsilon3_floor_bits,
         epsilon4_floor_bits,
         security_floor_bits,
-        meets_128_bit_floor: security_floor_bits >= 128.0,
+        meets_128_bit_floor: exact_aggregate_check,
     }
+}
+
+fn falling_product(n: u128, count: usize) -> Option<BigUint> {
+    if n < count as u128 {
+        return None;
+    }
+    Some((0..count).fold(BigUint::from(1u8), |product, index| {
+        product * BigUint::from(n - index as u128)
+    }))
+}
+
+fn smallwood_no_grinding_exact_terms_from_cfg(
+    cfg: &SmallwoodConfig,
+    public_value_count: usize,
+) -> Option<[(BigUint, BigUint); 4]> {
+    let profile = cfg.profile;
+    if profile.opening_pow_bits != 0
+        || profile.decs_pow_bits != 0
+        || cfg.constraint_degree == 0
+        || profile.beta > u32::MAX as usize
+        || profile.rho > u32::MAX as usize
+        || profile.decs_eta == usize::MAX
+        || profile.decs_eta + 1 > u32::MAX as usize
+        || profile.rho == usize::MAX
+        || profile.rho + 1 > u32::MAX as usize
+    {
+        return None;
+    }
+
+    let q = BigUint::from(FIELD_ORDER);
+    let degree_to_beta = BigUint::from(cfg.constraint_degree).pow(profile.beta as u32);
+    let epsilon1_numerator = (BigUint::from(profile.decs_nb_evals)
+        + (BigUint::from(2u8) * &degree_to_beta))
+        * (&q + BigUint::from(cfg.nb_lvcs_rows).pow((profile.decs_eta + 1) as u32));
+    let epsilon1_denominator = &degree_to_beta * q.pow((profile.decs_eta + 1) as u32);
+
+    let public_width = cfg.packing_factor.checked_add(public_value_count)?;
+    let epsilon2_numerator = &q + BigUint::from(public_width).pow((profile.rho + 1) as u32);
+    let epsilon2_denominator = q.pow((profile.rho + 1) as u32);
+    let epsilon3_numerator =
+        falling_product(cfg.mpol_poly_degree as u128, profile.nb_opened_evals)?;
+    let epsilon3_denominator = falling_product(FIELD_ORDER as u128, profile.nb_opened_evals)?;
+
+    let decs_numerator_base = cfg
+        .nb_lvcs_cols
+        .checked_add(profile.decs_nb_opened_evals)
+        .and_then(|value| value.checked_sub(1))?;
+    let epsilon4_numerator =
+        falling_product(decs_numerator_base as u128, profile.decs_nb_opened_evals)?;
+    let epsilon4_denominator =
+        falling_product(profile.decs_nb_evals as u128, profile.decs_nb_opened_evals)?;
+
+    Some([
+        (epsilon1_numerator, epsilon1_denominator),
+        (epsilon2_numerator, epsilon2_denominator),
+        (epsilon3_numerator, epsilon3_denominator),
+        (epsilon4_numerator, epsilon4_denominator),
+    ])
+}
+
+fn smallwood_no_grinding_exact_128_bit_term_checks_from_cfg(
+    cfg: &SmallwoodConfig,
+    public_value_count: usize,
+) -> [bool; 4] {
+    let Some(terms) = smallwood_no_grinding_exact_terms_from_cfg(cfg, public_value_count) else {
+        return [false; 4];
+    };
+    let scale = BigUint::from(1u8) << 128usize;
+    std::array::from_fn(|index| &scale * &terms[index].0 <= terms[index].1)
+}
+
+fn smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(
+    cfg: &SmallwoodConfig,
+    public_value_count: usize,
+) -> bool {
+    let Some(terms) = smallwood_no_grinding_exact_terms_from_cfg(cfg, public_value_count) else {
+        return false;
+    };
+    let common_denominator = terms
+        .iter()
+        .fold(BigUint::from(1u8), |product, (_, denominator)| {
+            product * denominator
+        });
+    let aggregate_numerator = terms
+        .iter()
+        .fold(BigUint::from(0u8), |sum, (numerator, denominator)| {
+            sum + numerator * (&common_denominator / denominator)
+        });
+    let scale = BigUint::from(1u8) << 128usize;
+    scale * aggregate_numerator <= common_denominator
 }
 
 fn project_lvcs_planner_geometry_cfg(
@@ -2222,6 +2314,27 @@ pub fn report_smallwood_no_grinding_soundness_v1(
         &cfg,
         public_value_count,
     ))
+}
+
+pub fn smallwood_no_grinding_exact_128_bit_term_checks(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<[bool; 4], TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(smallwood_no_grinding_exact_128_bit_term_checks_from_cfg(
+        &cfg,
+        public_value_count,
+    ))
+}
+
+pub fn smallwood_no_grinding_exact_128_bit_aggregate_check(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<bool, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(&cfg, public_value_count))
 }
 
 pub fn report_smallwood_lvcs_planner_projection_v1(
@@ -4991,6 +5104,7 @@ mod tests {
     };
     use crate::witness::TransactionWitness;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    use std::sync::OnceLock;
 
     fn transcript_xof_words_blake3_reference(
         domain: &[u8],
@@ -5176,6 +5290,25 @@ mod tests {
         )
     }
 
+    fn sample_production_candidate() -> &'static (PackedSmallwoodAuxFrontendMaterial, Vec<u8>) {
+        static SAMPLE: OnceLock<(PackedSmallwoodAuxFrontendMaterial, Vec<u8>)> = OnceLock::new();
+        SAMPLE.get_or_init(|| {
+            let witness = sample_witness();
+            let material =
+                build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+            let proof = {
+                let statement = production_statement(&material);
+                prove_candidate(
+                    &statement,
+                    &material.packed_expanded_witness,
+                    &material.transcript_binding,
+                )
+                .unwrap()
+            };
+            (material, proof)
+        })
+    }
+
     struct FakeIdentityWitnessStatement {
         row_count: usize,
         packing_factor: usize,
@@ -5342,21 +5475,14 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let proof = prove_candidate(
-            &statement,
-            &material.packed_expanded_witness,
-            &material.transcript_binding,
-        )
-        .unwrap();
+        let (material, proof) = sample_production_candidate();
+        let statement = production_statement(material);
         assert!(
             proof.len() < 524_288,
             "direct packed proof bytes {} exceed native tx-leaf cap",
             proof.len()
         );
-        let decoded = decode_smallwood_proof_bytes_v1(&proof).unwrap();
+        let decoded = decode_smallwood_proof_bytes_v1(proof).unwrap();
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         match decoded.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
@@ -5371,7 +5497,7 @@ mod tests {
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
-        verify_candidate(&statement, &material.transcript_binding, &proof).unwrap();
+        verify_candidate(&statement, &material.transcript_binding, proof).unwrap();
     }
 
     #[test]
@@ -5428,18 +5554,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_opened_witness_mode_mismatch() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         proof.opened_witness.mode = SmallwoodOpenedWitnessMode::None;
         let proof_bytes = encode_smallwood_proof_bytes_v1(&proof).unwrap();
         let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
@@ -5452,18 +5569,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_auxiliary_witness_limb_count_overflow() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         match &mut proof.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
                 auxiliary_words,
@@ -5489,18 +5597,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_nonzero_auxiliary_padding() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         match &mut proof.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
                 auxiliary_words,

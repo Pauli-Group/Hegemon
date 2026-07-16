@@ -1,0 +1,49 @@
+name: Formal cryptography sanity
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'formal/crypto/**'
+      - 'formal/lean/**'
+      - 'scripts/check_formal_crypto.sh'
+      - 'scripts/lean_axiom_audit.lean'
+      - '.github/workflows/formal-crypto.yml'
+  pull_request:
+    paths:
+      - 'formal/crypto/**'
+      - 'formal/lean/**'
+      - 'scripts/check_formal_crypto.sh'
+      - 'scripts/lean_axiom_audit.lean'
+      - '.github/workflows/formal-crypto.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  formal-crypto-sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
+          sh "$ELAN_INIT" -y --default-toolchain none
+      - name: Formal cryptography sanity gate
+        env:
+          HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB: '8'
+        run: bash scripts/check_formal_crypto.sh

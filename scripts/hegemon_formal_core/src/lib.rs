@@ -120,7 +120,15 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
         "native.fold-output-equality-model",
         &["Hegemon.Native.NativeBackendAlgebra.fold_output_matches_recomputed_iff_equality"],
     ),
-    ("native.fold-verifier-implementation-equivalence", &[]),
+    (
+        "transaction.smallwood-exact-aggregate-soundness-bound",
+        &[
+            "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_profile_uses_rho_three",
+            "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_lvcs_column_count_is_781",
+            "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_single_query_aggregate_error_supports_128_bits",
+            "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_aggregate_error_scales_with_query_budget",
+        ],
+    ),
     (
         "native.digit-bound-euclidean-arithmetic",
         &[
@@ -155,16 +163,31 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
         ],
     ),
     ("native.complete-parser-node-refinement", &[]),
-    ("native.low-degree-unit-irreducibility", &[]),
-    ("native.backend-collision-reduction-and-pok", &[]),
+    (
+        "transaction.smallwood-staged-knowledge-soundness-reduction",
+        &[
+            "Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction.accepted_protocol_yields_witness_or_named_failure",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_witness_or_named_failure",
+            "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_witness_outside_named_failures",
+        ],
+    ),
+    (
+        "native.non-authoritative-production-boundary",
+        &[
+            "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.backend_acceptance_requires_embedded_transaction_proof",
+            "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.every_accepted_path_inherits_embedded_transaction_proof_acceptance",
+            "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.receipt_root_has_no_production_verifier_dispatch",
+            "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.receipt_root_is_rejected_before_native_fold_dispatch",
+        ],
+    ),
     ("privacy.zero-knowledge-unlinkability-game", &[]),
     ("bridge.external-receipt-soundness", &[]),
     ("system.da-storage-runtime-semantics", &[]),
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
-    "48241181e5d729f606709afbb568c1074d2852de838c13bacadd7a519aa6f9b5";
+    "91b4f24252dfbd0eb153e68d0fa47013d84f37987a62b990aaf7b6b2b0f55529";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "ac8698e700262a49b65538267b0906227c2cdbedd73e01adc9fd2c8369be6a54";
+    "3d72ca53e76400a6bc6ede822d24a24d3f15b12a9e388b4a843ec4e3e009fc17";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]

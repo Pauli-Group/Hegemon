@@ -13,6 +13,7 @@ env:
 jobs:
   rust-lints:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -29,6 +30,7 @@ jobs:
 
   dependency-audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -43,9 +45,74 @@ jobs:
       - name: Dependency audit waiver gate
         run: ./scripts/dependency-audit-gate.sh
 
-  formal-core:
+  formal-core-checker:
     runs-on: ubuntu-latest
-    needs: rust-lints
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-core"
+      - name: Formal-core checker gate
+        run: bash scripts/check_formal_core.sh checker
+
+  formal-core-lean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-core"
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
+          sh "$ELAN_INIT" -y --default-toolchain none
+      - name: Formal-core proof-kernel gate
+        run: bash scripts/check_formal_core.sh lean
+
+  formal-core-vectors:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev clang lld
+      - name: Setup Rust toolchain
+        run: rustup show
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: "formal-core"
+      - name: Install Lean toolchain manager
+        env:
+          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
+        run: |
+          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
+          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
+          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
+          sh "$ELAN_INIT" -y --default-toolchain none
+      - name: Formal-core Lean-to-Rust vector gate
+        run: bash scripts/check_formal_core.sh vectors
+
+  formal-core-policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -59,30 +126,51 @@ jobs:
           shared-key: "formal-core"
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
-      - name: Install Lean toolchain manager
-        env:
-          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
-        run: |
-          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
-          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
-          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
-          sh "$ELAN_INIT" -y --default-toolchain none
-      - name: Formal-core release gate
-        run: bash scripts/check_formal_core.sh
+      - name: Formal-core claims and release-policy gate
+        run: bash scripts/check_formal_core.sh policy
 
-  core-tests:
+  formal-core:
     runs-on: ubuntu-latest
-    needs: rust-lints
+    if: ${{ always() }}
+    needs:
+      - formal-core-checker
+      - formal-core-lean
+      - formal-core-vectors
+      - formal-core-policy
+    timeout-minutes: 2
+    steps:
+      - name: Require every formal-core shard
+        env:
+          CHECKER_RESULT: ${{ needs.formal-core-checker.result }}
+          LEAN_RESULT: ${{ needs.formal-core-lean.result }}
+          VECTORS_RESULT: ${{ needs.formal-core-vectors.result }}
+          POLICY_RESULT: ${{ needs.formal-core-policy.result }}
+        run: |
+          test "$CHECKER_RESULT" = success
+          test "$LEAN_RESULT" = success
+          test "$VECTORS_RESULT" = success
+          test "$POLICY_RESULT" = success
+
+  core-test-shards:
+    name: core-tests / ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - base
+          - transaction-lib
+          - transaction-integration
+          - wallet-base
+          - wallet-multisig-setup
+          - wallet-multisig-builders
+          - wallet-multisig-drift
+          - node-default
+          - node-minimal
     env:
       PROPTEST_CASES: 64
     steps:
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
@@ -90,23 +178,26 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libclang-dev
       - name: Setup Rust toolchain
         run: rustup show
-      - name: Install Lean toolchain manager
-        env:
-          ELAN_INIT_SHA256: a620ff1641616222c8d37c54845492004bb84d6877cdbc944dd65c1aa685bf53
-        run: |
-          ELAN_INIT="$RUNNER_TEMP/elan-init.sh"
-          curl --proto '=https' --tlsv1.2 --fail --location --show-error https://elan.lean-lang.org/elan-init.sh -o "$ELAN_INIT"
-          printf '%s  %s\n' "$ELAN_INIT_SHA256" "$ELAN_INIT" | sha256sum -c -
-          sh "$ELAN_INIT" -y --default-toolchain none
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
         with:
           shared-key: "core-rust"
-      - name: Lean test gate
-        run: ./scripts/check-core.sh test
+      - name: Core test shard
+        run: ./scripts/check-core.sh "test-${{ matrix.shard }}"
+
+  core-tests:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    needs: core-test-shards
+    timeout-minutes: 2
+    steps:
+      - name: Require every core test shard
+        env:
+          SHARD_RESULT: ${{ needs.core-test-shards.result }}
+        run: test "$SHARD_RESULT" = success
 
   native-path-tests:
     runs-on: ubuntu-latest
-    needs: rust-lints
+    timeout-minutes: 30
     steps:
       - name: Free disk space
         run: |
@@ -138,9 +229,7 @@ jobs:
 
   app-no-ssh-e2e:
     runs-on: ubuntu-latest
-    needs:
-      - rust-lints
-      - native-path-tests
+    timeout-minutes: 30
     env:
       HEGEMON_E2E_MINE_THREADS: "4"
     steps:
@@ -170,7 +259,7 @@ jobs:
 
   security-adversarial:
     runs-on: ubuntu-latest
-    needs: rust-lints
+    timeout-minutes: 30
     env:
       PROPTEST_CASES: 64
       HEGEMON_REDTEAM_MODE: ci
@@ -205,7 +294,10 @@ jobs:
 
   native-backend-security:
     runs-on: ubuntu-latest
-    needs: rust-lints
+    timeout-minutes: 30
+    env:
+      HEGEMON_TIMING_SAMPLE_COUNT: "16"
+      HEGEMON_TIMING_WARMUP_COUNT: "4"
     steps:
       - name: Free disk space
         run: |
@@ -243,19 +335,11 @@ jobs:
           ./scripts/package_native_backend_review.sh
           cmp /tmp/native-backend-review-package.tar.gz audits/native-backend-128b/native-backend-128b-review-package.tar.gz
           cmp /tmp/native-backend-review-package.sha256 audits/native-backend-128b/package.sha256
-          ./scripts/verify_native_backend_review_package.sh
           ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
 
-  release-build:
+  release-binaries:
     runs-on: ubuntu-latest
-    needs:
-      - dependency-audit
-      - formal-core
-      - core-tests
-      - native-path-tests
-      - app-no-ssh-e2e
-      - security-adversarial
-      - native-backend-security
+    timeout-minutes: 30
     steps:
       - name: Free disk space
         run: |
@@ -279,3 +363,40 @@ jobs:
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+
+  release-build:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    timeout-minutes: 2
+    needs:
+      - rust-lints
+      - dependency-audit
+      - formal-core
+      - core-tests
+      - native-path-tests
+      - app-no-ssh-e2e
+      - security-adversarial
+      - native-backend-security
+      - release-binaries
+    steps:
+      - name: Require release binaries and every release prerequisite
+        env:
+          RUST_LINTS_RESULT: ${{ needs.rust-lints.result }}
+          DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+          FORMAL_CORE_RESULT: ${{ needs.formal-core.result }}
+          CORE_TESTS_RESULT: ${{ needs.core-tests.result }}
+          NATIVE_PATH_TESTS_RESULT: ${{ needs.native-path-tests.result }}
+          APP_NO_SSH_E2E_RESULT: ${{ needs.app-no-ssh-e2e.result }}
+          SECURITY_ADVERSARIAL_RESULT: ${{ needs.security-adversarial.result }}
+          NATIVE_BACKEND_SECURITY_RESULT: ${{ needs.native-backend-security.result }}
+          RELEASE_BINARIES_RESULT: ${{ needs.release-binaries.result }}
+        run: |
+          test "$RUST_LINTS_RESULT" = success
+          test "$DEPENDENCY_AUDIT_RESULT" = success
+          test "$FORMAL_CORE_RESULT" = success
+          test "$CORE_TESTS_RESULT" = success
+          test "$NATIVE_PATH_TESTS_RESULT" = success
+          test "$APP_NO_SSH_E2E_RESULT" = success
+          test "$SECURITY_ADVERSARIAL_RESULT" = success
+          test "$NATIVE_BACKEND_SECURITY_RESULT" = success
+          test "$RELEASE_BINARIES_RESULT" = success

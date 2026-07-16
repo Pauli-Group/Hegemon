@@ -12,6 +12,7 @@ use tokio::time::{Instant, sleep, timeout};
 
 const TCP_GOSSIP_DEADLINE: Duration = Duration::from_secs(20);
 const TCP_GOSSIP_POLL: Duration = Duration::from_millis(250);
+static P2P_INTEGRATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn local_addr() -> SocketAddr {
     TcpListener::bind("127.0.0.1:0")
@@ -82,6 +83,7 @@ async fn retry_broadcast_until<F>(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gossip_crosses_tcp_boundary() {
+    let _serial = P2P_INTEGRATION_LOCK.lock().await;
     let router_a = GossipRouter::new(32);
     let router_b = GossipRouter::new(32);
 
@@ -134,6 +136,7 @@ async fn gossip_crosses_tcp_boundary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn address_exchange_teaches_new_peers() {
+    let _serial = P2P_INTEGRATION_LOCK.lock().await;
     let addr_a = local_addr();
     let addr_b = local_addr();
     let addr_c = local_addr();
@@ -214,6 +217,7 @@ async fn address_exchange_teaches_new_peers() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn block_gossip_is_imported_and_relayed_to_non_origin() {
+    let _serial = P2P_INTEGRATION_LOCK.lock().await;
     let router_a = GossipRouter::new(32);
     let router_b = GossipRouter::new(32);
     let router_c = GossipRouter::new(32);

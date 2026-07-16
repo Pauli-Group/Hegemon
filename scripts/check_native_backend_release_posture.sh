@@ -60,28 +60,28 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-TMPDIR=""
+WORKDIR=""
 cleanup() {
-  if [[ -n "$TMPDIR" ]]; then
-    rm -rf "$TMPDIR"
+  if [[ -n "$WORKDIR" ]]; then
+    rm -rf "$WORKDIR"
   fi
 }
 trap cleanup EXIT
 
 if [[ -n "$PACKAGE_TAR" ]]; then
-  TMPDIR="$(mktemp -d)"
+  WORKDIR="$(mktemp -d)"
   PACKAGE_SHA="$(dirname "$PACKAGE_TAR")/package.sha256"
   python3 -I "$ROOT/scripts/native_backend_review_package.py" extract \
     --archive "$PACKAGE_TAR" \
     --sha "$PACKAGE_SHA" \
-    --destination "$TMPDIR" >/dev/null
-  CLAIM_JSON="$TMPDIR/native-backend-128b-review-package/current_claim.json"
-  REVIEW_MANIFEST="$TMPDIR/native-backend-128b-review-package/review_manifest.json"
+    --destination "$WORKDIR" >/dev/null
+  CLAIM_JSON="$WORKDIR/native-backend-128b-review-package/current_claim.json"
+  REVIEW_MANIFEST="$WORKDIR/native-backend-128b-review-package/review_manifest.json"
 fi
 
 if [[ -z "$CLAIM_JSON" ]]; then
-  TMPDIR="$(mktemp -d)"
-  CLAIM_JSON="$TMPDIR/current_claim.json"
+  WORKDIR="$(mktemp -d)"
+  CLAIM_JSON="$WORKDIR/current_claim.json"
   cd "$ROOT"
   cargo run -p superneo-bench -- --print-native-security-claim > "$CLAIM_JSON"
 fi

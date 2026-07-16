@@ -55,6 +55,19 @@ Run:
 cargo run -p native-backend-timing --release
 ```
 
+The default full profile uses 64 measured samples per class and eight discarded
+warmups. Blocking pull-request CI uses the minimum accepted bounded profile:
+
+```bash
+HEGEMON_TIMING_SAMPLE_COUNT=16 \
+HEGEMON_TIMING_WARMUP_COUNT=4 \
+cargo run -p native-backend-timing --release
+```
+
+The executable rejects lower counts. The bounded profile is a regression smoke
+screen; reviewers investigating timing behavior should run the default full
+profile on a quiet host.
+
 The harness:
 
 1. builds two controlled witness classes over the same public shape,
@@ -71,7 +84,7 @@ Current screening thresholds:
 
 These thresholds are still crude. They are only guards against obvious secret-dependent timing separation in the exercised path.
 
-Latest numbers are intentionally not frozen into this document because the harness is host-dependent and changed when the live tx-leaf builder dropped the fake seed-facing API. Reviewers should rerun `cargo run -p native-backend-timing --release` on the current tree or inspect the packaged timing output generated alongside the review package.
+Latest numbers are intentionally not frozen into this document because the harness is host-dependent and changed when the live tx-leaf builder dropped the fake seed-facing API. Reviewers should rerun `cargo run -p native-backend-timing --release` on the current tree and retain the output with their review notes.
 
 ## What This Note Does Not Claim
 

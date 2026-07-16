@@ -1,13 +1,13 @@
 use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{fs, sync::OnceLock};
 use transaction_circuit::constants::CIRCUIT_MERKLE_DEPTH;
 use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, Felt, HashFelt};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::proof::{
     prove, serialized_stark_inputs_from_witness, transaction_public_inputs_digest_from_serialized,
-    transaction_statement_hash_from_public_inputs, verify,
+    transaction_statement_hash_from_public_inputs, verify, TransactionProof,
 };
 use transaction_circuit::{
     analyze_smallwood_candidate_profile_for_arithmetization,
@@ -290,6 +290,28 @@ fn stablecoin_witness() -> TransactionWitness {
         },
         version: TransactionWitness::default_version_binding(),
     }
+}
+
+fn sample_smallwood_candidate_proof() -> TransactionProof {
+    static PROOF: OnceLock<TransactionProof> = OnceLock::new();
+    PROOF
+        .get_or_init(|| {
+            let mut witness = sample_witness();
+            witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+            prove_smallwood_candidate(&witness).expect("sample SmallWood candidate proof")
+        })
+        .clone()
+}
+
+fn stablecoin_smallwood_candidate_proof() -> TransactionProof {
+    static PROOF: OnceLock<TransactionProof> = OnceLock::new();
+    PROOF
+        .get_or_init(|| {
+            let mut witness = stablecoin_witness();
+            witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
+            prove_smallwood_candidate(&witness).expect("stablecoin SmallWood candidate proof")
+        })
+        .clone()
 }
 
 #[test]
@@ -1540,9 +1562,7 @@ fn smallwood_candidate_compact_bindings_proof_size_report_beats_current_release_
 
 #[test]
 fn smallwood_candidate_verification_fails_for_active_ciphertext_hash_mutation() {
-    let mut witness = sample_witness();
-    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    let mut proof = sample_smallwood_candidate_proof();
     proof.public_inputs.ciphertext_hashes[0][0] ^= 0x01;
     let err =
         verify(&proof, &generate_keys().1).expect_err("expected SmallWood verification failure");
@@ -1558,11 +1578,10 @@ fn smallwood_candidate_verification_fails_for_active_ciphertext_hash_mutation() 
 
 #[test]
 fn smallwood_candidate_verification_fails_for_enabled_stablecoin_binding_mutation() {
-    let mut witness = stablecoin_witness();
-    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
     let verifying_key = generate_keys().1;
+    let base_proof = stablecoin_smallwood_candidate_proof();
     for mutate in 0..4 {
-        let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+        let mut proof = base_proof.clone();
         match mutate {
             0 => proof.public_inputs.stablecoin.policy_version ^= 1,
             1 => proof.public_inputs.stablecoin.policy_hash[0] ^= 0x01,
@@ -1688,10 +1707,8 @@ fn smallwood_candidate_malformed_all_evals_do_not_panic() {
 
 #[test]
 fn smallwood_candidate_rejects_opened_witness_mode_mismatch() {
-    let mut witness = sample_witness();
-    witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
-    let (_proving_key, verifying_key) = generate_keys();
-    let mut proof = prove_smallwood_candidate(&witness).expect("smallwood candidate proof");
+    let verifying_key = generate_keys().1;
+    let mut proof = sample_smallwood_candidate_proof();
 
     let mut outer = decode_mirror_smallwood_candidate_proof(&proof.stark_proof);
     let mut inner =
