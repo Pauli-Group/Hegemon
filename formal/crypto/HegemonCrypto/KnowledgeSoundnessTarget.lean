@@ -4,8 +4,10 @@ import HegemonCrypto.SmallWoodRelation
 /-!
 # SmallWood knowledge-soundness target
 
-This module only states the missing probabilistic claim using ArkLib's standard definition. It
-does not assert that any current SmallWood verifier satisfies the target.
+This module only states a necessary relation-bound probabilistic claim using ArkLib's standard
+definition. It does not model adaptive multi-theorem Fiat-Shamir knowledge soundness, simulation
+extractability, the QROM, canonical proof bytes, or Rust acceptance, and does not assert that any
+current SmallWood verifier satisfies the target.
 -/
 
 noncomputable section
@@ -20,9 +22,10 @@ def AcceptRelation : Set (Bool × Unit) :=
   { output | output.1 = true }
 
 /--
-The non-vacuous probabilistic knowledge-soundness target. ArkLib's definition quantifies over all
-malicious provers and requires a straight-line extractor whose bad-event probability is bounded by
-`knowledgeError`.
+The non-vacuous relation-bound knowledge-soundness baseline. ArkLib's definition quantifies over
+all malicious provers and requires a straight-line extractor whose bad-event probability is
+bounded by `knowledgeError`. Separate theorems must lift this baseline through the exact
+Fiat-Shamir ROM and QROM games before it can describe the production verifier.
 -/
 def KnowledgeSoundnessTarget
     {ι : Type}

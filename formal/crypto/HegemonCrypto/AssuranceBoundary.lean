@@ -11,11 +11,12 @@ namespace HegemonCrypto.AssuranceBoundary
 
 inductive Obligation where
   | exactProductionToCCS
+  | exactProtocolTranscript
   | honestProverCompleteness
   | interactiveKnowledgeSoundness
   | commitmentBindingReduction
-  | fiatShamirRomKnowledgeSoundness
-  | fiatShamirQromKnowledgeSoundness
+  | fiatShamirRomAdaptiveKnowledgeSoundness
+  | fiatShamirQromAdaptiveKnowledgeSoundness
   | primitiveHashSecurity
   | concreteParameterSoundness
   | canonicalSerializationRefinement

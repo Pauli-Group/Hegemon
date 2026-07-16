@@ -6,7 +6,7 @@ This ExecPlan is a living document. Keep `Progress`, `Surprises & Discoveries`, 
 
 Hegemon currently has an extensive dependency-free Lean model that binds production SmallWood constraint tables, transaction semantics, proof bytes, and accepted-chain composition to Rust conformance tests. It deliberately leaves primitive proof-system knowledge soundness as an assumption. This change adds an isolated research package that states the missing cryptographic claim using standard probabilistic and interactive-proof definitions, defines the underlying customizable constraint system (CCS) relation in a conventional mathematical form, and proves that its declarative and executable relation checks agree.
 
-After this work, a reviewer can run one command and observe four facts: the research package builds under pinned dependencies; the CCS relation has a proved executable checker; the exact SmallWood knowledge-soundness target is present but not falsely marked proved; and no runtime crate or production proof registry depends on the research package. This is a sanity check and architectural foundation, not a claim that the deployed STARK, FRI, polynomial commitment scheme, Fiat-Shamir transform, or extractor is now formally proved.
+After this work, a reviewer can run one command and observe four facts: the research package builds under pinned dependencies; the CCS relation has a proved executable checker; a non-vacuous knowledge-soundness target is bound to the exact SmallWood production relation but not falsely marked proved; and no runtime crate or production proof registry depends on the research package. This is a sanity check and architectural foundation, not a claim that the deployed SmallWood PIOP, LVCS/DECS polynomial commitment scheme, Fiat-Shamir transform, or extractor is now formally proved.
 
 ## Progress
 
@@ -40,6 +40,12 @@ After this work, a reviewer can run one command and observe four facts: the rese
 - Observation: the first gate draft left its root import file outside the lexical trust-bypass scan and did not independently pin the credited declaration inventory.
   Evidence: adversarial review showed `HegemonCrypto.lean` was outside the initial `find` root and the list file could be shortened consistently with the audit output. The final gate scans every local Lean source, fixes the exact six-file and ten-theorem source inventory, and compares the thirteen credited declarations to an in-script fixed list.
 
+- Observation: FRI is not part of the active SmallWood transaction-proof backend.
+  Evidence: the executable path in `circuits/transaction/src/smallwood_engine.rs` uses the SmallWood PIOP and LVCS/DECS hash-based PCS, and neither that path nor its active proof-options or no-grinding model contains a FRI layer. The architecture therefore names the actual SmallWood components and does not inherit terminology from other proof paths in the repository.
+
+- Observation: ArkLib's imported target is straight-line, single-execution knowledge soundness and is not itself the final deployed Fiat-Shamir claim.
+  Evidence: `Verifier.knowledgeSoundness` consumes one verifier execution and a straight-line extractor. The final Hegemon theorem must separately model adaptive multi-theorem non-interactive proofs in the classical ROM and QROM before refining canonical bytes and Rust acceptance. Simulation extractability is a distinct stronger game required only by a consuming proof that exposes simulated proofs.
+
 - Observation: changing common production evidence documents for this isolated research proposal causes unrelated release-review digest churn.
   Evidence: a temporary `DESIGN.md`/`METHODS.md` edit changed review digests for many unrelated blueprint nodes. Those edits and the temporary digest update were removed; the dedicated architecture document now owns the research design, and the unchanged production blueprint passes directly.
 
@@ -68,6 +74,8 @@ After this work, a reviewer can run one command and observe four facts: the rese
 ## Outcomes & Retrospective
 
 The isolated package now compiles and is adversarially gated. `HegemonCrypto.CCS.System.satisfiesB_iff` proves generic declarative/executable CCS equivalence; five kernel-checked examples reject coefficient, omitted-factor, duplicated-factor, and witness mutations; `HegemonCrypto.SmallWood.relationB_iff` binds the executable relation to the exact production predicate; and `HegemonCrypto.SmallWood.KnowledgeSoundnessTarget` states, but does not prove, ArkLib's malicious-prover/extractor game. The package's thirteen credited declarations depend only on `propext`, `Classical.choice`, and `Quot.sound`.
+
+The architecture review also records the exact next theorem ladder: production-to-CCS equivalence, interactive completeness and extraction, adaptive multi-theorem classical-ROM knowledge soundness, separate adaptive QROM knowledge soundness, canonical byte decoding, exact Rust refinement, and one final production bad-event bound. Simulation extractability remains a separate conditional property. This prevents the relation-bound ArkLib baseline from being mistaken for the deployed non-interactive theorem.
 
 Final validation passed:
 
