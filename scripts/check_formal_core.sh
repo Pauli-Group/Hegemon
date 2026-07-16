@@ -85,12 +85,17 @@ printf '\n[1/14] Checking formal-core checker formatting\n'
 cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
 
 printf '\n[2/14] Running formal-core checker tests\n'
-cargo test --quiet --manifest-path "$FORMAL_MANIFEST"
+cargo test --quiet --manifest-path "$FORMAL_MANIFEST" -- \
+  --skip tests::closed_track_propositions_match_independent_rust_policy
 fi
 
 if run_stage lean || run_stage preflight; then
 printf '\n[3/14] Checking Lean formal proof kernel\n'
 bash "$ROOT/scripts/check_lean_formal.sh"
+
+printf '\n[3b/14] Checking elaborated closed-track proposition policy\n'
+cargo test --quiet --manifest-path "$FORMAL_MANIFEST" \
+  tests::closed_track_propositions_match_independent_rust_policy -- --exact
 
 printf '\n[8/14] Checking active goal progress measure\n'
 run_formal_core check-active-goal-progress "$ROOT/config/active-goal-progress.json"
