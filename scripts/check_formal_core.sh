@@ -91,6 +91,9 @@ fi
 if run_stage lean || run_stage preflight; then
 printf '\n[3/14] Checking Lean formal proof kernel\n'
 bash "$ROOT/scripts/check_lean_formal.sh"
+
+printf '\n[8/14] Checking active goal progress measure\n'
+run_formal_core check-active-goal-progress "$ROOT/config/active-goal-progress.json"
 fi
 
 if run_stage vectors; then
@@ -892,9 +895,6 @@ run_formal_core check-formal-inventory --root "$ROOT"
 
 printf '\n[7/14] Checking system-model fail-closed gates\n'
 run_formal_core check-system-model-gates "$ROOT/config/system-model-assumption-gates.json"
-
-printf '\n[8/14] Checking active goal progress measure\n'
-run_formal_core check-active-goal-progress "$ROOT/config/active-goal-progress.json"
 
 printf '\n[9/14] Checking formal security claims ledger\n'
 run_formal_core check-claims "$ROOT/config/formal-security-claims.json"
