@@ -337,18 +337,9 @@ jobs:
           cmp /tmp/native-backend-review-package.sha256 audits/native-backend-128b/package.sha256
           ./scripts/check_native_backend_release_posture.sh --package audits/native-backend-128b/native-backend-128b-review-package.tar.gz
 
-  release-build:
+  release-binaries:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs:
-      - rust-lints
-      - dependency-audit
-      - formal-core
-      - core-tests
-      - native-path-tests
-      - app-no-ssh-e2e
-      - security-adversarial
-      - native-backend-security
     steps:
       - name: Free disk space
         run: |
@@ -372,3 +363,40 @@ jobs:
 
       - name: Release PQ binary audit
         run: ./scripts/security-audit.sh --require-binary --binary-manifest target/release/hegemon-release-artifacts.json --node-bin target/release/hegemon-node --binary target/release/wallet --binary target/release/walletd
+
+  release-build:
+    runs-on: ubuntu-latest
+    if: ${{ always() }}
+    timeout-minutes: 2
+    needs:
+      - rust-lints
+      - dependency-audit
+      - formal-core
+      - core-tests
+      - native-path-tests
+      - app-no-ssh-e2e
+      - security-adversarial
+      - native-backend-security
+      - release-binaries
+    steps:
+      - name: Require release binaries and every release prerequisite
+        env:
+          RUST_LINTS_RESULT: ${{ needs.rust-lints.result }}
+          DEPENDENCY_AUDIT_RESULT: ${{ needs.dependency-audit.result }}
+          FORMAL_CORE_RESULT: ${{ needs.formal-core.result }}
+          CORE_TESTS_RESULT: ${{ needs.core-tests.result }}
+          NATIVE_PATH_TESTS_RESULT: ${{ needs.native-path-tests.result }}
+          APP_NO_SSH_E2E_RESULT: ${{ needs.app-no-ssh-e2e.result }}
+          SECURITY_ADVERSARIAL_RESULT: ${{ needs.security-adversarial.result }}
+          NATIVE_BACKEND_SECURITY_RESULT: ${{ needs.native-backend-security.result }}
+          RELEASE_BINARIES_RESULT: ${{ needs.release-binaries.result }}
+        run: |
+          test "$RUST_LINTS_RESULT" = success
+          test "$DEPENDENCY_AUDIT_RESULT" = success
+          test "$FORMAL_CORE_RESULT" = success
+          test "$CORE_TESTS_RESULT" = success
+          test "$NATIVE_PATH_TESTS_RESULT" = success
+          test "$APP_NO_SSH_E2E_RESULT" = success
+          test "$SECURITY_ADVERSARIAL_RESULT" = success
+          test "$NATIVE_BACKEND_SECURITY_RESULT" = success
+          test "$RELEASE_BINARIES_RESULT" = success

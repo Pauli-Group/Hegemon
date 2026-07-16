@@ -462,7 +462,7 @@ def check_ci_workflow(path: Path) -> None:
         "app-no-ssh-e2e",
         "security-adversarial",
         "native-backend-security",
-        "release-build",
+        "release-binaries",
     ):
         require_contains(
             f"{timed_job} wall-clock budget",
@@ -482,7 +482,17 @@ def check_ci_workflow(path: Path) -> None:
     app_no_ssh = job_block(workflow, "app-no-ssh-e2e")
     dependency_steps = workflow_steps(workflow, "dependency-audit")
     app_steps = workflow_steps(workflow, "app-no-ssh-e2e")
-    release_steps = workflow_steps(workflow, "release-build")
+    release_steps = workflow_steps(workflow, "release-binaries")
+    require_contains(
+        "release-build aggregate wall-clock budget",
+        release_build,
+        "timeout-minutes: 2",
+    )
+    require_contains(
+        "release-build aggregate always runs",
+        release_build,
+        "if: ${{ always() }}",
+    )
     require_lean_installer_outside_worktree(
         "formal-core Lean proof-kernel installer", formal_core_lean
     )
@@ -558,6 +568,12 @@ def check_ci_workflow(path: Path) -> None:
     require_contains("release-build needs rust-lints", release_build, "- rust-lints")
     require_contains("release-build needs dependency-audit", release_build, "- dependency-audit")
     require_contains("release-build needs formal-core", release_build, "- formal-core")
+    require_contains("release-build needs core-tests", release_build, "- core-tests")
+    require_contains(
+        "release-build needs native-path-tests",
+        release_build,
+        "- native-path-tests",
+    )
     require_contains(
         "release-build needs security-adversarial",
         release_build,
@@ -585,18 +601,44 @@ def check_ci_workflow(path: Path) -> None:
         release_build,
         "- app-no-ssh-e2e",
     )
+    require_contains(
+        "release-build needs release binaries",
+        release_build,
+        "- release-binaries",
+    )
+    for job_name, result_name in (
+        ("rust-lints", "RUST_LINTS_RESULT"),
+        ("dependency-audit", "DEPENDENCY_AUDIT_RESULT"),
+        ("formal-core", "FORMAL_CORE_RESULT"),
+        ("core-tests", "CORE_TESTS_RESULT"),
+        ("native-path-tests", "NATIVE_PATH_TESTS_RESULT"),
+        ("app-no-ssh-e2e", "APP_NO_SSH_E2E_RESULT"),
+        ("security-adversarial", "SECURITY_ADVERSARIAL_RESULT"),
+        ("native-backend-security", "NATIVE_BACKEND_SECURITY_RESULT"),
+        ("release-binaries", "RELEASE_BINARIES_RESULT"),
+    ):
+        require_contains(
+            f"release-build records {job_name} result",
+            release_build,
+            f"{result_name}: ${{{{ needs.{job_name}.result }}}}",
+        )
+        require_contains(
+            f"release-build requires {job_name} success",
+            release_build,
+            f'test "${result_name}" = success',
+        )
     build_index = require_executable_command(
-        "release-build build command", release_steps, "scripts/check-core.sh", ("build",)
+        "release-binaries build command", release_steps, "scripts/check-core.sh", ("build",)
     )
     audit_index = require_binary_audit(
-        "release-build binary audit",
+        "release-binaries binary audit",
         release_steps,
         "target/release/hegemon-node",
         "target/release/wallet",
         "target/release/walletd",
         "target/release/hegemon-release-artifacts.json",
     )
-    require_step_order("release-build build/audit order", build_index, audit_index)
+    require_step_order("release-binaries build/audit order", build_index, audit_index)
     print(f"ci workflow release-build gate passed: {path}")
 
 

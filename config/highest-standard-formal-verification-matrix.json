@@ -392,7 +392,7 @@
     "changed_runtime_paths": [
       "wallet/src/tx_builder.rs routes transfer and burn change outputs through change_output_address, returning the primary shielded address instead of reserve_internal_address, so newly built change-output diversifier_index values no longer encode the local address cursor.",
       "formal/lean/Hegemon/Privacy/GenerateWalletOutputBatchVectors.lean schema-v2 emits recipient/change-output counts, expected primary change diversifier, and cursor-independence cases checked by wallet/src/tx_builder.rs against production transaction construction.",
-      "scripts/check_ci_release_gate_policy.py checks generated release-gate vectors against .github/workflows/ci.yml and .github/workflows/release.yml, including security-adversarial/native-backend-security/app-no-ssh-e2e release-build dependencies and tag-release native backend review/posture steps.",
+      "scripts/check_ci_release_gate_policy.py checks generated release-gate vectors against .github/workflows/ci.yml and .github/workflows/release.yml, including the parallel release-binaries build/audit, the fail-closed release-build aggregate over security-adversarial/native-backend-security/app-no-ssh-e2e and every other required result, and tag-release native backend review/posture steps.",
       "scripts/check_formal_core.sh regenerates wallet output-batch and CI release-gate vectors, then runs the wallet production conformance gate and release workflow policy gate."
     ],
     "supporting_theorem_families": [
@@ -1603,7 +1603,7 @@
       "completion_percent": 100.0,
       "top_level_theorem_target": "Release artifacts and release CI paths are accepted only when source, dependency, binary, native-backend posture, and checked workflow security gates are satisfied, with explicit waivers and no hidden classical/PQ-forbidden paths.",
       "current_evidence": [
-        ".github/workflows/ci.yml release-build security/no-SSH dependencies and hegemon-node/wallet/walletd binary audit",
+        ".github/workflows/ci.yml parallel release-binaries build/audit and fail-closed release-build security/no-SSH aggregate",
         ".github/workflows/release.yml security-gates and per-platform hegemon-node/wallet/walletd binary audits",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean",
         "scripts/check_ci_release_gate_policy.py",
@@ -1614,10 +1614,10 @@
         "DependencyAuditPolicy now rejects unused/stale waivers, generated vectors cover unused-waiver and unwaived-before-unused precedence, and scripts/dependency-audit-gate.sh fails release CI when a waiver no longer matches a current cargo-audit finding.",
         "config/dependency-audit-waivers.json now contains only the 8 current cargo-audit findings after removing stale tracing-subscriber, derivative, and rustls-pemfile waivers; the 2026-06-18 live scripts/dependency-audit-gate.sh run reports 8 waived, 0 unwaived, and 0 unused waivers.",
         "docs/DEPENDENCY_AUDITS.md now lists the exact current waiver register with id, package, version, kind, expiry, tracking id, and release rationale.",
-        "Hegemon.Release.CiReleaseGate now proves release acceptance requires security-adversarial, native-backend-security, and app-no-ssh-e2e jobs, release-build dependencies on those jobs, tag-release native backend review/posture gates, and the dependency-audit job's explicit waiver-gate step; scripts/check_ci_release_gate_policy.py checks those requirements against the checked-in GitHub workflows.",
+        "Hegemon.Release.CiReleaseGate proves release acceptance requires security-adversarial, native-backend-security, and app-no-ssh-e2e jobs, release-build dependencies on those jobs, tag-release native backend review/posture gates, and the dependency-audit job's explicit waiver-gate step; scripts/check_ci_release_gate_policy.py additionally checks the parallel release-binaries build/audit and each fail-closed release-build aggregate result against the checked-in GitHub workflows.",
         "formal/lean/Hegemon/Native/RawIngressBridgePendingActionPublication.lean now composes Risc0ReleaseVerifier fail-closed posture with bridge mint-replay policy publication instead of leaving release posture adjacent to bridge safety",
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean exposes accepted dependency audit facts for valid waivers, waived findings, and used/live waivers",
-        "formal/lean/Hegemon/Release/CiReleaseGate.lean exposes every required CI job, the dependency-audit waiver-gate step, app no-SSH E2E job, release-build dependency edge, all-binary release audit, and tag-release backend gate from accepted CI release policy",
+        "formal/lean/Hegemon/Release/CiReleaseGate.lean exposes every required CI job, the dependency-audit waiver-gate step, app no-SSH E2E job, release-build dependency edge, all-binary release audit, and tag-release backend gate from accepted CI release policy; the workflow checker binds those facts to the parallel binary job and final aggregate",
         "formal/lean/Hegemon/Release/CiReleaseGate.lean now requires branch-protection/ruleset evidence in accepted release policy, GenerateCiReleaseGateVectors emits schema-v2 branch-ruleset rejection cases, and scripts/check_ci_release_gate_policy.py validates .github/rulesets/hegemon-release-required-checks.json for active required dependency-audit, formal-core, security-adversarial, native-backend-security, app-no-ssh-e2e, and release-build status checks",
         "formal/lean/Hegemon/Release/DependencyAuditPolicy.lean now requires release-review metadata for every valid dependency waiver, exposes `accepted_dependency_audit_waiver_has_release_metadata`, and generated vectors cover missing owner, missing remediation, and missing review-date rejection.",
         "scripts/dependency-audit-gate.sh now rejects waiver policies missing owner/reviewed_at/remediation metadata, malformed DEP tracking ids, or future review dates before a cargo-audit finding can be waived; scripts/check_formal_core.sh includes a synthetic missing-remediation negative gate.",
