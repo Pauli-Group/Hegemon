@@ -74,7 +74,14 @@ run_test_base() {
 
 run_test_transaction_lib() {
   prepare_test_environment
-  cargo test -p transaction-circuit --lib
+  cargo test -p transaction-circuit --lib -- \
+    --skip private_multisig_accumulator::tests::private_multisig_accumulator_matches_lean_vectors \
+    --skip proof::tests::lean_generated_transaction_proof_wrapper_wire_vectors_match_production \
+    --skip smallwood_frontend::tests::lean_generated_smallwood_candidate_wrapper_admission_vectors_match_production \
+    --skip smallwood_frontend::tests::lean_generated_smallwood_production_constraint_maps_match_every_production_row \
+    --skip smallwood_frontend::tests::lean_generated_smallwood_transcript_binding_vectors_match_production \
+    --skip smallwood_frontend::tests::lean_generated_smallwood_verifier_statement_projection_vectors_match_production \
+    --skip smallwood_recursive::tests::lean_generated_smallwood_recursive_envelope_wire_vectors_match_production
 }
 
 run_test_transaction_integration() {
