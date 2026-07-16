@@ -16,8 +16,8 @@ The answer for the active integrated backend is:
 
 - the old random-linear-check envelope is gone,
 - the packed candidate statement is witness-free and public,
-- and the exact no-grinding candidate profile clears a conservative `128-bit` floor for that packed statement,
-- but this note should still be read as a narrow soundness note for the current candidate geometry, not as a blanket claim that every future SmallWood frontend or arithmetization experiment inherits the same bound.
+- and the exact no-grinding candidate profile gives a base aggregate work factor above `2^128` for that packed statement,
+- but the complete straight-line extraction bound scales that aggregate by the adversary's random-oracle query count and adds a random-oracle collision term. This note does not claim a query-independent `2^-128` failure probability.
 
 ## What statement is actually proved
 
@@ -89,7 +89,9 @@ So the repo is not claiming a paper-default or grinding-assisted profile. It is 
 
 `Hegemon.Transaction.SmallWoodTranscriptBinding` now treats the complete active verifier-profile material as one parameter record. A typed 16-constructor field inventory derives both the mutation labels and mutation functions, covering circuit version, crypto suite, arithmetization, effective constraint degree, `rho`, opened evaluations, `beta`, opening grinding, DECS evaluation count, DECS opening count, `eta`, DECS grinding, and the four Poseidon geometry fields. Lean proves both grinding fields are zero, proves the active parameters fit the production `u16`/`u64` serialization domain, and proves the field constructors and labels are unique. The production Rust test reconstructs every mutation, requires exact byte equality with Lean, proves that its 16-field profile array differs at exactly the named field index, rejects duplicate or missing mutation names, and requires every mutation to differ from the active profile. Lean also exhibits the out-of-range mutation `circuitVersion + 2^16`, proves that it aliases the serialized active profile, and proves that it is excluded by the well-formed production-domain predicate. The rejection theorem is deliberately quantified over named in-range mutations; it is not a false injectivity claim over unrestricted `Nat`, and it does not assert that the runtime rejects supported legacy profiles. This is a profile-drift and transcript-binding gate, not a cryptographic proof of the Fiat-Shamir transform.
 
-`Hegemon.Transaction.SmallWoodProductionConstraintRefinement` reconstructs the exact production map from canonical public values and deterministically projects one satisfying witness into equation-backed authorization, output-validity, and balance relations. `Hegemon.Consensus.AcceptedSmallWoodBlockComposition` then binds the verified transaction claims, ordered batch identity, ordered fees, coinbase, supply delta, and claimed supply to the same accepted block projection. The final deployed theorem composes these facts from accepted proof bytes under explicit SmallWood proof-system soundness and note-hash collision-resistance assumptions. Exact extraction, same-witness row semantics, cross-object identity, ordering, and accepted-chain supply linkage are no longer separate assumptions.
+`Hegemon.Transaction.SmallWoodProductionConstraintRefinement` reconstructs the exact production map from canonical public values and deterministically projects one satisfying witness into equation-backed authorization, output-validity, and balance relations. `Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction` replaces the former one-line "accepted proof implies witness" premise with ordered statement/hash-binding, transcript, PCS-opening, AIR-row, and extraction stages. The production theorem yields either an exact witness or one of six named failure classes, including verifier implementation mismatch. `Hegemon.Consensus.AcceptedSmallWoodBlockComposition` consumes that structured evidence and binds verified transaction claims, ordered batch identity, fees, coinbase, supply delta, and claimed supply to the same accepted block projection.
+
+`Hegemon.Transaction.SmallWoodNoGrindingSoundness` computes every active dimension and rational error term with exact natural-number arithmetic. Production Rust performs the same aggregate comparison with `BigUint`; floating-point bit values are telemetry only and cannot decide release acceptance.
 
 ## Theorem surface used here
 
@@ -97,7 +99,7 @@ This note follows the explicit CAPSS / SmallWood soundness terms given in the pa
 
 Primary source:
 
-- “SmallWood: Practical Transparent Arguments for Small Circuits,” ePrint 2025/1085, https://eprint.iacr.org/2025/1085.pdf
+- “SmallWood: Hash-Based Polynomial Commitments and Zero-Knowledge Arguments for Relatively Small Instances,” ePrint 2025/1085, https://eprint.iacr.org/2025/1085
 
 The explicit term decomposition appears in the CAPSS theorem:
 
@@ -109,7 +111,9 @@ For the implemented no-grinding profile we set:
 - `opening_pow_bits = 0`
 - `decs_pow_bits = 0`
 
-As with Hegemon’s other tx-proof notes, this is a release-engineering note, not a blanket claim about every possible random-oracle query budget. The floor below is the term-wise per-proof floor for the exact implemented statement and exact no-grinding profile.
+The paper was revised on 2026-02-13 to revise its binding definitions and proofs for the extractable setting. Its theorem is in the classical random-oracle model. A post-quantum interpretation additionally needs a suitable QROM argument; this repository does not silently promote the ROM theorem into one.
+
+For `κ1 = κ2 = κ3 = κ4 = 0`, the base algebraic extraction error is `ε1 + ε2 + ε3 + ε4`, while the theorem scales it by `Q_RO`. The separate collision term scales as `Q_RO^2 / 2^(2λ)`. Consequently, `128 bits` below means a base work factor: for `Q_RO` queries, the algebraic part has at least `128 - log2(Q_RO)` bits. Lean proves this scaling generically whenever `2^bits * Q_RO <= 2^128`.
 
 ## Mapping the implemented statement to SmallWood parameters
 
@@ -122,7 +126,7 @@ Using the notation from the SmallWood paper's Table 1 for the active V3 statemen
 - `m1 = 1`
 - `m2 = 78`
 - `ℓ' = 3`
-- `ρ = 2`
+- `ρ = 3`
 - `β = 2`
 - `ℓ = 24`
 - `N = 32768`
@@ -130,11 +134,11 @@ Using the notation from the SmallWood paper's Table 1 for the active V3 statemen
 
 The exact derived PCS/LVCS terms are:
 
-- `n_pcs = n + 2ρ = 1535`
+- `n_pcs = n + 2ρ = 1537`
 - witness-polynomial degree convention gives `d_j = s + ℓ' - 1 = 66`
 - masked polynomial-constraint degree `d_Q = d * (s + ℓ' - 1) - s = 464`
 - LVCS row count `n_rows = β * (s + ℓ') = 134`
-- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 776`
+- LVCS row-vector width `n_cols = ceil((Σ_j ν_j) / β) = 781`
 - DECS polynomial count `n_decs = n_rows = 134`
 
 The implementation enforces that the DECS opened leaf indices are distinct, so the live verifier matches the `ℓ = 24` count used below instead of silently accepting duplicate openings.
@@ -153,15 +157,16 @@ With the mappings above, the SmallWood terms become:
 For the exact current candidate profile:
 
 - `ε1 < 2^-182.99`
-- `ε2 < 2^-128.00`
+- `ε2 < 2^-192.00`
 - `ε3 < 2^-165.44`
-- `ε4 < 2^-129.08`
+- `ε4 < 2^-128.86`
 
-So the exact no-grinding floor for the implemented witness-free public statement is:
+The exact rational sum also satisfies:
 
-- `min(182.99, 128.00, 165.44, 129.08) = 128.00 bits`
+- `ε1 + ε2 + ε3 + ε4 < 2^-128`
+- floating telemetry for the aggregate is approximately `128.8628` bits
 
-The dominant term is `ε2`, not the DECS term and not the LVCS geometry term.
+The dominant term is `ε4`, the DECS opening ratio. Checking only the minimum term or checking each term separately would be insufficient; the production gate checks their exact sum.
 
 ## Why the parameter bump matters
 
@@ -186,10 +191,10 @@ What it proves:
 - the current `SmallwoodCandidate` statement is witness-free,
 - the public statement is direct and code-derived,
 - the bound is instantiated against the exact implemented statement shape,
-- the current no-grinding profile clears a conservative `128-bit` floor for that exact statement.
+- the current no-grinding profile has an exact aggregate base work factor above `2^128` for that exact statement,
 - the full active profile material is mutation-checked across Lean and production Rust,
 - exact semantic rows imply the Hegemon accepted-transaction relation and canonical no-theft facts,
-- accepted proof extraction reaches those rows through an explicit proof-system soundness boundary,
+- accepted proof extraction reaches those rows through a staged witness-or-named-failure reduction,
 - and accepted block identity, ordering, fees, coinbase, supply delta, and claimed supply compose over one production projection.
 
 What it does not prove:
@@ -198,6 +203,7 @@ What it does not prove:
 - that the current bridge geometry is the final SmallWood tx frontend,
 - that the final SmallWood tx backend has reached the smaller `934`-row structural target.
 - primitive PCS/PIOP/DECS, random-oracle, Merkle/commitment, or hash security,
+- a query-independent `2^-128` extraction-failure probability or a QROM theorem,
 - arbitrary compiler correctness beyond the checked generated Rust/Lean map boundary,
 - or privacy and liveness properties outside the no-counterfeit theorem.
 
@@ -208,9 +214,9 @@ Today the Rust engine proves the V3 packed semantic relation over the live `64`-
 This milestone closes the four production-bound no-counterfeit tracks while preserving explicit cryptographic assumptions:
 
 - the candidate statement is now witness-free and public,
-- the active integrated backend now carries an exact no-grinding `128-bit` note for that exact statement,
+- the active integrated backend now carries an exact no-grinding `128-bit` base-work-factor calculation for that exact statement, including the aggregate and query-scaling theorem,
 - all 16 typed security-relevant profile mutations are checked across Lean and Rust with an exact named-field delta assertion,
 - exact accepted rows imply the local accepted-transaction and no-theft relations,
 - the final theorem binds accepted-proof extraction, exact same-witness equations, cross-object identity, ordering, and same-block supply composition,
-- the remaining assumptions name primitive SmallWood proof-system soundness and note-hash collision resistance,
+- the remaining assumptions are six named reduction failures plus primitive note-hash collision resistance; the old monolithic accepted-proof-to-witness premise is gone,
 - and the active proof bytes stay below the native `tx_leaf` cap without a Plonky3 dependency in the shipped node graph.

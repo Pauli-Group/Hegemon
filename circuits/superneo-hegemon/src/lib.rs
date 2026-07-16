@@ -3473,6 +3473,16 @@ pub fn verify_native_tx_leaf_artifact_bytes(
     )
 }
 
+fn verify_embedded_transaction_proof_for_native_tx_leaf(
+    backend: TxProofBackend,
+    proof_bytes: &[u8],
+    verifier_inputs: &TransactionVerifierInputs,
+    version: VersionBinding,
+) -> Result<()> {
+    verify_transaction_proof_bytes_for_backend(backend, proof_bytes, verifier_inputs, version)
+        .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))
+}
+
 pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     params: &NativeBackendParams,
     tx: &TxLeafPublicTx,
@@ -3549,13 +3559,12 @@ pub fn verify_native_tx_leaf_artifact_bytes_with_params(
     );
     let verifier_inputs =
         transaction_verifier_inputs_from_tx_leaf_public(tx, &artifact.stark_public_inputs)?;
-    verify_transaction_proof_bytes_for_backend(
+    verify_embedded_transaction_proof_for_native_tx_leaf(
         artifact.proof_backend,
         &artifact.stark_proof,
         &verifier_inputs,
         tx.version,
-    )
-    .map_err(|err| anyhow::anyhow!("native tx-leaf proof verification failed: {err}"))?;
+    )?;
 
     let witness = tx_leaf_public_witness_from_parts(
         tx,

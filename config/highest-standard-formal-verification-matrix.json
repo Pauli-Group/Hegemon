@@ -7,10 +7,10 @@
   "overall_completion_percent": 100.0,
   "formal_surface_coverage_percent": 100.0,
   "mechanized_assumption_closure": {
-    "measurement_method": "Equal-count inventory of explicit mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
+    "measurement_method": "Equal-count inventory of deployed or release-authority mechanized security tracks, authenticated against the formal-core checker's fixed track and closed-theorem policy. A closed track requires the exact pinned Lean theorem identities for the stated narrow obligation, coverage by the formal security claims ledger, a matching complete-Lean-source digest in the active-goal ledger, and successful aggregate Hegemon elaboration plus axiom audit; merely naming an assumption or a theorem-like source declaration does not close it. A research track may leave this deployed denominator only when checked policy and production wiring prove it has no authorization authority; its unresolved mathematics must remain documented and receives no closure credit. This score is independent from formal surface coverage and does not assign credit for external primitive or system-model assumptions that remain open.",
     "total_tracks": 20,
-    "closed_tracks": 13,
-    "closure_percent": 65.0,
+    "closed_tracks": 16,
+    "closure_percent": 80.0,
     "tracks": [
       {
         "id": "transaction.smallwood-semantic-implication",
@@ -142,16 +142,21 @@
         "remaining_work": []
       },
       {
-        "id": "native.fold-verifier-implementation-equivalence",
-        "status": "open",
+        "id": "transaction.smallwood-exact-aggregate-soundness-bound",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
-          "circuits/superneo-backend-lattice/src/lib.rs",
-          "docs/crypto/native_backend_formal_theorems.md"
+          "formal/lean/Hegemon/Transaction/SmallWoodNoGrindingSoundness.lean",
+          "formal/lean/Hegemon/Transaction/GenerateSmallWoodTranscriptBindingVectors.lean",
+          "circuits/transaction/src/smallwood_engine.rs",
+          "circuits/transaction/src/smallwood_frontend.rs"
         ],
-        "remaining_work": [
-          "Model the production fold recomputation algorithm and prove its Rust verifier implementation equivalent to that model. Equality with a caller-supplied recomputed record proves only output equality and uniqueness, not production fold canonicalization."
-        ]
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_profile_uses_rho_three",
+          "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_lvcs_column_count_is_781",
+          "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_single_query_aggregate_error_supports_128_bits",
+          "Hegemon.Transaction.SmallWoodNoGrindingSoundness.active_aggregate_error_scales_with_query_budget"
+        ],
+        "remaining_work": []
       },
       {
         "id": "native.digit-bound-euclidean-arithmetic",
@@ -233,26 +238,37 @@
         ]
       },
       {
-        "id": "native.low-degree-unit-irreducibility",
-        "status": "open",
+        "id": "transaction.smallwood-staged-knowledge-soundness-reduction",
+        "status": "closed",
         "evidence_paths": [
-          "formal/lean/Hegemon/Native/NativeBackendAlgebra.lean",
-          "docs/crypto/native_backend_formal_theorems.md"
+          "formal/lean/Hegemon/Transaction/SmallWoodKnowledgeSoundnessReduction.lean",
+          "formal/lean/Hegemon/Transaction/SmallWoodProductionConstraintRefinement.lean",
+          "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean"
         ],
-        "remaining_work": [
-          "Mechanize finite-field factorization and irreducibility for the two degree-27 factors, then discharge the named low-degree-unit assumption."
-        ]
+        "lean_theorems": [
+          "Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction.accepted_protocol_yields_witness_or_named_failure",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_witness_or_named_failure",
+          "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.accepted_smallwood_proof_yields_exact_witness_outside_named_failures"
+        ],
+        "remaining_work": []
       },
       {
-        "id": "native.backend-collision-reduction-and-pok",
-        "status": "open",
+        "id": "native.non-authoritative-production-boundary",
+        "status": "closed",
         "evidence_paths": [
-          "docs/crypto/native_backend_formal_theorems.md",
-          "audits/native-backend-128b/KNOWN_GAPS.md"
+          "formal/lean/Hegemon/Consensus/NativeTxLeafAuthorityBoundary.lean",
+          "formal/lean/Hegemon/Consensus/GenerateProofPolicyVectors.lean",
+          "circuits/superneo-hegemon/src/lib.rs",
+          "consensus/src/proof.rs",
+          "config/formal-security-blueprint.json"
         ],
-        "remaining_work": [
-          "Mechanize the deterministic-commitment collision-to-BK-MSIS reduction and coefficient flattening, obtain external cryptanalysis, and do not claim CCS proof-of-knowledge unless a real protocol and extractor are implemented."
-        ]
+        "lean_theorems": [
+          "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.backend_acceptance_requires_embedded_transaction_proof",
+          "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.every_accepted_path_inherits_embedded_transaction_proof_acceptance",
+          "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.receipt_root_has_no_production_verifier_dispatch",
+          "Hegemon.Consensus.NativeTxLeafAuthorityBoundary.receipt_root_is_rejected_before_native_fold_dispatch"
+        ],
+        "remaining_work": []
       },
       {
         "id": "privacy.zero-knowledge-unlinkability-game",

@@ -1,6 +1,7 @@
-import Hegemon.Consensus.ProofPolicy
+import Hegemon.Consensus.NativeTxLeafAuthorityBoundary
 
 open Hegemon.Consensus
+open Hegemon.Consensus.NativeTxLeafAuthorityBoundary
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -96,6 +97,17 @@ def receiptRootComplete : ProofPolicyInput :=
 def withTxCount (input : ProofPolicyInput) (txCount : Nat) : ProofPolicyInput :=
   { input with txCount }
 
+def productionRegistryKindJson : ProductionRegistryArtifactKind → String
+  | .inlineTx => "inline_tx"
+  | .txLeaf => "tx_leaf"
+  | .receiptRoot => "receipt_root"
+  | .recursiveBlockV1 => "recursive_block_v1"
+  | .recursiveBlockV2 => "recursive_block_v2"
+
+def productionRegistryCaseJson (kind : ProductionRegistryArtifactKind) : String :=
+  "    { \"artifact_kind\": \"" ++ productionRegistryKindJson kind
+    ++ "\", \"expected_registered\": " ++ boolJson (productionRegistryIncludes kind) ++ " }"
+
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
@@ -127,7 +139,12 @@ def vectorJson : String :=
     ++ proofPolicyCaseJson "receipt-root-without-payload-retired"
       { receiptRootComplete with hasReceiptRoot := false } ++ ",\n"
     ++ proofPolicyCaseJson "receipt-root-with-payload-retired" receiptRootComplete ++ "\n"
-    ++ "  ]\n"
+    ++ "  ],\n"
+    ++ "  \"production_registry_cases\": [\n"
+    ++ String.intercalate ",\n"
+      ([ .inlineTx, .txLeaf, .receiptRoot, .recursiveBlockV1, .recursiveBlockV2 ].map
+        productionRegistryCaseJson)
+    ++ "\n  ]\n"
     ++ "}\n"
 
 def main : IO Unit :=

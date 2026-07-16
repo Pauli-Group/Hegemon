@@ -1,8 +1,11 @@
 import Hegemon.Transaction.SmallWoodTranscriptBinding
+import Hegemon.Transaction.SmallWoodNoGrindingSoundness
 
 namespace Hegemon
 namespace Transaction
 namespace SmallWoodTranscriptBinding
+
+open SmallWoodNoGrindingSoundness
 
 def boolJson (value : Bool) : String :=
   if value then "true" else "false"
@@ -156,6 +159,35 @@ def vectorJson : String :=
     ++ hexBytes smallwoodPublicStatementDomain ++ "\",\n"
     ++ "  \"smallwood_field_xof_domain_hex\": \""
     ++ hexBytes smallwoodFieldXofDomain ++ "\",\n"
+    ++ "  \"active_no_grinding_soundness\": {\n"
+    ++ "    \"field_order\": " ++ toString goldilocksOrder ++ ",\n"
+    ++ "    \"row_count\": " ++ toString activeRowCount ++ ",\n"
+    ++ "    \"packing_factor\": " ++ toString activePackingFactor ++ ",\n"
+    ++ "    \"public_value_count\": " ++ toString activePublicValueCount ++ ",\n"
+    ++ "    \"constraint_degree\": " ++ toString activeConstraintDegree ++ ",\n"
+    ++ "    \"rho\": " ++ toString activeProfile.rho ++ ",\n"
+    ++ "    \"opened_evaluations\": " ++ toString activeProfile.nbOpenedEvals ++ ",\n"
+    ++ "    \"beta\": " ++ toString activeProfile.beta ++ ",\n"
+    ++ "    \"decs_evaluations\": " ++ toString activeProfile.decsNbEvals ++ ",\n"
+    ++ "    \"decs_opened_evaluations\": "
+    ++ toString activeProfile.decsNbOpenedEvals ++ ",\n"
+    ++ "    \"decs_eta\": " ++ toString activeProfile.decsEta ++ ",\n"
+    ++ "    \"polynomial_count\": " ++ toString activePolynomialCount ++ ",\n"
+    ++ "    \"constraint_polynomial_degree\": "
+    ++ toString activeConstraintPolynomialDegree ++ ",\n"
+    ++ "    \"lvcs_row_count\": " ++ toString activeLvcsRowCount ++ ",\n"
+    ++ "    \"lvcs_column_count\": " ++ toString activeLvcsColumnCount ++ ",\n"
+    ++ "    \"epsilon_1_supports_128_bits\": "
+    ++ boolJson (supports128BitBoundBool epsilon1Numerator epsilon1Denominator) ++ ",\n"
+    ++ "    \"epsilon_2_supports_128_bits\": "
+    ++ boolJson (supports128BitBoundBool epsilon2Numerator epsilon2Denominator) ++ ",\n"
+    ++ "    \"epsilon_3_supports_128_bits\": "
+    ++ boolJson (supports128BitBoundBool epsilon3Numerator epsilon3Denominator) ++ ",\n"
+    ++ "    \"epsilon_4_supports_128_bits\": "
+    ++ boolJson (supports128BitBoundBool epsilon4Numerator epsilon4Denominator) ++ ",\n"
+    ++ "    \"aggregate_error_supports_128_bit_work_factor\": "
+    ++ boolJson (supports128BitBoundBool aggregateErrorNumerator aggregateErrorDenominator) ++ "\n"
+    ++ "  },\n"
     ++ "  \"smallwood_transcript_binding_cases\": [\n"
     ++ String.intercalate ",\n" cases ++ "\n"
     ++ "  ],\n"
