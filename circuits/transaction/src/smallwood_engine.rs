@@ -5104,6 +5104,7 @@ mod tests {
     };
     use crate::witness::TransactionWitness;
     use protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
+    use std::sync::OnceLock;
 
     fn transcript_xof_words_blake3_reference(
         domain: &[u8],
@@ -5289,6 +5290,25 @@ mod tests {
         )
     }
 
+    fn sample_production_candidate() -> &'static (PackedSmallwoodAuxFrontendMaterial, Vec<u8>) {
+        static SAMPLE: OnceLock<(PackedSmallwoodAuxFrontendMaterial, Vec<u8>)> = OnceLock::new();
+        SAMPLE.get_or_init(|| {
+            let witness = sample_witness();
+            let material =
+                build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
+            let proof = {
+                let statement = production_statement(&material);
+                prove_candidate(
+                    &statement,
+                    &material.packed_expanded_witness,
+                    &material.transcript_binding,
+                )
+                .unwrap()
+            };
+            (material, proof)
+        })
+    }
+
     struct FakeIdentityWitnessStatement {
         row_count: usize,
         packing_factor: usize,
@@ -5455,21 +5475,14 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let proof = prove_candidate(
-            &statement,
-            &material.packed_expanded_witness,
-            &material.transcript_binding,
-        )
-        .unwrap();
+        let (material, proof) = sample_production_candidate();
+        let statement = production_statement(material);
         assert!(
             proof.len() < 524_288,
             "direct packed proof bytes {} exceed native tx-leaf cap",
             proof.len()
         );
-        let decoded = decode_smallwood_proof_bytes_v1(&proof).unwrap();
+        let decoded = decode_smallwood_proof_bytes_v1(proof).unwrap();
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         match decoded.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
@@ -5484,7 +5497,7 @@ mod tests {
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
-        verify_candidate(&statement, &material.transcript_binding, &proof).unwrap();
+        verify_candidate(&statement, &material.transcript_binding, proof).unwrap();
     }
 
     #[test]
@@ -5541,18 +5554,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_opened_witness_mode_mismatch() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         proof.opened_witness.mode = SmallwoodOpenedWitnessMode::None;
         let proof_bytes = encode_smallwood_proof_bytes_v1(&proof).unwrap();
         let err = verify_candidate(&statement, &material.transcript_binding, &proof_bytes)
@@ -5565,18 +5569,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_auxiliary_witness_limb_count_overflow() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         match &mut proof.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
                 auxiliary_words,
@@ -5602,18 +5597,9 @@ mod tests {
 
     #[test]
     fn direct_packed_arithmetization_rejects_nonzero_auxiliary_padding() {
-        let witness = sample_witness();
-        let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
-        let statement = production_statement(&material);
-        let mut proof = decode_smallwood_proof_bytes_v1(
-            &prove_candidate(
-                &statement,
-                &material.packed_expanded_witness,
-                &material.transcript_binding,
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let (material, proof_bytes) = sample_production_candidate();
+        let statement = production_statement(material);
+        let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         match &mut proof.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
                 auxiliary_words,

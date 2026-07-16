@@ -28,14 +28,13 @@ Rust runtime and release policy      formal/lean
                                          |
                                          v
                                   formal/crypto
-                                         |
-                                         v
-                               pinned research libraries
 ```
 
 `scripts/check_formal_crypto.sh --isolation-only` enforces the missing reverse arrows in a small
-always-on CI workflow. The full gate runs in a separate, path-scoped workflow because a cold ArkLib
-and Mathlib build is large and is not needed for unrelated runtime changes.
+always-on CI workflow. The full gate runs in a separate, path-scoped workflow because it is not
+needed for unrelated runtime changes. The sanity package deliberately has no direct external proof
+library dependency; primary papers guide later reductions without forcing CI to build unrelated
+research trees.
 
 ## Minimal definitions
 
@@ -56,14 +55,13 @@ production formal model. `ExactCCSRefinement` is the only intended conversion in
 CCS encoder must prove an if-and-only-if statement for every production statement and witness. No
 inhabitant is provided now.
 
-`HegemonCrypto.SmallWood.KnowledgeSoundnessTarget` is definitionally ArkLib's probabilistic
-straight-line extractor target, instantiated with the SmallWood relation. It quantifies over
-malicious provers and a nonnegative extraction-error bound. The module contains no theorem or
-instance asserting that a SmallWood verifier satisfies it.
-
-That target is a necessary relation-bound baseline, not the final production game. The deployed
-proof is non-interactive, statements may be chosen adaptively, and the post-quantum claim permits
-quantum random-oracle queries. Those properties require distinct definitions and reductions.
+`HegemonCrypto.SmallWood.KnowledgeSoundnessTarget` fixes the release-level game boundary directly.
+It requires the standard QROM, bounds all quantum hash queries by `q_H`, bounds prior proof
+interactions by `q_P`, defines the bad event as verifier acceptance without an extracted exact
+production-relation witness, and compares that event's probability with one exact rational loss
+function. The event probability remains an interface: a future finite-dimensional quantum model
+must derive it from channels, oracle unitaries, and final measurement. The module contains no
+theorem or instance asserting that a SmallWood verifier satisfies the target.
 
 ## Required theorem ladder
 
@@ -178,17 +176,15 @@ instantiation decides which case applies.
 | Make the executable checker differ from the mathematical predicate | Prove `rowSatisfiedB_iff` and `satisfiesB_iff` generically |
 | Hide a proof gap behind `sorry`, `axiom`, `unsafe`, or `native_decide` | Reject those constructs locally and audit every credited declaration transitively |
 | Import an unfinished upstream theorem indirectly | Allow only `propext`, `Classical.choice`, and `Quot.sound` in credited declaration dependencies |
-| Drift a research dependency | Pin every Git package to an immutable 40-character commit in `lake-manifest.json` |
+| Smuggle a broad research dependency into the target | Permit only the local `formal/lean` direct dependency and pin all of its transitive Git revisions in `lake-manifest.json` |
 | Turn a research result into runtime acceptance | Reject references from Cargo manifests, `formal/lean`, release workflows, and formal claim registries |
 | Prove an interactive result but claim a Fiat-Shamir result | Keep interactive, ROM, and QROM obligations distinct |
 | Prove an abstract verifier but ship different bytes or code | Keep canonical serialization and Rust verifier refinement as explicit obligations |
 | Substitute a review bundle or marker for a proof | `openObligations = Finset.univ`; production authorization evaluates to false |
 
-The pinned ArkLib tree contains unfinished declarations. This is visible and not waived. Hegemon
-uses one standard definition from that tree and accepts it only because the standalone auditor
-loads compiled constants without contributor extensions, computes transitive axioms with
-`Lean.collectAxioms`, and rejects any dependency outside the explicit kernel allowlist. An upstream
-`sorry` cannot receive Hegemon credit merely because the package builds.
+The standalone auditor loads compiled constants without contributor extensions, computes
+transitive axioms with `Lean.collectAxioms`, and rejects any dependency outside the explicit kernel
+allowlist. An upstream `sorry` cannot receive Hegemon credit merely because a dependency builds.
 
 ## Promotion obligations
 
@@ -225,9 +221,10 @@ Run the full sanity check from the repository root:
 bash scripts/check_formal_crypto.sh
 ```
 
-A cold build requires substantial temporary space. The script refuses to start dependency
-resolution below its free-space threshold. The generated `formal/crypto/.lake` directory is
-untracked and can be removed independently without cleaning any Rust target or user worktree.
+A cold build requires temporary space for the local formal model and Mathlib. The script refuses to
+start dependency resolution below its free-space threshold. The generated `formal/crypto/.lake`
+directory is untracked and can be removed independently without cleaning any Rust target or user
+worktree.
 
 The expected result is deliberately limited: canonical CCS semantics, a non-vacuous
 relation-bound target statement, adversarial tests, immutable dependencies, a clean axiom audit,

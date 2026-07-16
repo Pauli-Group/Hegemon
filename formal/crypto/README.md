@@ -12,7 +12,8 @@ The package currently provides:
 - adversarial examples for changed coefficients, omitted and duplicated factors, and changed
   witnesses;
 - an exact adapter to the bounded SmallWood production constraint relation;
-- a probabilistic knowledge-soundness target using ArkLib's standard verifier definition; and
+- an adaptive standard-QROM knowledge-soundness target with explicit query budgets, extraction
+  failure event, and exact rational loss; and
 - an exhaustive open-obligation inventory that prevents this research state from authorizing a
   production cryptographic security claim.
 
@@ -29,8 +30,9 @@ sanity gate from the repository root with:
 bash scripts/check_formal_crypto.sh
 ```
 
-The gate pins every Git dependency, rejects local trust bypasses, builds the package, audits the
+The package has no direct external proof-library dependency. The gate pins every transitive Git
+dependency inherited from `formal/lean`, rejects local trust bypasses, builds the package, audits the
 transitive axioms of all credited declarations, executes the kernel-checked mutation cases, and
-checks that no production authority imports this package. A cold build creates a large untracked
+checks that no production authority imports this package. A cold build creates an untracked
 `formal/crypto/.lake` tree; it can be removed independently when the research environment is no
 longer needed.

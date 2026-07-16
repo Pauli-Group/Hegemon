@@ -3,6 +3,19 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FORMAL_MANIFEST="$ROOT/scripts/hegemon_formal_core/Cargo.toml"
+MODE="${1:-all}"
+case "$MODE" in
+  all|preflight|checker|lean|vectors|policy) ;;
+  *)
+    printf 'usage: %s [all|preflight|checker|lean|vectors|policy]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+
+run_stage() {
+  [ "$MODE" = all ] || [ "$MODE" = "$1" ]
+}
+
 if [ -d "${HOME:-}/.cargo/bin" ]; then
   export PATH="${HOME}/.cargo/bin:$PATH"
 fi
@@ -61,6 +74,7 @@ require_pinned_model_checker() {
 
 printf '=== Hegemon formal-core gate ===\n'
 
+if run_stage checker || run_stage preflight; then
 printf '\n[0/14] Checking shipped native runtime dependency graph\n'
 bash "$ROOT/scripts/check_native_runtime_dependencies.sh"
 
@@ -72,10 +86,14 @@ cargo fmt --manifest-path "$FORMAL_MANIFEST" -- --check
 
 printf '\n[2/14] Running formal-core checker tests\n'
 cargo test --quiet --manifest-path "$FORMAL_MANIFEST"
+fi
 
+if run_stage lean || run_stage preflight; then
 printf '\n[3/14] Checking Lean formal proof kernel\n'
 bash "$ROOT/scripts/check_lean_formal.sh"
+fi
 
+if run_stage vectors; then
 printf '\n[4/14] Verifying Lean-generated Rust conformance vectors\n'
 LEAN_BRIDGE_VECTORS="$(mktemp)"
 LEAN_BRIDGE_CHECKPOINT_OUTPUT_VECTORS="$(mktemp)"
@@ -782,13 +800,8 @@ cargo test -p wallet build_transaction_can_emit_native_tx_leaf_payloads --lib --
 cargo test -p wallet stablecoin_policy_admission --lib -- --nocapture
 cargo test -p synthetic-crypto note_encryption::tests::test_decrypt_rejects --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS="$LEAN_NATIVE_TX_LEAF_ARTIFACT_VECTORS" \
-  cargo test -p superneo-hegemon lean_generated_native_tx_leaf_artifact_vectors_match_production -- --nocapture
-cargo test -p superneo-hegemon native_tx_leaf_artifact --lib -- --nocapture
 HEGEMON_LEAN_NATIVE_RECEIPT_ROOT_VECTORS="$LEAN_NATIVE_RECEIPT_ROOT_VECTORS" \
-  cargo test -p superneo-hegemon lean_generated_native_receipt_root_vectors_match_production -- --nocapture
-cargo test -p superneo-hegemon native_receipt_root_parser_matches_independent_oracle_on_mutation_corpus --lib -- --nocapture
-cargo test -p superneo-hegemon superneo_receipts_use_shared_statement_hash_helper --lib -- --nocapture
-cargo test -p superneo-hegemon oversized_public_inputs_without_panic --lib -- --nocapture
+  cargo test -p superneo-hegemon --lib -- --nocapture
 HEGEMON_LEAN_TRANSACTION_VECTORS="$LEAN_TRANSACTION_VECTORS" \
   cargo test -p transaction-circuit lean_generated_balance_vectors_match_production -- --nocapture
 HEGEMON_LEAN_NOTE_COMMITMENT_INPUT_VECTORS="$LEAN_NOTE_COMMITMENT_INPUT_VECTORS" \
@@ -861,7 +874,9 @@ cargo test -p consensus tx_validity_ --lib -- --nocapture
 cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
 HEGEMON_AGG_LEGACY_V4=1 \
   cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_even_when_env_set --lib -- --nocapture
+fi
 
+if run_stage policy; then
 printf '\n[5/14] Auditing formal-core checker dependencies\n'
 if ! command -v cargo-audit >/dev/null 2>&1; then
   printf 'cargo-audit is not installed. Install with: cargo install cargo-audit --version 0.22.2 --locked\n' >&2
@@ -920,7 +935,6 @@ if [ "${HEGEMON_FORMAL_RUN_MODEL_CHECKERS:-0}" = "1" ]; then
 else
   printf 'model-checker execution not requested; this gate is not claiming TLC/Apalache evidence\n'
 fi
+fi
 
-rm -f "$LEAN_SIDECAR_UPLOAD_ADMISSION_VECTORS" "$LEAN_SIDECAR_UPLOAD_RAW_JSON_PROJECTION_VECTORS" "$LEAN_AIR_BALANCE_BOUNDARY_VECTORS" "$LEAN_BRIDGE_MINT_PAYLOAD_RAW_ADMISSION_VECTORS"
-
-printf '\n=== Hegemon formal-core gate passed ===\n'
+printf '\n=== Hegemon formal-core %s gate passed ===\n' "$MODE"

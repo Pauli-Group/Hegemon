@@ -87,20 +87,6 @@ manifest = json.load(open(sys.argv[1], encoding="utf-8"))
 with open(sys.argv[2], "rb") as lakefile:
     lake_config = tomllib.load(lakefile)
 packages = {package["name"]: package for package in manifest["packages"]}
-required = {
-    "Arklib": (
-        "https://github.com/Verified-zkEVM/ArkLib",
-        "e6d77b18ca1334a91faf4d1ccf9f96d854d58ba4",
-    ),
-    "VCVio": (
-        "https://github.com/Verified-zkEVM/VCV-io",
-        "5f7707fbeb0c53754580b0a506af8952f75e9019",
-    ),
-}
-for name, (url, revision) in required.items():
-    package = packages.get(name)
-    if package is None or package.get("url") != url or package.get("rev") != revision:
-        raise SystemExit(f"dependency pin mismatch for {name}")
 for package in manifest["packages"]:
     if package.get("type") == "git":
         if not re.fullmatch(r"[0-9a-f]{40}", package.get("rev", "")):
@@ -116,9 +102,9 @@ if path_packages != ["hegemon_formal"]:
 expected_requirements = [
     {"name": "hegemon_formal", "path": "../lean"},
     {
-        "name": "Arklib",
-        "git": "https://github.com/Verified-zkEVM/ArkLib",
-        "rev": "e6d77b18ca1334a91faf4d1ccf9f96d854d58ba4",
+        "name": "mathlib",
+        "git": "https://github.com/leanprover-community/mathlib4",
+        "rev": "c5ea00351c28e24afc9f0f84379aa41082b1188f",
     },
 ]
 if lake_config.get("require") != expected_requirements:
@@ -126,7 +112,7 @@ if lake_config.get("require") != expected_requirements:
 PY
 
 if [ ! -d "$CRYPTO_ROOT/.lake/packages" ]; then
-  minimum_free_gib="${HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB:-40}"
+  minimum_free_gib="${HEGEMON_FORMAL_CRYPTO_MIN_FREE_GIB:-8}"
   python3 - "$CRYPTO_ROOT" "$minimum_free_gib" <<'PY'
 import shutil
 import sys
@@ -226,4 +212,4 @@ if violations:
 print(f"audited {len(records)} formal-crypto declarations against the kernel axiom allowlist")
 PY
 
-printf 'formal-crypto sanity passed: ArkLib e6d77b18; 13 declarations; production claim remains unauthorized\n'
+printf 'formal-crypto sanity passed: explicit standard-QROM target; 13 declarations; production claim remains unauthorized\n'

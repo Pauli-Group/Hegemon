@@ -6268,7 +6268,7 @@ mod tests {
 
     #[test]
     fn tx_leaf_artifact_round_trip() {
-        let proof = sample_transaction_proof(7);
+        let proof = sample_transaction_proof();
         let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let built = build_tx_leaf_artifact_bytes(&proof).unwrap();
@@ -6316,7 +6316,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_oversized_monetary_inputs_before_field_reduction() {
-        let proof = sample_transaction_proof(17);
+        let proof = sample_transaction_proof();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let mut stark_public_inputs = proof
             .stark_public_inputs
@@ -6330,7 +6330,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_projection_rejects_duplicate_balance_slots() {
-        let proof = sample_transaction_proof(18);
+        let proof = sample_transaction_proof();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let mut stark_public_inputs = proof
             .stark_public_inputs
@@ -6348,7 +6348,7 @@ mod tests {
 
     #[test]
     fn superneo_receipts_use_shared_statement_hash_helper() {
-        let proof = sample_transaction_proof(17);
+        let proof = sample_transaction_proof();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let stark_public_inputs = proof
             .stark_public_inputs
@@ -6488,7 +6488,7 @@ mod tests {
 
     #[test]
     fn tx_leaf_artifact_rejects_trailing_bytes() {
-        let proof = sample_transaction_proof(11);
+        let proof = sample_transaction_proof();
         let mut built = build_tx_leaf_artifact_bytes(&proof).unwrap();
         built.artifact_bytes.push(0);
         let err = decode_tx_leaf_artifact_bytes(&built.artifact_bytes)
@@ -6498,7 +6498,7 @@ mod tests {
 
     #[test]
     fn tx_leaf_public_witness_accepts_smallwood_direct_profile_digest() {
-        let mut proof = sample_transaction_proof(70);
+        let mut proof = sample_transaction_proof();
         proof.backend = TxProofBackend::SmallwoodCandidate;
         proof.stark_proof = bincode::serialize(
             &transaction_circuit::smallwood_frontend::SmallwoodCandidateProof {
@@ -6515,7 +6515,7 @@ mod tests {
 
     #[test]
     fn tx_leaf_artifact_rejects_wrong_tx_view() {
-        let proof = sample_transaction_proof(8);
+        let proof = sample_transaction_proof();
         let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
         let mut tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         tx.balance_tag[0] ^= 0x5a;
@@ -6525,7 +6525,7 @@ mod tests {
 
     #[test]
     fn recursive_leaf_payload_round_trip() {
-        let proof = sample_transaction_proof(23);
+        let proof = sample_transaction_proof();
         let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let stark_public_inputs = proof
@@ -6546,7 +6546,7 @@ mod tests {
 
     #[test]
     fn recursive_leaf_payload_rejects_mismatch() {
-        let proof = sample_transaction_proof(24);
+        let proof = sample_transaction_proof();
         let receipt = canonical_tx_validity_receipt_from_transaction_proof(&proof).unwrap();
         let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let mut stark_public_inputs = proof
@@ -6559,9 +6559,9 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_artifact_round_trip() {
-        let witness = sample_witness(18);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(18);
+        let built = sample_native_tx_leaf_artifact();
         let metadata =
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
                 .unwrap();
@@ -6642,7 +6642,7 @@ mod tests {
         clear_native_receipt_root_build_caches();
         clear_native_receipt_root_build_cache_stats();
 
-        let artifact = sample_decoded_native_tx_leaf_artifact(72);
+        let artifact = sample_decoded_native_tx_leaf_artifact();
         let default_params = native_backend_params();
         let alternate_params = alternate_native_backend_params();
 
@@ -6679,9 +6679,9 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_artifact_canonical_admission_rejects_missing_backend() {
-        let witness = sample_witness(19);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(19);
+        let built = sample_native_tx_leaf_artifact();
         let mut legacy_bytes = built.artifact_bytes.clone();
         legacy_bytes.pop().expect("proof backend byte");
         let decoded = decode_native_tx_leaf_artifact_bytes(&legacy_bytes).unwrap();
@@ -6697,12 +6697,12 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_artifact_projection_matches_canonical_statement_vectors() {
-        let witness = sample_witness(82);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let public_inputs = witness.public_inputs().unwrap();
         let expected_serialized =
             serialized_stark_inputs_from_witness(&witness, &public_inputs).unwrap();
         let expected_tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(82);
+        let built = sample_native_tx_leaf_artifact();
         let artifact =
             decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
 
@@ -6777,7 +6777,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_artifact_rejects_vector_count_alias() {
-        let built = sample_native_tx_leaf_artifact(82);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact =
             decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
 
@@ -6809,7 +6809,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_artifact_rejects_stablecoin_payload_projection_drift() {
-        let built = sample_native_tx_leaf_artifact(82);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact =
             decode_native_tx_leaf_artifact_canonical_bytes(&built.artifact_bytes).unwrap();
         artifact.stark_public_inputs.stablecoin_policy_hash[0] ^= 0x5a;
@@ -7671,7 +7671,7 @@ mod tests {
             &smallwood_proof,
         )
         .unwrap();
-        let second_smallwood_leaf = sample_native_tx_leaf_artifact(46);
+        let second_smallwood_leaf = sample_native_tx_leaf_artifact();
         let artifacts = vec![
             decode_native_tx_leaf_artifact_bytes(&smallwood_leaf.artifact_bytes).unwrap(),
             decode_native_tx_leaf_artifact_bytes(&second_smallwood_leaf.artifact_bytes).unwrap(),
@@ -7698,9 +7698,9 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_tampered_stark_proof() {
-        let witness = sample_witness(19);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(19);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.stark_proof[0] ^= 0x5a;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -7709,7 +7709,7 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_oversized_stark_proof_bytes() {
-        let built = sample_native_tx_leaf_artifact(39);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.stark_proof = vec![0u8; MAX_NATIVE_TX_STARK_PROOF_BYTES + 1];
         let err = encode_native_tx_leaf_artifact(&artifact).unwrap_err();
@@ -7721,9 +7721,9 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_malformed_commitment() {
-        let witness = sample_witness(20);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(20);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.commitment.rows[0].coeffs[0] ^= 1;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -7732,14 +7732,12 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_mixed_parameter_set() {
-        let witness = sample_witness(21);
-        let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
+        let proof = sample_transaction_proof();
+        let tx = tx_leaf_public_tx_from_transaction_proof(&proof).unwrap();
         let params = alternate_native_backend_params();
-        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
-            &params,
-            &sample_transaction_proof(21),
-        )
-        .unwrap();
+        let built =
+            build_native_tx_leaf_artifact_from_transaction_proof_with_params(&params, &proof)
+                .unwrap();
         assert!(
             verify_native_tx_leaf_artifact_bytes(&tx, &built.receipt, &built.artifact_bytes)
                 .is_err()
@@ -7748,9 +7746,9 @@ mod tests {
 
     #[test]
     fn native_tx_leaf_rejects_spec_digest_mismatch() {
-        let witness = sample_witness(22);
+        let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
         let tx = tx_leaf_public_tx_from_witness(&witness).unwrap();
-        let built = sample_native_tx_leaf_artifact(22);
+        let built = sample_native_tx_leaf_artifact();
         let mut artifact = decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes).unwrap();
         artifact.spec_digest[0] ^= 0x5a;
         let tampered = encode_native_tx_leaf_artifact(&artifact).unwrap();
@@ -7782,7 +7780,8 @@ mod tests {
 
     #[test]
     fn verified_tx_proof_receipt_root_round_trip() {
-        let proofs = vec![sample_transaction_proof(1), sample_transaction_proof(2)];
+        let proof = sample_transaction_proof();
+        let proofs = vec![proof.clone(), proof];
         let built = build_verified_tx_proof_receipt_root_artifact_bytes(&proofs).unwrap();
         let metadata =
             verify_verified_tx_proof_receipt_root_artifact_bytes(&proofs, &built.artifact_bytes)
@@ -8005,15 +8004,22 @@ mod tests {
         }
     }
 
-    fn sample_transaction_proof(seed: u64) -> TransactionProof {
-        let witness = sample_witness(seed);
-        let (proving_key, _) = generate_keys();
-        prove_transaction_with_params(
-            &witness,
-            &proving_key,
-            TransactionProofParams::release_for_version(witness.version),
-        )
-        .expect("sample tx proof")
+    const SAMPLE_TRANSACTION_PROOF_SEED: u64 = 18;
+
+    fn sample_transaction_proof() -> TransactionProof {
+        static PROOF: std::sync::OnceLock<TransactionProof> = std::sync::OnceLock::new();
+        PROOF
+            .get_or_init(|| {
+                let witness = sample_witness(SAMPLE_TRANSACTION_PROOF_SEED);
+                let (proving_key, _) = generate_keys();
+                prove_transaction_with_params(
+                    &witness,
+                    &proving_key,
+                    TransactionProofParams::release_for_version(witness.version),
+                )
+                .expect("sample tx proof")
+            })
+            .clone()
     }
 
     fn oversized_public_inputs_proof() -> TransactionProof {
@@ -8059,28 +8065,22 @@ mod tests {
         }
     }
 
-    fn sample_native_tx_leaf_artifact(seed: u64) -> BuiltNativeTxLeafArtifact {
-        static CACHE: std::sync::OnceLock<
-            std::sync::Mutex<std::collections::BTreeMap<u64, BuiltNativeTxLeafArtifact>>,
-        > = std::sync::OnceLock::new();
-        let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
-        if let Some(built) = cache.lock().expect("sample artifact cache lock").get(&seed) {
-            return built.clone();
-        }
-        let built = build_native_tx_leaf_artifact_from_transaction_proof_with_params(
-            &native_backend_params(),
-            &sample_transaction_proof(seed),
-        )
-        .expect("sample native tx-leaf artifact");
-        cache
-            .lock()
-            .expect("sample artifact cache lock")
-            .insert(seed, built.clone());
-        built
+    fn sample_native_tx_leaf_artifact() -> BuiltNativeTxLeafArtifact {
+        static ARTIFACT: std::sync::OnceLock<BuiltNativeTxLeafArtifact> =
+            std::sync::OnceLock::new();
+        ARTIFACT
+            .get_or_init(|| {
+                build_native_tx_leaf_artifact_from_transaction_proof_with_params(
+                    &native_backend_params(),
+                    &sample_transaction_proof(),
+                )
+                .expect("sample native tx-leaf artifact")
+            })
+            .clone()
     }
 
-    fn sample_decoded_native_tx_leaf_artifact(seed: u64) -> NativeTxLeafArtifact {
-        decode_native_tx_leaf_artifact_bytes(&sample_native_tx_leaf_artifact(seed).artifact_bytes)
+    fn sample_decoded_native_tx_leaf_artifact() -> NativeTxLeafArtifact {
+        decode_native_tx_leaf_artifact_bytes(&sample_native_tx_leaf_artifact().artifact_bytes)
             .expect("decode sample native tx-leaf artifact")
     }
 
@@ -8096,7 +8096,7 @@ mod tests {
             .get_or_init(|| {
                 vec![
                     review_bundle_valid_native_tx_leaf_artifact(),
-                    sample_decoded_native_tx_leaf_artifact(71),
+                    sample_decoded_native_tx_leaf_artifact(),
                 ]
             })
             .clone()

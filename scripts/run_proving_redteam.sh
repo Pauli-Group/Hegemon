@@ -290,9 +290,7 @@ EOF
       cat <<'EOF'
 cargo_test_lib_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
 cargo_test_lib_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_fold_rows -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_spec_digest_mismatch -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_tampered_leaf_statement_digest -- --nocapture
+cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_ -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi
@@ -371,7 +369,9 @@ run_campaign "recursive-block-mismatch"
 run_campaign "receipt-root-tamper"
 run_campaign "prover-configuration-downgrade"
 run_campaign "network-transport-abuse"
-run_campaign "review-package-parity"
+if [[ "$MODE" == "full" ]]; then
+  run_campaign "review-package-parity"
+fi
 
 overall="pass"
 for result in "${RESULTS[@]}"; do

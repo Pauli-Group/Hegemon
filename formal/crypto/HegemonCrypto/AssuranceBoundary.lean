@@ -22,14 +22,26 @@ inductive Obligation where
   | canonicalSerializationRefinement
   | rustVerifierRefinement
   | proverRandomnessAndSecretHandling
-deriving DecidableEq, Repr, Fintype
+deriving DecidableEq, Repr
 
-def openObligations : Finset Obligation := Finset.univ
+def openObligations : Finset Obligation :=
+  { .exactProductionToCCS,
+    .exactProtocolTranscript,
+    .honestProverCompleteness,
+    .interactiveKnowledgeSoundness,
+    .commitmentBindingReduction,
+    .fiatShamirRomAdaptiveKnowledgeSoundness,
+    .fiatShamirQromAdaptiveKnowledgeSoundness,
+    .primitiveHashSecurity,
+    .concreteParameterSoundness,
+    .canonicalSerializationRefinement,
+    .rustVerifierRefinement,
+    .proverRandomnessAndSecretHandling }
 
 theorem every_cryptographic_obligation_remains_open
     (obligation : Obligation) :
     obligation ∈ openObligations := by
-  simp [openObligations]
+  cases obligation <;> simp [openObligations]
 
 def productionSecurityClaimAuthorized : Bool := decide (openObligations = ∅)
 

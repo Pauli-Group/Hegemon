@@ -91,6 +91,28 @@ def main() -> None:
         pass
     else:
         raise SystemExit("out-of-order workflow steps unexpectedly passed")
+    policy.require_job_env_literal(
+        "fixture env",
+        '    env:\n      HEGEMON_TIMING_SAMPLE_COUNT: "16"\n    steps:\n',
+        "HEGEMON_TIMING_SAMPLE_COUNT",
+        "16",
+    )
+    for invalid_env in (
+        '    # HEGEMON_TIMING_SAMPLE_COUNT: "16"\n    steps:\n',
+        '    steps:\n      - env:\n          HEGEMON_TIMING_SAMPLE_COUNT: "16"\n',
+        '    env:\n      HEGEMON_TIMING_SAMPLE_COUNT: "15"\n    steps:\n',
+    ):
+        try:
+            policy.require_job_env_literal(
+                "fixture env",
+                invalid_env,
+                "HEGEMON_TIMING_SAMPLE_COUNT",
+                "16",
+            )
+        except SystemExit:
+            pass
+        else:
+            raise SystemExit("invalid timing environment unexpectedly passed")
     print("CI/release executable-step policy negative tests passed")
 
 
