@@ -14811,7 +14811,7 @@
         "reviewer": "codex-security/adversarial-diff",
         "reviewed_at": "2026-07-11",
         "notes": "Pending independent review. Previous internal assessment: Re-reviewed with the bounded reducer theorem and checkout-bound review package. Accepted only as an explicit residual-risk and candidate release-posture node; the native backend is not promoted to production cryptography.",
-        "content_blake3": "fe3725f27f2d48d71527c69f813ad8eb63f709b0434be27a9aaeb2f08cbbc2c5"
+        "content_blake3": "cad429c6ffc925b1cac3714745791a5c6b6d18b5ebc647a5f0f22c29a791a072"
       },
       "falsification_cases": [
         {
