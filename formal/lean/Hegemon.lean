@@ -16,6 +16,7 @@ import Hegemon.Consensus.ForkChoice
 import Hegemon.Consensus.Header
 import Hegemon.Consensus.MinerIdentity
 import Hegemon.Consensus.NativeTxLeafAdmission
+import Hegemon.Consensus.NativeTxLeafAuthorityBoundary
 import Hegemon.Consensus.PowRules
 import Hegemon.Consensus.ProofPolicy
 import Hegemon.Consensus.ProvenBatchBinding
@@ -174,6 +175,8 @@ import Hegemon.Transaction.PrivateMultisigAccumulator
 import Hegemon.Transaction.SmallWoodBalanceBoundary
 import Hegemon.Transaction.SmallWoodCandidateWrapperAdmission
 import Hegemon.Transaction.SmallWoodNoCounterfeit
+import Hegemon.Transaction.SmallWoodNoGrindingSoundness
+import Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction
 import Hegemon.Transaction.SmallWoodPublicStatementBinding
 import Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 import Hegemon.Transaction.SmallWoodProductionSemanticSpec

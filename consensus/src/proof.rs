@@ -1,11 +1,13 @@
+#[cfg(test)]
+use crate::backend_interface::max_native_receipt_root_artifact_bytes;
 use crate::backend_interface::{
     BlockLeafRecordV1, BlockSemanticInputsV1, CommitmentBlockProof, CommitmentBlockProver,
     NativeTxLeafRecord, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
     SerializedStarkInputs, TransactionProof, TxLeafPublicTx, build_tx_leaf_artifact_bytes,
     decode_native_tx_leaf_artifact_bytes, decode_transaction_proof_bytes_exact,
     deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
-    max_native_receipt_root_artifact_bytes, max_native_tx_leaf_artifact_bytes,
-    native_tx_leaf_record_from_artifact, public_replay_v1, public_replay_v2,
+    max_native_tx_leaf_artifact_bytes, native_tx_leaf_record_from_artifact, public_replay_v1,
+    public_replay_v2,
     recursive_block_artifact_verifier_profile_digest_v1 as backend_recursive_block_profile_v1,
     recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
     transaction_proof_digest, transaction_public_inputs_digest,
@@ -19,9 +21,12 @@ use crate::commitment_tree::CommitmentTreeState;
 use crate::error::ProofError;
 use crate::proof_interface::{
     BlockBackendInputs, HeaderProofExt, ProofVerifier, canonical_receipt_from_tx_receipt,
-    experimental_native_receipt_root_verifier_profile,
     experimental_native_tx_leaf_verifier_profile, experimental_tx_leaf_verifier_profile,
     tx_statement_bindings_from_claims, tx_validity_receipts_from_claims, verify_commitments,
+};
+#[cfg(test)]
+use crate::proof_interface::{
+    experimental_native_receipt_root_verifier_profile,
     verify_experimental_native_receipt_root_artifact,
     verify_experimental_native_receipt_root_artifact_from_records,
 };
@@ -397,6 +402,7 @@ fn evaluate_receipt_root_payload_admission(
     Ok(())
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootArtifactAdmissionInput {
     envelope_kind: ProofArtifactKind,
@@ -407,6 +413,7 @@ struct ReceiptRootArtifactAdmissionInput {
     tx_artifact_count_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootArtifactAdmissionRejection {
     ArtifactKindMismatch,
@@ -416,8 +423,8 @@ enum ReceiptRootArtifactAdmissionRejection {
     TransactionProofCountMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootArtifactAdmissionRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::ArtifactKindMismatch => "artifact_kind_mismatch",
@@ -429,6 +436,7 @@ impl ReceiptRootArtifactAdmissionRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_artifact_admission(
     input: ReceiptRootArtifactAdmissionInput,
 ) -> Result<(), ReceiptRootArtifactAdmissionRejection> {
@@ -450,6 +458,7 @@ fn evaluate_receipt_root_artifact_admission(
     Ok(())
 }
 
+#[cfg(test)]
 fn receipt_root_artifact_admission_error(
     input: ReceiptRootArtifactAdmissionInput,
     tx_count: usize,
@@ -487,18 +496,20 @@ fn receipt_root_artifact_admission_error(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootStatementBindingInput {
     statement_commitment_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootStatementBindingRejection {
     StatementCommitmentMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootStatementBindingRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::StatementCommitmentMismatch => "statement_commitment_mismatch",
@@ -506,6 +517,7 @@ impl ReceiptRootStatementBindingRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_statement_binding(
     input: ReceiptRootStatementBindingInput,
 ) -> Result<(), ReceiptRootStatementBindingRejection> {
@@ -516,18 +528,20 @@ fn evaluate_receipt_root_statement_binding(
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ReceiptRootVerifiedMetadataInput {
     verified_leaf_count_matches: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ReceiptRootVerifiedMetadataRejection {
     VerifiedLeafCountMismatch,
 }
 
+#[cfg(test)]
 impl ReceiptRootVerifiedMetadataRejection {
-    #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
             Self::VerifiedLeafCountMismatch => "verified_leaf_count_mismatch",
@@ -535,6 +549,7 @@ impl ReceiptRootVerifiedMetadataRejection {
     }
 }
 
+#[cfg(test)]
 fn evaluate_receipt_root_verified_metadata(
     input: ReceiptRootVerifiedMetadataInput,
 ) -> Result<(), ReceiptRootVerifiedMetadataRejection> {
@@ -1128,6 +1143,7 @@ pub struct RecursiveBlockV2ArtifactBuild {
     pub verifier_profile: VerifierProfileDigest,
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NativeReceiptRootVerifyMode {
     Replay,
@@ -1135,6 +1151,7 @@ enum NativeReceiptRootVerifyMode {
     CrossCheck,
 }
 
+#[cfg(test)]
 impl NativeReceiptRootVerifyMode {
     fn label(self) -> &'static str {
         match self {
@@ -1145,6 +1162,7 @@ impl NativeReceiptRootVerifyMode {
     }
 }
 
+#[cfg(test)]
 fn load_native_receipt_root_verify_mode() -> NativeReceiptRootVerifyMode {
     let Some(raw) = std::env::var("HEGEMON_NATIVE_RECEIPT_ROOT_VERIFY_MODE").ok() else {
         return NativeReceiptRootVerifyMode::VerifiedRecords;
@@ -1165,6 +1183,12 @@ fn load_native_receipt_root_verify_mode() -> NativeReceiptRootVerifyMode {
     }
 }
 
+#[cfg(not(test))]
+pub const fn native_receipt_root_verify_mode_label() -> &'static str {
+    "not_registered"
+}
+
+#[cfg(test)]
 pub fn native_receipt_root_verify_mode_label() -> &'static str {
     load_native_receipt_root_verify_mode().label()
 }
@@ -1244,7 +1268,6 @@ impl Default for VerifierRegistry {
         }));
         registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(NativeTxLeafVerifier));
-        registry.register(Arc::new(ReceiptRootVerifier));
         registry.register(Arc::new(RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV1,
         }));
@@ -1512,8 +1535,10 @@ impl ArtifactVerifier for NativeTxLeafVerifier {
     }
 }
 
+#[cfg(test)]
 struct ReceiptRootVerifier;
 
+#[cfg(test)]
 impl ArtifactVerifier for ReceiptRootVerifier {
     fn kind(&self) -> ProofArtifactKind {
         ProofArtifactKind::ReceiptRoot
@@ -3004,6 +3029,14 @@ mod tests {
     struct LeanProofPolicyVectorFile {
         schema_version: u32,
         proof_policy_cases: Vec<LeanProofPolicyCase>,
+        production_registry_cases: Vec<LeanProductionRegistryCase>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct LeanProductionRegistryCase {
+        artifact_kind: String,
+        expected_registered: bool,
     }
 
     #[derive(Debug, Deserialize)]
@@ -3766,6 +3799,23 @@ mod tests {
         for case in &vectors.proof_policy_cases {
             assert!(names.insert(case.name.clone()));
             verify_lean_proof_policy_case(case);
+        }
+
+        assert_eq!(vectors.production_registry_cases.len(), 5);
+        let registry = VerifierRegistry::default();
+        let mut registry_kinds = BTreeSet::new();
+        for case in &vectors.production_registry_cases {
+            assert!(registry_kinds.insert(case.artifact_kind.clone()));
+            let kind = parse_lean_proof_artifact_kind(&case.artifact_kind);
+            let registered = registry
+                .verifiers
+                .iter()
+                .any(|verifier| verifier.kind() == kind);
+            assert_eq!(
+                registered, case.expected_registered,
+                "{} production registry membership drifted from Lean spec",
+                case.artifact_kind
+            );
         }
     }
 

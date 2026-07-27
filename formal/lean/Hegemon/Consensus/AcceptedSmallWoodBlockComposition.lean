@@ -457,14 +457,14 @@ structure AcceptedDeployedSmallWoodBlock
       forall proof, proof ∈ canonicalTransfers actions ->
         DeployedSmallWoodProofAccepted verifier hashes proof
 
-def DeployedSmallWoodBlockProofSystemSoundness
+def DeployedSmallWoodBlockKnowledgeSoundnessEvidence
     (codec : ProductionActionCodec DeployedSmallWoodProof)
     (verifier : ProductionSmallWoodProofVerifier)
-    (block : AcceptedCanonicalBlock) : Prop :=
+    (block : AcceptedCanonicalBlock) : Type :=
   forall actions,
     decodeCanonicalActionStream codec block.actionBytes = some actions ->
     forall proof, proof ∈ canonicalTransfers actions ->
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier proof.exactMap
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
         proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper
 
 def DeployedSmallWoodBlockPoseidon2HashCollisionResistance
@@ -690,8 +690,8 @@ theorem deployed_smallwood_proof_yields_transaction_relation
     (hashes : ProductionIdentityFunctions)
     (proof : DeployedSmallWoodProof)
     (accepted : DeployedSmallWoodProofAccepted verifier hashes proof)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier proof.exactMap
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier proof.exactMap
         proof.proofBytes proof.serializedPublicInputBytes proof.verifierProfile proof.wrapper) :
     ProductionAcceptedTransactionRelation verifier proof.exactMap
       (productionVerifierPublicValues proof.bound proof.statementFields)
@@ -699,7 +699,7 @@ theorem deployed_smallwood_proof_yields_transaction_relation
   exact accepted_smallwood_proof_yields_transaction_relation
     accepted.canonicalSurface.accepted accepted.exactArtifactAccepted
       accepted.constraintMapBound
-      accepted.constraintPublicValuesBound proofSystemSoundness
+      accepted.constraintPublicValuesBound knowledgeSoundness
 
 structure DeployedNoCounterfeitCriticalPathCertificate
     (hashes : ProductionIdentityFunctions)
@@ -778,7 +778,8 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
     {block : AcceptedCanonicalBlock}
     (accepted :
       AcceptedDeployedSmallWoodBlock codec verifier hashes acceptedParent block)
-    (proofSystemSoundness : DeployedSmallWoodBlockProofSystemSoundness codec verifier block)
+    (knowledgeSoundness :
+      DeployedSmallWoodBlockKnowledgeSoundnessEvidence codec verifier block)
     (poseidon2HashCollisionResistance :
       DeployedSmallWoodBlockPoseidon2HashCollisionResistance codec block) :
     DeployedNoCounterfeitCriticalPathCertificate hashes codec verifier acceptedParent block := by
@@ -797,12 +798,12 @@ theorem accepted_deployed_smallwood_block_yields_no_counterfeit_critical_path
         intro proof membership
         exact deployed_smallwood_proof_yields_transaction_relation verifier hashes proof
           (accepted.decodedProofsAccepted actions decoded proof membership)
-          (proofSystemSoundness actions decoded proof membership), by
+          (knowledgeSoundness actions decoded proof membership), by
         intro proof membership
         exact production_accepted_transaction_relation_exposes_same_witness_semantics
           (deployed_smallwood_proof_yields_transaction_relation verifier hashes proof
             (accepted.decodedProofsAccepted actions decoded proof membership)
-            (proofSystemSoundness actions decoded proof membership)), by
+            (knowledgeSoundness actions decoded proof membership)), by
         intro proof membership
         intro witnessValues semanticConstraints output outputBound active
         have acceptedImage := production_concrete_output_yields_accepted_hash_image

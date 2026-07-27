@@ -5255,14 +5255,9 @@ mod tests {
     }
 
     #[test]
-    fn review_vectors_agree_between_production_and_reference_verifiers() {
-        let dir = std::env::temp_dir().join(format!(
-            "hegemon-native-backend-vectors-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("unnamed")
-        ));
-        let _ = fs::remove_dir_all(&dir);
-        emit_review_vectors(&dir).expect("emit review vectors");
+    fn checked_in_review_vectors_agree_between_production_and_reference_verifiers() {
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/native_backend_vectors");
         let (summary, reference_results) =
             verify_bundle_dir(&dir).expect("reference verifier should run");
         assert_eq!(
@@ -5294,7 +5289,6 @@ mod tests {
                 );
             }
         }
-        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

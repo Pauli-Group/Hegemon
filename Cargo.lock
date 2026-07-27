@@ -4798,6 +4798,7 @@ dependencies = [
  "getrandom 0.3.4",
  "hegemon-field",
  "hex",
+ "num-bigint",
  "postcard",
  "proptest",
  "protocol-versioning",

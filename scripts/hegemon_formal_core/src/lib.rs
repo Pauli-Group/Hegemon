@@ -162,9 +162,9 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("system.da-storage-runtime-semantics", &[]),
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
-    "48241181e5d729f606709afbb568c1074d2852de838c13bacadd7a519aa6f9b5";
+    "c6a98106a930379ef0b4f0445622c07d0ff786e2e1f606d571d7e1c60f95722d";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "ac8698e700262a49b65538267b0906227c2cdbedd73e01adc9fd2c8369be6a54";
+    "3d72ca53e76400a6bc6ede822d24a24d3f15b12a9e388b4a843ec4e3e009fc17";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]

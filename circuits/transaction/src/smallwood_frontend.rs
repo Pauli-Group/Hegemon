@@ -6689,8 +6689,33 @@ mod tests {
         smallwood_binding_transcript_domain_hex: String,
         smallwood_public_statement_domain_hex: String,
         smallwood_field_xof_domain_hex: String,
+        active_no_grinding_soundness: LeanActiveNoGrindingSoundness,
         smallwood_transcript_binding_cases: Vec<LeanSmallwoodTranscriptBindingCase>,
         active_profile_single_field_mutations: Vec<LeanSmallwoodProfileMutationCase>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct LeanActiveNoGrindingSoundness {
+        field_order: u64,
+        row_count: usize,
+        packing_factor: usize,
+        public_value_count: usize,
+        constraint_degree: usize,
+        rho: usize,
+        opened_evaluations: usize,
+        beta: usize,
+        decs_evaluations: usize,
+        decs_opened_evaluations: usize,
+        decs_eta: usize,
+        polynomial_count: usize,
+        constraint_polynomial_degree: usize,
+        lvcs_row_count: usize,
+        lvcs_column_count: usize,
+        epsilon_1_supports_128_bits: bool,
+        epsilon_2_supports_128_bits: bool,
+        epsilon_3_supports_128_bits: bool,
+        epsilon_4_supports_128_bits: bool,
+        aggregate_error_supports_128_bit_work_factor: bool,
     }
 
     #[derive(Debug, serde::Deserialize)]
@@ -8859,6 +8884,36 @@ mod tests {
     fn lean_generated_smallwood_transcript_binding_vectors_match_production() {
         let vectors = load_smallwood_transcript_binding_vectors();
         assert_eq!(vectors.schema_version, 1);
+        let exact = &vectors.active_no_grinding_soundness;
+        assert_eq!(exact.field_order, 0xffff_ffff_0000_0001);
+        assert_eq!(exact.packing_factor, 64);
+        assert_eq!(exact.constraint_degree, 8);
+        assert_eq!(exact.rho, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.rho);
+        assert_eq!(
+            exact.opened_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.nb_opened_evals
+        );
+        assert_eq!(exact.beta, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.beta);
+        assert_eq!(
+            exact.decs_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals
+        );
+        assert_eq!(
+            exact.decs_opened_evaluations,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals
+        );
+        assert_eq!(
+            exact.decs_eta,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_eta
+        );
+        assert!(
+            exact.epsilon_1_supports_128_bits
+                && exact.epsilon_2_supports_128_bits
+                && exact.epsilon_3_supports_128_bits
+                && exact.epsilon_4_supports_128_bits
+                && exact.aggregate_error_supports_128_bit_work_factor,
+            "Lean must prove every active no-grinding term and their aggregate at the 128-bit floor"
+        );
         assert_eq!(
             decode_hex_bytes(&vectors.smallwood_binding_transcript_domain_hex),
             SMALLWOOD_BINDING_TRANSCRIPT_DOMAIN
@@ -9164,6 +9219,87 @@ mod tests {
             SmallwoodFrontendShape::direct_packed64_committed_bindings_inline_merkle_skip_initial_mds_v2(),
         )
         .unwrap();
+        let report = report_smallwood_no_grinding_soundness_v1(
+            &PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            ),
+            material.public_statement.public_value_count as usize,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        )
+        .expect("report active exact SmallWood soundness");
+        let term_checks = crate::smallwood_engine::smallwood_no_grinding_exact_128_bit_term_checks(
+            &PackedStatement::new_with_auxiliary(
+                arithmetization,
+                &material.public_statement.public_values,
+                material.public_statement.lppc_row_count as usize,
+                material.public_statement.lppc_packing_factor as usize,
+                material.public_statement.effective_constraint_degree as usize,
+                &material.linear_constraints.term_offsets,
+                &material.linear_constraints.term_indices,
+                &material.linear_constraints.term_coefficients,
+                &material.linear_constraints.targets,
+                &[],
+                0,
+            ),
+            material.public_statement.public_value_count as usize,
+            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+        )
+        .expect("check active exact SmallWood soundness terms");
+        let aggregate_check =
+            crate::smallwood_engine::smallwood_no_grinding_exact_128_bit_aggregate_check(
+                &PackedStatement::new_with_auxiliary(
+                    arithmetization,
+                    &material.public_statement.public_values,
+                    material.public_statement.lppc_row_count as usize,
+                    material.public_statement.lppc_packing_factor as usize,
+                    material.public_statement.effective_constraint_degree as usize,
+                    &material.linear_constraints.term_offsets,
+                    &material.linear_constraints.term_indices,
+                    &material.linear_constraints.term_coefficients,
+                    &material.linear_constraints.targets,
+                    &[],
+                    0,
+                ),
+                material.public_statement.public_value_count as usize,
+                ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1,
+            )
+            .expect("check aggregate active exact SmallWood soundness");
+        assert_eq!(
+            material.public_statement.lppc_row_count as usize,
+            exact.row_count
+        );
+        assert_eq!(
+            material.public_statement.public_value_count as usize,
+            exact.public_value_count
+        );
+        assert_eq!(report.n_pcs, exact.polynomial_count);
+        assert_eq!(report.d_q, exact.constraint_polynomial_degree);
+        assert_eq!(report.n_rows, exact.lvcs_row_count);
+        assert_eq!(report.n_cols, exact.lvcs_column_count);
+        assert_eq!(
+            term_checks,
+            [
+                exact.epsilon_1_supports_128_bits,
+                exact.epsilon_2_supports_128_bits,
+                exact.epsilon_3_supports_128_bits,
+                exact.epsilon_4_supports_128_bits,
+            ]
+        );
+        assert_eq!(report.meets_128_bit_floor, aggregate_check);
+        assert_eq!(
+            aggregate_check,
+            exact.aggregate_error_supports_128_bit_work_factor
+        );
         let serialized_statement = bincode::serialize(&material.public_statement)
             .expect("serialize SmallWood public statement");
         assert_eq!(

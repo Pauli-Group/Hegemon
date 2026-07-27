@@ -3,6 +3,7 @@ import Hegemon.Transaction.NoteCommitmentInputs
 import Hegemon.Transaction.PublicInputBinding
 import Hegemon.Transaction.SmallWoodProductionSemanticSpec
 import Hegemon.Transaction.StatementHash
+import Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction
 
 set_option maxHeartbeats 0
 set_option maxRecDepth 1000000
@@ -16,6 +17,7 @@ open Hegemon.Transaction.ProofWrapperAdmission
 open Hegemon.Transaction.PublicInputs
 open Hegemon.Transaction.SmallWoodSemanticClosure
 open Hegemon.Transaction.SpendAuthorization
+open Hegemon.Transaction.SmallWoodKnowledgeSoundnessReduction
 
 def activePublicFieldRanges : List PublicFieldRange :=
   [ { name := "input_flags", start := 0, stop := 2 },
@@ -2379,14 +2381,126 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
 structure ProductionSmallWoodProofVerifier where
   accepts : List Byte → List Byte → Digest → ProofWrapperInput → Bool
 
-def DeployedSmallWoodProofSystemSoundnessAssumption
+structure DeployedSmallWoodProtocolStatement where
+  exactMap : ProductionConstraintMap
+  serializedPublicInputBytes : List Byte
+  verifierProfile : Digest
+  wrapper : ProofWrapperInput
+
+def deployedSmallWoodProtocolStatement
+    (exactMap : ProductionConstraintMap)
+    (serializedPublicInputBytes : List Byte)
+    (verifierProfile : Digest)
+    (wrapper : ProofWrapperInput) : DeployedSmallWoodProtocolStatement :=
+  { exactMap
+    serializedPublicInputBytes
+    verifierProfile
+    wrapper }
+
+abbrev DeployedSmallWoodProtocolModel :=
+  ProtocolModel
+    DeployedSmallWoodProtocolStatement
+    (List Byte)
+    (List Byte)
+    (List Nat)
+    (List Nat)
+    (List Nat)
+
+abbrev DeployedSmallWoodPrimitiveFailures :=
+  PrimitiveFailurePredicates DeployedSmallWoodProtocolStatement (List Byte)
+
+structure DeployedSmallWoodKnowledgeSoundnessReduction
     (verifier : ProductionSmallWoodProofVerifier)
     (exactMap : ProductionConstraintMap)
     (proofBytes serializedPublicInputBytes : List Byte)
     (verifierProfile : Digest)
-    (wrapper : ProofWrapperInput) : Prop :=
-  verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true →
-    exists witnessValues, ExactProductionConstraintMapEvaluates exactMap witnessValues
+    (wrapper : ProofWrapperInput) : Type where
+  model : DeployedSmallWoodProtocolModel
+  primitiveFailures : DeployedSmallWoodPrimitiveFailures
+  protocolReduction : KnowledgeSoundnessReduction model primitiveFailures
+  productionVerifierImplementationMismatch : Prop
+  productionAcceptanceRefinesProtocol :
+    verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true →
+      model.verifies
+          (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+            verifierProfile wrapper)
+          proofBytes = true
+        ∨ productionVerifierImplementationMismatch
+  protocolRelationRefinesExactMap :
+    ∀ witnessValues,
+      model.relation
+          (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+            verifierProfile wrapper)
+          witnessValues →
+        ExactProductionConstraintMapEvaluates exactMap witnessValues
+
+def DeployedSmallWoodSoundnessFailure
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (reduction :
+      DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) : Prop :=
+  reduction.productionVerifierImplementationMismatch
+    ∨ ProtocolSoundnessFailure reduction.primitiveFailures
+        (deployedSmallWoodProtocolStatement exactMap serializedPublicInputBytes
+          verifierProfile wrapper)
+        proofBytes
+
+structure DeployedSmallWoodKnowledgeSoundnessEvidence
+    (verifier : ProductionSmallWoodProofVerifier)
+    (exactMap : ProductionConstraintMap)
+    (proofBytes serializedPublicInputBytes : List Byte)
+    (verifierProfile : Digest)
+    (wrapper : ProofWrapperInput) : Type where
+  reduction :
+    DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+      serializedPublicInputBytes verifierProfile wrapper
+  noNamedSoundnessFailure : ¬ DeployedSmallWoodSoundnessFailure reduction
+
+theorem accepted_smallwood_proof_yields_exact_witness_or_named_failure
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (accepted :
+      verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
+    (reduction :
+      DeployedSmallWoodKnowledgeSoundnessReduction verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) :
+    (exists witnessValues,
+        ExactProductionConstraintMapEvaluates exactMap witnessValues)
+      ∨ DeployedSmallWoodSoundnessFailure reduction := by
+  rcases reduction.productionAcceptanceRefinesProtocol accepted with
+    protocolAccepted | implementationMismatch
+  · rcases accepted_protocol_yields_witness_or_named_failure
+      reduction.protocolReduction protocolAccepted with witness | protocolFailure
+    · obtain ⟨witnessValues, _, relation⟩ := witness
+      exact Or.inl ⟨witnessValues,
+        reduction.protocolRelationRefinesExactMap witnessValues relation⟩
+    · exact Or.inr (Or.inr protocolFailure)
+  · exact Or.inr (Or.inl implementationMismatch)
+
+theorem accepted_smallwood_proof_yields_exact_witness_outside_named_failures
+    {verifier : ProductionSmallWoodProofVerifier}
+    {exactMap : ProductionConstraintMap}
+    {proofBytes serializedPublicInputBytes : List Byte}
+    {verifierProfile : Digest}
+    {wrapper : ProofWrapperInput}
+    (accepted :
+      verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
+    (evidence :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
+        serializedPublicInputBytes verifierProfile wrapper) :
+    exists witnessValues,
+      ExactProductionConstraintMapEvaluates exactMap witnessValues := by
+  rcases accepted_smallwood_proof_yields_exact_witness_or_named_failure
+      accepted evidence.reduction with witness | failure
+  · exact witness
+  · exact False.elim (evidence.noNamedSoundnessFailure failure)
 
 theorem accepted_smallwood_proof_yields_exact_semantic_constraints
     {verifier : ProductionSmallWoodProofVerifier}
@@ -2397,12 +2511,14 @@ theorem accepted_smallwood_proof_yields_exact_semantic_constraints
     (accepted :
       verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
     (mapBound : ProductionConstraintMapBound exactMap)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier exactMap proofBytes
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
         serializedPublicInputBytes verifierProfile wrapper) :
     exists witnessValues,
       ProductionSmallWoodSemanticConstraintsSatisfied exactMap witnessValues := by
-  obtain ⟨witnessValues, exactRows⟩ := proofSystemSoundness accepted
+  obtain ⟨witnessValues, exactRows⟩ :=
+    accepted_smallwood_proof_yields_exact_witness_outside_named_failures
+      accepted knowledgeSoundness
   exact ⟨witnessValues,
     production_smallwood_air_rows_are_implementation_equivalent mapBound exactRows⟩
 
@@ -2434,8 +2550,8 @@ theorem accepted_smallwood_proof_yields_transaction_relation
       verifier.accepts proofBytes serializedPublicInputBytes verifierProfile wrapper = true)
     (mapBound : ProductionConstraintMapBound exactMap)
     (publicValuesBound : exactMap.publicValues = canonicalPublicValues)
-    (proofSystemSoundness :
-      DeployedSmallWoodProofSystemSoundnessAssumption verifier exactMap proofBytes
+    (knowledgeSoundness :
+      DeployedSmallWoodKnowledgeSoundnessEvidence verifier exactMap proofBytes
         serializedPublicInputBytes verifierProfile wrapper) :
     ProductionAcceptedTransactionRelation verifier exactMap canonicalPublicValues
       proofBytes serializedPublicInputBytes verifierProfile wrapper :=
@@ -2445,7 +2561,7 @@ theorem accepted_smallwood_proof_yields_transaction_relation
     canonicalPublicValuesBound := publicValuesBound
     exactSemanticConstraints :=
       accepted_smallwood_proof_yields_exact_semantic_constraints
-        artifactAccepted mapBound proofSystemSoundness }
+        artifactAccepted mapBound knowledgeSoundness }
 
 theorem production_accepted_transaction_relation_exposes_same_witness_semantics
     {verifier : ProductionSmallWoodProofVerifier}
