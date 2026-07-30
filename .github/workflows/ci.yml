@@ -321,7 +321,8 @@ jobs:
         run: |
           cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
           cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
-          cargo run -p native-backend-timing --release
+          HEGEMON_TIMING_SAMPLE_COUNT=16 HEGEMON_TIMING_WARMUP_COUNT=4 \
+            cargo run -p native-backend-timing --release
           bash scripts/verify_native_receipt_root_scalability.sh
           cargo +nightly-2026-06-23 fuzz run native_tx_leaf_artifact -- -max_total_time=30
           cargo +nightly-2026-06-23 fuzz run receipt_root_artifact -- -max_total_time=30
