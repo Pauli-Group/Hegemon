@@ -9,7 +9,6 @@ import Hegemon.Bridge.MessageRoot
 import Hegemon.Bridge.MintPayloadAdmission
 import Hegemon.Bridge.MintReplayPolicy
 import Hegemon.Bridge.Replay
-import Hegemon.Consensus.AggregationV5
 import Hegemon.Consensus.CommitmentTreeAppend
 import Hegemon.Consensus.DaRoot
 import Hegemon.Consensus.ForkChoice

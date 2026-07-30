@@ -13,10 +13,19 @@ def smallwoodPublicStatementDomain : List Byte :=
   asciiBytes "hegemon.tx.smallwood-public-statement.v1"
 
 def smallwoodFieldXofDomain : List Byte :=
+  asciiBytes "hegemon.sha512-level5-field-xof.v1"
+
+def historicalFieldXofDomain : List Byte :=
   asciiBytes "hegemon.blake3-field-xof.v1"
 
-def activeCircuitVersion : Nat := 3
-def activeCryptoSuite : Nat := 2
+def consecutiveEvaluationDomain : List Byte :=
+  asciiBytes "hegemon.decs-domain.consecutive.v1"
+
+def radix2EvaluationDomain : List Byte :=
+  asciiBytes "hegemon.decs-domain.radix2-subgroup.v1"
+
+def activeCircuitVersion : Nat := 4
+def activeCryptoSuite : Nat := 3
 
 def arithBridge64V1 : Nat := 0
 def arithDirectPacked64V1 : Nat := 1
@@ -28,6 +37,7 @@ def arithDirectPacked64CompactBindingsSkipInitialMdsV1 : Nat := 6
 def arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 7
 def arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1 : Nat := 8
 def arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 : Nat := 9
+def arithDirectPacked64CompressedLevel5 : Nat := 10
 
 def effectiveConstraintDegree : Nat := 8
 def poseidonWidth : Nat := 12
@@ -35,6 +45,7 @@ def poseidonRate : Nat := 6
 def poseidonSteps : Nat := 31
 def groupedRowsPerPermutation : Nat := 32
 def skipInitialMdsRowsPerPermutation : Nat := 31
+def compressedRowsPerPermutation : Nat := 142
 
 structure NoGrindingProfile where
   rho : Nat
@@ -48,6 +59,16 @@ structure NoGrindingProfile where
 deriving DecidableEq, Repr
 
 def activeProfile : NoGrindingProfile :=
+  { rho := 5,
+    nbOpenedEvals := 5,
+    beta := 7,
+    openingPowBits := 0,
+    decsNbEvals := 1048576,
+    decsNbOpenedEvals := 20,
+    decsEta := 33,
+    decsPowBits := 0 }
+
+def historicalV3Profile : NoGrindingProfile :=
   { rho := 3,
     nbOpenedEvals := 3,
     beta := 2,
@@ -58,14 +79,16 @@ def activeProfile : NoGrindingProfile :=
     decsPowBits := 0 }
 
 def historicalV2Profile : NoGrindingProfile :=
-  { activeProfile with rho := 2, decsNbOpenedEvals := 23 }
+  { historicalV3Profile with rho := 2, decsNbOpenedEvals := 23 }
 
 def legacyProfile : NoGrindingProfile :=
-  { activeProfile with rho := 2, decsNbOpenedEvals := 25 }
+  { historicalV3Profile with rho := 2, decsNbOpenedEvals := 25 }
 
 def profileForArithmetization (arithmetization : Nat) : NoGrindingProfile :=
-  if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
+  if arithmetization = arithDirectPacked64CompressedLevel5 then
     activeProfile
+  else if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
+    historicalV3Profile
   else if arithmetization = arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1 then
     historicalV2Profile
   else
@@ -92,8 +115,22 @@ def arithmetizationLabel (arithmetization : Nat) : List Byte :=
     asciiBytes "candidate-smallwood-direct-packed-128-inline-merkle-compact-bindings-skip-initial-mds"
   else if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
     asciiBytes "candidate-smallwood-direct-packed-64-committed-inline-merkle-bindings-v2"
+  else if arithmetization = arithDirectPacked64CompressedLevel5 then
+    asciiBytes "candidate-smallwood-direct-packed-64-compressed-level5"
   else
     asciiBytes "candidate-smallwood-unknown"
+
+def fieldXofDomainForArithmetization (arithmetization : Nat) : List Byte :=
+  if arithmetization = arithDirectPacked64CompressedLevel5 then
+    smallwoodFieldXofDomain
+  else
+    historicalFieldXofDomain
+
+def evaluationDomainForArithmetization (arithmetization : Nat) : List Byte :=
+  if arithmetization = arithDirectPacked64CompressedLevel5 then
+    radix2EvaluationDomain
+  else
+    consecutiveEvaluationDomain
 
 def poseidonRowsPerPermutation (arithmetization : Nat) : Nat :=
   if arithmetization = arithDirectPacked64CompactBindingsSkipInitialMdsV1 then
@@ -104,6 +141,8 @@ def poseidonRowsPerPermutation (arithmetization : Nat) : Nat :=
     skipInitialMdsRowsPerPermutation
   else if arithmetization = arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 then
     skipInitialMdsRowsPerPermutation
+  else if arithmetization = arithDirectPacked64CompressedLevel5 then
+    compressedRowsPerPermutation
   else
     groupedRowsPerPermutation
 
@@ -117,7 +156,8 @@ def deployedSmallwoodArithmetizationTags : List Nat :=
     arithDirectPacked64CompactBindingsSkipInitialMdsV1,
     arithDirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
     arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
-    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 ]
+    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+    arithDirectPacked64CompressedLevel5 ]
 
 def legacyProfileArithmetizationTags : List Nat :=
   [ arithBridge64V1,
@@ -176,14 +216,13 @@ abbrev ProfileBindingParameters.wellFormed
 def activeProfileBindingParameters : ProfileBindingParameters :=
   { circuitVersion := activeCircuitVersion,
     cryptoSuite := activeCryptoSuite,
-    arithmetization :=
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+    arithmetization := arithDirectPacked64CompressedLevel5,
     constraintDegree := effectiveConstraintDegree,
     profile := activeProfile,
     poseidonWidth := poseidonWidth,
     poseidonRate := poseidonRate,
     poseidonSteps := poseidonSteps,
-    poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation }
+    poseidonRowsPerPermutation := compressedRowsPerPermutation }
 
 def profileBindingParameterBytes
     (parameters : ProfileBindingParameters) : List Byte :=
@@ -201,7 +240,8 @@ def profileMaterialWithParameters
     (parameters : ProfileBindingParameters) : List Byte :=
   smallwoodPublicStatementDomain
     ++ arithmetizationLabel parameters.arithmetization
-    ++ smallwoodFieldXofDomain
+    ++ fieldXofDomainForArithmetization parameters.arithmetization
+    ++ evaluationDomainForArithmetization parameters.arithmetization
     ++ profileBindingParameterBytes parameters
 
 inductive ProfileBindingField
@@ -314,7 +354,7 @@ def ProfileBindingField.mutate
           poseidonSteps := SmallWoodTranscriptBinding.poseidonSteps + 1 }
   | .poseidonRowsPerPermutation =>
       { activeProfileBindingParameters with
-          poseidonRowsPerPermutation := skipInitialMdsRowsPerPermutation + 1 }
+          poseidonRowsPerPermutation := compressedRowsPerPermutation + 1 }
 
 def activeProfileSingleFieldMutationCases :
     List (String × ProfileBindingParameters) :=
@@ -444,7 +484,7 @@ def activeProfileMaterial : List Byte :=
   smallwoodProfileMaterial
     activeCircuitVersion
     activeCryptoSuite
-    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+    arithDirectPacked64CompressedLevel5
 
 def legacyDirectProfileMaterial : List Byte :=
   smallwoodProfileMaterial
@@ -459,14 +499,13 @@ def sampleTranscriptBinding : List Byte :=
   smallwoodTranscriptBinding
     activeCircuitVersion
     activeCryptoSuite
-    arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+    arithDirectPacked64CompressedLevel5
     sampleStatementBytes
 
 def sampleSurface : TranscriptSurface :=
   { circuitVersion := activeCircuitVersion,
     cryptoSuite := activeCryptoSuite,
-    arithmetization :=
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+    arithmetization := arithDirectPacked64CompressedLevel5,
     statementBytes := sampleStatementBytes,
     transcriptBytes := sampleTranscriptBinding }
 
@@ -476,31 +515,52 @@ theorem smallwood_profile_material_binds_version :
     activeProfileMaterial =
       smallwoodPublicStatementDomain
         ++ arithmetizationLabel
-          arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+          arithDirectPacked64CompressedLevel5
         ++ smallwoodFieldXofDomain
+        ++ radix2EvaluationDomain
         ++ u16le activeCircuitVersion
         ++ u16le activeCryptoSuite
-        ++ u64le arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        ++ u64le arithDirectPacked64CompressedLevel5
         ++ u64le effectiveConstraintDegree
         ++ profileBytes activeProfile
         ++ u64le poseidonWidth
         ++ u64le poseidonRate
         ++ u64le poseidonSteps
-        ++ u64le skipInitialMdsRowsPerPermutation := by
+        ++ u64le compressedRowsPerPermutation := by
   decide
 
 theorem smallwood_profile_material_binds_arithmetization :
     activeProfileMaterial != legacyDirectProfileMaterial := by
   decide
 
-theorem active_inline_merkle_profile_uses_active_decs_opening_count :
+theorem active_level5_profile_uses_twenty_decs_openings :
     (profileForArithmetization
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2).decsNbOpenedEvals = 24 := by
+      arithDirectPacked64CompressedLevel5).decsNbOpenedEvals = 20 := by
   rfl
 
-theorem active_inline_merkle_profile_uses_strict_rho_three_floor :
+theorem active_level5_profile_uses_strict_rho_five_floor :
+    (profileForArithmetization
+      arithDirectPacked64CompressedLevel5).rho = 5 := by
+  rfl
+
+theorem active_level5_profile_uses_beta_seven :
+    (profileForArithmetization
+      arithDirectPacked64CompressedLevel5).beta = 7 := by
+  rfl
+
+theorem active_level5_profile_uses_thirty_three_uniform_decs_rows :
+    (profileForArithmetization
+      arithDirectPacked64CompressedLevel5).decsEta = 33 := by
+  rfl
+
+theorem historical_v3_inline_merkle_profile_preserves_rho_three :
     (profileForArithmetization
       arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2).rho = 3 := by
+  rfl
+
+theorem historical_v3_inline_merkle_profile_uses_historical_decs_opening_count :
+    (profileForArithmetization
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2).decsNbOpenedEvals = 24 := by
   rfl
 
 theorem historical_v2_inline_merkle_profile_preserves_rho_two :
@@ -531,7 +591,7 @@ theorem smallwood_transcript_binding_starts_with_domain :
     ⟨transcriptAfterDomain
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         sampleStatementBytes,
       rfl⟩
 
@@ -545,7 +605,7 @@ theorem smallwood_transcript_binding_includes_profile_material :
       transcriptAfterProfile
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         sampleStatementBytes,
       rfl⟩
 
@@ -559,11 +619,11 @@ theorem smallwood_transcript_binding_includes_statement_bytes :
         ++ smallwoodProfileMaterial
           activeCircuitVersion
           activeCryptoSuite
-          arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+          arithDirectPacked64CompressedLevel5,
       transcriptAfterStatement
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         sampleStatementBytes,
       rfl⟩
 
@@ -572,13 +632,13 @@ theorem smallwood_transcript_binding_padding_aligned_to_eight :
       unpaddedTranscript
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         sampleStatementBytes
         ++ paddingBytes
           (unpaddedTranscript
             activeCircuitVersion
             activeCryptoSuite
-            arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+            arithDirectPacked64CompressedLevel5
             sampleStatementBytes) := by
   unfold sampleTranscriptBinding smallwoodTranscriptBinding transcriptAfterDomain
   unfold transcriptAfterProfile transcriptAfterStatement transcriptPadding

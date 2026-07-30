@@ -1,4 +1,5 @@
 import Mathlib.Data.List.Basic
+import Mathlib.Data.Nat.Digits.Lemmas
 
 namespace HegemonCrypto
 namespace CanonicalBytes
@@ -71,6 +72,82 @@ theorem encodeLE_length (width value : Nat) :
 
 def byteListValues (bytes : List Byte) : List Nat :=
   bytes.map Fin.val
+
+theorem byteListValues_append (left right : List Byte) :
+    byteListValues (left ++ right) =
+      byteListValues left ++ byteListValues right := by
+  simp [byteListValues]
+
+theorem byteListValues_singleton (byte : Byte) :
+    byteListValues [byte] = [byte.val] := by
+  rfl
+
+theorem decodeLE_eq_ofDigits (bytes : List Byte) :
+    decodeLE bytes = Nat.ofDigits 256 (byteListValues bytes) := by
+  induction bytes with
+  | nil => rfl
+  | cons byte rest induction =>
+      simp [decodeLE, byteListValues, Nat.ofDigits, induction]
+
+theorem encodeLE_succ (width value : Nat) :
+    encodeLE (width + 1) value =
+      encodeLE width value ++
+        [⟨(value / 256 ^ width) % 256, Nat.mod_lt _ (by decide)⟩] := by
+  simp [encodeLE, List.range_succ]
+
+/-- Decoding a fixed-width little-endian encoding recovers the value modulo its byte width. -/
+theorem decodeLE_encodeLE (width value : Nat) :
+    decodeLE (encodeLE width value) = value % 256 ^ width := by
+  rw [decodeLE_eq_ofDigits]
+  induction width with
+  | zero => simp [encodeLE, byteListValues, Nat.mod_one]
+  | succ width induction =>
+      rw [encodeLE_succ]
+      rw [byteListValues_append, byteListValues_singleton]
+      change
+        Nat.ofDigits 256
+            (byteListValues (encodeLE width value) ++
+              [(value / 256 ^ width) % 256]) =
+          value % 256 ^ (width + 1)
+      rw [Nat.ofDigits_append, induction]
+      simp only [Nat.ofDigits_singleton]
+      rw [show (byteListValues (encodeLE width value)).length = width by
+        simp [byteListValues, encodeLE_length]]
+      let modulus := 256 ^ width
+      have modulusPositive : 0 < modulus := by
+        dsimp [modulus]
+        positivity
+      have remainderBound : value % modulus < modulus :=
+        Nat.mod_lt _ modulusPositive
+      have digitBound : (value / modulus) % 256 < 256 :=
+        Nat.mod_lt _ (by decide)
+      have assembledBound :
+          value % modulus + modulus * ((value / modulus) % 256) <
+            modulus * 256 := by
+        nlinarith
+      have remainderSmall :
+          value % modulus < modulus * 256 := by
+        nlinarith
+      have decomposition :
+          value = value % modulus + modulus * (value / modulus) := by
+        exact (Nat.mod_add_div value modulus).symm
+      rw [pow_succ, show 256 ^ width * 256 = modulus * 256 by rfl]
+      conv_rhs => rw [decomposition]
+      rw [Nat.add_mod]
+      rw [Nat.mod_eq_of_lt remainderSmall]
+      rw [Nat.mul_mod_mul_left]
+      rw [Nat.mod_eq_of_lt assembledBound]
+
+/-- Fixed-width little-endian encoding is injective on the represented integer interval. -/
+theorem encodeLE_injective_of_lt
+    {width left right : Nat}
+    (leftBound : left < 256 ^ width)
+    (rightBound : right < 256 ^ width)
+    (sameEncoding : encodeLE width left = encodeLE width right) :
+    left = right := by
+  have sameDecoded := congrArg decodeLE sameEncoding
+  simpa [decodeLE_encodeLE, Nat.mod_eq_of_lt leftBound,
+    Nat.mod_eq_of_lt rightBound] using sameDecoded
 
 structure PrefixCodec (Value : Type) where
   encode : Value -> List Byte

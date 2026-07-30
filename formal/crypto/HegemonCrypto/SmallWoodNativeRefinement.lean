@@ -9,7 +9,7 @@ This module composes the three deterministic parsers reached before cryptographi
 
 1. the outer bincode `TransactionProof` wrapper;
 2. the current SmallWood candidate wrapper; and
-3. the compact `SMW1` proof.
+3. the active compact `SMW2` proof.
 
 The production-semantics package supplies independently reviewed bincode fixture constructors for
 the outer wrapper.  The research package supplies exact executable codecs for the candidate and
@@ -119,10 +119,10 @@ def cryptoSuiteOffset : Nat :=
     Hegemon.Transaction.ProofWrapperWire.transactionPublicInputsBytes).length - 2
 
 def wrongCircuitVersionArtifactBytes : List Byte :=
-  canonicalActiveArtifactBytes.set circuitVersionOffset 4
+  canonicalActiveArtifactBytes.set circuitVersionOffset 3
 
 def wrongCryptoSuiteArtifactBytes : List Byte :=
-  canonicalActiveArtifactBytes.set cryptoSuiteOffset 3
+  canonicalActiveArtifactBytes.set cryptoSuiteOffset 2
 
 def wrongArithmetizationArtifactBytes : List Byte :=
   activeArtifactBytesFor canonicalMinimalProof.encode

@@ -2,6 +2,7 @@ import Hegemon.Transaction.SmallWoodTranscriptBinding
 
 set_option maxHeartbeats 0
 set_option maxRecDepth 100000
+set_option exponentiation.threshold 512
 
 namespace Hegemon
 namespace Transaction
@@ -10,7 +11,7 @@ namespace SmallWoodNoGrindingSoundness
 open SmallWoodTranscriptBinding
 
 def goldilocksOrder : Nat := 18446744069414584321
-def activeRowCount : Nat := 1531
+def activeRowCount : Nat := 699
 def activePackingFactor : Nat := 64
 def activePublicValueCount : Nat := 78
 def activeConstraintDegree : Nat := 8
@@ -21,10 +22,22 @@ def ceilDiv (numerator denominator : Nat) : Nat :=
 def activeWitnessPolynomialDegree : Nat :=
   activePackingFactor + activeProfile.nbOpenedEvals - 1
 
+def activeBatchedConstraintPolynomialDegree : Nat :=
+  activeConstraintDegree * activeWitnessPolynomialDegree
+
+/--
+Degree of the masked quotient committed through the PCS.  This is not the degree used by the
+PIOP evaluation-soundness term: after cross multiplication, the verifier's consistency
+discrepancy has the full batched-constraint degree.
+-/
 def activeConstraintPolynomialDegree : Nat :=
-  activeConstraintDegree
-      * (activePackingFactor + activeProfile.nbOpenedEvals - 1)
-    - activePackingFactor
+  activeBatchedConstraintPolynomialDegree - activePackingFactor
+
+def activePiopConsistencyDiscrepancyDegree : Nat :=
+  activeBatchedConstraintPolynomialDegree
+
+def activePiopOpeningDomainSize : Nat :=
+  goldilocksOrder - activePackingFactor
 
 def activeLinearPolynomialDegree : Nat :=
   activePackingFactor + activeProfile.nbOpenedEvals - 1
@@ -49,32 +62,43 @@ def activeLvcsRowCount : Nat :=
 def activeLvcsColumnCount : Nat :=
   ceilDiv activeUnstackedColumnCount activeProfile.beta
 
+def activeDecsPolynomialDegree : Nat :=
+  activeLvcsColumnCount + activeProfile.decsNbOpenedEvals - 1
+
 def fallingProduct (value count : Nat) : Nat :=
   (List.range count).foldl (fun product index => product * (value - index)) 1
 
-def supports128BitBound (numerator denominator : Nat) : Prop :=
-  2 ^ 128 * numerator ≤ denominator
+def binomial (value count : Nat) : Nat :=
+  (List.range count).foldl
+    (fun result index => result * (value - index) / (index + 1))
+    1
+
+def supportsBitBound (bits numerator denominator : Nat) : Prop :=
+  2 ^ bits * numerator ≤ denominator
+
+def supports256BitBound (numerator denominator : Nat) : Prop :=
+  supportsBitBound 256 numerator denominator
+
+def supports260BitBound (numerator denominator : Nat) : Prop :=
+  supportsBitBound 260 numerator denominator
 
 def epsilon1Numerator : Nat :=
-  (activeProfile.decsNbEvals + 2 * activeConstraintDegree ^ activeProfile.beta)
-    * (goldilocksOrder + activeLvcsRowCount ^ (activeProfile.decsEta + 1))
+  binomial activeProfile.decsNbEvals (activeDecsPolynomialDegree + 2)
 
 def epsilon1Denominator : Nat :=
-  activeConstraintDegree ^ activeProfile.beta
-    * goldilocksOrder ^ (activeProfile.decsEta + 1)
+  goldilocksOrder ^ activeProfile.decsEta
 
 def epsilon2Numerator : Nat :=
-  goldilocksOrder
-    + (activePackingFactor + activePublicValueCount) ^ (activeProfile.rho + 1)
+  1
 
 def epsilon2Denominator : Nat :=
-  goldilocksOrder ^ (activeProfile.rho + 1)
+  goldilocksOrder ^ activeProfile.rho
 
 def epsilon3Numerator : Nat :=
-  fallingProduct activeConstraintPolynomialDegree activeProfile.nbOpenedEvals
+  fallingProduct activePiopConsistencyDiscrepancyDegree activeProfile.nbOpenedEvals
 
 def epsilon3Denominator : Nat :=
-  fallingProduct goldilocksOrder activeProfile.nbOpenedEvals
+  fallingProduct activePiopOpeningDomainSize activeProfile.nbOpenedEvals
 
 def epsilon4Numerator : Nat :=
   fallingProduct
@@ -93,94 +117,154 @@ def aggregateErrorNumerator : Nat :=
 def aggregateErrorDenominator : Nat :=
   epsilon1Denominator * epsilon2Denominator * epsilon3Denominator * epsilon4Denominator
 
-def supports128BitBoundBool (numerator denominator : Nat) : Bool :=
-  decide (2 ^ 128 * numerator ≤ denominator)
+def supports256BitBoundBool (numerator denominator : Nat) : Bool :=
+  decide (2 ^ 256 * numerator ≤ denominator)
+
+def supports260BitBoundBool (numerator denominator : Nat) : Bool :=
+  decide (2 ^ 260 * numerator ≤ denominator)
 
 def supportsBitsAtQueryBudget
     (bits queries numerator denominator : Nat) : Prop :=
   2 ^ bits * queries * numerator ≤ denominator
 
-theorem active_profile_uses_rho_three :
-    activeProfile.rho = 3 := by
+theorem active_profile_uses_rho_five :
+    activeProfile.rho = 5 := by
   decide
 
-theorem active_witness_polynomial_degree_is_66 :
-    activeWitnessPolynomialDegree = 66 := by
+theorem active_witness_polynomial_degree_is_68 :
+    activeWitnessPolynomialDegree = 68 := by
   decide
 
-theorem active_constraint_polynomial_degree_is_464 :
-    activeConstraintPolynomialDegree = 464 := by
+theorem active_constraint_polynomial_degree_is_480 :
+    activeConstraintPolynomialDegree = 480 := by
   decide
 
-theorem active_linear_polynomial_degree_is_129 :
-    activeLinearPolynomialDegree = 129 := by
+theorem active_batched_constraint_polynomial_degree_is_544 :
+    activeBatchedConstraintPolynomialDegree = 544 := by
   decide
 
-theorem active_polynomial_count_is_1537 :
-    activePolynomialCount = 1537 := by
+theorem active_piop_consistency_discrepancy_degree_is_544 :
+    activePiopConsistencyDiscrepancyDegree = 544 := by
   decide
 
-theorem active_unstacked_column_count_is_1561 :
-    activeUnstackedColumnCount = 1561 := by
+theorem active_piop_opening_domain_size_is_goldilocks_minus_64 :
+    activePiopOpeningDomainSize = 18446744069414584257 := by
   decide
 
-theorem active_lvcs_row_count_is_134 :
-    activeLvcsRowCount = 134 := by
+theorem active_linear_polynomial_degree_is_131 :
+    activeLinearPolynomialDegree = 131 := by
   decide
 
-theorem active_lvcs_column_count_is_781 :
-    activeLvcsColumnCount = 781 := by
+theorem active_polynomial_count_is_709 :
+    activePolynomialCount = 709 := by
   decide
 
-theorem active_epsilon1_supports_128_bits :
-    supports128BitBound epsilon1Numerator epsilon1Denominator := by
-  simp only [supports128BitBound]
+theorem active_unstacked_column_count_is_749 :
+    activeUnstackedColumnCount = 749 := by
   decide
 
-theorem active_epsilon2_supports_128_bits :
-    supports128BitBound epsilon2Numerator epsilon2Denominator := by
-  simp only [supports128BitBound]
+theorem active_lvcs_row_count_is_483 :
+    activeLvcsRowCount = 483 := by
   decide
 
-theorem active_epsilon3_supports_128_bits :
-    supports128BitBound epsilon3Numerator epsilon3Denominator := by
-  simp only [supports128BitBound]
+theorem active_lvcs_column_count_is_107 :
+    activeLvcsColumnCount = 107 := by
   decide
 
-theorem active_epsilon4_supports_128_bits :
-    supports128BitBound epsilon4Numerator epsilon4Denominator := by
-  simp only [supports128BitBound]
+theorem active_decs_polynomial_degree_is_126 :
+    activeDecsPolynomialDegree = 126 := by
   decide
 
-theorem active_single_query_aggregate_error_supports_128_bits :
-    supports128BitBound aggregateErrorNumerator aggregateErrorDenominator := by
-  simp only [supports128BitBound]
+theorem active_decs_binding_subset_size_is_128 :
+    activeDecsPolynomialDegree + 2 = 128 := by
+  decide
+
+theorem active_epsilon1_supports_256_bits :
+    supports256BitBound epsilon1Numerator epsilon1Denominator := by
+  unfold supports256BitBound supportsBitBound
+  decide
+
+theorem active_epsilon2_supports_256_bits :
+    supports256BitBound epsilon2Numerator epsilon2Denominator := by
+  unfold supports256BitBound supportsBitBound
+  decide
+
+theorem active_epsilon3_supports_256_bits :
+    supports256BitBound epsilon3Numerator epsilon3Denominator := by
+  unfold supports256BitBound supportsBitBound
+  decide
+
+theorem active_epsilon4_supports_256_bits :
+    supports256BitBound epsilon4Numerator epsilon4Denominator := by
+  unfold supports256BitBound supportsBitBound
+  decide
+
+theorem active_single_query_aggregate_error_supports_256_bits :
+    supports256BitBound aggregateErrorNumerator aggregateErrorDenominator := by
+  unfold supports256BitBound supportsBitBound
+  decide
+
+theorem active_epsilon1_supports_260_bits :
+    supports260BitBound epsilon1Numerator epsilon1Denominator := by
+  unfold supports260BitBound supportsBitBound
+  decide
+
+theorem active_epsilon2_supports_260_bits :
+    supports260BitBound epsilon2Numerator epsilon2Denominator := by
+  unfold supports260BitBound supportsBitBound
+  decide
+
+theorem active_epsilon3_supports_260_bits :
+    supports260BitBound epsilon3Numerator epsilon3Denominator := by
+  unfold supports260BitBound supportsBitBound
+  decide
+
+theorem active_epsilon4_supports_260_bits :
+    supports260BitBound epsilon4Numerator epsilon4Denominator := by
+  unfold supports260BitBound supportsBitBound
+  decide
+
+theorem active_single_query_aggregate_error_supports_260_bits :
+    supports260BitBound aggregateErrorNumerator aggregateErrorDenominator := by
+  unfold supports260BitBound supportsBitBound
   decide
 
 theorem active_aggregate_error_scales_with_query_budget
     {bits queries : Nat}
-    (budget : 2 ^ bits * queries ≤ 2 ^ 128) :
+    (budget : 2 ^ bits * queries ≤ 2 ^ 256) :
     supportsBitsAtQueryBudget bits queries
       aggregateErrorNumerator aggregateErrorDenominator := by
   unfold supportsBitsAtQueryBudget
   calc
     2 ^ bits * queries * aggregateErrorNumerator ≤
-        2 ^ 128 * aggregateErrorNumerator :=
+        2 ^ 256 * aggregateErrorNumerator :=
       Nat.mul_le_mul_right aggregateErrorNumerator budget
     _ ≤ aggregateErrorDenominator :=
-      active_single_query_aggregate_error_supports_128_bits
+      active_single_query_aggregate_error_supports_256_bits
 
-theorem active_no_grinding_profile_supports_128_bits :
-    supports128BitBound epsilon1Numerator epsilon1Denominator
-      ∧ supports128BitBound epsilon2Numerator epsilon2Denominator
-      ∧ supports128BitBound epsilon3Numerator epsilon3Denominator
-      ∧ supports128BitBound epsilon4Numerator epsilon4Denominator
-      ∧ supports128BitBound aggregateErrorNumerator aggregateErrorDenominator := by
-  exact ⟨active_epsilon1_supports_128_bits,
-    active_epsilon2_supports_128_bits,
-    active_epsilon3_supports_128_bits,
-    active_epsilon4_supports_128_bits,
-    active_single_query_aggregate_error_supports_128_bits⟩
+theorem active_no_grinding_profile_supports_256_bits :
+    supports256BitBound epsilon1Numerator epsilon1Denominator
+      ∧ supports256BitBound epsilon2Numerator epsilon2Denominator
+      ∧ supports256BitBound epsilon3Numerator epsilon3Denominator
+      ∧ supports256BitBound epsilon4Numerator epsilon4Denominator
+      ∧ supports256BitBound aggregateErrorNumerator aggregateErrorDenominator := by
+  exact ⟨active_epsilon1_supports_256_bits,
+    active_epsilon2_supports_256_bits,
+    active_epsilon3_supports_256_bits,
+    active_epsilon4_supports_256_bits,
+    active_single_query_aggregate_error_supports_256_bits⟩
+
+theorem active_no_grinding_profile_supports_260_bits :
+    supports260BitBound epsilon1Numerator epsilon1Denominator
+      ∧ supports260BitBound epsilon2Numerator epsilon2Denominator
+      ∧ supports260BitBound epsilon3Numerator epsilon3Denominator
+      ∧ supports260BitBound epsilon4Numerator epsilon4Denominator
+      ∧ supports260BitBound aggregateErrorNumerator aggregateErrorDenominator := by
+  exact ⟨active_epsilon1_supports_260_bits,
+    active_epsilon2_supports_260_bits,
+    active_epsilon3_supports_260_bits,
+    active_epsilon4_supports_260_bits,
+    active_single_query_aggregate_error_supports_260_bits⟩
 
 end SmallWoodNoGrindingSoundness
 end Transaction

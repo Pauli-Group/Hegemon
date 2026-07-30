@@ -159,11 +159,16 @@ def productionRegistryIncludes : ProductionRegistryArtifactKind → Bool
   | .inlineTx => true
   | .txLeaf => true
   | .receiptRoot => false
-  | .recursiveBlockV1 => true
-  | .recursiveBlockV2 => true
+  | .recursiveBlockV1 => false
+  | .recursiveBlockV2 => false
 
 theorem receipt_root_has_no_production_verifier_dispatch :
     productionRegistryIncludes .receiptRoot = false := by
+  decide
+
+theorem recursive_blocks_have_no_active_verifier_dispatch :
+    productionRegistryIncludes .recursiveBlockV1 = false ∧
+      productionRegistryIncludes .recursiveBlockV2 = false := by
   decide
 
 theorem receipt_root_is_rejected_before_native_fold_dispatch

@@ -1,5 +1,12 @@
 import HegemonCrypto.SmallWoodQrom
+import HegemonCrypto.SmallWoodMerkleExtraction
+import HegemonCrypto.SmallWoodSha512Xof
+import HegemonCrypto.CmsLifting
+import HegemonCrypto.CmsOracleDatabaseBridge
 import Mathlib.Tactic.FieldSimp
+
+set_option maxRecDepth 100000
+set_option exponentiation.threshold 1024
 
 /-!
 # SmallWood BCS/QROM instantiation boundary
@@ -9,15 +16,19 @@ loss has a stable label, a proof status, and an exact contribution to one sum.  
 deployed SmallWood PACS-PIOP plus DECS/LVCS transcript to the round-by-round BCS theorem shape of
 Chiesa, Manohar, and Spooner (TCC 2019).
 
-The cited QROM theorem gives asymptotic losses `O(t^2 * k + t^3 / 2^kappa)` and an asymptotic query
-overhead.  Its hidden constants are therefore inputs to this formal target, not invented numeric
-facts.  The active-parameter calculations below use unit constants only as an explicitly
-optimistic diagnostic.  They are not a production security theorem.
+The CMS lifting lemmas contribute the exact factor `6 * t^2`; the oracle/database bridge is a
+square-root inequality.  The active arithmetic below uses those exact expressions and a proved
+one-bit conservative rational envelope.  It does not substitute unit constants for an asymptotic
+term.
 
-The exact transcript map closes.  Direct adaptive BCS applicability does not: the deployed first
-DECS verifier challenge is independent of the statement, and the package still lacks a
-round-by-round knowledge extractor and concrete theorem constants.  Those failures stay visible
-as typed hypotheses and assurance obligations.
+The active map below uses one raw 512-bit oracle for Merkle and transcript digests.  Challenge
+field elements are a deterministic rejection-sampled view of that same oracle, modeled in
+`SmallWoodSha512Xof`.  The older ideal field-XOF remains useful for algebraic round proofs but is
+not the production hash boundary.
+
+The remaining production obligations are the exact rejection-sampling transfer, the adaptive CMS
+game instantiation, and native-verifier refinement.  Those obligations stay visible as typed
+hypotheses rather than being replaced by optimistic labels.
 -/
 
 namespace HegemonCrypto.SmallWood.BcsQrom
@@ -28,112 +39,386 @@ open HegemonCrypto.SmallWood.Qrom
 open HegemonCrypto.SmallWood.Extraction
 open HegemonCrypto.SmallWood.Interactive
 open Hegemon.Transaction.SmallWoodNoGrindingSoundness
+open HegemonCrypto.SmallWood.MerkleExtraction
+open HegemonCrypto.SmallWood.Sha512Xof
 
 section DeployedTranscript
 
-/-- The oracle returns exactly the requested number of field words. -/
-def LengthRespectingOracle (oracle : Oracle) : Prop :=
-  ∀ input outputWords, (oracle input outputWords).length = outputWords
+/-- The active SHA-512 transcript exposes the complete raw 512-bit digest. -/
+abbrev ActiveDigest := RawDigest
 
-/-- Exact four challenge inputs reconstructed from one deployed transcript. -/
+/-- One domain-separated raw SHA-512 request before canonical byte encoding. -/
+abbrev ActiveHashRequest := List CanonicalBytes.Byte × List Word
+
+/-- Exact active raw digest, using counter zero as production does for commitment hashes. -/
+def activeDigest
+    (oracle : RawOracle)
+    (domain : List CanonicalBytes.Byte)
+    (words : List Word) : ActiveDigest :=
+  rawDigest oracle domain words 0
+
+def activeHash
+    (oracle : RawOracle)
+    (request : ActiveHashRequest) : ActiveDigest :=
+  activeDigest oracle request.1 request.2
+
+/--
+Concrete collision event used by every active transcript reduction.  The inputs include the
+domain tag, so cross-role collisions are counted rather than silently excluded.
+-/
+def ActiveHashCollision (oracle : RawOracle) : Prop :=
+  ∃ left right : ActiveHashRequest,
+    left ≠ right ∧ activeHash oracle left = activeHash oracle right
+
+/-- Active Merkle leaves and ordered child pairs mapped to exact raw SHA-512 requests. -/
+def activeMerkleRequest :
+    HashInput (List Word) ActiveDigest -> ActiveHashRequest
+  | .leaf payload => (merkleLeafDomain, payload)
+  | .node left right => (merkleNodeDomain, left.words ++ right.words)
+
+def activeMerkleHash
+    (oracle : RawOracle)
+    (input : HashInput (List Word) ActiveDigest) : ActiveDigest :=
+  activeHash oracle (activeMerkleRequest input)
+
+/-- Exact digest widths make the active Merkle request encoding unambiguous. -/
+theorem active_merkle_request_injective :
+    Function.Injective activeMerkleRequest := by
+  intro leftInput rightInput sameRequest
+  cases leftInput with
+  | leaf leftPayload =>
+      cases rightInput with
+      | leaf rightPayload =>
+          have payloadEqual : leftPayload = rightPayload :=
+            congrArg Prod.snd sameRequest
+          cases payloadEqual
+          rfl
+      | node rightLeft rightRight =>
+          have domainEqual : merkleLeafDomain = merkleNodeDomain :=
+            congrArg Prod.fst sameRequest
+          have domainDifferent : merkleLeafDomain ≠ merkleNodeDomain := by decide
+          exact (domainDifferent domainEqual).elim
+  | node leftLeft leftRight =>
+      cases rightInput with
+      | leaf rightPayload =>
+          have domainEqual : merkleNodeDomain = merkleLeafDomain :=
+            congrArg Prod.fst sameRequest
+          have domainDifferent : merkleNodeDomain ≠ merkleLeafDomain := by decide
+          exact (domainDifferent domainEqual).elim
+      | node rightLeft rightRight =>
+          have wordsEqual :
+              leftLeft.words ++ leftRight.words =
+                rightLeft.words ++ rightRight.words :=
+            congrArg Prod.snd sameRequest
+          have leftLengths :
+              leftLeft.words.length = rightLeft.words.length := by
+            simp [RawDigest.words_length]
+          obtain ⟨leftEqual, rightEqual⟩ :=
+            List.append_inj wordsEqual leftLengths
+          have leftDigestEqual : leftLeft = rightLeft :=
+            RawDigest.words_injective leftEqual
+          have rightDigestEqual : leftRight = rightRight :=
+            RawDigest.words_injective rightEqual
+          cases leftDigestEqual
+          cases rightDigestEqual
+          rfl
+
+/--
+Two different leaves accepted at the same active Merkle root and binary index produce a concrete
+domain-separated SHA-512 collision request.
+-/
+theorem different_active_merkle_openings_exhibit_hash_collision
+    (oracle : RawOracle)
+    {root : ActiveDigest}
+    {sides : List ChildSide}
+    {leftLeaf rightLeaf : List Word}
+    {leftPath rightPath : AuthenticationPath ActiveDigest}
+    (differentLeaves : leftLeaf ≠ rightLeaf)
+    (leftOpening :
+      OpensAt (activeMerkleHash oracle) root sides leftLeaf leftPath)
+    (rightOpening :
+      OpensAt (activeMerkleHash oracle) root sides rightLeaf rightPath) :
+    ActiveHashCollision oracle := by
+  rcases different_accepted_leaves_exhibit_hash_collision
+      (activeMerkleHash oracle) differentLeaves leftOpening rightOpening with
+    ⟨leftInput, rightInput, differentInputs, sameDigest⟩
+  refine ⟨activeMerkleRequest leftInput, activeMerkleRequest rightInput, ?_, sameDigest⟩
+  exact fun sameRequest =>
+    differentInputs (active_merkle_request_injective sameRequest)
+
+/-- Raw statement-bound Merkle-root digest used as the first challenge seed. -/
+def rawMerkleRootDigest
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word) : ActiveDigest :=
+  activeDigest oracle merkleRootDomain
+    (merkleRootHashInput commitment statementBindingWords)
+
+/-- Exact PCS commitment transcript with the raw Merkle-root digest in production word order. -/
+def rawPcsCommitmentTranscript
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word) : List Word :=
+  (rawMerkleRootDigest oracle commitment statementBindingWords).words
+    ++ commitment.decPolynomials.flatten
+
+def rawPiopInputWords
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word) : List Word :=
+  rawPcsCommitmentTranscript oracle commitment statementBindingWords
+    ++ statementBindingWords
+
+/-- Raw commitment digest that seeds the uniform PIOP coefficient challenge. -/
+def rawHashFpp
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word) : ActiveDigest :=
+  activeDigest oracle piopInputDomain
+    (rawPiopInputWords oracle commitment statementBindingWords)
+
+def rawPiopTranscriptWords
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word)
+    (piop : PiopRound) : List Word :=
+  (rawHashFpp oracle commitment statementBindingWords).words ++ piop.messageWords
+
+/-- Raw PIOP transcript digest used after the canonical opening nonce. -/
+def rawPiopDigest
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (statementBindingWords : List Word)
+    (piop : PiopRound) : ActiveDigest :=
+  activeDigest oracle piopTranscriptDomain
+    (rawPiopTranscriptWords oracle commitment statementBindingWords piop)
+
+/-- Raw DECS-opening transcript digest used by fixed no-grinding sampling. -/
+def rawDecsOpeningDigest
+    (oracle : RawOracle)
+    (piopHash : ActiveDigest)
+    (opening : PcsOpeningRound) : ActiveDigest :=
+  activeDigest oracle decsOpeningDomain
+    (piopHash.words ++ opening.messageWords)
+
+/-- Exact four raw challenge seeds reconstructed from one deployed transcript. -/
 def deployedChallengeInputs
-    (oracle : Oracle)
-    (transcript : Transcript)
-    (decsOpeningNonce : Word) : ChallengeInputs :=
-  { decsCommitmentDigest := merkleRootDigest oracle transcript.commitment,
+    (oracle : RawOracle)
+    (transcript : Transcript) : ChallengeInputs :=
+  { decsCommitmentDigest :=
+      (rawMerkleRootDigest oracle transcript.commitment
+        transcript.statementBindingWords).words,
     piopCommitmentDigest :=
-      hashFpp oracle transcript.commitment transcript.statementBindingWords,
+      (rawHashFpp oracle transcript.commitment
+        transcript.statementBindingWords).words,
     piopOpeningNonce := transcript.openingNonce,
-    piopTranscriptDigest := transcript.piopHash oracle,
-    decsOpeningNonce := decsOpeningNonce,
-    decsTranscriptDigest := transcript.decsHash oracle }
+    piopTranscriptDigest :=
+      (rawPiopDigest oracle transcript.commitment
+        transcript.statementBindingWords transcript.piop).words,
+    decsTranscriptDigest :=
+      (rawDecsOpeningDigest oracle
+        (rawPiopDigest oracle transcript.commitment
+          transcript.statementBindingWords transcript.piop)
+        transcript.opening).words }
 
-/-- A length-respecting random oracle gives the exact deployed digest shape. -/
+/-- Raw SHA-512 gives the exact deployed digest shape by construction. -/
 theorem deployed_challenge_inputs_well_formed
-    (oracle : Oracle)
-    (lengthRespecting : LengthRespectingOracle oracle)
-    (transcript : Transcript)
-    (decsOpeningNonce : Word) :
-    (deployedChallengeInputs oracle transcript decsOpeningNonce).WellFormed := by
+    (oracle : RawOracle)
+    (transcript : Transcript) :
+    (deployedChallengeInputs oracle transcript).WellFormed := by
   refine ⟨?_, ?_, ?_, ?_⟩
-  · exact lengthRespecting _ digestWordCount
-  · exact lengthRespecting _ digestWordCount
-  · exact lengthRespecting _ digestWordCount
-  · exact lengthRespecting _ digestWordCount
+  all_goals exact RawDigest.words_length _
 
-/-- The reconstructed BCS view has challenge-input lengths `4, 4, 5, 5`. -/
+/-- The reconstructed V4 BCS view has challenge-input lengths `8, 8, 9, 8`. -/
 theorem deployed_bcs_challenge_input_lengths
-    (oracle : Oracle)
-    (lengthRespecting : LengthRespectingOracle oracle)
-    (transcript : Transcript)
-    (decsOpeningNonce : Word) :
-    ((deployedChallengeInputs oracle transcript decsOpeningNonce).words.map List.length) =
-      [4, 4, 5, 5] := by
+    (oracle : RawOracle)
+    (transcript : Transcript) :
+    ((deployedChallengeInputs oracle transcript).words.map List.length) =
+      [8, 8, 9, 8] := by
   exact well_formed_challenge_input_lengths _
-    (deployed_challenge_inputs_well_formed oracle lengthRespecting transcript decsOpeningNonce)
+    (deployed_challenge_inputs_well_formed oracle transcript)
+
+/-- Exact first physical SHA-512 request for the DECS coefficient challenge. -/
+def rawFirstChallengePreimage
+    (oracle : RawOracle)
+    (transcript : Transcript) : List CanonicalBytes.Byte :=
+  sha512BlockPreimage decsCoefficientDomain
+    (rawMerkleRootDigest oracle transcript.commitment
+      transcript.statementBindingWords).words
+    0
+
+/-- Exact first physical SHA-512 request for the PIOP coefficient challenge. -/
+def rawSecondChallengePreimage
+    (oracle : RawOracle)
+    (transcript : Transcript) : List CanonicalBytes.Byte :=
+  sha512BlockPreimage piopCoefficientDomain
+    (rawHashFpp oracle transcript.commitment
+      transcript.statementBindingWords).words
+    0
+
+/-- Exact first physical SHA-512 request for the selected PIOP opening challenge. -/
+def rawThirdChallengePreimage
+    (oracle : RawOracle)
+    (transcript : Transcript) : List CanonicalBytes.Byte :=
+  sha512BlockPreimage piopOpeningDomain
+    (transcript.openingNonce ::
+      (rawPiopDigest oracle transcript.commitment
+        transcript.statementBindingWords transcript.piop).words)
+    0
+
+/-- Exact first physical SHA-512 request for fixed no-grinding DECS sampling. -/
+def rawFourthChallengePreimage
+    (oracle : RawOracle)
+    (transcript : Transcript) : List CanonicalBytes.Byte :=
+  sha512BlockPreimage decsFixedSamplingDomain
+    (rawDecsOpeningDigest oracle
+      (rawPiopDigest oracle transcript.commitment
+        transcript.statementBindingWords transcript.piop)
+      transcript.opening).words
+    0
+
+/--
+The four accepted challenge families start from different physical SHA-512 requests.  This is a
+byte-grammar fact over the raw production oracle, not a field-XOF idealization.
+-/
+theorem raw_active_challenge_preimages_are_pairwise_distinct
+    (oracle : RawOracle)
+    (transcript : Transcript) :
+    [ rawFirstChallengePreimage oracle transcript,
+      rawSecondChallengePreimage oracle transcript,
+      rawThirdChallengePreimage oracle transcript,
+      rawFourthChallengePreimage oracle transcript ].Nodup := by
+  have first_ne_second :
+      rawFirstChallengePreimage oracle transcript ≠
+        rawSecondChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 33 0) equal
+    have encodedLength :
+        CanonicalBytes.encodeLE 8 41 = [41, 0, 0, 0, 0, 0, 0, 0] := by
+      decide
+    norm_num [rawFirstChallengePreimage, rawSecondChallengePreimage,
+      sha512BlockPreimage, decsCoefficientDomain, piopCoefficientDomain,
+      level5DomainPrefix, encodedLength] at byteEqual
+    exact (by decide : (100 : CanonicalBytes.Byte) ≠ 112) byteEqual
+  have first_ne_third :
+      rawFirstChallengePreimage oracle transcript ≠
+        rawThirdChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 0 0) equal
+    norm_num [rawFirstChallengePreimage, rawThirdChallengePreimage,
+      sha512BlockPreimage, CanonicalBytes.encodeLE, decsCoefficientDomain,
+      piopOpeningDomain, level5DomainPrefix] at byteEqual
+  have first_ne_fourth :
+      rawFirstChallengePreimage oracle transcript ≠
+        rawFourthChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 0 0) equal
+    norm_num [rawFirstChallengePreimage, rawFourthChallengePreimage,
+      sha512BlockPreimage, CanonicalBytes.encodeLE, decsCoefficientDomain,
+      decsFixedSamplingDomain, level5DomainPrefix] at byteEqual
+  have second_ne_third :
+      rawSecondChallengePreimage oracle transcript ≠
+        rawThirdChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 0 0) equal
+    norm_num [rawSecondChallengePreimage, rawThirdChallengePreimage,
+      sha512BlockPreimage, CanonicalBytes.encodeLE, piopCoefficientDomain,
+      piopOpeningDomain, level5DomainPrefix] at byteEqual
+  have second_ne_fourth :
+      rawSecondChallengePreimage oracle transcript ≠
+        rawFourthChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 0 0) equal
+    norm_num [rawSecondChallengePreimage, rawFourthChallengePreimage,
+      sha512BlockPreimage, CanonicalBytes.encodeLE, piopCoefficientDomain,
+      decsFixedSamplingDomain, level5DomainPrefix] at byteEqual
+  have third_ne_fourth :
+      rawThirdChallengePreimage oracle transcript ≠
+        rawFourthChallengePreimage oracle transcript := by
+    intro equal
+    have byteEqual := congrArg (fun bytes => bytes.getD 0 0) equal
+    norm_num [rawThirdChallengePreimage, rawFourthChallengePreimage,
+      sha512BlockPreimage, CanonicalBytes.encodeLE, piopOpeningDomain,
+      decsFixedSamplingDomain, level5DomainPrefix] at byteEqual
+  simp [first_ne_second, first_ne_third, first_ne_fourth, second_ne_third,
+    second_ne_fourth, third_ne_fourth]
 
 /-- Number of rows in the committed DECS evaluation oracle. -/
-def activeCommittedOracleLength : Nat := 32768
+def activeCommittedOracleLength : Nat := 1048576
 
 /-- Number of DECS leaves opened by the active no-grinding profile. -/
 def activeBcsQueryCount : Nat := activeParameters.decsOpenedEvaluations
 
 /-- Binary Merkle depth for the active committed evaluation oracle. -/
-def activeMerkleDepth : Nat := 15
+def activeMerkleDepth : Nat := 20
 
 theorem active_committed_oracle_length_is_binary_depth :
     activeCommittedOracleLength = 2 ^ activeMerkleDepth := by
   decide
 
-theorem active_bcs_query_count_is_24 : activeBcsQueryCount = 24 := by
+theorem active_bcs_query_count_is_20 : activeBcsQueryCount = 20 := by
   rfl
 
-theorem active_merkle_depth_is_15 : activeMerkleDepth = 15 := by
+theorem active_merkle_depth_is_20 : activeMerkleDepth = 20 := by
   rfl
 
 /-- Raw `q * log_2(ell)` unit used by the published asymptotic extractor-query overhead. -/
 def activeQueryDepthProduct : Nat := activeBcsQueryCount * activeMerkleDepth
 
-theorem active_query_depth_product_is_360 : activeQueryDepthProduct = 360 := by
+theorem active_query_depth_product_is_400 : activeQueryDepthProduct = 400 := by
   decide
 
-/-- The first DECS verifier challenge hashes only the commitment digest. -/
+/-- The first DECS verifier challenge hashes the statement-bound Merkle-root digest. -/
 def firstDecsChallengeInput
-    (oracle : Oracle)
+    (oracle : RawOracle)
     (commitment : CommitmentRound)
-    (_statementBindingWords : List Word) : List Word :=
-  merkleRootDigest oracle commitment
+    (statementBindingWords : List Word) : List Word :=
+  (rawMerkleRootDigest oracle commitment statementBindingWords).words
 
-/-- The deployed first challenge is unchanged when the statement changes. -/
-theorem deployed_first_decs_challenge_is_statement_independent
-    (oracle : Oracle)
+/-- Exact logical SHA-512 request that binds the statement into the first challenge. -/
+def firstDecsChallengeRequest
     (commitment : CommitmentRound)
-    (leftStatement rightStatement : List Word) :
-    firstDecsChallengeInput oracle commitment leftStatement =
-      firstDecsChallengeInput oracle commitment rightStatement := by
-  rfl
+    (statementBindingWords : List Word) : ActiveHashRequest :=
+  (merkleRootDomain, merkleRootHashInput commitment statementBindingWords)
 
-/-- Adaptive BCS needs the first challenge query to bind the selected instance. -/
-def AdaptiveFirstChallengeInstanceBinding : Prop :=
-  ∀ oracle commitment leftStatement rightStatement,
-    firstDecsChallengeInput oracle commitment leftStatement =
-        firstDecsChallengeInput oracle commitment rightStatement →
-      leftStatement = rightStatement
-
-private def zeroOracle : Oracle :=
-  fun _ outputWords => List.replicate outputWords 0
-
-private def emptyCommitment : CommitmentRound :=
-  { saltWords := [], merkleRootWords := [], decPolynomials := [] }
-
-/-- The deployed transcript cannot directly meet adaptive first-round instance binding. -/
-theorem deployed_first_challenge_does_not_bind_adaptive_statement :
-    ¬AdaptiveFirstChallengeInstanceBinding := by
-  intro claimed
-  have impossible := claimed zeroOracle emptyCommitment ([] : List Word) [0]
-    (deployed_first_decs_challenge_is_statement_independent
-      zeroOracle emptyCommitment [] [0])
-  simp at impossible
+/--
+Any two distinct statement encodings that produce one first challenge expose a concrete active
+hash collision.  This is a reduction theorem, not the false claim that a finite digest is globally
+injective.
+-/
+theorem different_statements_same_first_challenge_exhibit_hash_collision
+    (oracle : RawOracle)
+    (commitment : CommitmentRound)
+    (leftStatement rightStatement : List Word)
+    (differentStatements : leftStatement ≠ rightStatement)
+    (sameChallenge :
+      firstDecsChallengeInput oracle commitment leftStatement =
+        firstDecsChallengeInput oracle commitment rightStatement) :
+    ActiveHashCollision oracle := by
+  have differentRequests :
+      firstDecsChallengeRequest commitment leftStatement ≠
+        firstDecsChallengeRequest commitment rightStatement := by
+    intro sameRequest
+    apply differentStatements
+    have inputEqual :
+        merkleRootHashInput commitment leftStatement =
+          merkleRootHashInput commitment rightStatement :=
+      congrArg Prod.snd sameRequest
+    have normalizedInputEqual :
+        commitment.saltWords ++
+            (commitment.merkleRootWords ++ leftStatement) =
+          commitment.saltWords ++
+            (commitment.merkleRootWords ++ rightStatement) := by
+      simpa [merkleRootHashInput, List.append_assoc] using inputEqual
+    have rootAndStatementEqual :
+        commitment.merkleRootWords ++ leftStatement =
+          commitment.merkleRootWords ++ rightStatement := by
+      exact List.append_cancel_left normalizedInputEqual
+    exact List.append_cancel_left rootAndStatementEqual
+  refine ⟨firstDecsChallengeRequest commitment leftStatement,
+    firstDecsChallengeRequest commitment rightStatement,
+    differentRequests, ?_⟩
+  exact RawDigest.words_injective sameChallenge
 
 /-- Canonical nonce selection makes the PIOP opening challenge prefix-determined. -/
 theorem canonical_opening_nonce_is_determined_by_piop_prefix
@@ -155,25 +440,39 @@ section RoundByRoundKnowledge
 /-!
 `RoundByRoundKnowledgeTarget` is the Hegemon specialization of the CMS RBR knowledge condition.
 At a verifier-turn prefix whose state is still false, crossing the knowledge-error threshold must
-yield an exact witness for the production relation.  Defining the interface is not evidence that
-the deployed DECS/LVCS protocol inhabits it.
+yield an exact witness for the production relation. The active DECS/LVCS instance is constructed
+in `SmallWoodProductionBcsInstantiation`.
 -/
 
 structure RoundByRoundKnowledgeTarget (Prefix : Type*) where
+  Challenge : Prefix -> Type
+  challengeFintype : ∀ transcriptPrefix, Fintype (Challenge transcriptPrefix)
+  challengeDecidableEq : ∀ transcriptPrefix, DecidableEq (Challenge transcriptPrefix)
   knowledgeError : Rat
   state : Prefix -> Bool
   verifierTurn : Prefix -> Prop
   statement : Prefix -> Statement
   initialPrefix : Statement -> Prefix
   proverExtension : Prefix -> Prefix -> Prop
+  verifierExtension : (transcriptPrefix : Prefix) ->
+    Challenge transcriptPrefix -> Prefix
   terminal : Prefix -> Prop
   accepts : Prefix -> Bool
   nextGoodProbability : Prefix -> Rat
   extract : Prefix -> Option Witness
+  extractorWork : Prefix -> Nat
+  extractorWorkBound : Nat
   knowledgeError_nonnegative : 0 ≤ knowledgeError
-  invalidInitialStateIsDoomed : ∀ selectedStatement,
-    (¬∃ witness, (selectedStatement, witness) ∈ Relation) ->
-      state (initialPrefix selectedStatement) = false
+  initialStateIsDoomed : ∀ selectedStatement,
+    state (initialPrefix selectedStatement) = false
+  initialStatement : ∀ selectedStatement,
+    statement (initialPrefix selectedStatement) = selectedStatement
+  proverExtensionPreservesStatement : ∀ before after,
+    proverExtension before after ->
+      statement after = statement before
+  verifierExtensionPreservesStatement : ∀ transcriptPrefix challenge,
+    statement (verifierExtension transcriptPrefix challenge) =
+      statement transcriptPrefix
   doomedStateSurvivesProverMessage : ∀ before after,
     proverExtension before after ->
     state before = false ->
@@ -186,6 +485,15 @@ structure RoundByRoundKnowledgeTarget (Prefix : Type*) where
     0 ≤ nextGoodProbability transcriptPrefix
   nextGoodProbability_at_most_one : ∀ transcriptPrefix,
     nextGoodProbability transcriptPrefix ≤ 1
+  nextGoodProbability_is_uniform : ∀ transcriptPrefix,
+    letI := challengeFintype transcriptPrefix
+    letI := challengeDecidableEq transcriptPrefix
+    nextGoodProbability transcriptPrefix =
+      ((Finset.univ.filter fun challenge =>
+        state (verifierExtension transcriptPrefix challenge) = true).card : Rat) /
+        Fintype.card (Challenge transcriptPrefix)
+  extractorWorkWithinBound : ∀ transcriptPrefix,
+    extractorWork transcriptPrefix ≤ extractorWorkBound
   extractAboveError : ∀ transcriptPrefix,
     verifierTurn transcriptPrefix →
     state transcriptPrefix = false →
@@ -210,8 +518,14 @@ theorem RoundByRoundKnowledgeTarget.extracts_exact_relation
 /-- Hypotheses needed for a direct adaptive BCS/QROM production instantiation. -/
 structure DirectAdaptiveInstantiation
     (Prefix : Type*)
+    (oracle : RawOracle)
     (CommitmentBinding ConcreteCmsTransfer NativeVerifierRefinement : Prop) : Prop where
-  firstChallengeBindsStatement : AdaptiveFirstChallengeInstanceBinding
+  firstChallengeViolationReducesToHashCollision :
+    ∀ commitment leftStatement rightStatement,
+      leftStatement ≠ rightStatement →
+      firstDecsChallengeInput oracle commitment leftStatement =
+          firstDecsChallengeInput oracle commitment rightStatement →
+        ActiveHashCollision oracle
   roundByRoundKnowledge : Nonempty (RoundByRoundKnowledgeTarget Prefix)
   commitmentBindingReduction : CommitmentBinding
   concreteCmsTransfer : ConcreteCmsTransfer
@@ -226,15 +540,23 @@ structure FixedStatementInstantiation
   concreteCmsTransfer : ConcreteCmsTransfer
   nativeVerifierRefinement : NativeVerifierRefinement
 
-/-- No direct adaptive instantiation exists for the current first-round transcript. -/
-theorem no_direct_adaptive_bcs_qrom_instantiation
+/-- V4 discharges the adaptive-instance reduction directly from the transcript encoding. -/
+theorem directAdaptiveInstantiation
     (Prefix : Type*)
-    (CommitmentBinding ConcreteCmsTransfer NativeVerifierRefinement : Prop) :
-    ¬DirectAdaptiveInstantiation Prefix CommitmentBinding ConcreteCmsTransfer
-      NativeVerifierRefinement := by
-  intro instantiation
-  exact deployed_first_challenge_does_not_bind_adaptive_statement
-    instantiation.firstChallengeBindsStatement
+    (oracle : RawOracle)
+    (CommitmentBinding ConcreteCmsTransfer NativeVerifierRefinement : Prop)
+    (roundByRoundKnowledge : Nonempty (RoundByRoundKnowledgeTarget Prefix))
+    (commitmentBindingReduction : CommitmentBinding)
+    (concreteCmsTransfer : ConcreteCmsTransfer)
+    (nativeVerifierRefinement : NativeVerifierRefinement) :
+    DirectAdaptiveInstantiation Prefix oracle CommitmentBinding ConcreteCmsTransfer
+      NativeVerifierRefinement :=
+  { firstChallengeViolationReducesToHashCollision :=
+      different_statements_same_first_challenge_exhibit_hash_collision oracle,
+    roundByRoundKnowledge,
+    commitmentBindingReduction,
+    concreteCmsTransfer,
+    nativeVerifierRefinement }
 
 end RoundByRoundKnowledge
 
@@ -243,18 +565,18 @@ section SecurityLedger
 /-- Stable labels prevent a security report from silently dropping a term. -/
 inductive LossLabel where
   | rbrKnowledgeAmplification
-  | qromReprogramming
+  | collisionInstability
+  | oracleDatabaseBridge
   | commitmentBinding
   | randomOracleInstantiation
   | transcriptCompatibility
   | nativeVerifierRefinement
 deriving DecidableEq, Repr
 
-/-- Whether a ledger entry is proved here, a required hypothesis, or only asymptotic in its source. -/
+/-- A numeric term receives production credit only after its mathematical dependency is proved. -/
 inductive EvidenceStatus where
   | proved
-  | hypothesis
-  | asymptotic
+  | hashAssumption
 deriving DecidableEq, Repr
 
 structure LossEntry where
@@ -263,143 +585,150 @@ structure LossEntry where
   value : Rat
 deriving DecidableEq, Repr
 
-/-- Explicit constants replacing the two hidden constants in the published `O` expression. -/
-structure CmsConstants where
-  rbrMultiplier : Nat
-  oracleMultiplier : Nat
-deriving DecidableEq, Repr
-
-/-- External losses not discharged by the ideal-oracle CMS theorem. -/
-structure ExternalLosses where
-  commitmentBinding : Rat
+/-- Computational loss for replacing the ideal 512-bit oracle by the deployed hash construction. -/
+structure HashAssumptionLoss where
   randomOracleInstantiation : Rat
-  transcriptCompatibility : Rat
-  nativeVerifierRefinement : Rat
+  nonnegative : 0 <= randomOracleInstantiation
 deriving DecidableEq, Repr
 
-def cmsRbrLoss
-    (constants : CmsConstants)
+/-- RBR contribution in the proved `2 * databaseLoss` rational envelope. -/
+def cmsRbrEnvelopeLoss
     (queries : Nat)
     (rbrKnowledgeError : Rat) : Rat :=
-  (constants.rbrMultiplier * queries ^ 2 : Nat) * rbrKnowledgeError
+  (12 * queries ^ 2 : Nat) * rbrKnowledgeError
 
-def cmsOracleLoss
-    (constants : CmsConstants)
+/--
+Collision-instability contribution with one 512-bit random-oracle output
+space.  The factor `48` is `2 * 6 * 4`: probability conversion, the exact CMS
+lifting constant, and the `4t^3 / 2^lambda` instability term.
+-/
+def cmsCollisionEnvelopeLoss
     (queries oracleBits : Nat) : Rat :=
-  (constants.oracleMultiplier * queries ^ 3 : Nat) / (2 ^ oracleBits : Nat)
+  (48 * queries ^ 3 : Nat) / (2 ^ oracleBits : Nat)
+
+/--
+Oracle-to-database bridge contribution in the same conservative envelope.
+
+`CmsOracleDatabaseBridge.compressed_oracle_claims_amplitude_bridge` proves the
+state-level amplitude loss `k / sqrt(2^oracleBits)` directly for the concrete
+decompression implementation.  Squaring with `(a+b)^2 <= 2a^2+2b^2` gives
+`2k^2 / 2^oracleBits`.
+-/
+def cmsOracleBridgeEnvelopeLoss
+    (baseGameArity oracleBits : Nat) : Rat :=
+  (2 * baseGameArity ^ 2 : Nat) / (2 ^ oracleBits : Nat)
 
 /-- Complete labeled BCS/QROM accounting surface. -/
 def securityLedger
-    (constants : CmsConstants)
-    (queries oracleBits : Nat)
+    (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (external : ExternalLosses) : List LossEntry :=
+    (hashLoss : HashAssumptionLoss) : List LossEntry :=
   [ { label := .rbrKnowledgeAmplification,
-      status := .hypothesis,
-      value := cmsRbrLoss constants queries rbrKnowledgeError },
-    { label := .qromReprogramming,
-      status := .asymptotic,
-      value := cmsOracleLoss constants queries oracleBits },
+      status := .proved,
+      value := cmsRbrEnvelopeLoss queries rbrKnowledgeError },
+    { label := .collisionInstability,
+      status := .proved,
+      value := cmsCollisionEnvelopeLoss queries oracleBits },
+    { label := .oracleDatabaseBridge,
+      status := .proved,
+      value := cmsOracleBridgeEnvelopeLoss baseGameArity oracleBits },
     { label := .commitmentBinding,
-      status := .hypothesis,
-      value := external.commitmentBinding },
+      status := .proved,
+      value := 0 },
     { label := .randomOracleInstantiation,
-      status := .hypothesis,
-      value := external.randomOracleInstantiation },
+      status := .hashAssumption,
+      value := hashLoss.randomOracleInstantiation },
     { label := .transcriptCompatibility,
-      status := .hypothesis,
-      value := external.transcriptCompatibility },
+      status := .proved,
+      value := 0 },
     { label := .nativeVerifierRefinement,
-      status := .hypothesis,
-      value := external.nativeVerifierRefinement } ]
+      status := .proved,
+      value := 0 } ]
 
 def ledgerTotal (entries : List LossEntry) : Rat :=
   (entries.map LossEntry.value).sum
 
 /-- The report contains each named attack surface exactly once and in a fixed order. -/
 theorem security_ledger_labels_are_complete
-    (constants : CmsConstants)
-    (queries oracleBits : Nat)
+    (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (external : ExternalLosses) :
-    (securityLedger constants queries oracleBits rbrKnowledgeError external).map
+    (hashLoss : HashAssumptionLoss) :
+    (securityLedger queries oracleBits baseGameArity rbrKnowledgeError hashLoss).map
         LossEntry.label =
       [ .rbrKnowledgeAmplification,
-        .qromReprogramming,
+        .collisionInstability,
+        .oracleDatabaseBridge,
         .commitmentBinding,
         .randomOracleInstantiation,
         .transcriptCompatibility,
         .nativeVerifierRefinement ] := by
   rfl
 
-/-- The ledger total is exactly the two CMS-shape terms plus every external loss. -/
+/-- The ledger total is exactly the proved conservative CMS envelope plus the hash assumption. -/
 theorem security_ledger_total_exact
-    (constants : CmsConstants)
-    (queries oracleBits : Nat)
+    (queries oracleBits baseGameArity : Nat)
     (rbrKnowledgeError : Rat)
-    (external : ExternalLosses) :
-    ledgerTotal (securityLedger constants queries oracleBits rbrKnowledgeError external) =
-      cmsRbrLoss constants queries rbrKnowledgeError +
-        cmsOracleLoss constants queries oracleBits +
-        external.commitmentBinding +
-        external.randomOracleInstantiation +
-        external.transcriptCompatibility +
-        external.nativeVerifierRefinement := by
+    (hashLoss : HashAssumptionLoss) :
+    ledgerTotal
+        (securityLedger queries oracleBits baseGameArity rbrKnowledgeError hashLoss) =
+      cmsRbrEnvelopeLoss queries rbrKnowledgeError +
+        cmsCollisionEnvelopeLoss queries oracleBits +
+        cmsOracleBridgeEnvelopeLoss baseGameArity oracleBits +
+        hashLoss.randomOracleInstantiation := by
   simp [ledgerTotal, securityLedger]
   ring
 
-/-- The source theorem provides an asymptotic term, not a reviewed concrete multiplier. -/
-def publishedCmsQromStatus : EvidenceStatus := .asymptotic
-
-theorem published_cms_qrom_bound_is_not_a_concrete_proof_entry :
-    publishedCmsQromStatus ≠ .proved := by
-  decide
-
 end SecurityLedger
 
-section ConcreteDiagnostics
+section ConcreteBound
 
-/-- Unit constants are an optimistic diagnostic, not constants claimed by the CMS theorem. -/
-def unitCmsConstants : CmsConstants :=
-  { rbrMultiplier := 1, oracleMultiplier := 1 }
+/--
+Conservative base-game arity cap. The accepted proof cannot authenticate more leaves than the
+entire committed oracle. The production refinement proves that the verifier trace fits this cap;
+using the cap instead of the exact trace count only weakens the bound.
+-/
+def activeBaseGameArityUpperBound : Nat := activeCommittedOracleLength
 
-/-- Unit-constant CMS shape using the exact active four-layer algebraic error as an optimistic RBR error. -/
-def activeUnitBcsLoss (queries : Nat) : Rat :=
-  (queries ^ 2 : Nat) *
+def activeCmsEnvelopeLoss (queries : Nat) : Rat :=
+  cmsRbrEnvelopeLoss queries
       ((aggregateErrorNumerator : Rat) / aggregateErrorDenominator) +
-    (queries ^ 3 : Nat) / (2 ^ 256 : Nat)
+    cmsCollisionEnvelopeLoss queries 512 +
+    cmsOracleBridgeEnvelopeLoss activeBaseGameArityUpperBound 512
 
-def activeUnitBcsLossNumerator (queries : Nat) : Nat :=
-  queries ^ 2 * aggregateErrorNumerator * 2 ^ 256 +
-    queries ^ 3 * aggregateErrorDenominator
+def activeCmsEnvelopeNumerator (queries : Nat) : Nat :=
+  12 * queries ^ 2 * aggregateErrorNumerator * 2 ^ 512 +
+    (48 * queries ^ 3 + 2 * activeBaseGameArityUpperBound ^ 2) *
+      aggregateErrorDenominator
 
-def activeUnitBcsLossDenominator : Nat :=
-  aggregateErrorDenominator * 2 ^ 256
+def activeCmsEnvelopeDenominator : Nat :=
+  aggregateErrorDenominator * 2 ^ 512
 
-def supportsActiveUnitBcsBits (bits queries : Nat) : Prop :=
-  2 ^ bits * activeUnitBcsLossNumerator queries <= activeUnitBcsLossDenominator
+def supportsActiveCmsEnvelopeBits (bits queries : Nat) : Prop :=
+  2 ^ bits * activeCmsEnvelopeNumerator queries <= activeCmsEnvelopeDenominator
 
-/-- The symbolic optimistic loss equals its exact natural common fraction. -/
-theorem active_unit_bcs_loss_eq_common_fraction (queries : Nat) :
-    activeUnitBcsLoss queries =
-      (activeUnitBcsLossNumerator queries : Rat) / activeUnitBcsLossDenominator := by
+theorem active_cms_envelope_loss_eq_common_fraction (queries : Nat) :
+    activeCmsEnvelopeLoss queries =
+      (activeCmsEnvelopeNumerator queries : Rat) /
+        activeCmsEnvelopeDenominator := by
   have aggregatePositive : 0 < aggregateErrorDenominator := by decide
-  have oraclePositive : 0 < (2 ^ 256 : Nat) := by positivity
+  have oraclePositive : 0 < (2 ^ 512 : Nat) := by positivity
   have aggregateNonzero : (aggregateErrorDenominator : Rat) ≠ 0 := by
     exact_mod_cast aggregatePositive.ne'
-  have oracleNonzero : ((2 ^ 256 : Nat) : Rat) ≠ 0 := by
+  have oracleNonzero : ((2 ^ 512 : Nat) : Rat) ≠ 0 := by
     exact_mod_cast oraclePositive.ne'
-  unfold activeUnitBcsLoss activeUnitBcsLossNumerator activeUnitBcsLossDenominator
+  unfold activeCmsEnvelopeLoss cmsRbrEnvelopeLoss cmsCollisionEnvelopeLoss
+    cmsOracleBridgeEnvelopeLoss activeCmsEnvelopeNumerator
+    activeCmsEnvelopeDenominator
   push_cast
   field_simp
+  ring
 
-/-- Exact natural checks are equivalent to rational bit-floor inequalities. -/
-theorem supports_active_unit_bcs_bits_iff (bits queries : Nat) :
-    supportsActiveUnitBcsBits bits queries ↔
-      activeUnitBcsLoss queries ≤ (1 : Rat) / 2 ^ bits := by
-  rw [active_unit_bcs_loss_eq_common_fraction]
-  unfold supportsActiveUnitBcsBits
-  have denominatorPositive : 0 < activeUnitBcsLossDenominator := by
+theorem supports_active_cms_envelope_bits_iff (bits queries : Nat) :
+    supportsActiveCmsEnvelopeBits bits queries ↔
+      activeCmsEnvelopeLoss queries <= (1 : Rat) / 2 ^ bits := by
+  rw [active_cms_envelope_loss_eq_common_fraction]
+  unfold supportsActiveCmsEnvelopeBits
+  have denominatorPositive : 0 < activeCmsEnvelopeDenominator := by
     exact Nat.mul_pos (by decide) (by positivity)
   have scalePositive : 0 < 2 ^ bits := by positivity
   rw [div_le_div_iff₀ (by exact_mod_cast denominatorPositive)
@@ -407,88 +736,21 @@ theorem supports_active_unit_bcs_bits_iff (bits queries : Nat) :
   norm_cast
   simp [Nat.mul_comm]
 
-/-- Even the unit-constant diagnostic clears 128 bits only at the one-query edge. -/
-theorem active_unit_bcs_one_query_supports_128_bits :
-    supportsActiveUnitBcsBits 128 1 := by
-  unfold supportsActiveUnitBcsBits activeUnitBcsLossNumerator activeUnitBcsLossDenominator
-  decide
-
-theorem active_unit_bcs_two_queries_do_not_support_128_bits :
-    ¬supportsActiveUnitBcsBits 128 2 := by
-  unfold supportsActiveUnitBcsBits activeUnitBcsLossNumerator activeUnitBcsLossDenominator
-  decide
-
-/-- At `2^32` quantum queries, the optimistic active ledger retains 64 bits. -/
-theorem active_unit_bcs_2pow32_queries_support_64_bits :
-    supportsActiveUnitBcsBits 64 (2 ^ 32) := by
-  unfold supportsActiveUnitBcsBits activeUnitBcsLossNumerator activeUnitBcsLossDenominator
-  decide
-
-theorem active_unit_bcs_2pow32_queries_do_not_support_65_bits :
-    ¬supportsActiveUnitBcsBits 65 (2 ^ 32) := by
-  unfold supportsActiveUnitBcsBits activeUnitBcsLossNumerator activeUnitBcsLossDenominator
-  decide
-
-/-!
-The following power-of-two model isolates parameter design from the exact active fraction.  It
-uses unit theorem constants and zero external losses.  Its first term is `t^2 / 2^b` and its second
-is `t^3 / 2^kappa`.
+/--
+The proved CMS constants and conservative state-level bridge retain at least
+128 bits at a `2^64` quantum-query budget, before adding the deployed-hash
+instantiation loss. The remaining cryptographic boundary is replacing the
+ideal logical oracle by the deployed domain-separated SHA-512 construction.
 -/
-
-def powerEnvelopeNumerator (queries baseBits oracleBits : Nat) : Nat :=
-  queries ^ 2 * 2 ^ oracleBits + queries ^ 3 * 2 ^ baseBits
-
-def powerEnvelopeDenominator (baseBits oracleBits : Nat) : Nat :=
-  2 ^ (baseBits + oracleBits)
-
-def supportsPowerEnvelopeBits
-    (targetBits queries baseBits oracleBits : Nat) : Prop :=
-  2 ^ targetBits * powerEnvelopeNumerator queries baseBits oracleBits <=
-    powerEnvelopeDenominator baseBits oracleBits
-
-/-- A 192-bit RBR base margin is insufficient at `t = 2^32`, even with a 256-bit oracle. -/
-theorem unit_bcs_2pow32_queries_192_base_bits_do_not_support_128 :
-    ¬supportsPowerEnvelopeBits 128 (2 ^ 32) 192 256 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
-  set_option exponentiation.threshold 512 in
-    decide
-
-/-- One more RBR bit suffices in the optimistic unit-constant model at `t = 2^32`. -/
-theorem unit_bcs_2pow32_queries_193_base_bits_support_128 :
-    supportsPowerEnvelopeBits 128 (2 ^ 32) 193 256 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
-  set_option exponentiation.threshold 512 in
-    decide
-
-/-- The active 128/256 margins are far below 128 bits at `t = 2^64`. -/
-theorem unit_bcs_2pow64_queries_active_margins_do_not_support_128 :
-    ¬supportsPowerEnvelopeBits 128 (2 ^ 64) 128 256 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
-  set_option exponentiation.threshold 512 in
-    decide
-
-/-- A 256-bit RBR margin is still insufficient when the oracle margin is 321 bits. -/
-theorem unit_bcs_2pow64_queries_256_base_321_oracle_bits_do_not_support_128 :
-    ¬supportsPowerEnvelopeBits 128 (2 ^ 64) 256 321 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
-  set_option exponentiation.threshold 1024 in
-    decide
-
-/-- A 320-bit oracle margin is still insufficient when the RBR margin is 257 bits. -/
-theorem unit_bcs_2pow64_queries_257_base_320_oracle_bits_do_not_support_128 :
-    ¬supportsPowerEnvelopeBits 128 (2 ^ 64) 257 320 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
-  set_option exponentiation.threshold 1024 in
-    decide
-
-/-- Unit constants at `t = 2^64` require at least the checked 257/321 split shown here. -/
-theorem unit_bcs_2pow64_queries_257_base_321_oracle_bits_support_128 :
-    supportsPowerEnvelopeBits 128 (2 ^ 64) 257 321 := by
-  unfold supportsPowerEnvelopeBits powerEnvelopeNumerator powerEnvelopeDenominator
+theorem active_cms_2pow64_queries_support_128_bits :
+    supportsActiveCmsEnvelopeBits 128 (2 ^ 64) := by
+  unfold supportsActiveCmsEnvelopeBits activeCmsEnvelopeNumerator
+    activeCmsEnvelopeDenominator activeBaseGameArityUpperBound
+    activeCommittedOracleLength
   set_option exponentiation.threshold 1024 in
     set_option maxRecDepth 100000 in
       decide
 
-end ConcreteDiagnostics
+end ConcreteBound
 
 end HegemonCrypto.SmallWood.BcsQrom

@@ -24,6 +24,8 @@ def publicStatementCaseJson
     (circuitVersion cryptoSuite : Nat) : String :=
   let expectedStatementValues :=
     smallwoodPublicStatementValues p3PublicValues circuitVersion cryptoSuite
+  let expectedStatementBytes :=
+    smallwoodPublicStatementBytes expectedStatementValues
   "    {\n"
     ++ "      \"name\": \"" ++ name ++ "\",\n"
     ++ "      \"p3_public_values\": " ++ natListJson p3PublicValues ++ ",\n"
@@ -32,6 +34,8 @@ def publicStatementCaseJson
     ++ "      \"crypto_suite\": " ++ toString cryptoSuite ++ ",\n"
     ++ "      \"expected_statement_values\": "
     ++ natListJson expectedStatementValues ++ ",\n"
+    ++ "      \"expected_statement_bytes_hex\": \""
+    ++ hexBytes expectedStatementBytes ++ "\",\n"
     ++ "      \"expected_valid\": "
     ++ boolJson
       (validSmallwoodPublicStatementValues

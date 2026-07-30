@@ -177,7 +177,7 @@ def evaluatorProbeJson : String :=
 def vectorJson : String :=
   "{\n"
     ++ "  \"schema_version\": 1,\n"
-    ++ "  \"arithmetization\": \"DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2\",\n"
+    ++ "  \"arithmetization\": \"DirectPacked64CompressedLevel5\",\n"
     ++ "  \"constraint_families\": "
     ++ stringArrayJson (productionConstraintFamilies.map productionConstraintFamilyName) ++ ",\n"
     ++ canonicalStatementProjectionJson

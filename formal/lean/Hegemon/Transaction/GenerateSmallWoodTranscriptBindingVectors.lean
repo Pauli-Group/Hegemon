@@ -70,7 +70,9 @@ def deployedArithmetizationCases : List (String × Nat) :=
     ("direct-packed128-inline-merkle-compact-bindings-skip-initial-mds-v1-profile-material",
       arithDirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1),
     ("direct-packed64-committed-inline-merkle-bindings-v2-profile-material",
-      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2) ]
+      arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2),
+    ("direct-packed64-compressed-level5-profile-material",
+      arithDirectPacked64CompressedLevel5) ]
 
 def deployedArithmetizationCaseJsons : List String :=
   deployedArithmetizationCases.map fun case =>
@@ -124,19 +126,19 @@ def vectorJson : String :=
         "active-inline-merkle-binding"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         activeCaseStatement,
       transcriptCaseJson
         "statement-byte-mutation-changes-binding"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         statementMutationBytes,
       transcriptCaseJson
         "version-mutation-changes-profile-material"
         (activeCircuitVersion + 1)
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         activeCaseStatement,
       transcriptCaseJson
         "legacy-direct-packed-arithmetization-changes-profile-material"
@@ -148,11 +150,11 @@ def vectorJson : String :=
         "padding-boundary-statement-remains-eight-byte-aligned"
         activeCircuitVersion
         activeCryptoSuite
-        arithDirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        arithDirectPacked64CompressedLevel5
         paddingBoundaryStatementBytes ]
   let cases := coreCases ++ deployedArithmetizationCaseJsons
   "{\n"
-    ++ "  \"schema_version\": 1,\n"
+    ++ "  \"schema_version\": 2,\n"
     ++ "  \"smallwood_binding_transcript_domain_hex\": \""
     ++ hexBytes smallwoodBindingTranscriptDomain ++ "\",\n"
     ++ "  \"smallwood_public_statement_domain_hex\": \""
@@ -177,16 +179,21 @@ def vectorJson : String :=
     ++ toString activeConstraintPolynomialDegree ++ ",\n"
     ++ "    \"lvcs_row_count\": " ++ toString activeLvcsRowCount ++ ",\n"
     ++ "    \"lvcs_column_count\": " ++ toString activeLvcsColumnCount ++ ",\n"
-    ++ "    \"epsilon_1_supports_128_bits\": "
-    ++ boolJson (supports128BitBoundBool epsilon1Numerator epsilon1Denominator) ++ ",\n"
-    ++ "    \"epsilon_2_supports_128_bits\": "
-    ++ boolJson (supports128BitBoundBool epsilon2Numerator epsilon2Denominator) ++ ",\n"
-    ++ "    \"epsilon_3_supports_128_bits\": "
-    ++ boolJson (supports128BitBoundBool epsilon3Numerator epsilon3Denominator) ++ ",\n"
-    ++ "    \"epsilon_4_supports_128_bits\": "
-    ++ boolJson (supports128BitBoundBool epsilon4Numerator epsilon4Denominator) ++ ",\n"
-    ++ "    \"aggregate_error_supports_128_bit_work_factor\": "
-    ++ boolJson (supports128BitBoundBool aggregateErrorNumerator aggregateErrorDenominator) ++ "\n"
+    ++ "    \"decs_polynomial_degree\": " ++ toString activeDecsPolynomialDegree ++ ",\n"
+    ++ "    \"decs_binding_subset_size\": "
+    ++ toString (activeDecsPolynomialDegree + 2) ++ ",\n"
+    ++ "    \"epsilon_1_supports_256_bits\": "
+    ++ boolJson (supports256BitBoundBool epsilon1Numerator epsilon1Denominator) ++ ",\n"
+    ++ "    \"epsilon_2_supports_256_bits\": "
+    ++ boolJson (supports256BitBoundBool epsilon2Numerator epsilon2Denominator) ++ ",\n"
+    ++ "    \"epsilon_3_supports_256_bits\": "
+    ++ boolJson (supports256BitBoundBool epsilon3Numerator epsilon3Denominator) ++ ",\n"
+    ++ "    \"epsilon_4_supports_256_bits\": "
+    ++ boolJson (supports256BitBoundBool epsilon4Numerator epsilon4Denominator) ++ ",\n"
+    ++ "    \"aggregate_error_supports_256_bit_work_factor\": "
+    ++ boolJson (supports256BitBoundBool aggregateErrorNumerator aggregateErrorDenominator) ++ ",\n"
+    ++ "    \"aggregate_error_supports_260_bit_work_factor\": "
+    ++ boolJson (supports260BitBoundBool aggregateErrorNumerator aggregateErrorDenominator) ++ "\n"
     ++ "  },\n"
     ++ "  \"smallwood_transcript_binding_cases\": [\n"
     ++ String.intercalate ",\n" cases ++ "\n"

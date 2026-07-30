@@ -78,8 +78,8 @@ def countedCodec (itemWidth : Nat) : PrefixCodec CountedWire where
   decode_encode := decodeCountedPrefix_encode itemWidth
   decode_sound := decodeCountedPrefix_sound
 
-def maximumArithmetizationVariant : Nat := 9
-def activeArithmetizationVariant : Nat := 9
+def maximumArithmetizationVariant : Nat := 10
+def activeArithmetizationVariant : Nat := 10
 
 structure CurrentCandidateWire where
   arithmetizationBytes : List Byte

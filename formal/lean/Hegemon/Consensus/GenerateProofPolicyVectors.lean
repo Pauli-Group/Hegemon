@@ -20,7 +20,8 @@ def rejectionJson : Option ProofPolicyReject -> String
   | some ProofPolicyReject.emptyBlockCarriesProof => "\"empty_block_carries_proof\""
   | some ProofPolicyReject.missingTransactionProofs => "\"missing_transaction_proofs\""
   | some ProofPolicyReject.transactionProofCountMismatch => "\"transaction_proof_count_mismatch\""
-  | some ProofPolicyReject.unsupportedInlineRequired => "\"unsupported_inline_required\""
+  | some ProofPolicyReject.independentProvenBatch => "\"independent_proven_batch\""
+  | some ProofPolicyReject.independentBlockArtifact => "\"independent_block_artifact\""
   | some ProofPolicyReject.missingProvenBatch => "\"missing_proven_batch\""
   | some ProofPolicyReject.missingTransactionValidityClaims =>
       "\"missing_transaction_validity_claims\""
@@ -80,6 +81,20 @@ def recursiveComplete : ProofPolicyInput :=
     hasTxValidityClaims := true
   }
 
+def independentComplete : ProofPolicyInput :=
+  {
+    txCount := 2,
+    verificationMode := VerificationMode.inlineRequired,
+    hasProvenBatch := false,
+    batchMode := BatchMode.inlineTx,
+    commitmentProofBytes := 0,
+    hasBlockArtifact := false,
+    hasReceiptRoot := false,
+    hasTxValidityArtifacts := true,
+    txValidityArtifactCount := 2,
+    hasTxValidityClaims := false
+  }
+
 def receiptRootComplete : ProofPolicyInput :=
   {
     txCount := 2,
@@ -120,9 +135,12 @@ def vectorJson : String :=
     ++ proofPolicyCaseJson "nonempty-requires-tx-artifacts"
       { recursiveComplete with hasTxValidityArtifacts := false } ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-rejects-tx-artifact-count-mismatch"
-      { recursiveComplete with txValidityArtifactCount := 1 } ++ ",\n"
-    ++ proofPolicyCaseJson "nonempty-rejects-inline-required-mode"
-      { recursiveComplete with verificationMode := VerificationMode.inlineRequired } ++ ",\n"
+      { independentComplete with txValidityArtifactCount := 1 } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-rejects-proven-batch"
+      { independentComplete with hasProvenBatch := true } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-rejects-block-artifact"
+      { independentComplete with hasBlockArtifact := true } ++ ",\n"
+    ++ proofPolicyCaseJson "independent-complete-accepted" independentComplete ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-requires-proven-batch"
       { recursiveComplete with hasProvenBatch := false } ++ ",\n"
     ++ proofPolicyCaseJson "nonempty-requires-tx-validity-claims"

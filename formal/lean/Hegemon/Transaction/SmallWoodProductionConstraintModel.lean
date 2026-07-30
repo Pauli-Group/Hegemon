@@ -209,8 +209,8 @@ def canonicalProductionPublicValuesB (publicValues : List Nat) : Bool :=
     && decide (publicValues.getD 2 2 < 2)
     && decide (publicValues.getD 3 2 < 2)
     && canonicalProductionBalanceSlotAssetsB publicValues
-    && decide (publicValues.getD 76 0 = 3)
-    && decide (publicValues.getD 77 0 = 2)
+    && decide (publicValues.getD 76 0 = 4)
+    && decide (publicValues.getD 77 0 = 3)
 
 def ProductionConstraintMapTemplate.matchesPublicValues
     (template : ProductionConstraintMapTemplate)
@@ -359,13 +359,13 @@ def balanceConstraintSpan : NonlinearConstraintFamilySpan :=
   { name := "balance_conservation", start := 117, count := 4 }
 
 def valueRangeConstraintSpan : NonlinearConstraintFamilySpan :=
-  { name := "value_ranges", start := 121, count := 147 }
+  { name := "value_ranges", start := 121, count := 5 }
 
 def authorizationConstraintSpan : NonlinearConstraintFamilySpan :=
-  { name := "spend_authorization", start := 268, count := 374 }
+  { name := "spend_authorization", start := 126, count := 374 }
 
 def poseidonConstraintSpan : NonlinearConstraintFamilySpan :=
-  { name := "poseidon_transitions", start := 642, count := 1080 }
+  { name := "poseidon_transitions", start := 500, count := 390 }
 
 def productionNonlinearConstraintFamilySpans : List NonlinearConstraintFamilySpan :=
   [ publicShapeConstraintSpan, inputConstraintSpan, outputConstraintSpan,
@@ -391,7 +391,7 @@ def nonlinearFamilyEvaluatesB
 def nonlinearProgramEvaluatesB
     (map : ProductionConstraintMap)
     (witnessValues : List Nat) : Bool :=
-  decide (map.nonlinearConstraintCount = 1722)
+  decide (map.nonlinearConstraintCount = 890)
     && (List.range map.lppcPackingFactor).all fun lane =>
       nonlinearLaneEvaluatesB map witnessValues lane
 

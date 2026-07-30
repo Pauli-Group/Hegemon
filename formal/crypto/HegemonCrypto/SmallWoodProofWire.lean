@@ -6,8 +6,8 @@ namespace SmallWoodProofWire
 
 open CanonicalBytes
 
-def maximumCollectionRows : Nat := 25
-def digestBytes : Nat := 32
+def maximumCollectionRows : Nat := 96
+def digestBytes : Nat := 64
 def fieldOrder : Nat :=
   Hegemon.Transaction.SmallWoodProductionConstraintRefinement.goldilocksModulus
 
@@ -463,7 +463,7 @@ def proofPayloadCodec : PrefixCodec ProofWire :=
   PrefixCodec.xmap
     (PrefixCodec.pair (PrefixCodec.fixed 32)
       (PrefixCodec.pair (PrefixCodec.fixed 4)
-        (PrefixCodec.pair (PrefixCodec.fixed 32)
+        (PrefixCodec.pair (PrefixCodec.fixed digestBytes)
           (PrefixCodec.pair piopCodec
             (PrefixCodec.pair pcsCodec openedWitnessCodec)))))
     (fun value =>
@@ -490,7 +490,7 @@ def proofPayloadCodec : PrefixCodec ProofWire :=
                   | mk piop rest => cases rest; rfl)
     (by intro value; cases value; rfl)
 
-def proofMagic : List Byte := [83, 77, 87, 49]
+def proofMagic : List Byte := [83, 77, 87, 50]
 
 theorem proofMagic_length : proofMagic.length = 4 := by
   rfl

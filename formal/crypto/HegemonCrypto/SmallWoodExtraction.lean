@@ -1,7 +1,11 @@
 import HegemonCrypto.ProductionCCS
 import HegemonCrypto.SmallWoodInteractive
+import HegemonCrypto.SmallWoodPiopExtraction
 import Hegemon.Transaction.SmallWoodNoGrindingSoundness
 import Mathlib.Tactic.FieldSimp
+
+set_option maxRecDepth 100000
+set_option exponentiation.threshold 512
 
 /-!
 # SmallWood extraction boundary and failure composition
@@ -19,7 +23,9 @@ refinement remain separately visible.
 namespace HegemonCrypto.SmallWood.Extraction
 
 open Hegemon.Transaction.SmallWoodProductionConstraintRefinement
+open Hegemon.Transaction.SmallWoodNoGrindingSoundness
 open HegemonCrypto.SmallWood.Interactive
+open HegemonCrypto.SmallWood.PiopExtraction
 
 section ProductionSoundness
 
@@ -111,6 +117,29 @@ theorem production_oracles_sound
         fieldValue (nonlinearConstraintValue statement witness lane constraint) = 0 :=
       naturalZero
     exact canonical.symm.trans reducedZero
+
+/--
+An extracted production oracle that does not encode a valid Hegemon witness can survive the exact
+dynamic five-row PIOP batching stage only within the checked second SmallWood failure term.
+-/
+theorem invalid_production_oracle_batch_failure_probability_le
+    (statement : Statement)
+    (witness : Witness)
+    (encoding : ProductionFieldEncoding (F := Goldilocks))
+    (oracles : ProductionOracleRefinement statement witness encoding)
+    (mapBound : ProductionConstraintMapBound statement)
+    (witnessLength :
+      witness.length = statement.lppcRowCount * statement.lppcPackingFactor)
+    (notRelation : (statement, witness) ∉ Relation) :
+    batchFailureProbability
+        (repetitions := HegemonCrypto.SmallWoodTranscript.activePiopRepetitions)
+        (paddedProductionSystem oracles) ≤
+      (epsilon2Numerator : Rat) / epsilon2Denominator := by
+  apply production_unsatisfied_batch_failure_probability_le oracles
+  intro satisfied
+  exact notRelation
+    (production_oracles_sound statement witness encoding oracles
+      mapBound witnessLength satisfied)
 
 /-- Fully checked output required from the cryptographic straight-line extractor. -/
 structure Certificate (F : Type*) [Field F] (statement : Statement) where
@@ -417,15 +446,15 @@ theorem rational_ratio_le_inverse_of_scaled_le
   norm_cast
   simpa [Nat.mul_comm] using scaledBound
 
-/-- The published active algebraic layer sum is at most one in two to the 128. -/
-theorem active_published_layer_loss_at_most_128_bits :
+/-- The active Level-5 algebraic layer sum is at most one in two to the 256. -/
+theorem active_published_layer_loss_at_most_256_bits :
     (∑ layer ∈ publishedAlgebraicFailureLayers, publishedLayerLoss layer) ≤
-      (1 : ℚ) / 2 ^ 128 := by
+      (1 : ℚ) / 2 ^ 256 := by
   rw [published_layer_loss_sum_exact]
   exact rational_ratio_le_inverse_of_scaled_le
     (by decide : 0 < aggregateErrorDenominator)
-    (by positivity : 0 < 2 ^ 128)
-    active_single_query_aggregate_error_supports_128_bits
+    (by positivity : 0 < 2 ^ 256)
+    active_single_query_aggregate_error_supports_256_bits
 
 /-- The published four-term estimate intentionally excludes hash and executable refinement loss. -/
 theorem published_loss_excludes_external_layers :

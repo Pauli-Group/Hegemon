@@ -16,7 +16,8 @@ inductive ProofPolicyReject where
   | emptyBlockCarriesProof
   | missingTransactionProofs
   | transactionProofCountMismatch
-  | unsupportedInlineRequired
+  | independentProvenBatch
+  | independentBlockArtifact
   | missingProvenBatch
   | missingTransactionValidityClaims
   | legacyInlineBatch
@@ -56,7 +57,12 @@ def evaluateProofPolicy (input : ProofPolicyInput) : Option ProofPolicyReject :=
   else if input.txValidityArtifactCount != input.txCount then
     some ProofPolicyReject.transactionProofCountMismatch
   else if input.verificationMode = VerificationMode.inlineRequired then
-    some ProofPolicyReject.unsupportedInlineRequired
+    if input.hasProvenBatch then
+      some ProofPolicyReject.independentProvenBatch
+    else if input.hasBlockArtifact then
+      some ProofPolicyReject.independentBlockArtifact
+    else
+      none
   else if !input.hasProvenBatch then
     some ProofPolicyReject.missingProvenBatch
   else if !input.hasTxValidityClaims then
@@ -116,16 +122,42 @@ theorem nonempty_rejects_tx_artifact_count_mismatch
   unfold evaluateProofPolicy
   simp [nonzero, hasArtifacts, mismatch]
 
-theorem nonempty_rejects_inline_required
+theorem independent_rejects_proven_batch
     {input : ProofPolicyInput}
     (nonzero : input.txCount ≠ 0)
     (hasArtifacts : input.hasTxValidityArtifacts = true)
     (countMatch : input.txValidityArtifactCount = input.txCount)
-    (mode : input.verificationMode = VerificationMode.inlineRequired) :
+    (mode : input.verificationMode = VerificationMode.inlineRequired)
+    (hasBatch : input.hasProvenBatch = true) :
     evaluateProofPolicy input =
-      some ProofPolicyReject.unsupportedInlineRequired := by
+      some ProofPolicyReject.independentProvenBatch := by
   unfold evaluateProofPolicy
-  simp [nonzero, hasArtifacts, countMatch, mode]
+  simp [nonzero, hasArtifacts, countMatch, mode, hasBatch]
+
+theorem independent_rejects_block_artifact
+    {input : ProofPolicyInput}
+    (nonzero : input.txCount ≠ 0)
+    (hasArtifacts : input.hasTxValidityArtifacts = true)
+    (countMatch : input.txValidityArtifactCount = input.txCount)
+    (mode : input.verificationMode = VerificationMode.inlineRequired)
+    (noBatch : input.hasProvenBatch = false)
+    (hasBlockArtifact : input.hasBlockArtifact = true) :
+    evaluateProofPolicy input =
+      some ProofPolicyReject.independentBlockArtifact := by
+  unfold evaluateProofPolicy
+  simp [nonzero, hasArtifacts, countMatch, mode, noBatch, hasBlockArtifact]
+
+theorem independent_complete_accepts
+    {input : ProofPolicyInput}
+    (nonzero : input.txCount ≠ 0)
+    (hasArtifacts : input.hasTxValidityArtifacts = true)
+    (countMatch : input.txValidityArtifactCount = input.txCount)
+    (mode : input.verificationMode = VerificationMode.inlineRequired)
+    (noBatch : input.hasProvenBatch = false)
+    (noBlockArtifact : input.hasBlockArtifact = false) :
+    evaluateProofPolicy input = none := by
+  unfold evaluateProofPolicy
+  simp [nonzero, hasArtifacts, countMatch, mode, noBatch, noBlockArtifact]
 
 theorem nonempty_requires_proven_batch
     {input : ProofPolicyInput}

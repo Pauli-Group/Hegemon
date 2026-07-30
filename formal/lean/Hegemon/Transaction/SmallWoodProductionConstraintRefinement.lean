@@ -666,7 +666,7 @@ def productionNonlinearConstraintFamilyIndices : List Nat :=
     NonlinearConstraintFamilySpan.indices
 
 theorem production_nonlinear_constraint_families_cover_every_root_exactly_once :
-    productionNonlinearConstraintFamilyIndices = List.range 1722 := by
+    productionNonlinearConstraintFamilyIndices = List.range 890 := by
   native_decide
 
 structure ProductionLinearConstraintSpec where
@@ -706,9 +706,9 @@ def productionOutputCommitmentLane
 def productionOutputCommitmentPoseidonRow
     (map : ProductionConstraintMap)
     (output chunk step limb : Nat) : Nat :=
-  415 +
-    ((productionOutputCommitmentPermutation output chunk / map.lppcPackingFactor) * 31 + step) *
-      12 + limb
+  273
+    + (productionOutputCommitmentPermutation output chunk / map.lppcPackingFactor) * 142
+    + (if step = 0 then limb else 130 + limb)
 
 def productionOutputCommitmentPoseidonIndex
     (map : ProductionConstraintMap)
@@ -810,9 +810,9 @@ def productionInputCommitmentLane
 def productionInputCommitmentPoseidonRow
     (map : ProductionConstraintMap)
     (input chunk step limb : Nat) : Nat :=
-  415 +
-    ((productionInputCommitmentPermutation input chunk / map.lppcPackingFactor) * 31 + step) *
-      12 + limb
+  273
+    + (productionInputCommitmentPermutation input chunk / map.lppcPackingFactor) * 142
+    + (if step = 0 then limb else 130 + limb)
 
 def productionInputCommitmentPoseidonIndex
     (map : ProductionConstraintMap)
@@ -853,56 +853,69 @@ def productionInputValueRow (input : Nat) : Nat :=
 def productionOutputValueRow (output : Nat) : Nat :=
   68 + output * 12
 
-def productionValueRangeBaseRow : Nat := 92
+def productionDenseRangeBaseRow : Nat := 241
 
-def productionRangeLimbCount : Nat := 21
+def productionDenseRangeOrdinaryDigitCount : Nat := 30
 
-def productionRangeLimbBits : Nat := 3
+def productionDenseRangeRowCount : Nat := 5
 
-def productionRangeLimbCoefficient (limb : Nat) : Nat :=
-  2 ^ (limb * productionRangeLimbBits)
+def productionDenseRangeDigitRow (value digit : Nat) : Nat :=
+  productionDenseRangeBaseRow
+    + (value * productionDenseRangeOrdinaryDigitCount + digit) / 64
 
-def productionInputValueRangeRow (input limb : Nat) : Nat :=
-  productionValueRangeBaseRow + input * productionRangeLimbCount + limb
+def productionDenseRangeDigitLane (value digit : Nat) : Nat :=
+  (value * productionDenseRangeOrdinaryDigitCount + digit) % 64
 
-def productionOutputValueRangeRow (output limb : Nat) : Nat :=
-  productionValueRangeBaseRow + (2 + output) * productionRangeLimbCount + limb
+def productionDenseRangeTopRow : Nat :=
+  productionDenseRangeBaseRow + productionDenseRangeRowCount - 1
 
-def productionPublicValueRangeRow (rangeSlot limb : Nat) : Nat :=
-  productionValueRangeBaseRow + (4 + rangeSlot) * productionRangeLimbCount + limb
+def productionDenseRangeCoefficient (digit : Nat) : Nat :=
+  4 ^ digit
 
 def productionWitnessValueReconstructionSpec
     (map : ProductionConstraintMap)
     (valueRow : Nat)
-    (rangeRow : Nat → Nat) : ProductionLinearConstraintSpec :=
+    (valueIndex : Nat) : ProductionLinearConstraintSpec :=
   { termIndices :=
       productionPackedWitnessIndex map valueRow 0 ::
-        (List.range productionRangeLimbCount).map fun limb =>
-          productionPackedWitnessIndex map (rangeRow limb) 0
+        (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+          productionPackedWitnessIndex map
+            (productionDenseRangeDigitRow valueIndex digit)
+            (productionDenseRangeDigitLane valueIndex digit))
+        ++ [productionPackedWitnessIndex map productionDenseRangeTopRow valueIndex]
     termCoefficients :=
-      1 :: (List.range productionRangeLimbCount).map fun limb =>
-        goldilocksModulus - productionRangeLimbCoefficient limb
+      1 :: (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+        goldilocksModulus - productionDenseRangeCoefficient digit)
+        ++ [goldilocksModulus -
+          productionDenseRangeCoefficient productionDenseRangeOrdinaryDigitCount]
     target := 0 }
 
 def productionInputValueReconstructionSpec
     (map : ProductionConstraintMap)
     (input : Nat) : ProductionLinearConstraintSpec :=
   productionWitnessValueReconstructionSpec map
-    (productionInputValueRow input) (productionInputValueRangeRow input)
+    (productionInputValueRow input) input
 
 def productionOutputValueReconstructionSpec
     (map : ProductionConstraintMap)
     (output : Nat) : ProductionLinearConstraintSpec :=
   productionWitnessValueReconstructionSpec map
-    (productionOutputValueRow output) (productionOutputValueRangeRow output)
+    (productionOutputValueRow output) (2 + output)
 
 def productionPublicValueReconstructionSpec
     (map : ProductionConstraintMap)
     (rangeSlot publicValueIndex : Nat) : ProductionLinearConstraintSpec :=
-  { termIndices := (List.range productionRangeLimbCount).map fun limb =>
-      productionPackedWitnessIndex map (productionPublicValueRangeRow rangeSlot limb) 0
-    termCoefficients := (List.range productionRangeLimbCount).map
-      productionRangeLimbCoefficient
+  let valueIndex := 4 + rangeSlot
+  { termIndices :=
+      (List.range productionDenseRangeOrdinaryDigitCount).map (fun digit =>
+        productionPackedWitnessIndex map
+          (productionDenseRangeDigitRow valueIndex digit)
+          (productionDenseRangeDigitLane valueIndex digit))
+        ++ [productionPackedWitnessIndex map productionDenseRangeTopRow valueIndex]
+    termCoefficients :=
+      (List.range productionDenseRangeOrdinaryDigitCount).map
+        productionDenseRangeCoefficient
+        ++ [productionDenseRangeCoefficient productionDenseRangeOrdinaryDigitCount]
     target := publicValueAt map.publicValues publicValueIndex }
 
 def productionMonetaryReconstructionRequiredLinearSpecs
@@ -944,7 +957,7 @@ def productionOutputHashRequiredLinearSpecsPresentB
 
 def productionOutputHashLinearBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && (List.range 2).all fun output =>
       if publicValueAt map.publicValues (2 + output) = 1 then
         productionOutputHashRequiredLinearSpecsPresentB map output
@@ -971,7 +984,7 @@ def productionInputHashRequiredLinearSpecsPresentB
 
 def productionInputHashLinearBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && (List.range 2).all fun input =>
       if publicValueAt map.publicValues input = 1 then
         productionInputHashRequiredLinearSpecsPresentB map input
@@ -987,7 +1000,7 @@ def productionMonetaryReconstructionBindingsBoundB
     (map : ProductionConstraintMap) : Bool :=
   let indices := productionMonetaryReconstructionConstraintIndices map
   let required := productionMonetaryReconstructionRequiredLinearSpecs map
-  decide (map.lppcRowCount = 1531 ∧ map.lppcPackingFactor = 64)
+  decide (map.lppcRowCount = 699 ∧ map.lppcPackingFactor = 64)
     && decide (indices.length = required.length)
     && (List.range required.length).all fun binding =>
       let constraint := indices.getD binding 0
@@ -1110,10 +1123,10 @@ def productionActivityPatternPublicValues (mask : Nat) : List Nat :=
     ++ List.replicate 45 0
     ++ [0, productionBalanceSlotPadding, productionBalanceSlotPadding,
       productionBalanceSlotPadding]
-    ++ List.replicate 23 0 ++ [3, 2]
+    ++ List.replicate 23 0 ++ [4, 3]
 
 def productionPublicValuesWithBalanceSlots (slots : List Nat) : List Nat :=
-  List.replicate 49 0 ++ slots ++ List.replicate 23 0 ++ [3, 2]
+  List.replicate 49 0 ++ slots ++ List.replicate 23 0 ++ [4, 3]
 
 theorem canonical_production_balance_slots_accept_native_and_padding_suffix :
     canonicalProductionPublicValuesB
@@ -1816,20 +1829,20 @@ structure ProductionConcreteSemanticConsequences
     ProductionConcreteBalanceConservation map witnessValues
 
 theorem production_nonlinear_root_count_is_exact :
-    productionNonlinearConstraintRoots.length = 1722 := by
+    productionNonlinearConstraintRoots.length = 890 := by
   rfl
 
 theorem production_equations_give_concrete_span
     {map : ProductionConstraintMap}
     {witnessValues : List Nat}
     (mapBound : ProductionConstraintMapBound map)
-    (nonlinearConstraintCount : map.nonlinearConstraintCount = 1722)
+    (nonlinearConstraintCount : map.nonlinearConstraintCount = 890)
     (equations :
       forall lane, lane < map.lppcPackingFactor →
         forall constraint, constraint < map.nonlinearConstraintCount →
           nonlinearConstraintEquation map witnessValues lane constraint)
     (span : NonlinearConstraintFamilySpan)
-    (spanBound : span.start + span.count ≤ 1722) :
+    (spanBound : span.start + span.count ≤ 890) :
     ProductionConcreteConstraintSpanSatisfied map witnessValues span := by
   intro lane laneBound relativeConstraint relativeBound
   apply production_nonlinear_equation_has_concrete_tree_meaning mapBound
@@ -1853,7 +1866,7 @@ theorem production_balance_equations_give_concrete_conservation
     {map : ProductionConstraintMap}
     {witnessValues : List Nat}
     (mapBound : ProductionConstraintMapBound map)
-    (nonlinearConstraintCount : map.nonlinearConstraintCount = 1722)
+    (nonlinearConstraintCount : map.nonlinearConstraintCount = 890)
     (equations :
       forall lane, lane < map.lppcPackingFactor →
         forall constraint, constraint < map.nonlinearConstraintCount →
@@ -2229,7 +2242,7 @@ structure ProductionSmallWoodSemanticConstraintsSatisfied
     ExactProductionConstraintMapEvaluates map witnessValues
   sparseTableWellFormed : map.sparseTableWellFormed
   witnessLength : witnessValues.length = map.lppcRowCount * map.lppcPackingFactor
-  nonlinearConstraintCount : map.nonlinearConstraintCount = 1722
+  nonlinearConstraintCount : map.nonlinearConstraintCount = 890
   linearConstraintEquations :
     ProductionLinearConstraintEquations map witnessValues
   counterfeitCriticalLinearBindings :
@@ -2296,7 +2309,7 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
     of_decide_eq_true witnessLengthDecision
   simp only [nonlinearProgramEvaluatesB, Bool.and_eq_true] at nonlinearRows
   obtain ⟨nonlinearCountDecision, nonlinearLanes⟩ := nonlinearRows
-  have nonlinearConstraintCount : exactMap.nonlinearConstraintCount = 1722 :=
+  have nonlinearConstraintCount : exactMap.nonlinearConstraintCount = 890 :=
     of_decide_eq_true nonlinearCountDecision
   have linearConstraintEquations :
       forall constraint, constraint < exactMap.linearConstraintCount ->
@@ -2328,7 +2341,7 @@ theorem production_smallwood_air_rows_are_implementation_equivalent
     exact equation
   have familyEquations
       (span : NonlinearConstraintFamilySpan)
-      (spanBound : span.start + span.count <= 1722) :
+      (spanBound : span.start + span.count <= 890) :
       ProductionNonlinearFamilyEquations exactMap witnessValues span := by
     apply production_nonlinear_equations_include_family
       nonlinearConstraintEquations span

@@ -2,6 +2,9 @@ import HegemonCrypto.SmallWoodExtraction
 import HegemonCrypto.SmallWoodTranscript
 import Mathlib.Tactic.FieldSimp
 
+set_option maxRecDepth 100000
+set_option exponentiation.threshold 1024
+
 /-!
 # SmallWood classical random-oracle reduction boundary
 
@@ -24,15 +27,12 @@ open HegemonCrypto.CanonicalBytes
 
 section OracleDomains
 
-/-- Domain used by the deployed binary Merkle compression oracle. -/
-def compressionDomain : List Byte :=
-  [ 104, 101, 103, 101, 109, 111, 110, 46, 115, 109, 97, 108, 108,
-    119, 111, 111, 100, 46, 102, 54, 52, 45, 99, 111, 109, 112, 114,
-    101, 115, 115, 50, 46, 118, 49 ]
+/-- Domain used by the active V4 binary Merkle-node hash. -/
+def compressionDomain : List Byte := merkleNodeDomain
 
-/-- Exact byte preimage used by the generic deployed compression path. -/
+/-- Exact byte preimage used by the active V4 binary Merkle-node hash. -/
 def compressionPreimage (words : List Word) : List Byte :=
-  compressionDomain ++ encodeLE 8 words.length ++ flattenWordBytes words
+  sha512BlockPreimage compressionDomain words 0
 
 theorem deployed_oracle_domains_are_distinct :
     xofDomain ≠ compressionDomain := by
@@ -43,9 +43,12 @@ theorem xof_and_compression_preimages_are_disjoint
     (xofWords compressionWords : List Word) :
     xofPreimage xofWords ≠ compressionPreimage compressionWords := by
   intro equality
-  have prefixEquality := congrArg (List.take 23) equality
-  norm_num [xofPreimage, xofDomain, compressionPreimage, compressionDomain] at prefixEquality
-  exact (by decide : (120 : CanonicalBytes.Byte) ≠ 99) prefixEquality
+  have prefixEquality := congrArg (List.take 8) equality
+  norm_num [xofPreimage, xofDomain, compressionPreimage, compressionDomain,
+    sha512BlockPreimage, piopInputDomain, merkleNodeDomain, level5DomainPrefix,
+    encodeLE] at prefixEquality
+  have firstByteEquality := prefixEquality 0 (by decide)
+  norm_num at firstByteEquality
 
 /-- One query to the variable-output XOF restriction. -/
 abbrev XofRequest := List Word × Nat
@@ -91,8 +94,8 @@ end OracleDomains
 
 section ExactLoss
 
-/-- `lambda = 128` in the published collision term, giving a 256-bit oracle output space. -/
-def activeHashSecurityBits : Nat := 128
+/-- `lambda = 256` in the collision term, matching the active 512-bit SHA-512 output. -/
+def activeHashSecurityBits : Nat := 256
 
 /-- Published random-oracle collision term. -/
 def hashCollisionLoss (queries : Nat) : ℚ :=
@@ -172,15 +175,15 @@ theorem supports_active_rom_bits_iff (bits queries : Nat) :
   norm_cast
   simp [Nat.mul_comm]
 
-/-- With one total oracle query, the exact active ROM expression still clears 128 bits. -/
-theorem active_rom_one_query_supports_128_bits :
-    supportsActiveRomBits 128 1 := by
+/-- With one total oracle query, the exact active ROM expression clears 256 bits. -/
+theorem active_rom_one_query_supports_256_bits :
+    supportsActiveRomBits 256 1 := by
   unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
   decide
 
-/-- With two total oracle queries, the exact active ROM expression no longer clears 128 bits. -/
-theorem active_rom_two_queries_do_not_support_128_bits :
-    ¬supportsActiveRomBits 128 2 := by
+/-- With two total oracle queries, the exact active ROM expression still clears 256 bits. -/
+theorem active_rom_two_queries_support_256_bits :
+    supportsActiveRomBits 256 2 := by
   unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
   decide
 
@@ -203,28 +206,33 @@ theorem active_rom_loss_numerator_mono
   exact Nat.add_le_add collisionBound (by
     simpa [Nat.mul_assoc] using algebraicBound)
 
-/-- No classical-ROM budget of at least two total queries retains a 128-bit bound. -/
-theorem active_rom_at_least_two_queries_do_not_support_128_bits
-    {queries : Nat}
-    (queryBound : 2 ≤ queries) :
-    ¬supportsActiveRomBits 128 queries := by
-  intro claimedBound
-  apply active_rom_two_queries_do_not_support_128_bits
-  unfold supportsActiveRomBits at claimedBound ⊢
-  exact (Nat.mul_le_mul_left (2 ^ 128)
-    (active_rom_loss_numerator_mono queryBound)).trans claimedBound
-
-/-- A `2^32` classical query budget retains only a checked 96-bit floor. -/
-theorem active_rom_2pow32_queries_support_96_bits :
-    supportsActiveRomBits 96 (2 ^ 32) := by
+/-- A `2^32` classical-query budget retains a checked 230-bit floor. -/
+theorem active_rom_2pow32_queries_support_230_bits :
+    supportsActiveRomBits 230 (2 ^ 32) := by
   unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
-  decide
+  set_option exponentiation.threshold 1024 in
+    decide
 
-/-- A `2^64` classical query budget retains only a checked 64-bit floor. -/
-theorem active_rom_2pow64_queries_support_64_bits :
-    supportsActiveRomBits 64 (2 ^ 64) := by
+theorem active_rom_2pow32_queries_do_not_support_231_bits :
+    ¬supportsActiveRomBits 231 (2 ^ 32) := by
   unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
-  decide
+  set_option exponentiation.threshold 1024 in
+    decide
+
+/-- A `2^64` classical-query budget retains a checked 198-bit floor. -/
+theorem active_rom_2pow64_queries_support_198_bits :
+    supportsActiveRomBits 198 (2 ^ 64) := by
+  unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
+  set_option exponentiation.threshold 1024 in
+    set_option maxRecDepth 100000 in
+      decide
+
+theorem active_rom_2pow64_queries_do_not_support_199_bits :
+    ¬supportsActiveRomBits 199 (2 ^ 64) := by
+  unfold supportsActiveRomBits activeRomLossNumerator activeRomLossDenominator
+  set_option exponentiation.threshold 1024 in
+    set_option maxRecDepth 100000 in
+      decide
 
 /-- Exact published layer loss, with executable refinement kept as an explicit external term. -/
 def publishedRomLayerLoss

@@ -736,7 +736,7 @@ private theorem linearEquation_encode_iff
       rw [← castValue]
       exact rowEquation
     have canonicalEquation := congrArg fromGoldilocks castEquation
-    simpa [fromGoldilocks_toGoldilocks,
+    simpa [linearConstraintEquation, fromGoldilocks_toGoldilocks,
       linearConstraintValue_canonical] using canonicalEquation
   · intro equation
     calc
@@ -1208,7 +1208,7 @@ theorem program_complete
     simpa [witnessCellCount] using of_decide_eq_true witnessLengthDecision
   simp only [nonlinearProgramEvaluatesB, Bool.and_eq_true] at nonlinearRows
   obtain ⟨nonlinearCountDecision, nonlinearLanes⟩ := nonlinearRows
-  have nonlinearCount : statement.nonlinearConstraintCount = 1722 :=
+  have nonlinearCount : statement.nonlinearConstraintCount = 890 :=
     of_decide_eq_true nonlinearCountDecision
   intro row
   have rowBound : row.val < programRowCount statement := by
@@ -1237,7 +1237,8 @@ theorem program_complete
       have expandedBound :
           nonlinearRow <
             statement.lppcPackingFactor * statement.nonlinearExpressionCount := by
-        simpa [expressionRowCount] using expressionRowBound
+        unfold expressionRowCount expressionCellCount at expressionRowBound
+        exact expressionRowBound
       have expressionCountPositive : 0 < statement.nonlinearExpressionCount :=
         Nat.pos_of_lt_mul_left expandedBound
       have laneBound :
@@ -1378,7 +1379,7 @@ private theorem linearEquation_decode_iff
       rw [← castValue]
       exact rowEquation
     have canonicalEquation := congrArg fromGoldilocks castEquation
-    simpa [fromGoldilocks_toGoldilocks,
+    simpa [linearConstraintEquation, fromGoldilocks_toGoldilocks,
       linearConstraintValue_canonical] using canonicalEquation
   · intro equation
     calc
@@ -1812,14 +1813,14 @@ private theorem satisfyingAssignment_rootEquation
 private theorem nonlinearConstraintCount_of_mapBound
     {statement : Statement}
     (mapBound : ProductionConstraintMapBound statement) :
-    statement.nonlinearConstraintCount = 1722 := by
+    statement.nonlinearConstraintCount = 890 := by
   have rootLength := nonlinearRootLength_of_mapBound mapBound
   have staticProgram := production_constraint_map_bound_uses_static_nonlinear_program mapBound
   calc
     statement.nonlinearConstraintCount = statement.nonlinearConstraintRoots.length :=
       rootLength.symm
     _ = productionNonlinearConstraintRoots.length := congrArg List.length staticProgram.2
-    _ = 1722 := production_nonlinear_root_count_is_exact
+    _ = 890 := production_nonlinear_root_count_is_exact
 
 /-- Every satisfying quadratic-program assignment extracts to the exact production relation. -/
 theorem program_sound
@@ -1932,8 +1933,8 @@ theorem production_ccs_exact
 
 /-- Bounded fixture for the generated production template without materializing dense matrices. -/
 theorem production_template_compiler_dimensions :
-    (system productionConstraintMapTemplateBase).variableCount = 840641 ∧
-      (system productionConstraintMapTemplateBase).rowCount = 879453 := by
+    (system productionConstraintMapTemplateBase).variableCount = 610561 ∧
+      (system productionConstraintMapTemplateBase).rowCount = 640215 := by
   constructor <;> rfl
 
 /-- Public canonicality fact needed when an extracted field value is reflected to a natural row. -/
@@ -1967,11 +1968,11 @@ theorem sparse_table_well_formed_of_map_bound
     statement.sparseTableWellFormedB = true := by
   exact sparseTableWellFormed_of_mapBound mapBound
 
-/-- A bounded production map has exactly the deployed 1,722 nonlinear roots. -/
+/-- A bounded production map has exactly the deployed 890 nonlinear roots. -/
 theorem nonlinear_constraint_count_of_map_bound
     {statement : Statement}
     (mapBound : ProductionConstraintMapBound statement) :
-    statement.nonlinearConstraintCount = 1722 := by
+    statement.nonlinearConstraintCount = 890 := by
   exact nonlinearConstraintCount_of_mapBound mapBound
 
 end HegemonCrypto.SmallWood.ProductionCCS

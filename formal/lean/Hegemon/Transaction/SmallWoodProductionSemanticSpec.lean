@@ -9,8 +9,8 @@ namespace SmallWoodProductionConstraintRefinement
 
 /-
 The generated constraint table is an extraction of the Rust builder.  This file
-is deliberately independent of that extraction: it restates the deployed V3
-non-Poseidon relation as named Lean code and reconstructs its symbolic program.
+is deliberately independent of that extraction: it restates the deployed V4
+compressed non-Poseidon relation as named Lean code and reconstructs its symbolic program.
 The production-map gate compares the generated roots and expression prefix to
 this program, so regenerating a coherently weakened Rust table cannot bless the
 weakening without also changing this reviewed specification.
@@ -23,9 +23,9 @@ private def merkleDepth : Nat := 32
 private def hashLimbs : Nat := 6
 private def multisigMaxSigners : Nat := 6
 private def signerTagWords : Nat := 5
-private def rangeLimbCount : Nat := 21
+private def denseRangeRowCount : Nat := 5
 private def publicValueCount : Nat := 78
-private def rowCount : Nat := 1531
+private def rowCount : Nat := 699
 
 private def publicInputFlag0 : Nat := 0
 private def publicOutputFlag0 : Nat := 2
@@ -46,12 +46,12 @@ private def publicStableAttestation : Nat := 70
 private def inputRows : Nat := 34
 private def outputRows : Nat := 12
 private def valueRangeBase : Nat := 92
-private def valueRangeRows : Nat := 147
-private def authBase : Nat := valueRangeBase + valueRangeRows
-private def inlineBindingBase : Nat := 388
+private def authBase : Nat := valueRangeBase
+private def denseRangeBase : Nat := authBase + 149
+private def inlineBindingBase : Nat := denseRangeBase + denseRangeRowCount
 private def inlineMerkleGroups : Nat := 6
-private def poseidonRowsBase : Nat := 415
-private def poseidonRowsPerPermutation : Nat := 31
+private def poseidonRowsBase : Nat := 273
+private def poseidonRowsPerPermutation : Nat := 142
 private def poseidonWidth : Nat := 12
 
 private def authModeRows : Nat := 3
@@ -83,12 +83,8 @@ private def rowOutputValue (output : Nat) : Nat := rowOutputBase output
 private def rowOutputAsset (output : Nat) : Nat := rowOutputBase output + 1
 private def rowOutputAuthKey (output limb : Nat) : Nat :=
   rowOutputBase output + outputRows - 4 + limb
-private def rowInputValueRangeLimb (input limb : Nat) : Nat :=
-  valueRangeBase + input * rangeLimbCount + limb
-private def rowOutputValueRangeLimb (output limb : Nat) : Nat :=
-  valueRangeBase + (maxInputs + output) * rangeLimbCount + limb
-private def rowPublicValueRangeLimb (publicValue limb : Nat) : Nat :=
-  valueRangeBase + (maxInputs + maxOutputs + publicValue) * rangeLimbCount + limb
+private def rowDenseRange (row : Nat) : Nat :=
+  denseRangeBase + row
 private def rowAuthMode (mode : Nat) : Nat := authBase + mode
 private def rowAuthInputPrf (input : Nat) : Nat := authBase + authModeRows + input
 private def rowAuthInputKey (input limb : Nat) : Nat :=
@@ -281,14 +277,10 @@ private def signedFromParts (sign magnitude : Nat) : BuildM Nat := do
   let twiceSign <- add sign sign
   sub magnitude (← mul twiceSign magnitude)
 
-private def boundedValueLimb (limb limbIndex : Nat) : BuildM Nat := do
-  if limbIndex + 1 = rangeLimbCount then
-    boolPolynomial limb
-  else
-    let mut result := 1
-    for digit in List.range 8 do
-      result <- mul result (← sub limb (← constant digit))
-    pure result
+private def radixFourDigitPolynomial (digit : Nat) : BuildM Nat := do
+  let accumulator <- mul digit (← sub digit 1)
+  let accumulator <- mul accumulator (← sub digit (← constant 2))
+  mul accumulator (← sub digit (← constant 3))
 
 private def slotActive (signerCountFlags : List Nat) (slot : Nat) : BuildM Nat :=
   addAll (signerCountFlags.drop slot)
@@ -381,15 +373,9 @@ private def buildBalanceAndRangeSemantics : BuildM Unit := do
       let expected <- mul (← mul stableEnabled stableWeight) signedStableIssuance
       emit (← sub delta expected)
 
-  for input in List.range maxInputs do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowInputValueRangeLimb input limb)) limb)
-  for output in List.range maxOutputs do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowOutputValueRangeLimb output limb)) limb)
-  for publicIndex in List.range 3 do
-    for limb in List.range rangeLimbCount do
-      emit (← boundedValueLimb (witnessRow (rowPublicValueRangeLimb publicIndex limb)) limb)
+  for row in List.range (denseRangeRowCount - 1) do
+    emit (← radixFourDigitPolynomial (witnessRow (rowDenseRange row)))
+  emit (← boolPolynomial (witnessRow (rowDenseRange (denseRangeRowCount - 1))))
 
 private def buildAuthorizationSemantics : BuildM Unit := do
   let authStart := (← get).roots.length
@@ -589,7 +575,7 @@ def productionSemanticProgram : ProductionSemanticProgramBuilder :=
     buildAuthorizationSemantics
   (build.run initialBuilder).2
 
-def productionSemanticConstraintCount : Nat := 642
+def productionSemanticConstraintCount : Nat := 500
 
 def productionSemanticProgramBoundB (map : ProductionConstraintMap) : Bool :=
   decide (productionSemanticProgram.roots.length = productionSemanticConstraintCount)

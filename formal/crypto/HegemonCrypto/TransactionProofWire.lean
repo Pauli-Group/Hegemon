@@ -348,8 +348,8 @@ deriving DecidableEq, Repr
 
 namespace ActiveAcceptedProofWire
 
-def activeCircuitVersion : Nat := 3
-def activeCryptoSuite : Nat := 2
+def activeCircuitVersion : Nat := 4
+def activeCryptoSuite : Nat := 3
 
 def encode (artifact : ActiveAcceptedProofWire) : List Byte :=
   artifact.wrapper.encode

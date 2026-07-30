@@ -46,7 +46,7 @@ def zeroPcs : PcsWire :=
 def canonicalMinimalProof : ProofWire :=
   { saltBytes := zeroBytes 32,
     nonceBytes := zeroBytes 4,
-    piopHashBytes := zeroBytes 32,
+    piopHashBytes := zeroBytes digestBytes,
     piop := zeroPiop,
     pcs := zeroPcs,
     openedWitness := .none }
@@ -57,7 +57,7 @@ def invalidZeroShapeProof : ProofWire :=
 
 def excessiveRowsProof : ProofWire :=
   { canonicalMinimalProof with
-      piop := { zeroPiop with polynomialHighs := matrix 26 1 } }
+      piop := { zeroPiop with polynomialHighs := matrix 97 1 } }
 
 def noncanonicalFieldProof : ProofWire :=
   { canonicalMinimalProof with
@@ -70,7 +70,7 @@ def emptyAuthPathProof : ProofWire :=
       pcs := { zeroPcs with decs := { zeroDecs with authPaths := emptyPathAuthPaths } } }
 
 def wrongMagicBytes : List Byte :=
-  [0, 77, 87, 49] ++ proofPayloadCodec.encode canonicalMinimalProof
+  [0, 77, 87, 50] ++ proofPayloadCodec.encode canonicalMinimalProof
 
 def trailingBytes : List Byte :=
   canonicalMinimalProof.encode ++ [170]

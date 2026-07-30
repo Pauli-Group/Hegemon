@@ -1,21 +1,19 @@
 import HegemonCrypto.SmallWoodRom
 
+set_option maxRecDepth 100000
+set_option exponentiation.threshold 512
+
 /-!
-# SmallWood standard-QROM transfer boundary
+# SmallWood V4 QROM transcript boundary
 
-This module checks the exact point at which the deployed SmallWood Fiat-Shamir transcript meets,
-or fails to meet, the multi-round measure-and-reprogram theorem of Don, Fehr, and Majenz
-(`ePrint 2020/282`, Corollary 13).
-
-The deployed protocol has four public-coin challenge stages, corresponding to DECS degree
-enforcement, PIOP batching, PIOP evaluation, and DECS opening sampling.  The generic theorem
-therefore has numerator `4! = 24` and denominator `(2q + 5)^8`.  Its duplicate-free-input
-hypothesis is not automatic for the deployed transcript: the two digest-only inputs have the same
-shape, as do the two nonce-and-digest inputs.  The checked counterexample below prevents this
-package from silently treating the current untagged wire as a direct theorem instantiation.
-
-The round-tagged construction is a protocol repair target, not the deployed transcript.  Applying
-it would change challenge bytes and requires an explicit versioned migration.
+Circuit V4 uses four distinct SHA-512 domains for the four challenge-producing oracle calls.
+Consequently the deterministic duplicate-free-input precondition that failed for historical
+untagged transcripts now holds by byte syntax.  This file proves that format fact and records the
+generic measure-and-reprogram loss without treating that generic route as the selected production
+reduction.  A "challenge call" below is one logical field-XOF request.  It is not one SHA-512
+digest invocation: a variable-output request can require several counter-mode digests, and
+canonical nonce search can issue several logical requests.  The production route is the tighter
+round-by-round BCS reduction in `SmallWoodBcsQrom`.
 -/
 
 namespace HegemonCrypto.SmallWood.Qrom
@@ -23,8 +21,8 @@ namespace HegemonCrypto.SmallWood.Qrom
 open HegemonCrypto.SmallWoodTranscript
 open HegemonCrypto.SmallWood.Rom
 open Hegemon.Transaction.SmallWoodNoGrindingSoundness
+open Hegemon.Transaction.SmallWoodTranscriptBinding
 
-/-- The four interactive public-coin stages underlying the deployed non-interactive argument. -/
 inductive ChallengeRound where
   | decsDegreeEnforcement
   | piopBatching
@@ -44,17 +42,15 @@ theorem active_fiat_shamir_round_count :
     activeFiatShamirRoundCount = 4 := by
   rfl
 
-/-- Exact inputs to the four challenge-producing XOF calls after transcript hashes are computed. -/
+/-- Digest payloads used by the four challenge stages. -/
 structure ChallengeInputs where
   decsCommitmentDigest : List Word
   piopCommitmentDigest : List Word
   piopOpeningNonce : Word
   piopTranscriptDigest : List Word
-  decsOpeningNonce : Word
   decsTranscriptDigest : List Word
 deriving DecidableEq, Repr
 
-/-- Runtime shape contract: every stored digest is the four-word deployed digest. -/
 def ChallengeInputs.WellFormed (inputs : ChallengeInputs) : Prop :=
   inputs.decsCommitmentDigest.length = digestWordCount
     ∧ inputs.piopCommitmentDigest.length = digestWordCount
@@ -65,85 +61,117 @@ def ChallengeInputs.words (inputs : ChallengeInputs) : List (List Word) :=
   [ inputs.decsCommitmentDigest,
     inputs.piopCommitmentDigest,
     inputs.piopOpeningNonce :: inputs.piopTranscriptDigest,
-    inputs.decsOpeningNonce :: inputs.decsTranscriptDigest ]
+    inputs.decsTranscriptDigest ]
 
-/-- The deployed challenge inputs have exact word lengths `4, 4, 5, 5`. -/
 theorem well_formed_challenge_input_lengths
     (inputs : ChallengeInputs)
     (wellFormed : inputs.WellFormed) :
-    (inputs.words.map List.length) = [4, 4, 5, 5] := by
+    (inputs.words.map List.length) = [8, 8, 9, 8] := by
   rcases wellFormed with ⟨decsCommitment, piopCommitment, piopTranscript, decsTranscript⟩
   simp [ChallengeInputs.words, digestWordCount, decsCommitment, piopCommitment,
     piopTranscript, decsTranscript]
 
-/-- Active XOF output-prefix lengths used by the four challenge stages. -/
-def activeChallengeOutputWordCounts : List Nat := [3, 16, 3, 6]
+/--
+Selected byte preimages for the four accepted challenge families.  These are the accepted
+Fiat--Shamir edges, not the complete verifier hash-query trace: canonical nonce search also queries
+all preceding candidate nonces and the native verifier currently recomputes the selected PIOP
+opening once.
+-/
+def deployedChallengePreimages
+    (oracle : Oracle)
+    (transcript : Transcript) : List (List CanonicalBytes.Byte) :=
+  [ firstChallengePreimage oracle transcript,
+    secondChallengePreimage oracle transcript,
+    thirdChallengePreimage oracle transcript,
+    fourthChallengePreimage oracle transcript ]
+
+def DeployedChallengeInputsAreDuplicateFree : Prop :=
+  ∀ oracle transcript,
+    (deployedChallengePreimages oracle transcript).Nodup
+
+theorem deployed_challenge_inputs_are_duplicate_free :
+    DeployedChallengeInputsAreDuplicateFree := by
+  intro oracle transcript
+  exact active_challenge_preimages_are_pairwise_distinct oracle transcript
+
+/--
+The active uniform DECS batching matrix has one field word for every repetition and committed
+LVCS row.
+-/
+def activeDecsCoefficientWordCount : Nat :=
+  HegemonCrypto.SmallWoodTranscript.activeDecsCoefficientWordCount
+
+theorem active_decs_coefficient_word_count_is_15939 :
+    activeDecsCoefficientWordCount = 15939 := by
+  decide
+
+/--
+Active accepted-challenge output-prefix lengths: the uniform DECS matrix, the full uniform PIOP
+matrix, one selected PIOP-opening candidate, and the fixed DECS candidate pool. The last 50 words
+are deterministically filtered to the first 20 distinct indices.
+
+Canonical PIOP nonce selection may evaluate up to 16 distinct five-word candidates.  That retry
+trace is accounted separately below instead of being hidden in this accepted-edge shape.
+-/
+def activeChallengeOutputWordCounts : List Nat :=
+  [activeDecsCoefficientWordCount,
+    HegemonCrypto.SmallWoodTranscript.activePiopCoefficientWordCount,
+    activeProfile.nbOpenedEvals,
+    HegemonCrypto.SmallWoodTranscript.activeDecsFixedCandidateCount]
 
 theorem active_challenge_output_word_counts_are_nonzero :
     ∀ count ∈ activeChallengeOutputWordCounts, 0 < count := by
   decide
 
-/-- Direct DFMS applicability requires every challenge-reprogramming input to be distinct. -/
-def DeployedChallengeInputsAreDuplicateFree : Prop :=
-  ∀ inputs : ChallengeInputs, inputs.WellFormed → inputs.words.Nodup
-
-private def repeatedDigest : List Word :=
-  List.replicate digestWordCount 0
-
-private def collidedChallengeInputs : ChallengeInputs :=
-  { decsCommitmentDigest := repeatedDigest,
-    piopCommitmentDigest := repeatedDigest,
-    piopOpeningNonce := 0,
-    piopTranscriptDigest := repeatedDigest,
-    decsOpeningNonce := 0,
-    decsTranscriptDigest := repeatedDigest }
-
-private theorem collided_challenge_inputs_well_formed :
-    collidedChallengeInputs.WellFormed := by
-  simp [ChallengeInputs.WellFormed, collidedChallengeInputs, repeatedDigest,
-    digestWordCount]
-
-private theorem collided_challenge_inputs_are_not_duplicate_free :
-    ¬collidedChallengeInputs.words.Nodup := by
-  simp [ChallengeInputs.words, collidedChallengeInputs]
-
 /--
-The deployed untagged format does not provide the theorem's deterministic duplicate-free
-hypothesis.  This is a format mismatch, not a claim that an honest transcript actually collides.
+Minimum number of 512-bit SHA-512 counter-mode digest calls required to obtain a requested number
+of 64-bit field words.  Goldilocks rejection sampling can only increase this count.
 -/
-theorem deployed_challenge_inputs_are_not_unconditionally_duplicate_free :
-    ¬DeployedChallengeInputsAreDuplicateFree := by
-  intro claimed
-  exact collided_challenge_inputs_are_not_duplicate_free
-    (claimed collidedChallengeInputs collided_challenge_inputs_well_formed)
+def minimumSha512DigestCalls (outputWords : Nat) : Nat :=
+  (outputWords + digestWordCount - 1) / digestWordCount
 
-/-- A one-word role tag for the protocol repair target. -/
-def ChallengeRound.tag : ChallengeRound → Word
-  | .decsDegreeEnforcement => 0
-  | .piopBatching => 1
-  | .piopEvaluation => 2
-  | .decsOpeningSampling => 3
+def activeChallengeMinimumSha512DigestCalls : List Nat :=
+  activeChallengeOutputWordCounts.map minimumSha512DigestCalls
 
-def taggedChallengeInput (round : ChallengeRound) (payload : List Word) : List Word :=
-  round.tag :: payload
+theorem active_challenge_minimum_sha512_digest_calls :
+    activeChallengeMinimumSha512DigestCalls = [1993, 11464, 1, 7] := by
+  decide
 
-def ChallengeInputs.taggedWords (inputs : ChallengeInputs) : List (List Word) :=
-  [ taggedChallengeInput .decsDegreeEnforcement inputs.decsCommitmentDigest,
-    taggedChallengeInput .piopBatching inputs.piopCommitmentDigest,
-    taggedChallengeInput .piopEvaluation
-      (inputs.piopOpeningNonce :: inputs.piopTranscriptDigest),
-    taggedChallengeInput .decsOpeningSampling
-      (inputs.decsOpeningNonce :: inputs.decsTranscriptDigest) ]
-
-/-- Explicit round tags make all four challenge inputs distinct for every payload. -/
-theorem tagged_challenge_inputs_are_duplicate_free (inputs : ChallengeInputs) :
-    inputs.taggedWords.Nodup := by
-  simp [ChallengeInputs.taggedWords, taggedChallengeInput, ChallengeRound.tag]
+theorem active_challenge_minimum_sha512_digest_call_total :
+    activeChallengeMinimumSha512DigestCalls.sum = 13465 := by
+  decide
 
 /--
-Requirements that must be discharged before Corollary 13 can be instantiated for the production
-argument.  The common finite challenge range and quantum interactive PoK fields are explicit
-because neither follows from classical straight-line extraction.
+The verifier may test all 16 canonical PIOP nonces.  Each candidate asks for five field words and
+therefore needs at least one SHA-512 block before rejection sampling.
+-/
+def activePiopNonceMaximumMinimumSha512DigestCalls : Nat :=
+  piopNonceTrialBound *
+    minimumSha512DigestCalls activeProfile.nbOpenedEvals
+
+theorem active_piop_nonce_maximum_minimum_sha512_digest_calls :
+    activePiopNonceMaximumMinimumSha512DigestCalls = 16 := by
+  decide
+
+/--
+Minimum physical SHA-512 calls over the complete accepted challenge trace in the worst canonical
+nonce case.  Rejection sampling can only increase this value.
+-/
+def activeChallengeWorstCaseMinimumSha512DigestCallTotal : Nat :=
+  minimumSha512DigestCalls activeDecsCoefficientWordCount +
+    minimumSha512DigestCalls
+      HegemonCrypto.SmallWoodTranscript.activePiopCoefficientWordCount +
+    activePiopNonceMaximumMinimumSha512DigestCalls +
+    minimumSha512DigestCalls
+      HegemonCrypto.SmallWoodTranscript.activeDecsFixedCandidateCount
+
+theorem active_challenge_worst_case_minimum_sha512_digest_call_total :
+    activeChallengeWorstCaseMinimumSha512DigestCallTotal = 13480 := by
+  decide
+
+/--
+Remaining hypotheses for the generic multi-round measure-and-reprogram theorem.  Unlike the
+historical format, V4 discharges `duplicateFreeInputs` directly.
 -/
 structure MeasureAndReprogramInstantiation
     (CommonFiniteChallengeRange
@@ -154,25 +182,26 @@ structure MeasureAndReprogramInstantiation
   interactiveQuantumProofOfKnowledge : InteractiveQuantumProofOfKnowledge
   everyQuantumOracleQueryCounted : EveryQuantumOracleQueryCounted
 
-/-- The current untagged transcript cannot directly instantiate the cited generic theorem. -/
-theorem no_direct_measure_and_reprogram_instantiation :
-    ∀ commonFiniteChallengeRange interactiveQuantumProofOfKnowledge
-        everyQuantumOracleQueryCounted,
-      ¬MeasureAndReprogramInstantiation commonFiniteChallengeRange
-        interactiveQuantumProofOfKnowledge everyQuantumOracleQueryCounted := by
-  intro commonFiniteChallengeRange interactiveQuantumProofOfKnowledge
-    everyQuantumOracleQueryCounted instantiation
-  exact deployed_challenge_inputs_are_not_unconditionally_duplicate_free
-    instantiation.duplicateFreeInputs
+theorem formatCompleteMeasureAndReprogramInstantiation
+    {CommonFiniteChallengeRange
+      InteractiveQuantumProofOfKnowledge
+      EveryQuantumOracleQueryCounted : Prop}
+    (commonFiniteChallengeRange : CommonFiniteChallengeRange)
+    (interactiveQuantumProofOfKnowledge : InteractiveQuantumProofOfKnowledge)
+    (everyQuantumOracleQueryCounted : EveryQuantumOracleQueryCounted) :
+    MeasureAndReprogramInstantiation CommonFiniteChallengeRange
+      InteractiveQuantumProofOfKnowledge EveryQuantumOracleQueryCounted :=
+  { duplicateFreeInputs := deployed_challenge_inputs_are_duplicate_free,
+    commonFiniteChallengeRange,
+    interactiveQuantumProofOfKnowledge,
+    everyQuantumOracleQueryCounted }
 
-section ExactTransferLoss
+section ExactGenericTransferLoss
 
-/-- Exact denominator `(2q + n + 1)^(2n)` at the active `n = 4`. -/
 def activeTransferDenominator (queries : Nat) : Nat :=
   (2 * queries + activeFiatShamirRoundCount + 1) ^
     (2 * activeFiatShamirRoundCount)
 
-/-- Exact numerator `n!` at the active `n = 4`. -/
 def activeTransferNumerator : Nat :=
   Nat.factorial activeFiatShamirRoundCount
 
@@ -184,56 +213,24 @@ theorem active_transfer_denominator_exact (queries : Nat) :
   simp [activeTransferDenominator, activeFiatShamirRoundCount, allChallengeRounds]
 
 /--
-Optimistic generic-QROM bound: only the four-term interactive algebraic error multiplied by the
-published transfer loss.  This deliberately omits the theorem's additive challenge-space term,
-hash collisions, transcript-mismatch loss, and executable-refinement loss, so failure here is a
-strong parameter no-go for this proof route.
+Generic four-round transfer applied only to the active interactive algebraic term.  Hash
+collisions, concrete theorem constants, transcript refinement, and executable refinement are
+separate terms.
 -/
-def optimisticQromLoss (queries : Nat) : ℚ :=
-  ((activeTransferDenominator queries : Nat) : ℚ) /
+def optimisticGenericQromLoss (queries : Nat) : Rat :=
+  ((activeTransferDenominator queries : Nat) : Rat) /
       activeTransferNumerator *
-    ((aggregateErrorNumerator : Nat) : ℚ) / aggregateErrorDenominator
+    ((aggregateErrorNumerator : Nat) : Rat) / aggregateErrorDenominator
 
-def optimisticQromLossNumerator (queries : Nat) : Nat :=
+def optimisticGenericQromLossNumerator (queries : Nat) : Nat :=
   activeTransferDenominator queries * aggregateErrorNumerator
 
-def optimisticQromLossDenominator : Nat :=
+def optimisticGenericQromLossDenominator : Nat :=
   activeTransferNumerator * aggregateErrorDenominator
 
-def supportsOptimisticQromBits (bits queries : Nat) : Prop :=
-  2 ^ bits * optimisticQromLossNumerator queries ≤ optimisticQromLossDenominator
-
-/-- The symbolic optimistic loss is exactly the checked natural common fraction. -/
-theorem optimistic_qrom_loss_eq_common_fraction (queries : Nat) :
-    optimisticQromLoss queries =
-      (optimisticQromLossNumerator queries : ℚ) /
-        optimisticQromLossDenominator := by
-  have transferNumeratorPositive : 0 < activeTransferNumerator := by
-    rw [active_transfer_numerator_is_24]
-    decide
-  have aggregateDenominatorPositive : 0 < aggregateErrorDenominator := by decide
-  have transferNumeratorNonzero : (activeTransferNumerator : ℚ) ≠ 0 := by
-    exact_mod_cast transferNumeratorPositive.ne'
-  have aggregateDenominatorNonzero : (aggregateErrorDenominator : ℚ) ≠ 0 := by
-    exact_mod_cast aggregateDenominatorPositive.ne'
-  unfold optimisticQromLoss optimisticQromLossNumerator optimisticQromLossDenominator
-  push_cast
-  field_simp
-
-/-- Bit-floor checks are equivalent to the corresponding rational probability inequality. -/
-theorem supports_optimistic_qrom_bits_iff (bits queries : Nat) :
-    supportsOptimisticQromBits bits queries ↔
-      optimisticQromLoss queries ≤ (1 : ℚ) / 2 ^ bits := by
-  rw [optimistic_qrom_loss_eq_common_fraction]
-  unfold supportsOptimisticQromBits
-  have denominatorPositive : 0 < optimisticQromLossDenominator := by
-    unfold optimisticQromLossDenominator
-    exact Nat.mul_pos (by rw [active_transfer_numerator_is_24]; decide) (by decide)
-  have scalePositive : 0 < 2 ^ bits := by positivity
-  rw [div_le_div_iff₀ (by exact_mod_cast denominatorPositive)
-    (by exact_mod_cast scalePositive)]
-  norm_cast
-  simp [Nat.mul_comm]
+def supportsOptimisticGenericQromBits (bits queries : Nat) : Prop :=
+  2 ^ bits * optimisticGenericQromLossNumerator queries ≤
+    optimisticGenericQromLossDenominator
 
 theorem active_transfer_denominator_mono
     {smaller larger : Nat}
@@ -243,48 +240,14 @@ theorem active_transfer_denominator_mono
   exact Nat.pow_le_pow_left
     (Nat.add_le_add_right (Nat.mul_le_mul_left 2 queryBound) 5) 8
 
-theorem optimistic_qrom_loss_numerator_mono
+theorem optimistic_generic_qrom_loss_numerator_mono
     {smaller larger : Nat}
     (queryBound : smaller ≤ larger) :
-    optimisticQromLossNumerator smaller ≤ optimisticQromLossNumerator larger := by
+    optimisticGenericQromLossNumerator smaller ≤
+      optimisticGenericQromLossNumerator larger := by
   exact Nat.mul_le_mul_right aggregateErrorNumerator
     (active_transfer_denominator_mono queryBound)
 
-/-- Even at one quantum query, the optimistic generic transfer retains a checked 110-bit floor. -/
-theorem optimistic_qrom_one_query_supports_110_bits :
-    supportsOptimisticQromBits 110 1 := by
-  unfold supportsOptimisticQromBits optimisticQromLossNumerator
-    optimisticQromLossDenominator activeTransferNumerator activeTransferDenominator
-    activeFiatShamirRoundCount allChallengeRounds
-  decide
-
-/-- The same already-optimistic one-query bound does not retain 111 bits. -/
-theorem optimistic_qrom_one_query_does_not_support_111_bits :
-    ¬supportsOptimisticQromBits 111 1 := by
-  unfold supportsOptimisticQromBits optimisticQromLossNumerator
-    optimisticQromLossDenominator activeTransferNumerator activeTransferDenominator
-    activeFiatShamirRoundCount allChallengeRounds
-  decide
-
-/-- In particular, the active parameters cannot certify 128 bits through this generic route. -/
-theorem optimistic_qrom_one_query_does_not_support_128_bits :
-    ¬supportsOptimisticQromBits 128 1 := by
-  unfold supportsOptimisticQromBits optimisticQromLossNumerator
-    optimisticQromLossDenominator activeTransferNumerator activeTransferDenominator
-    activeFiatShamirRoundCount allChallengeRounds
-  decide
-
-/-- No positive quantum-query budget recovers the missing 128-bit margin. -/
-theorem optimistic_qrom_positive_queries_do_not_support_128_bits
-    {queries : Nat}
-    (positiveQueries : 1 ≤ queries) :
-    ¬supportsOptimisticQromBits 128 queries := by
-  intro claimed
-  apply optimistic_qrom_one_query_does_not_support_128_bits
-  unfold supportsOptimisticQromBits at claimed ⊢
-  exact (Nat.mul_le_mul_left (2 ^ 128)
-    (optimistic_qrom_loss_numerator_mono positiveQueries)).trans claimed
-
-end ExactTransferLoss
+end ExactGenericTransferLoss
 
 end HegemonCrypto.SmallWood.Qrom

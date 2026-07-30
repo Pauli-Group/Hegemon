@@ -16,6 +16,38 @@ def smallwoodPublicStatementValues
     (circuitVersion cryptoSuite : Nat) : List Nat :=
   p3PublicValues ++ [circuitVersion, cryptoSuite]
 
+def activeRawWitnessLength : Nat := 241
+def activeRelationRowCount : Nat := 699
+def activePoseidonPermutationCount : Nat := 172
+def activePoseidonStateRowCount : Nat :=
+  activePoseidonPermutationCount *
+    SmallWoodTranscriptBinding.compressedRowsPerPermutation
+def activeExpandedWitnessLength : Nat :=
+  activeRelationRowCount * 64
+def activePackingFactor : Nat := 64
+def activeEffectiveConstraintDegree : Nat := 8
+
+def bincodeVecU64 (values : List Nat) : List Byte :=
+  u64le values.length ++ (values.map u64le).flatten
+
+/--
+Exact bincode 1.x encoding of the active Rust `SmallwoodPublicStatement`.
+
+The field order and widths match the production Rust structure:
+`Vec<u64>`, six `u32` geometry fields, then two `u16` fields. The geometry is
+consensus-fixed for the active 64-lane compressed relation.
+-/
+def smallwoodPublicStatementBytes (statementValues : List Nat) : List Byte :=
+  bincodeVecU64 statementValues
+    ++ u32le statementValues.length
+    ++ u32le activeRawWitnessLength
+    ++ u32le activeRelationRowCount
+    ++ u32le activePoseidonPermutationCount
+    ++ u32le activePoseidonStateRowCount
+    ++ u32le activeExpandedWitnessLength
+    ++ u16le activePackingFactor
+    ++ u16le activeEffectiveConstraintDegree
+
 def validSmallwoodPublicStatementValues
     (p3PublicValues statementValues : List Nat)
     (circuitVersion cryptoSuite : Nat) : Bool :=
@@ -34,7 +66,6 @@ structure PublicStatementSurface where
   arithmetization : Nat
   statementBytes : List Byte
   transcriptBytes : List Byte
-  statementBytesBindStatementValues : Prop
 
 def transcriptSurface (surface : PublicStatementSurface) :
     TranscriptSurface :=
@@ -52,7 +83,8 @@ def acceptedSmallwoodPublicStatementBinding
         surface.p3PublicValues
         surface.circuitVersion
         surface.cryptoSuite
-    ∧ surface.statementBytesBindStatementValues
+    ∧ surface.statementBytes =
+      smallwoodPublicStatementBytes surface.statementValues
     ∧ acceptedSmallwoodTranscriptBinding (transcriptSurface surface)
 
 structure SmallWoodPublicStatementBindingFacts
@@ -65,7 +97,8 @@ structure SmallWoodPublicStatementBindingFacts
   statementValuesExactLength :
     surface.statementValues.length = smallwoodPublicStatementValueCount
   statementBytesBoundary :
-    surface.statementBytesBindStatementValues
+    surface.statementBytes =
+      smallwoodPublicStatementBytes surface.statementValues
   transcriptBinding :
     acceptedSmallwoodTranscriptBinding (transcriptSurface surface)
 
@@ -97,6 +130,37 @@ theorem smallwood_public_statement_values_length
       smallwoodPublicStatementValueCount,
       p3PublicInputBaseLength,
       baseLen]
+
+theorem active_public_statement_geometry :
+    activeRawWitnessLength = 241
+      ∧ activeRelationRowCount = 699
+      ∧ activePoseidonPermutationCount = 172
+      ∧ activePoseidonStateRowCount = 24424
+      ∧ activeExpandedWitnessLength = 44736
+      ∧ activePackingFactor = 64
+      ∧ activeEffectiveConstraintDegree = 8 := by
+  decide
+
+theorem smallwood_public_statement_bytes_length
+    {statementValues : List Nat}
+    (statementLength :
+      statementValues.length = smallwoodPublicStatementValueCount) :
+    (smallwoodPublicStatementBytes statementValues).length = 660 := by
+  have encodedValuesLength :
+      ((statementValues.map u64le).flatten).length =
+        statementValues.length * 8 := by
+    clear statementLength
+    induction statementValues with
+    | nil => rfl
+    | cons value rest induction =>
+        simp only [List.map_cons, List.flatten_cons, List.length_append,
+          List.length_cons]
+        rw [u64le_length, induction]
+        omega
+  simp [smallwoodPublicStatementBytes, bincodeVecU64,
+    smallwoodPublicStatementValueCount, p3PublicInputBaseLength,
+    encodedValuesLength, statementLength, u64le_length, u32le_length,
+    u16le_length]
 
 theorem accepted_smallwood_public_statement_binding_exposes_p3_prefix
     {surface : PublicStatementSurface}

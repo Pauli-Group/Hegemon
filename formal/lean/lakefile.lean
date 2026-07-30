@@ -37,9 +37,6 @@ lean_exe gen_bridge_mint_payload_raw_admission_vectors where
 lean_exe gen_bridge_verifier_registration_policy_vectors where
   root := `Hegemon.Native.GenerateBridgeVerifierRegistrationPolicyVectors
 
-lean_exe gen_aggregation_v5_vectors where
-  root := `Hegemon.Consensus.GenerateAggregationV5Vectors
-
 lean_exe gen_commitment_tree_append_vectors where
   root := `Hegemon.Consensus.GenerateCommitmentTreeAppendVectors
 
