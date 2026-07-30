@@ -290,7 +290,6 @@ EOF
       cat <<'EOF'
 cargo_test_lib_filter consensus receipt_root_artifact_kind_and_profile_mismatch_reject_before_backend -- --nocapture
 cargo_test_lib_filter consensus receipt_root_statement_commitment_mismatch_rejects_before_backend -- --nocapture
-cargo_test_lib_filter superneo-hegemon native_receipt_root_rejects_ -- --nocapture
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo +"${HEGEMON_FUZZ_TOOLCHAIN:-nightly-2026-06-23}" fuzz run receipt_root_artifact -- -max_total_time=30
 fi
@@ -313,9 +312,8 @@ EOF
       ;;
     review-package-parity)
       cat <<'EOF'
-cargo test -p superneo-backend-lattice -p native-backend-ref -p superneo-hegemon -p superneo-bench
+cargo test -p native-backend-ref
 cargo run -p native-backend-ref -- verify-vectors testdata/native_backend_vectors
-./scripts/package_native_backend_review.sh
 ./scripts/verify_native_backend_review_package.sh
 if [[ "${HEGEMON_REDTEAM_MODE:-full}" == "full" ]]; then
   cargo run -p native-backend-timing --release

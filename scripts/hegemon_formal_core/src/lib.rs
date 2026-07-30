@@ -82,8 +82,8 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "transaction.recursive-cross-object-identity-refinement",
-        &["Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block"],
+        "transaction.independent-cross-object-identity-refinement",
+        &["Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_independent_cross_object_identity_refines_one_canonical_block"],
     ),
     (
         "consensus.accepted-chain-supply-composition",
@@ -162,9 +162,9 @@ const REQUIRED_MECHANIZED_ASSUMPTION_TRACKS: &[(&str, &[&str])] = &[
     ("system.da-storage-runtime-semantics", &[]),
 ];
 const EXPECTED_MECHANIZED_ASSUMPTION_PROPOSITION_BLAKE3: &str =
-    "c6a98106a930379ef0b4f0445622c07d0ff786e2e1f606d571d7e1c60f95722d";
+    "f1c17f67f300d3918910aac05f6c06ab78d6a906fd6325378f7ec21fc09e4767";
 const EXPECTED_FORMAL_SOURCE_TREE_BLAKE3: &str =
-    "3d72ca53e76400a6bc6ede822d24a24d3f15b12a9e388b4a843ec4e3e009fc17";
+    "3cd9e990810770a1a65f63589bee54e3a2e79724f95aeacd6b2b363f52d673d2";
 const PROGRESS_PERCENT_EPSILON: f64 = 0.0001;
 
 #[derive(Debug, Serialize)]
@@ -1572,8 +1572,6 @@ pub fn check_formal_inventory(root: &Path) -> Result<InventoryReport> {
         "formal/lean/Hegemon/Bridge/GenerateMintReplayPolicyVectors.lean",
         "formal/lean/Hegemon/Bridge/Replay.lean",
         "formal/lean/Hegemon/Bridge/GenerateVectors.lean",
-        "formal/lean/Hegemon/Consensus/AggregationV5.lean",
-        "formal/lean/Hegemon/Consensus/GenerateAggregationV5Vectors.lean",
         "formal/lean/Hegemon/Consensus/DaRoot.lean",
         "formal/lean/Hegemon/Consensus/GenerateDaRootVectors.lean",
         "formal/lean/Hegemon/Consensus/ForkChoice.lean",

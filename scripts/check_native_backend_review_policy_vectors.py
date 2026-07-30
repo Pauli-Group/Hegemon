@@ -176,10 +176,10 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
     if not isinstance(active, dict):
         raise SystemExit("checked-in native backend vector bundle lacks active_tx_profile")
     expected_active = {
-        "circuit_version": 3,
-        "crypto_suite": 2,
+        "circuit_version": 4,
+        "crypto_suite": 3,
         "proof_backend": "SmallwoodCandidate",
-        "arithmetization": "DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2",
+        "arithmetization": "DirectPacked64CompressedLevel5",
         "public_value_count": 78,
     }
     for field, expected in expected_active.items():
@@ -232,8 +232,8 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
             tx = tx_context.get("tx") if isinstance(tx_context, dict) else None
             if not isinstance(tx, dict) or (
                 tx.get("version_circuit"), tx.get("version_crypto")
-            ) != (3, 2):
-                raise SystemExit(f"{name}: tx context is not active V3 (3,2)")
+            ) != (4, 3):
+                raise SystemExit(f"{name}: tx context is not active V4 (4,3)")
             require_hex(
                 tx_context.get("statement_digest_hex"),
                 48,
@@ -271,9 +271,9 @@ def check_bundle(bundle: dict) -> tuple[int, int]:
                 tx = tx_context.get("tx") if isinstance(tx_context, dict) else None
                 if not isinstance(tx, dict) or (
                     tx.get("version_circuit"), tx.get("version_crypto")
-                ) != (3, 2):
+                ) != (4, 3):
                     raise SystemExit(
-                        f"{name}: leaf {leaf_index} tx context is not active V3 (3,2)"
+                        f"{name}: leaf {leaf_index} tx context is not active V4 (4,3)"
                     )
                 require_review_receipt(
                     tx_context.get("receipt"),

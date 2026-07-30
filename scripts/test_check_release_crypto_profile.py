@@ -18,10 +18,10 @@ def main() -> None:
         binary = temp / "hegemon-node"
         binary.write_text(
             "prefix\n"
-            "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=3:CRYPTO=2:"
-            "BACKEND=smallwood_candidate:ARITH=direct-packed64-committed-bindings-"
-            "inline-merkle-skip-initial-mds-v2:RHO=3:OPENINGS=3:DECS_EVALS=32768:"
-            "DECS_OPENINGS=24:FLOOR=128\n",
+            "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=4:CRYPTO=3:"
+            "BACKEND=smallwood_candidate:ARITH=direct-packed64-compressed-level5:"
+            "RHO=5:OPENINGS=5:BETA=7:DECS_EVALS=1048576:"
+            "DECS_OPENINGS=20:DECS_ETA=33:FLOOR=260\n",
             encoding="utf-8",
         )
         manifest = temp / "manifest.json"

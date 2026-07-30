@@ -108,19 +108,22 @@ run_test_wallet_base() {
 run_test_wallet_multisig_setup() {
   prepare_test_environment
   ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator
+    tx_builder::tests::multisig_setup_bundle_has_fee_nullifier_and_reconciled_accumulator \
+    --release
 }
 
 run_test_wallet_multisig_builders() {
   prepare_test_environment
   ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape
+    tx_builder::tests::multisig_builders_create_approval_and_final_transactions_with_hidden_policy_shape \
+    --release
 }
 
 run_test_wallet_multisig_drift() {
   prepare_test_environment
   ./scripts/run_exact_cargo_lib_test.sh wallet \
-    tx_builder::tests::multisig_final_rejects_plan_digest_drift
+    tx_builder::tests::multisig_final_rejects_plan_digest_drift \
+    --release
 }
 
 run_test_node_default() {

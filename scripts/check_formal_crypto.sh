@@ -70,7 +70,7 @@ for command in lake python3; do
   fi
 done
 
-expected_toolchain='leanprover/lean4:v4.30.0'
+expected_toolchain='leanprover/lean4:v4.32.2'
 actual_toolchain="$(tr -d '\r\n' < "$CRYPTO_ROOT/lean-toolchain")"
 if [ "$actual_toolchain" != "$expected_toolchain" ]; then
   printf 'unexpected formal/crypto toolchain: %s\n' "$actual_toolchain" >&2
@@ -104,7 +104,7 @@ expected_requirements = [
     {
         "name": "mathlib",
         "git": "https://github.com/leanprover-community/mathlib4",
-        "rev": "c5ea00351c28e24afc9f0f84379aa41082b1188f",
+        "rev": "905b95818eb32af7874a58b427f50c1711a5e96c",
     },
 ]
 if lake_config.get("require") != expected_requirements:

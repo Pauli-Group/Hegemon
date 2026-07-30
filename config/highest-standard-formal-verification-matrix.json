@@ -52,7 +52,7 @@
         "remaining_work": []
       },
       {
-        "id": "transaction.recursive-cross-object-identity-refinement",
+        "id": "transaction.independent-cross-object-identity-refinement",
         "status": "closed",
         "evidence_paths": [
           "formal/lean/Hegemon/Consensus/AcceptedSmallWoodBlockComposition.lean",
@@ -61,7 +61,7 @@
           "scripts/check_formal_core.sh"
         ],
         "lean_theorems": [
-          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block"
+          "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_independent_cross_object_identity_refines_one_canonical_block"
         ],
         "remaining_work": []
       },
@@ -326,7 +326,7 @@
       "restarted hegemon-node.service from the rebuilt binary; after startup replay RPC health reported syncing=false, peers=0, shouldHavePeers=false",
       "live RPC health reported syncing=false, peers=0, shouldHavePeers=false",
       "20-second live mining sample after restart advanced height from 18987 to 18991",
-      "bash scripts/test-node.sh wallet-send passed, including native::tests::submit_action_stages_and_imports_shielded_transfer",
+      "bash scripts/test-node.sh wallet-send passed, including native::tests::prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext",
       "live da_submitCiphertexts with an unknown request field rejected with JSON-RPC -32602 decode da ciphertext upload request",
       "live da_submitProofs with an unknown proof-item field rejected with JSON-RPC -32602 decode da proof upload request",
       "final live RPC sanity check reported height 19001 and syncing=false",
@@ -806,8 +806,7 @@
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the canonical verifier surface before deriving the accepted transaction relation",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean composes accepted native tx-leaf/action equality facts with the packaged proof-system boundary facts",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now binds native active input, total input-slot, and output commitment/ciphertext slots to the canonical statement and proof-binding vectors",
-        "transaction, consensus, SuperNeo, aggregation V5, and block commitment shared-helper gates",
-        "consensus/src/aggregation/v5.rs now checks the aggregation V5 HGA0/zstd envelope plus exact-postcard payload path against an independent marker/version/length/zstd/postcard/header oracle over raw pass-through, compressed, malformed, trailing, truncated, length-mismatched, zstd-garbage, and mutated valid payloads before heavy proof verification.",
+        "transaction, consensus, native backend, and block commitment shared-helper gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now packages native receipt statement-hash, public-input digest, proof digest/backend, ciphertext-payload binding, and canonical root/fee/balance-slot/stablecoin identity bindings with the deployed verifier boundary",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free projects accepted native tx-leaf/action binding plus canonical statement surface into statement preimage success/length, proof binding-message success, public-input binding validity, wrapper preconditions/surface, and native receipt/public-input/proof/backend/ciphertext-payload equality gates",
         "formal/lean/Hegemon/Native/TxLeafCanonicalSurface.lean now assumption-free packages accepted native tx-leaf/action binding plus the canonical statement surface into public-shape validity, core statement binding, full vector/input/output binding, value-balance binding, stablecoin payload binding, tx-leaf preconditions, full tx-leaf equality facts, and native digest/backend gates",
@@ -1549,7 +1548,6 @@
         "formal/lean/Hegemon/Native/TransferActionPayloadAdmission.lean proves inline transfer ciphertext resources project route payload bytes, proof-plus-ciphertext decoded bytes, ciphertext count, max ciphertext bytes, aggregate ciphertext bytes, and work units into reusable bounded-request caps; node/src/native/mod.rs calls validate_inline_transfer_ciphertext_resource before per-ciphertext hash/materialization at submit-action construction and decoded transfer validation.",
         "formal/lean/Hegemon/Native/BridgeActionResourceAdmission.lean proves bridge action public_args, outbound payload, inbound proof-receipt, inbound message-payload, aggregate dynamic-byte, item-count, and payload-work caps through the reusable bounded-request table; formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean composes those bridge resource facts into the pre-heavy verification-path bounds; node/src/native/mod.rs now rejects oversized inbound proof receipts and bridge message payloads before payload-hash binding, nested receipt decode, or receipt verification, and formal-core checks Lean-generated bridge action resource vectors plus focused regressions.",
         "formal/lean/Hegemon/Native/PreHeavyWorkResourceBoundSurface.lean sync_path_accepts_implies_preheavy_bounds composes sync exact decode, response range caps, response count caps, bounded-request resource facts, and item-count equality before sync import work",
-        "consensus/src/aggregation/v5.rs `aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus` covers the recursive aggregation HGA0/zstd envelope and exact-postcard V5 payload parser boundary before representative child proof decoding or STARK batch verification.",
         "formal/lean/Hegemon/Consensus/RecursiveBlockAdmission.lean proves `recursive_block_artifact_accepts_implies_bounded_request_facts`, deriving reusable raw/decoded/item/aggregate/work bounds for accepted recursive_block_v1/v2 artifact bytes from the existing production pre-decode byte cap",
         "consensus/src/proof.rs derives the legacy recursive_block_v1 pre-decode cap from the fixed serializer width and rejects oversized/trailing V1 artifacts before deserialization; the independent V1 oracle checks that ordering.",
         "circuits/block-recursion/src/tree_v2.rs `recursive_block_v2_raw_fixed_width_oracle_matches_parser_boundaries` checks recursive_block_v2 fixed-width bytes, boundary mutations, unsupported tx_count, public/header mismatch, canonical proof-prefix handling, and pre-proof surface rejection order before child proof verification.",

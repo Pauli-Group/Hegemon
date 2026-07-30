@@ -4,7 +4,7 @@
   "goal_thread_id": "019f29c7-3468-78f2-ba8a-6e6ed94c7b02",
   "goal_status_when_measured": "paused",
   "measurement_timestamp": "2026-07-14T11:00:15Z",
-  "formal_source_tree_blake3": "3d72ca53e76400a6bc6ede822d24a24d3f15b12a9e388b4a843ec4e3e009fc17",
+  "formal_source_tree_blake3": "3cd9e990810770a1a65f63589bee54e3a2e79724f95aeacd6b2b363f52d673d2",
   "objective": "On branch codex/deployed-smallwood-no-counterfeit-closure, close the four deployed SmallWood no-counterfeit mechanized tracks with an exact production constraint map, canonical cross-object identity, and accepted-block supply composition; remove the selectable Plonky3 transaction backend from the executable dispatch; preserve runtime and testnet compatibility; run all focused, aggregate, adversarial, release, native-smoke, and headless security validation; open a draft pull request; and drive all required GitHub checks green without merging or deploying.",
   "objective_must_contain": [
     "codex/deployed-smallwood-no-counterfeit-closure",

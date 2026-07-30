@@ -908,7 +908,11 @@
         "Hegemon.Transaction.SmallWoodPublicStatementBinding.accepted_smallwood_public_statement_binding_facts",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_version",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.smallwood_profile_material_binds_arithmetization",
-        "Hegemon.Transaction.SmallWoodTranscriptBinding.active_inline_merkle_profile_uses_active_decs_opening_count",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.active_level5_profile_uses_twenty_decs_openings",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.active_level5_profile_uses_strict_rho_five_floor",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.active_level5_profile_uses_beta_seven",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.active_level5_profile_uses_thirty_three_uniform_decs_rows",
+        "Hegemon.Transaction.SmallWoodTranscriptBinding.historical_v3_inline_merkle_profile_uses_historical_decs_opening_count",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.historical_v2_inline_merkle_profile_uses_historical_decs_opening_count",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.legacy_profile_arithmetizations_use_legacy_decs_opening_count",
         "Hegemon.Transaction.SmallWoodTranscriptBinding.deployed_smallwood_profile_materials_distinguish_arithmetization_tags",
@@ -1543,8 +1547,8 @@
         "Hegemon.Native.non_transfer_order_action_ignores_local_metadata",
         "Hegemon.Native.non_transfer_order_preimage_eq_of_public_fields",
         "Hegemon.Native.non_transfer_relative_order_ignores_local_metadata",
-        "Hegemon.Native.MineableActionAdmission.selected_candidate_none_when_no_mineable_transfers",
-        "Hegemon.Native.MineableActionAdmission.selection_accepts_candidate_iff_selected",
+        "Hegemon.Native.MineableActionAdmission.selected_candidate_always_none",
+        "Hegemon.Native.MineableActionAdmission.selection_rejects_candidate",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_transfer_iff_mineable",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action",
         "Hegemon.Privacy.WalletOutputBatch.output_count_eq_public_shape",
@@ -2412,17 +2416,19 @@
       "residual_risks": []
     },
     {
-      "id": "consensus.self-contained-proof-policy",
+      "id": "consensus.independent-proof-policy",
       "component": "block proof availability policy",
       "claim_class": "lean_theorem",
-      "summary": "The Lean proof-policy kernel proves the shipped non-empty block proof payload shape: self-contained mode, transaction artifacts, transaction validity claims, a proven batch, recursive blocks with no legacy commitment-proof bytes or receipt-root payload, and a required block artifact; generated Lean vectors are checked against the production consensus verifier helper. The TxValidityClaim matching slice additionally proves and vector-checks that accepted provided claims exactly match verified backend artifact receipts and statement bindings before aggregation/recursive block paths rely on them.",
+      "summary": "The Lean proof-policy kernel proves the active non-empty block payload shape: independent transaction artifacts with no proven batch or block artifact. Historical recursive payload rules remain explicit compatibility cases. Generated Lean vectors are checked against the production consensus verifier helper, and the TxValidityClaim slice proves any provided claims exactly match verified artifact receipts and statement bindings.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
       "lean_theorems": [
         "Hegemon.Consensus.empty_clean_accepts",
         "Hegemon.Consensus.empty_with_payload_rejects",
-        "Hegemon.Consensus.nonempty_rejects_inline_required",
+        "Hegemon.Consensus.independent_rejects_proven_batch",
+        "Hegemon.Consensus.independent_rejects_block_artifact",
+        "Hegemon.Consensus.independent_complete_accepts",
         "Hegemon.Consensus.nonempty_rejects_tx_artifact_count_mismatch",
         "Hegemon.Consensus.nonempty_requires_proven_batch",
         "Hegemon.Consensus.nonempty_requires_tx_artifacts",
@@ -2447,9 +2453,9 @@
       ],
       "assumptions": [
         "The Lean model represents the consensus proof payload availability and route-shape decision before cryptographic artifact verification.",
-        "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, legacy InlineRequired rejection, missing proven batches, missing transaction validity claims, legacy inline batches, explicit ReceiptRoot retirement with and without its payload, recursive commitment-proof byte rejection, recursive receipt-root payload rejection, and missing recursive block artifacts.",
+        "Generated Lean conformance vectors cover empty-block proof payload rejection, missing transaction artifacts, artifact-count mismatch, active independent acceptance, independent proven-batch and block-artifact rejection, and historical recursive compatibility rejection cases.",
         "Generated TxValidityClaim matching vectors cover exact acceptance plus claim-count, receipt statement hash, proof digest, public-input digest, verifier-profile, binding statement hash, anchor/root, fee, circuit-version, and rejection-precedence mismatches against the production consensus helper.",
-        "The theorem covers executable proof policy admission semantics and deterministic provided-claim/verified-artifact equality gates, not proven-batch binding, recursive proof cryptographic soundness, transaction leaf proof soundness, aggregation V5 header admission, DA root derivation, or native backend security. Proven-batch binding is covered separately by consensus.proven-batch-binding. Aggregation V5 header admission is covered separately by consensus.aggregation-v5-header-admission."
+        "The theorem covers executable proof policy admission semantics and deterministic provided-claim/verified-artifact equality gates, not proven-batch binding, historical recursive proof cryptographic soundness, transaction leaf proof soundness, DA root derivation, or native backend security. Proven-batch binding is covered separately by consensus.proven-batch-binding."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Consensus/ProofPolicy.lean",
@@ -2911,57 +2917,6 @@
       ]
     },
     {
-      "id": "consensus.aggregation-v5-header-admission",
-      "component": "self-contained aggregation proof V5 header admission",
-      "claim_class": "lean_theorem",
-      "summary": "The Lean aggregation V5 kernel proves executable header-admission facts for version, format, packed-public-values encoding, serialized tree_arity agreement with configured merge fan-in, statement-commitment binding, child/fan-in bounds, subtree tx-count binding, tree-level/root-level checks, binary-minimum merge fan-in, and packed public-input length agreement; generated Lean vectors are checked against the production consensus aggregation V5 header helper, and a deterministic mutation corpus checks the production HGA0/zstd envelope plus exact-postcard V5 payload path against an independent envelope/postcard/header oracle before heavy proof verification.",
-      "status": "enforced",
-      "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
-      "production_eligible": true,
-      "lean_theorems": [
-        "Hegemon.Consensus.AggregationV5.merge_fan_in_floor_is_binary_minimum",
-        "Hegemon.Consensus.AggregationV5.rejects_bad_proof_format",
-        "Hegemon.Consensus.AggregationV5.rejects_bad_public_values_encoding",
-        "Hegemon.Consensus.AggregationV5.rejects_bad_version",
-        "Hegemon.Consensus.AggregationV5.rejects_child_count_above_fan_in",
-        "Hegemon.Consensus.AggregationV5.rejects_inner_public_inputs_len_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_leaf_fan_in_above_configured",
-        "Hegemon.Consensus.AggregationV5.rejects_merge_fan_in_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_multilevel_leaf_fan_in_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_root_level_out_of_range",
-        "Hegemon.Consensus.AggregationV5.rejects_statement_commitment_length",
-        "Hegemon.Consensus.AggregationV5.rejects_statement_commitment_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_subtree_tx_count_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_tree_arity_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_tree_levels_mismatch",
-        "Hegemon.Consensus.AggregationV5.rejects_zero_child_count",
-        "Hegemon.Consensus.AggregationV5.rejects_zero_fan_in_after_child_bounds",
-        "Hegemon.Consensus.AggregationV5.tree_levels_use_binary_merge_floor",
-        "Hegemon.Consensus.AggregationV5.valid_leaf_singleton_header_accepts",
-        "Hegemon.Consensus.AggregationV5.valid_merge_header_accepts"
-      ],
-      "assumptions": [
-        "The Lean model represents the cheap aggregation V5 payload header gate before representative child proof decoding and STARK batch verification, including the serialized tree_arity value that must equal the configured merge fan-in.",
-        "Generated Lean conformance vectors cover valid singleton leaf and merge headers plus bad version, bad proof format, bad public-values encoding, tree_arity mismatch, bad statement-commitment length, statement-commitment mismatch, child-count underflow/overflow, subtree tx-count mismatch, tree-level mismatch, root-level overflow, leaf fan-in overflow, merge fan-in mismatch, and packed public-input length mismatch.",
-        "The aggregation V5 envelope mutation corpus covers raw pass-through payloads, HGA0 compressed payloads, compression version mismatch, invalid declared uncompressed lengths, missing/garbage zstd payloads, zstd length mismatch, postcard truncation/trailing bytes, malformed random bytes, and mutated valid raw/compressed payloads against a separate marker/version/length/zstd/postcard/header oracle.",
-        "The theorem covers executable aggregation V5 header admission only. The corpus is parser-drift evidence for the production envelope/postcard boundary, not a proof of postcard or zstd implementation correctness, representative child proof decoding, transaction proof soundness, aggregation STARK soundness, packed public-value cryptographic binding, or complete block proof validity."
-      ],
-      "evidence_paths": [
-        "formal/lean/Hegemon/Consensus/AggregationV5.lean",
-        "formal/lean/Hegemon/Consensus/GenerateAggregationV5Vectors.lean",
-        "consensus/src/aggregation/v5.rs",
-        "scripts/check_formal_core.sh",
-        "scripts/check_lean_formal.sh"
-      ],
-      "gates": [
-        "bash scripts/check_lean_formal.sh",
-        "HEGEMON_LEAN_AGGREGATION_V5_VECTORS=<generated-json> cargo test -p consensus lean_generated_aggregation_v5_header_vectors_match_production -- --nocapture",
-        "cargo test -p consensus aggregation_v5_envelope_decode_matches_zstd_postcard_oracle_on_mutation_corpus --lib -- --nocapture",
-        "bash scripts/check_formal_core.sh"
-      ],
-      "residual_risks": []
-    },
-    {
       "id": "consensus.supply-digest-accounting",
       "component": "PoW supply and coinbase accounting",
       "claim_class": "lean_theorem",
@@ -3062,7 +3017,7 @@
       "id": "consensus.supply-chain-invariant",
       "component": "PoW accepted-chain supply accounting",
       "claim_class": "lean_theorem",
-      "summary": "The Lean supply-chain invariant kernel proves accepted claimed supply steps replay to the executable expected-delta sequence. AcceptedSmallWoodBlockComposition now closes the same-block projection: the exact ordered transaction fees, deployed empty independent-burn list, zero-or-one coinbase count and observed amount, parent supply, height, and claimed supply are all fields of the same accepted canonical block object, and the final supply equals the production subsidy-plus-fee transition. The composed no-counterfeit certificate is explicitly scoped to active SmallWood V3/Beta transactions. Lean-generated identity, active-version, and supply mutations are checked against the production consensus identity projection, production default binding, native ingress manifest, and native supply-composition helper.",
+      "summary": "The Lean supply-chain invariant kernel proves accepted claimed supply steps replay to the executable expected-delta sequence. AcceptedSmallWoodBlockComposition closes the same-block projection: the exact ordered transaction fees, deployed empty independent-burn list, zero-or-one coinbase count and observed amount, parent supply, height, and claimed supply are fields of the same accepted canonical block object, and the final supply equals the production subsidy-plus-fee transition. The composed no-counterfeit certificate is scoped to active SmallWood V4/Gamma transactions. Lean-generated identity, active-version, and supply mutations are checked against the production consensus identity projection, production default binding, native ingress manifest, and native supply-composition helper.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3672,7 +3627,7 @@
       "id": "native.mineable-action-admission",
       "component": "native block-template action selection admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean mineable-action admission kernel proves the executable native block-template selection table for selected candidate artifacts, unselected candidate rejection, locally staged sidecar-transfer ciphertext metadata, ordered candidate-artifact selection from the mineable transfer count, and pending-candidate pruning when shielded transfers are pending; generated Lean vectors are checked against the production helpers used before native mining work, startup pending-action repair, and mined-block pending-action replay.",
+      "summary": "The Lean mineable-action admission kernel proves the executable native block-template selection table: candidate artifacts always reject, plain actions remain eligible, and sidecar transfers require matching locally staged ciphertext metadata and size. Generated Lean vectors are checked against the production helpers used before native mining work and replay.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -3682,25 +3637,23 @@
         "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_candidates_without_transfer",
         "Hegemon.Native.MineableActionAdmission.candidate_prune_keeps_non_candidates",
         "Hegemon.Native.MineableActionAdmission.candidate_precedes_sidecar_ciphertext_missing",
-        "Hegemon.Native.MineableActionAdmission.first_matching_candidate_head_matches",
-        "Hegemon.Native.MineableActionAdmission.first_matching_candidate_skips_nonmatching_head",
+        "Hegemon.Native.MineableActionAdmission.candidate_artifact_is_retired_even_if_marked_selected",
+        "Hegemon.Native.MineableActionAdmission.candidate_artifact_rejects",
         "Hegemon.Native.MineableActionAdmission.plain_action_accepts",
         "Hegemon.Native.MineableActionAdmission.plain_action_ignores_sidecar_metadata",
-        "Hegemon.Native.MineableActionAdmission.selected_candidate_none_when_no_mineable_transfers",
-        "Hegemon.Native.MineableActionAdmission.selected_candidate_accepts",
-        "Hegemon.Native.MineableActionAdmission.selection_accepts_candidate_iff_selected",
+        "Hegemon.Native.MineableActionAdmission.selected_candidate_always_none",
+        "Hegemon.Native.MineableActionAdmission.selection_rejects_candidate",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_plain_action",
         "Hegemon.Native.MineableActionAdmission.selection_accepts_transfer_iff_mineable",
         "Hegemon.Native.MineableActionAdmission.sidecar_ciphertext_missing_rejects",
         "Hegemon.Native.MineableActionAdmission.sidecar_ciphertext_size_mismatch_rejects",
         "Hegemon.Native.MineableActionAdmission.sidecar_ciphertext_size_missing_rejects",
-        "Hegemon.Native.MineableActionAdmission.unselected_candidate_rejects",
         "Hegemon.Native.MineableActionAdmission.valid_sidecar_transfer_accepts"
       ],
       "assumptions": [
-        "The Lean model treats candidate-artifact route identity, sidecar transfer identity, staged ciphertext lookup results, pending-transfer presence, and the already canonical pending-action order as production-derived predicates; it proves the executable admission table, rejection precedence, ordered candidate selection by mineable transfer count, and the pending-candidate cleanup rule.",
-        "Generated Lean conformance vectors cover plain action acceptance, selected candidate acceptance, valid sidecar transfer acceptance, unselected candidate rejection, missing sidecar ciphertext metadata, missing sidecar size metadata, sidecar size mismatch, precedence when candidate and sidecar predicates conflict, zero-transfer candidate rejection, one- and two-transfer candidate matching, unmineable sidecar exclusion from transfer count, canonical-order first matching candidate selection, no-transfer candidate survival, transfer-driven candidate pruning, and multiple-candidate pruning.",
-        "The theorem covers executable native block-template action admission, candidate selection over the production canonical order, and candidate cleanup for persisted/revalidated pending sets. It does not prove ciphertext hash cryptographic security or implementation equivalence, sled/BTreeMap consistency, DA durability, recursive proof soundness, native tx-leaf proof soundness, global miner fairness, or complete native-node equivalence."
+        "The Lean model treats action route identity, sidecar identity, and staged ciphertext lookup results as production-derived predicates; it proves candidate retirement, sidecar admission, plain-action admission, rejection precedence, and pending-candidate cleanup.",
+        "Generated Lean conformance vectors cover candidate rejection even when marked selected, valid sidecar and plain action acceptance, missing or mismatched sidecar metadata, selection with zero/one/two transfers, and pending candidate pruning.",
+        "The theorem covers executable native block-template action admission and candidate retirement. It does not prove ciphertext hash security, DA durability, native transaction-proof soundness, global miner fairness, or complete native-node equivalence."
       ],
       "evidence_paths": [
         "formal/lean/Hegemon/Native/MineableActionAdmission.lean",
@@ -4256,7 +4209,7 @@
       "id": "native.candidate-artifact-admission",
       "component": "native candidate artifact admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean candidate-artifact admission kernel proves the executable native action/artifact table for no state-delta smuggling, exact route public_args decode, route payload/artifact equality, payload presence, schema, tx-count and DA-chunk bounds, shipped recursive_block_v2 route/profile, explicit custom proof-kind rejection, empty legacy proof fields, missing/empty recursive payload rejection, and recursive proof byte caps; generated Lean vectors are checked against the production helper used by native candidate action/artifact validation. The candidate-artifact SCALE wire slice additionally proves and vector-checks the raw CandidateArtifact / SubmitCandidateArtifactArgs byte grammar used by that route-payload premise, including recursive-block-v2, receipt-root, custom proof-kind, trailing, truncated, invalid enum, noncanonical compact-prefix, recursive proof overrun, and receipt-count overrun cases. The candidate-artifact resource projection slice proves and vector-checks that declared bytes, proof bytes, receipt bytes, recursive proof bytes, tx count, and DA chunk count are projected into the reusable bounded-request caps before an artifact is accepted.",
+      "summary": "The Lean candidate-artifact admission kernel and raw SCALE-wire slice constrain decoding and resource admission for historical recursive blocks. Candidate RPC submission and candidate selection for new templates are retired; active blocks use independent SmallWood transaction proofs.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -4327,10 +4280,10 @@
       "id": "native.candidate-artifact-coupling-admission",
       "component": "native candidate artifact block coupling admission",
       "claim_class": "lean_theorem",
-      "summary": "The Lean candidate-artifact coupling kernel proves the executable native block table requiring zero candidate artifacts when a block has no shielded transfers, and exactly one candidate artifact whose tx_count matches the shielded transfer count when a block is non-empty; generated Lean vectors are checked against the production helper used before recursive block artifact verification.",
-      "status": "enforced",
+      "summary": "The Lean candidate-artifact coupling kernel is retained as research and regression evidence for the retired recursive-block format. Active production rejects candidate artifacts and does not call this helper.",
+      "status": "research_only",
       "proof_model": "lean4_theorem_no_sorry_generated_rust_conformance_vectors",
-      "production_eligible": true,
+      "production_eligible": false,
       "lean_theorems": [
         "Hegemon.Native.CandidateArtifactCouplingAdmission.accepts_iff_coupling_preconditions",
         "Hegemon.Native.CandidateArtifactCouplingAdmission.candidate_count_precedes_tx_count_mismatch",
@@ -4360,7 +4313,14 @@
         "cargo test -p hegemon-node shielded_transfer_ --lib --no-default-features -- --nocapture",
         "bash scripts/check_formal_core.sh"
       ],
-      "residual_risks": []
+      "residual_risks": [
+        {
+          "id": "retired-candidate-coupling-has-no-production-caller",
+          "description": "This retired-format coupling theorem is not connected to an active production caller; historical recursive replay is selected directly by decoded candidate count.",
+          "status": "accepted",
+          "tracking": "docs/SECURITY_REVIEWS.md"
+        }
+      ]
     },
     {
       "id": "native.block-artifact-binding-admission",
@@ -7699,7 +7659,7 @@
       "id": "formal.deployed-smallwood-no-counterfeit-critical-path",
       "component": "deployed SmallWood accepted-block no-counterfeit critical path",
       "claim_class": "lean_theorem",
-      "summary": "The deployed SmallWood closure proves one production-bound theorem chain for active circuit version 3 and crypto suite Beta from an accepted canonical block and named cryptographic boundaries to exact evaluation of the generated SmallWood constraint program, same-witness spend/output/balance equation relations for every ordered transaction, exact verified-claim/canonical-identity/proven-batch/statement/order/DA binding, and the same block's fee, burn, coinbase, and claimed-supply transition. The generated semantic map covers every public field, both exact sparse linear tables, all 11,604 nonlinear expression nodes, all 1,722 ordered roots, eight disjoint constraint-family spans, and the program digest. An independent sparse-linear objective requires 30 exact output-note-hash bindings per active output, both input value/asset-to-note-hash bindings per active input, and all seven input/output/public monetary range-reconstruction equations. The output bindings reconstruct the deployed 18-word Poseidon2 opening from three exact sponge chunks and derive value/asset uniqueness only from primitive Poseidon2 collision resistance. A generated 16-mask Rust contract is compiled into the V3 prover, verifier, and formal map API; for every actual public vector it checks the complete constraint structure and every normalized public-value target, so value-specific drift outside the generator probes fails closed. The exact-table digest remains audit metadata rather than a semantic map field or accepted-proof premise. Production conformance gates compare the full linear and nonlinear maps plus the exact ordered identity, active-version, and supply projections, including explicit V2/Beta rejection from the claimed closure scope, wrapper cross-encoding, input/output hash binding substitution, monetary reconstruction substitution, value-specific target/structure drift, expression/root/digest drift, omission, reordering, substitution, duplication, wrapping, truncation, DA mismatch, fee-order mismatch, coinbase mismatch, and claimed-supply mismatch.",
+      "summary": "The deployed SmallWood closure proves one production-bound theorem chain for active circuit version 4 and crypto suite Gamma from canonical accepted proof bytes through exact SHA-512 transcript reconstruction, rejection sampling, verifier-message restoration, authenticated-row extraction, exact production SmallWood constraints, same-witness spend/output/balance relations, ordered independent transaction identity, and the same block's fee, coinbase, and claimed-supply transition. The active relation is DirectPacked64CompressedLevel5 with 78 public fields, 241 raw witness rows, 699 LPPC rows at packing factor 64, degree 8, and 890 constraints. The active theorem has no recursive or proven-batch premise. Production conformance gates compare the exact constraint map, parser, transcript/profile material, ordered identity, active-version, and supply projections, including explicit V2/Beta and V3/Beta exclusion from the active closure scope, wrapper cross-encoding, binding drift, omission, reordering, substitution, duplication, truncation, DA mismatch, fee-order mismatch, coinbase mismatch, and claimed-supply mismatch.",
       "status": "enforced",
       "proof_model": "lean4_theorem_no_sorry_exact_production_map_generated_rust_conformance_vectors",
       "production_eligible": true,
@@ -7721,7 +7681,7 @@
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_output_hash_preimage_has_exact_deployed_word_count",
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_concrete_output_yields_accepted_hash_image",
         "Hegemon.Transaction.SmallWoodProductionConstraintRefinement.production_poseidon2_collision_resistance_binds_accepted_output_value_and_asset",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_recursive_cross_object_identity_refines_one_canonical_block",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.accepted_independent_cross_object_identity_refines_one_canonical_block",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.consensus_accepted_chain_supply_composition",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.deployed_smallwood_proof_yields_transaction_relation",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.active_smallwood_version_accepts_iff",
@@ -7731,8 +7691,8 @@
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.reordered_claim_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.substituted_claim_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.duplicated_claim_rejects",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.wrapped_recursive_identity_rejects",
-        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.truncated_recursive_identity_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.wrapped_independent_identity_rejects",
+        "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.truncated_independent_identity_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_da_identity_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_fee_order_rejects",
         "Hegemon.Consensus.AcceptedSmallWoodBlockComposition.mismatched_coinbase_amount_rejects",
@@ -7742,9 +7702,9 @@
         "`DeployedSmallWoodProofSystemSoundnessAssumption` is the explicit deployed STARK/FRI/PCS cryptographic boundary: accepted proof verification implies the exact production SmallWood relation evaluates true. It does not assume spend authorization, output validity, balance conservation, exact extraction, or row equivalence as separate conclusions.",
         "`ProductionPoseidon2HashCollisionResistance` is the explicit primitive note-hash assumption. It applies only after `ProductionAcceptedOutputHashImage` proves the exact production map, 18-word three-chunk preimage, frame and continuation constraints, authorization-key bindings, all Poseidon transition equations, and six public commitment bindings; Lean then derives value/asset equality by projecting the first two preimage words rather than assuming output binding as a separate relation.",
         "The exact-table BLAKE3 digest is audit-only conformance metadata. The accepted-proof theorem reconstructs the complete semantic map from canonical public values and does not accept a candidate digest.",
-        "The compiled Rust runtime contract is generated from the reviewed 16-mask map templates but is enforced against every actual V3 public vector. Its complete structure digest and normalized-target digest convert unsupported value-dependent builder behavior into verifier rejection rather than extrapolating four probes into a universal equivalence claim.",
+        "The compiled Rust runtime contract is generated from the reviewed 16-mask map templates and enforced against every actual V4 public vector. Its complete structure digest and normalized-target digest convert unsupported value-dependent builder behavior into verifier rejection rather than extrapolating finite probes into a universal equivalence claim.",
         "The production identity functions are instantiated by the shipped transaction, statement, proof, public-input, statement-commitment, DA-root, and DA-chunk-count helpers; their primitive collision resistance remains a cryptographic assumption rather than a Lean theorem.",
-        "`DeployedSmallWoodProofAccepted` requires circuit version 3 and crypto suite Beta (numeric suite 2), and the final certificate exposes that fact for every accepted transaction. Generated scope vectors bind those constants to the production default and native action-ingress manifest. Permissionless historical V2/Beta block replay is intentionally outside this bounded theorem until a coordinated network activation or checkpoint policy retires it.",
+        "`DeployedSmallWoodProofAccepted` requires circuit version 4 and crypto suite Gamma (numeric suite 3), and the final certificate exposes that fact for every accepted transaction. Generated scope vectors bind those constants to the production default and native action-ingress manifest. Historical V2/Beta and V3/Beta replay is intentionally outside this bounded theorem until a coordinated network activation or checkpoint policy retires it.",
         "The current native action grammar has no independent burn action, so the accepted burn list is exactly empty. A future burn action requires extending both the production projection and this theorem before admission.",
         "Complete arbitrary Rust compiler semantics and whole-node refinement remain outside this bounded theorem; generated vectors and mutation gates bind the exact shipped projection helpers used on the accepted path."
       ],
@@ -7790,8 +7750,8 @@
           "tracking": "config/highest-standard-formal-verification-matrix.json"
         },
         {
-          "id": "smallwood-v2-replay-outside-closure",
-          "description": "The final no-counterfeit certificate covers active V3/Beta transactions. Historical V2/Beta block replay remains accepted for chain compatibility and needs a coordinated activation or checkpoint before retirement.",
+          "id": "smallwood-historical-replay-outside-closure",
+          "description": "The final no-counterfeit certificate covers active V4/Gamma transactions. Historical V2/Beta and V3/Beta replay remains accepted for chain compatibility and needs a coordinated activation or checkpoint before retirement.",
           "status": "open",
           "tracking": ".agent/DEPLOYED_SMALLWOOD_NO_COUNTERFEIT_CLOSURE_EXECPLAN.md"
         }

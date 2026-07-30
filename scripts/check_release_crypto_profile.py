@@ -8,14 +8,12 @@ import subprocess
 
 
 PROFILE_MARKER = (
-    "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=3:CRYPTO=2:"
-    "BACKEND=smallwood_candidate:ARITH=direct-packed64-committed-bindings-"
-    "inline-merkle-skip-initial-mds-v2:RHO=3:OPENINGS=3:DECS_EVALS=32768:"
-    "DECS_OPENINGS=24:FLOOR=128"
+    "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=4:CRYPTO=3:"
+    "BACKEND=smallwood_candidate:ARITH=direct-packed64-compressed-level5:"
+    "RHO=5:OPENINGS=5:BETA=7:DECS_EVALS=1048576:"
+    "DECS_OPENINGS=20:DECS_ETA=33:FLOOR=260"
 )
-ACTIVE_ARITHMETIZATION = (
-    "DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2"
-)
+ACTIVE_ARITHMETIZATION = "DirectPacked64CompressedLevel5"
 
 
 def fail(message: str) -> None:
@@ -35,14 +33,14 @@ def validate_profile(profile: object, label: str) -> dict:
         fail(f"{label}: cryptographic profile must be a JSON object")
     expected_fields = {
         "schema_version": 1,
-        "default_version": {"circuit": 3, "crypto": 2},
+        "default_version": {"circuit": 4, "crypto": 3},
         "default_backend": "smallwood_candidate",
         "version_mapped_backend": "smallwood_candidate",
         "producer_entrypoint": "transaction_circuit::proof::prove->smallwood_frontend::prove_smallwood_candidate_with_auth",
         "verifier_entrypoint": "transaction_circuit::proof::verify_transaction_proof_bytes_for_backend->smallwood_frontend::verify_smallwood_candidate_proof_bytes",
         "arithmetization": ACTIVE_ARITHMETIZATION,
         "public_value_count": 78,
-        "required_soundness_floor_bits": 128,
+        "required_soundness_floor_bits": 260,
         "compiled_profile_marker": PROFILE_MARKER,
     }
     for field, expected in expected_fields.items():
@@ -53,13 +51,13 @@ def validate_profile(profile: object, label: str) -> dict:
             )
     no_grinding = profile.get("no_grinding_profile")
     expected_no_grinding = {
-        "rho": 3,
-        "nb_opened_evals": 3,
-        "beta": 2,
+        "rho": 5,
+        "nb_opened_evals": 5,
+        "beta": 7,
         "opening_pow_bits": 0,
-        "decs_nb_evals": 32768,
-        "decs_nb_opened_evals": 24,
-        "decs_eta": 3,
+        "decs_nb_evals": 1048576,
+        "decs_nb_opened_evals": 20,
+        "decs_eta": 33,
         "decs_pow_bits": 0,
     }
     if no_grinding != expected_no_grinding:
@@ -70,10 +68,10 @@ def validate_profile(profile: object, label: str) -> dict:
     if soundness.get("profile") != expected_no_grinding:
         fail(f"{label}: soundness report profile mismatch")
     floor = soundness.get("security_floor_bits")
-    if not isinstance(floor, (int, float)) or floor < 128:
-        fail(f"{label}: computed security floor is below 128 bits: {floor!r}")
-    if soundness.get("meets_128_bit_floor") is not True:
-        fail(f"{label}: computed soundness report does not meet the 128-bit floor")
+    if not isinstance(floor, (int, float)) or floor < 260:
+        fail(f"{label}: computed security floor is below 260 bits: {floor!r}")
+    if soundness.get("meets_260_bit_floor") is not True:
+        fail(f"{label}: computed soundness report does not meet the 260-bit floor")
     table_digest = profile.get("exact_constraint_table_digest_hex")
     verifier_profile = profile.get("verifier_profile_sha384_hex")
     for field, value, length in (

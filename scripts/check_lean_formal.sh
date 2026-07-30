@@ -58,8 +58,6 @@ rm -f /tmp/hegemon-lean-forbidden.$$
   lake env lean Hegemon/Bridge/GenerateCheckpointOutputVectors.lean
   lake env lean Hegemon/Bridge/GenerateLongRangeVectors.lean
   lake env lean Hegemon/Bridge/GenerateVectors.lean
-  lake env lean Hegemon/Consensus/AggregationV5.lean
-  lake env lean Hegemon/Consensus/GenerateAggregationV5Vectors.lean
   lake env lean Hegemon/Consensus/CommitmentTreeAppend.lean
   lake env lean Hegemon/Consensus/GenerateCommitmentTreeAppendVectors.lean
   lake env lean Hegemon/Consensus/DaRoot.lean
