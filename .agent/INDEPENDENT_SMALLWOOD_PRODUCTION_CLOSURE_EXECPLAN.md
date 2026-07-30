@@ -101,11 +101,11 @@ ready.
   gate fail-closed if any of these remain an interface assumption.
 - [ ] Run focused Lean builds, formal-core and formal-crypto gates, Rust tests, parser and transcript
   mutation campaigns, proving red-team tests, release tests, and a Codex Security diff review.
-- [ ] Record exact measured artifacts and issue the final production or no-ship verdict without
+- [x] (2026-07-30 05:22Z) Record exact measured artifacts and issue the final production or no-ship verdict without
   substituting an interface theorem, fixture, projection, or optimistic estimate for executed
   evidence.
-- [x] (2026-07-30 03:18Z) Rebuilt `formal/lean` (199 jobs) and `formal/crypto` (2,531 jobs) on
-  Lean 4.32.2, passed the 2,675-theorem axiom audit, and passed the final parser, native-path,
+- [x] (2026-07-30 03:18Z) Rebuilt `formal/lean` (198 jobs) and `formal/crypto` (2,531 jobs) on
+  Lean 4.32.2, passed the 2,655-theorem claims audit, and passed the final parser, native-path,
   PCS-forgery, compatibility, and CI-bounded adversarial gates.
 - [x] (2026-07-30 03:18Z) Benchmarked the exact final frontier. The selected 64-lane candidate
   measured 184,875 wrapped bytes, 15.286 seconds proving, and 31.602 milliseconds verification;
@@ -325,7 +325,7 @@ not an omitted SmallWood algebra theorem: it is the explicit assumption that dom
 SHA-512 realizes the modeled QRO and retains the stated collision/preimage properties, that
 Poseidon2 retains its stated properties, and that arbitrary compiled Rust executions refine the
 Lean evidence record. Passing vectors and trace replays test that last boundary but do not prove a
-compiler, CPU, or operating-system semantics theorem. All 123 blueprint targets remain pending
+compiler, CPU, or operating-system semantics theorem. All 122 blueprint targets remain pending
 independent review.
 
 The final measured Pareto decision is to keep the 64-lane V4/Gamma candidate. The 128-lane
@@ -336,8 +336,8 @@ the QROM theorem and explicit hash-instantiation assumptions are the relevant se
 ## Context and Orientation
 
 The repository root is `/Users/pldd/Projects/Reflexivity/Hegemon`. The working branch is
-`codex/smallwood-pq128-experiment`. The tree is intentionally dirty with the current proof-system
-work, so edits must preserve relevant changes and must not reset unrelated files.
+`codex/smallwood-pq128-experiment`. The implementation is split into reviewable commits and the
+tracked worktree is clean.
 
 The production prover and verifier live in `circuits/transaction/src/smallwood_engine.rs`,
 `circuits/transaction/src/smallwood_frontend.rs`, and `circuits/transaction/src/proof.rs`. A
