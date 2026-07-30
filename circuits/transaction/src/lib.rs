@@ -47,7 +47,7 @@ pub use note::{
 };
 pub use proof::{TransactionProof, VerificationReport};
 pub use proof_options::TransactionProofParams;
-pub use protocol_versioning::TxProofBackend;
+pub use protocol_versioning::{TxProofBackend, VersionBinding};
 pub use public_inputs::{StablecoinPolicyBinding, TransactionPublicInputs};
 pub use smallwood_engine::{
     build_smallwood_poseidon2_verifier_trace_v1, decode_smallwood_proof_trace_prefix_v1,
@@ -56,11 +56,16 @@ pub use smallwood_engine::{
     ensure_row_polynomial_arithmetization, hash_challenge_opening_decs, hash_piop_transcript,
     interpolate_smallwood_consecutive_row_v1, lvcs_recompute_rows, pcs_build_coefficients,
     pcs_reconstruct_combi_heads, piop_recompute_transcript,
-    projected_smallwood_structural_proof_bytes_v1, prove_smallwood_structural_identity_witness_v1,
-    report_smallwood_backend_opening_surface_v1, report_smallwood_lvcs_planner_projection_v1,
-    report_smallwood_proof_size_v1, report_smallwood_structural_no_grinding_soundness_v1,
-    smallwood_binding_words_v1, smallwood_no_grinding_exact_128_bit_aggregate_check,
+    projected_smallwood_structural_proof_bytes_v1,
+    projected_smallwood_structural_proof_bytes_with_backend_v1,
+    prove_smallwood_structural_identity_witness_v1, report_smallwood_backend_opening_surface_v1,
+    report_smallwood_lvcs_planner_projection_v1, report_smallwood_proof_size_v1,
+    report_smallwood_structural_no_grinding_soundness_v1, smallwood_binding_words_v1,
+    smallwood_no_grinding_exact_128_bit_aggregate_check,
     smallwood_no_grinding_exact_128_bit_term_checks,
+    smallwood_no_grinding_exact_256_bit_aggregate_check,
+    smallwood_no_grinding_exact_256_bit_term_checks,
+    smallwood_no_grinding_exact_260_bit_aggregate_check,
     smallwood_no_grinding_profile_for_arithmetization, smallwood_poseidon2_coeffs_v1,
     smallwood_poseidon2_combi_heads_v1, smallwood_poseidon2_decs_commitment_transcript_v1,
     smallwood_poseidon2_decs_query_v1, smallwood_poseidon2_decs_trans_hash_v1,
@@ -70,15 +75,18 @@ pub use smallwood_engine::{
     smallwood_poseidon2_piop_trace_v1, smallwood_poseidon2_piop_transcript_v1,
     smallwood_poseidon2_recompute_root_v1, smallwood_poseidon2_recompute_rows_v1,
     smallwood_proof_from_trace_v1, validate_proof_shape,
+    validate_smallwood_poseidon2_verifier_trace_v1,
     verify_smallwood_structural_identity_witness_v1, xof_decs_opening, xof_piop_opening_points,
     SmallwoodArithmetization, SmallwoodBackendOpeningSurfaceReportV1, SmallwoodConfig,
     SmallwoodLvcsPlannerGeometryKindV1, SmallwoodLvcsPlannerProjectionReportV1,
     SmallwoodNoGrindingProfileV1, SmallwoodNoGrindingSoundnessReportV1,
     SmallwoodPcsVerifierTraceV1, SmallwoodPiopVerifierTraceV1, SmallwoodProof,
     SmallwoodProofSizeReportV1, SmallwoodProofTraceV1, SmallwoodTranscriptBackend,
-    SmallwoodVerifierTraceV1, ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1, DIGEST_BYTES, NONCE_BYTES,
-    SMALLWOOD_BETA, SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS,
-    SMALLWOOD_DECS_POW_BITS, SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
+    SmallwoodTranscriptCallTraceV1, SmallwoodVerifierOperationProfileV1,
+    SmallwoodVerifierStageOperationProfileV1, SmallwoodVerifierTraceV1,
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1, DIGEST_BYTES, NONCE_BYTES, SMALLWOOD_BETA,
+    SMALLWOOD_DECS_NB_EVALS, SMALLWOOD_DECS_NB_OPENED_EVALS, SMALLWOOD_DECS_POW_BITS,
+    SMALLWOOD_NB_OPENED_EVALS, SMALLWOOD_RHO,
 };
 pub use smallwood_frontend::{
     active_smallwood_production_profile_attestation,
@@ -98,7 +106,9 @@ pub use smallwood_frontend::{
     smallwood_policy_root_bytes, smallwood_private_auth_intent_digest_bytes,
     smallwood_production_constraint_map, smallwood_production_constraint_map_for_public_values,
     smallwood_production_constraint_map_for_verifier_inputs,
-    smallwood_production_public_field_ranges, smallwood_public_statement_values,
+    smallwood_production_public_field_ranges,
+    smallwood_production_public_statement_bytes_from_values,
+    smallwood_production_verifier_evidence_v1, smallwood_public_statement_values,
     smallwood_signer_tag_from_spend_key, smallwood_value_lock_auth_key_bytes,
     verify_smallwood_candidate_proof_bytes, SmallwoodAccumulatorAuthOpening,
     SmallwoodCandidateBackendOpeningSurfaceReport, SmallwoodCandidateExactProfileReport,
@@ -107,8 +117,9 @@ pub use smallwood_frontend::{
     SmallwoodCandidateProof, SmallwoodCandidateProofSizeReport, SmallwoodFrontendShape,
     SmallwoodPoseidonLayout, SmallwoodPrivateAuthMode, SmallwoodPrivateAuthWitness,
     SmallwoodProductionConstraintMap, SmallwoodProductionProfileAttestation,
-    SmallwoodProductionPublicFieldRange, SmallwoodPublicBindingMode, SmallwoodSignerTag,
-    SMALLWOOD_MULTISIG_MAX_SIGNERS, SMALLWOOD_SIGNER_TAG_WORDS,
+    SmallwoodProductionPublicFieldRange, SmallwoodProductionVerifierEvidenceV1,
+    SmallwoodPublicBindingMode, SmallwoodSignerTag, SMALLWOOD_MULTISIG_MAX_SIGNERS,
+    SMALLWOOD_SIGNER_TAG_WORDS,
 };
 #[cfg(feature = "formal-generator")]
 pub use smallwood_frontend::{

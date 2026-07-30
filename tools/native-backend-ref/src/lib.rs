@@ -822,7 +822,7 @@ pub struct ReviewVectorCase {
 const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 1;
 const REVIEW_VECTOR_GENERATOR_ID: &str = "hegemon.superneo-bench.native-review";
 const ACTIVE_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
-    SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    SmallwoodArithmetization::DirectPacked64CompressedLevel5;
 const ACTIVE_REVIEW_PUBLIC_VALUE_COUNT: usize = 78;
 
 const REQUIRED_REVIEW_CASES: [(&str, &str, bool, Option<&str>, &str); 11] = [
@@ -1509,7 +1509,7 @@ fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()
     let valid_leaf = parse_native_tx_leaf_artifact(&leaf_params, &valid_leaf_bytes)?;
     ensure!(
         valid_leaf.tx.version == SMALLWOOD_CANDIDATE_VERSION_BINDING,
-        "review vectors must exercise active SmallWood V3"
+        "review vectors must exercise active SmallWood V4"
     );
     ensure!(
         valid_leaf.proof_backend == TxProofBackend::SmallwoodCandidate,
@@ -1523,7 +1523,7 @@ fn validate_ref_review_bundle_contract(bundle: &ReviewVectorBundle) -> Result<()
     .ok_or_else(|| anyhow!("review SmallWood artifact has no arithmetization"))?;
     ensure!(
         arithmetization == ACTIVE_REVIEW_ARITHMETIZATION,
-        "review vectors must exercise the active V3 arithmetization"
+        "review vectors must exercise the active V4 arithmetization"
     );
     let expected_profile = ReviewActiveTxProfile {
         circuit_version: SMALLWOOD_CANDIDATE_VERSION_BINDING.circuit,

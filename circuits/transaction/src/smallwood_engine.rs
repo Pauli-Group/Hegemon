@@ -1,3 +1,4 @@
+use std::cell::{Cell, RefCell};
 use std::cmp::min;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -9,7 +10,9 @@ use hegemon_field::Goldilocks;
 use num_bigint::BigUint;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use transaction_core::poseidon2::{poseidon2_permutation, Felt};
+use sha2::{Digest as ShaDigest, Sha512};
+use transaction_core::poseidon2::poseidon2_permutation;
+use transaction_core::poseidon2::Felt;
 
 use crate::{
     error::TransactionCircuitError,
@@ -20,7 +23,11 @@ use crate::{
 
 const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const NEG_ORDER: u64 = FIELD_ORDER.wrapping_neg();
-pub const DIGEST_BYTES: usize = 32;
+const GOLDILOCKS_TWO_ADIC_ROOT: u64 = 0x1856_29dc_da58_878c;
+const GOLDILOCKS_TWO_ADICITY: u32 = 32;
+pub const DIGEST_BYTES: usize = 64;
+const LEGACY_DIGEST_BYTES: usize = 32;
+const LEGACY_DIGEST_WORDS: usize = LEGACY_DIGEST_BYTES / 8;
 const DIGEST_WORDS: usize = DIGEST_BYTES / 8;
 const SALT_BYTES: usize = 32;
 const SALT_WORDS: usize = SALT_BYTES / 8;
@@ -28,8 +35,24 @@ pub const NONCE_BYTES: usize = 4;
 
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.f64-compress2.v1";
+const SMALLWOOD_LEVEL5_FIXED_DECS_DOMAIN: &[u8] = b"hegemon.smallwood.level5.decs-fixed-sampling";
+pub const SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT: usize = 50;
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
 const SMALLWOOD_POSEIDON2_COMPRESS2_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-compress2.v1";
+const SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN: &[u8] = b"hegemon.smallwood.level5.piop-input";
+const SMALLWOOD_LEVEL5_PIOP_TRANSCRIPT_DOMAIN: &[u8] = b"hegemon.smallwood.level5.piop-transcript";
+const SMALLWOOD_LEVEL5_DECS_OPENING_DOMAIN: &[u8] = b"hegemon.smallwood.level5.decs-opening";
+const SMALLWOOD_LEVEL5_MERKLE_LEAF_DOMAIN: &[u8] = b"hegemon.smallwood.level5.merkle-leaf";
+const SMALLWOOD_LEVEL5_MERKLE_NODE_DOMAIN: &[u8] = b"hegemon.smallwood.level5.merkle-node";
+const SMALLWOOD_LEVEL5_MERKLE_ROOT_DOMAIN: &[u8] = b"hegemon.smallwood.level5.merkle-root";
+const SMALLWOOD_LEVEL5_DECS_COEFFICIENT_DOMAIN: &[u8] =
+    b"hegemon.smallwood.level5.decs-coefficient";
+const SMALLWOOD_LEVEL5_PIOP_COEFFICIENT_DOMAIN: &[u8] =
+    b"hegemon.smallwood.level5.piop-coefficient";
+const SMALLWOOD_LEVEL5_PIOP_OPENING_DOMAIN: &[u8] = b"hegemon.smallwood.level5.piop-opening";
+const SMALLWOOD_LEVEL5_DECS_QUERY_DOMAIN: &[u8] = b"hegemon.smallwood.level5.decs-query";
+pub const SMALLWOOD_LEVEL5_MAX_PIOP_NONCE_TRIALS: u32 = 16;
+pub const SMALLWOOD_LEVEL5_MAX_DECS_NONCE_TRIALS: u32 = 1;
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SmallwoodNoGrindingProfileV1 {
     pub rho: usize,
@@ -54,7 +77,7 @@ pub const LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
         decs_pow_bits: 0,
     };
 
-pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+const HISTORICAL_SMALLWOOD_V3_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
     SmallwoodNoGrindingProfileV1 {
         rho: 3,
         nb_opened_evals: 3,
@@ -65,6 +88,21 @@ pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
         decs_eta: 3,
         decs_pow_bits: 0,
     };
+
+pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
+    SmallwoodNoGrindingProfileV1 {
+        rho: 5,
+        nb_opened_evals: 5,
+        beta: 7,
+        opening_pow_bits: 0,
+        decs_nb_evals: 1_048_576,
+        decs_nb_opened_evals: 20,
+        decs_eta: 33,
+        decs_pow_bits: 0,
+    };
+
+pub const LEVEL5_SMALLWOOD_NO_GRINDING_PROFILE: SmallwoodNoGrindingProfileV1 =
+    ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1;
 
 const HISTORICAL_SMALLWOOD_V2_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 =
     SmallwoodNoGrindingProfileV1 {
@@ -86,10 +124,15 @@ pub const SMALLWOOD_DECS_NB_EVALS: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_
 pub const SMALLWOOD_DECS_NB_OPENED_EVALS: usize =
     ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
 pub const SMALLWOOD_DECS_POW_BITS: u32 = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_pow_bits;
-const MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1: usize =
-    LEGACY_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
+// This is an allocation/parser ceiling, not an accepted-profile selector. The
+// verifier still enforces the exact active or explicitly supplied profile shape.
+// Keep enough bounded headroom for offline security-profile evaluation without
+// changing the canonical u16 wire format.
+const MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1: usize = 96;
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
 static CONSECUTIVE_LAGRANGE_BASIS_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<Vec<u64>>>>>> =
+    OnceLock::new();
+static CONSECUTIVE_BARYCENTRIC_WEIGHT_CACHE: OnceLock<Mutex<BTreeMap<usize, Arc<Vec<u64>>>>> =
     OnceLock::new();
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SmallwoodArithmetization {
@@ -103,6 +146,28 @@ pub enum SmallwoodArithmetization {
     DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1,
     DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1,
     DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+    DirectPacked64CompressedLevel5,
+    DirectPacked128CompressedLevel5,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SmallwoodDecsChallengeFormat {
+    ScalarPowers,
+    Uniform,
+}
+
+fn decs_challenge_format_for_arithmetization(
+    arithmetization: SmallwoodArithmetization,
+) -> SmallwoodDecsChallengeFormat {
+    if matches!(
+        arithmetization,
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+            | SmallwoodArithmetization::DirectPacked128CompressedLevel5
+    ) {
+        SmallwoodDecsChallengeFormat::Uniform
+    } else {
+        SmallwoodDecsChallengeFormat::ScalarPowers
+    }
 }
 
 pub fn smallwood_no_grinding_profile_for_arithmetization(
@@ -113,7 +178,11 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
             HISTORICAL_SMALLWOOD_V2_NO_GRINDING_PROFILE_V1
         }
         SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
-            ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1
+            HISTORICAL_SMALLWOOD_V3_NO_GRINDING_PROFILE_V1
+        }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5 => {
+            LEVEL5_SMALLWOOD_NO_GRINDING_PROFILE
         }
         SmallwoodArithmetization::Bridge64V1
         | SmallwoodArithmetization::DirectPacked64V1
@@ -132,10 +201,250 @@ pub fn smallwood_no_grinding_profile_for_arithmetization(
 pub enum SmallwoodTranscriptBackend {
     Blake3,
     Poseidon2,
+    Sha512Level5,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+impl SmallwoodTranscriptBackend {
+    fn digest_bytes(self) -> usize {
+        match self {
+            Self::Blake3 | Self::Poseidon2 => LEGACY_DIGEST_BYTES,
+            Self::Sha512Level5 => DIGEST_BYTES,
+        }
+    }
+
+    fn digest_words(self) -> usize {
+        self.digest_bytes() / std::mem::size_of::<u64>()
+    }
+}
+
+fn transcript_domain(
+    backend: SmallwoodTranscriptBackend,
+    level5_domain: &'static [u8],
+) -> &'static [u8] {
+    if backend == SmallwoodTranscriptBackend::Sha512Level5 {
+        level5_domain
+    } else {
+        SMALLWOOD_XOF_DOMAIN
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SmallwoodDecsEvaluationDomain {
+    Consecutive,
+    Radix2Subgroup,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodVerifierOperationProfileV1 {
+    pub field_additions: u64,
+    pub field_subtractions: u64,
+    pub field_multiplications: u64,
+    pub field_negations: u64,
+    pub field_inversions: u64,
+    pub transcript_calls: u64,
+    pub transcript_absorbed_words: u64,
+    pub transcript_squeezed_words: u64,
+    #[serde(default)]
+    pub sha512_digest_calls: u64,
+    pub poseidon2_permutations: u64,
+    pub merkle_leaf_hashes: u64,
+    pub merkle_internal_hashes: u64,
+    pub merkle_root_hashes: u64,
+    pub merkle_authentication_words: u64,
+    pub piop_nonce_trials: u64,
+    pub decs_nonce_trials: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodTranscriptCallTraceV1 {
+    pub domain: Vec<u8>,
+    pub input_words: Vec<u64>,
+    pub output_words: Vec<u64>,
+    #[serde(default)]
+    pub raw_digest_calls: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SmallwoodVerifierStageOperationProfileV1 {
+    pub stage: String,
+    pub operations: SmallwoodVerifierOperationProfileV1,
+}
+
+thread_local! {
+    static SMALLWOOD_VERIFIER_OPERATION_PROFILE_V1:
+        Cell<Option<SmallwoodVerifierOperationProfileV1>> = const { Cell::new(None) };
+    static SMALLWOOD_TRANSCRIPT_CALL_TRACE_V1:
+        RefCell<Option<Vec<SmallwoodTranscriptCallTraceV1>>> = const { RefCell::new(None) };
+    static SMALLWOOD_VERIFIER_STAGE_PROFILE_V1:
+        RefCell<Option<Vec<(String, SmallwoodVerifierOperationProfileV1)>>> =
+            const { RefCell::new(None) };
+}
+
+#[inline(always)]
+fn update_verifier_operation_profile_v1(
+    update: impl FnOnce(&mut SmallwoodVerifierOperationProfileV1),
+) {
+    SMALLWOOD_VERIFIER_OPERATION_PROFILE_V1.with(|slot| {
+        if let Some(mut profile) = slot.get() {
+            update(&mut profile);
+            slot.set(Some(profile));
+        }
+    });
+}
+
+fn begin_verifier_operation_profile_v1() -> Result<(), TransactionCircuitError> {
+    SMALLWOOD_VERIFIER_OPERATION_PROFILE_V1.with(|slot| {
+        if slot.get().is_some() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SmallWood verifier operation profiling is already active",
+            ));
+        }
+        slot.set(Some(SmallwoodVerifierOperationProfileV1::default()));
+        Ok(())
+    })
+}
+
+fn finish_verifier_operation_profile_v1() -> SmallwoodVerifierOperationProfileV1 {
+    SMALLWOOD_VERIFIER_OPERATION_PROFILE_V1
+        .with(|slot| slot.replace(None))
+        .unwrap_or_default()
+}
+
+fn begin_verifier_stage_profile_v1() -> Result<(), TransactionCircuitError> {
+    SMALLWOOD_VERIFIER_STAGE_PROFILE_V1.with(|slot| {
+        let mut stages = slot.borrow_mut();
+        if stages.is_some() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SmallWood verifier stage profiling is already active",
+            ));
+        }
+        *stages = Some(Vec::new());
+        Ok(())
+    })
+}
+
+fn record_verifier_stage_profile_v1(stage: &'static str) {
+    let cumulative = SMALLWOOD_VERIFIER_OPERATION_PROFILE_V1
+        .with(|slot| slot.get())
+        .unwrap_or_default();
+    SMALLWOOD_VERIFIER_STAGE_PROFILE_V1.with(|slot| {
+        if let Some(stages) = slot.borrow_mut().as_mut() {
+            stages.push((stage.to_owned(), cumulative));
+        }
+    });
+}
+
+fn subtract_operation_profile_v1(
+    current: SmallwoodVerifierOperationProfileV1,
+    previous: SmallwoodVerifierOperationProfileV1,
+) -> SmallwoodVerifierOperationProfileV1 {
+    SmallwoodVerifierOperationProfileV1 {
+        field_additions: current
+            .field_additions
+            .saturating_sub(previous.field_additions),
+        field_subtractions: current
+            .field_subtractions
+            .saturating_sub(previous.field_subtractions),
+        field_multiplications: current
+            .field_multiplications
+            .saturating_sub(previous.field_multiplications),
+        field_negations: current
+            .field_negations
+            .saturating_sub(previous.field_negations),
+        field_inversions: current
+            .field_inversions
+            .saturating_sub(previous.field_inversions),
+        transcript_calls: current
+            .transcript_calls
+            .saturating_sub(previous.transcript_calls),
+        transcript_absorbed_words: current
+            .transcript_absorbed_words
+            .saturating_sub(previous.transcript_absorbed_words),
+        transcript_squeezed_words: current
+            .transcript_squeezed_words
+            .saturating_sub(previous.transcript_squeezed_words),
+        sha512_digest_calls: current
+            .sha512_digest_calls
+            .saturating_sub(previous.sha512_digest_calls),
+        poseidon2_permutations: current
+            .poseidon2_permutations
+            .saturating_sub(previous.poseidon2_permutations),
+        merkle_leaf_hashes: current
+            .merkle_leaf_hashes
+            .saturating_sub(previous.merkle_leaf_hashes),
+        merkle_internal_hashes: current
+            .merkle_internal_hashes
+            .saturating_sub(previous.merkle_internal_hashes),
+        merkle_root_hashes: current
+            .merkle_root_hashes
+            .saturating_sub(previous.merkle_root_hashes),
+        merkle_authentication_words: current
+            .merkle_authentication_words
+            .saturating_sub(previous.merkle_authentication_words),
+        piop_nonce_trials: current
+            .piop_nonce_trials
+            .saturating_sub(previous.piop_nonce_trials),
+        decs_nonce_trials: current
+            .decs_nonce_trials
+            .saturating_sub(previous.decs_nonce_trials),
+    }
+}
+
+fn finish_verifier_stage_profile_v1() -> Vec<SmallwoodVerifierStageOperationProfileV1> {
+    let cumulative = SMALLWOOD_VERIFIER_STAGE_PROFILE_V1
+        .with(|slot| slot.borrow_mut().take())
+        .unwrap_or_default();
+    let mut previous = SmallwoodVerifierOperationProfileV1::default();
+    cumulative
+        .into_iter()
+        .map(|(stage, current)| {
+            let operations = subtract_operation_profile_v1(current, previous);
+            previous = current;
+            SmallwoodVerifierStageOperationProfileV1 { stage, operations }
+        })
+        .collect()
+}
+
+fn begin_transcript_call_trace_v1() -> Result<(), TransactionCircuitError> {
+    SMALLWOOD_TRANSCRIPT_CALL_TRACE_V1.with(|slot| {
+        let mut trace = slot.borrow_mut();
+        if trace.is_some() {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "SmallWood transcript call tracing is already active",
+            ));
+        }
+        *trace = Some(Vec::new());
+        Ok(())
+    })
+}
+
+fn record_transcript_call_trace_v1(
+    domain: &[u8],
+    input_words: &[u64],
+    output_words: &[u64],
+    raw_digest_calls: u64,
+) {
+    SMALLWOOD_TRANSCRIPT_CALL_TRACE_V1.with(|slot| {
+        if let Some(trace) = slot.borrow_mut().as_mut() {
+            trace.push(SmallwoodTranscriptCallTraceV1 {
+                domain: domain.to_vec(),
+                input_words: input_words.to_vec(),
+                output_words: output_words.to_vec(),
+                raw_digest_calls,
+            });
+        }
+    });
+}
+
+fn finish_transcript_call_trace_v1() -> Vec<SmallwoodTranscriptCallTraceV1> {
+    SMALLWOOD_TRANSCRIPT_CALL_TRACE_V1
+        .with(|slot| slot.borrow_mut().take())
+        .unwrap_or_default()
+}
+
+#[derive(Clone, Debug)]
 pub struct SmallwoodProof {
+    digest_bytes: usize,
     salt: [u8; SALT_BYTES],
     nonce: [u8; NONCE_BYTES],
     h_piop: [u8; DIGEST_BYTES],
@@ -144,13 +453,13 @@ pub struct SmallwoodProof {
     opened_witness: SmallwoodOpenedWitnessBundle,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PiopProof {
     ppol_highs: Vec<Vec<u64>>,
     plin_highs: Vec<Vec<u64>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PcsProof {
     rcombi_tails: Vec<Vec<u64>>,
     subset_evals: Vec<Vec<u64>>,
@@ -158,14 +467,14 @@ pub struct PcsProof {
     decs: DecsProof,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecsProof {
     auth_paths: Vec<Vec<[u8; DIGEST_BYTES]>>,
     masking_evals: Vec<Vec<u64>>,
     high_coeffs: Vec<Vec<u64>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SmallwoodProofTraceV1 {
     pub salt: [u8; SALT_BYTES],
     pub nonce: [u8; NONCE_BYTES],
@@ -288,20 +597,33 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
     let n_cols = cfg.nb_lvcs_cols;
     let n_pcs = cfg.nb_polys;
     let d_q = cfg.mpol_poly_degree;
-    let epsilon1 = ((profile.decs_nb_evals as f64
-        / (cfg.constraint_degree as f64).powi(profile.beta as i32))
-        + 2.0)
-        * field_order.powi(-(profile.decs_eta as i32))
-        * (1.0 + (n_rows as f64).powi((profile.decs_eta + 1) as i32) / field_order);
-    let epsilon2 = field_order.powi(-(profile.rho as i32))
-        * (1.0
-            + ((cfg.packing_factor + public_value_count) as f64).powi((profile.rho + 1) as i32)
-                / field_order);
-    let epsilon1_floor_bits = -epsilon1.log2();
+    let piop_consistency_degree = cfg
+        .mpol_poly_degree
+        .checked_add(cfg.packing_factor)
+        .expect("validated SmallWood degree geometry");
+    let piop_opening_domain_size = FIELD_ORDER
+        .checked_sub(cfg.packing_factor as u64)
+        .expect("packing domain is smaller than Goldilocks");
+    let decs_degree = n_cols + profile.decs_nb_opened_evals - 1;
+    let decs_batching_floor_bits = match cfg.decs_challenge_format {
+        SmallwoodDecsChallengeFormat::ScalarPowers => {
+            profile.decs_eta as f64 * (field_order / n_rows as f64).log2()
+        }
+        SmallwoodDecsChallengeFormat::Uniform => profile.decs_eta as f64 * field_order.log2(),
+    };
+    // The interactive DECS game fixes the complete oracle before sampling the
+    // matrix, but the compiled Merkle commitment only fixes a partial tree.
+    // Its straight-line extractor may discover the first bad support after the
+    // challenge query.  SmallWood Theorem 1 therefore requires the union over
+    // all (d + 2)-subsets for both challenge formats.
+    let epsilon1_floor_bits =
+        decs_batching_floor_bits - log2_binomial(profile.decs_nb_evals as u128, decs_degree + 2);
+    // The active PIOP challenge is a full uniform rho-by-constraint matrix.
+    let epsilon2 = field_order.powi(-(profile.rho as i32));
     let epsilon2_floor_bits = -epsilon2.log2();
     let epsilon3_floor_bits = log2_binom_ratio_large_over_small(
-        FIELD_ORDER as u128,
-        d_q as u128,
+        piop_opening_domain_size as u128,
+        piop_consistency_degree as u128,
         profile.nb_opened_evals,
     );
     let epsilon4_floor_bits = log2_binom_ratio_large_over_small(
@@ -309,11 +631,17 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         (n_cols + profile.decs_nb_opened_evals - 1) as u128,
         profile.decs_nb_opened_evals,
     );
-    let aggregate_error =
-        epsilon1 + epsilon2 + 2.0f64.powf(-epsilon3_floor_bits) + 2.0f64.powf(-epsilon4_floor_bits);
+    let aggregate_error = 2.0f64.powf(-epsilon1_floor_bits)
+        + epsilon2
+        + 2.0f64.powf(-epsilon3_floor_bits)
+        + 2.0f64.powf(-epsilon4_floor_bits);
     let security_floor_bits = -aggregate_error.log2();
-    let exact_aggregate_check =
-        smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(cfg, public_value_count);
+    let meets_128_bit_floor =
+        smallwood_no_grinding_exact_aggregate_check_from_cfg(cfg, public_value_count, 128);
+    let meets_256_bit_floor =
+        smallwood_no_grinding_exact_aggregate_check_from_cfg(cfg, public_value_count, 256);
+    let meets_260_bit_floor =
+        smallwood_no_grinding_exact_aggregate_check_from_cfg(cfg, public_value_count, 260);
     SmallwoodNoGrindingSoundnessReportV1 {
         profile,
         n_pcs,
@@ -325,7 +653,9 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         epsilon3_floor_bits,
         epsilon4_floor_bits,
         security_floor_bits,
-        meets_128_bit_floor: exact_aggregate_check,
+        meets_128_bit_floor,
+        meets_256_bit_floor,
+        meets_260_bit_floor,
     }
 }
 
@@ -338,9 +668,27 @@ fn falling_product(n: u128, count: usize) -> Option<BigUint> {
     }))
 }
 
+fn binomial(n: u128, k: usize) -> Option<BigUint> {
+    if n < k as u128 {
+        return None;
+    }
+    let complement = n - k as u128;
+    let reduced_k = if complement < k as u128 {
+        usize::try_from(complement).ok()?
+    } else {
+        k
+    };
+    let mut value = BigUint::from(1u8);
+    for index in 0..reduced_k {
+        value *= BigUint::from(n - index as u128);
+        value /= BigUint::from(index + 1);
+    }
+    Some(value)
+}
+
 fn smallwood_no_grinding_exact_terms_from_cfg(
     cfg: &SmallwoodConfig,
-    public_value_count: usize,
+    _public_value_count: usize,
 ) -> Option<[(BigUint, BigUint); 4]> {
     let profile = cfg.profile;
     if profile.opening_pow_bits != 0
@@ -348,8 +696,7 @@ fn smallwood_no_grinding_exact_terms_from_cfg(
         || cfg.constraint_degree == 0
         || profile.beta > u32::MAX as usize
         || profile.rho > u32::MAX as usize
-        || profile.decs_eta == usize::MAX
-        || profile.decs_eta + 1 > u32::MAX as usize
+        || profile.decs_eta > u32::MAX as usize
         || profile.rho == usize::MAX
         || profile.rho + 1 > u32::MAX as usize
     {
@@ -357,18 +704,35 @@ fn smallwood_no_grinding_exact_terms_from_cfg(
     }
 
     let q = BigUint::from(FIELD_ORDER);
-    let degree_to_beta = BigUint::from(cfg.constraint_degree).pow(profile.beta as u32);
-    let epsilon1_numerator = (BigUint::from(profile.decs_nb_evals)
-        + (BigUint::from(2u8) * &degree_to_beta))
-        * (&q + BigUint::from(cfg.nb_lvcs_rows).pow((profile.decs_eta + 1) as u32));
-    let epsilon1_denominator = &degree_to_beta * q.pow((profile.decs_eta + 1) as u32);
+    let decs_degree = cfg
+        .nb_lvcs_cols
+        .checked_add(profile.decs_nb_opened_evals)?
+        .checked_sub(1)?;
+    let (decs_batching_numerator, decs_batching_denominator) = match cfg.decs_challenge_format {
+        SmallwoodDecsChallengeFormat::ScalarPowers => (
+            binomial(profile.decs_nb_evals as u128, decs_degree + 2)?
+                * BigUint::from(cfg.nb_lvcs_rows).pow(profile.decs_eta as u32),
+            q.pow(profile.decs_eta as u32),
+        ),
+        SmallwoodDecsChallengeFormat::Uniform => (
+            binomial(profile.decs_nb_evals as u128, decs_degree + 2)?,
+            q.pow(profile.decs_eta as u32),
+        ),
+    };
+    let epsilon1_numerator = decs_batching_numerator;
+    let epsilon1_denominator = decs_batching_denominator;
 
-    let public_width = cfg.packing_factor.checked_add(public_value_count)?;
-    let epsilon2_numerator = &q + BigUint::from(public_width).pow((profile.rho + 1) as u32);
-    let epsilon2_denominator = q.pow((profile.rho + 1) as u32);
+    let epsilon2_numerator = BigUint::from(1u8);
+    let epsilon2_denominator = q.pow(profile.rho as u32);
+    // The verifier checks Q(e) = F(e) / Z(e) + M(e).  For a false claim,
+    // Z * (Q - M) - F is a nonzero polynomial of degree at most
+    // mpol_poly_degree + packing_factor.  Opening points are sampled without
+    // replacement from the field outside the packing domain.
+    let piop_consistency_degree = cfg.mpol_poly_degree.checked_add(cfg.packing_factor)?;
+    let piop_opening_domain_size = (FIELD_ORDER as u128).checked_sub(cfg.packing_factor as u128)?;
     let epsilon3_numerator =
-        falling_product(cfg.mpol_poly_degree as u128, profile.nb_opened_evals)?;
-    let epsilon3_denominator = falling_product(FIELD_ORDER as u128, profile.nb_opened_evals)?;
+        falling_product(piop_consistency_degree as u128, profile.nb_opened_evals)?;
+    let epsilon3_denominator = falling_product(piop_opening_domain_size, profile.nb_opened_evals)?;
 
     let decs_numerator_base = cfg
         .nb_lvcs_cols
@@ -387,20 +751,22 @@ fn smallwood_no_grinding_exact_terms_from_cfg(
     ])
 }
 
-fn smallwood_no_grinding_exact_128_bit_term_checks_from_cfg(
+fn smallwood_no_grinding_exact_term_checks_from_cfg(
     cfg: &SmallwoodConfig,
     public_value_count: usize,
+    security_bits: usize,
 ) -> [bool; 4] {
     let Some(terms) = smallwood_no_grinding_exact_terms_from_cfg(cfg, public_value_count) else {
         return [false; 4];
     };
-    let scale = BigUint::from(1u8) << 128usize;
+    let scale = BigUint::from(1u8) << security_bits;
     std::array::from_fn(|index| &scale * &terms[index].0 <= terms[index].1)
 }
 
-fn smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(
+fn smallwood_no_grinding_exact_aggregate_check_from_cfg(
     cfg: &SmallwoodConfig,
     public_value_count: usize,
+    security_bits: usize,
 ) -> bool {
     let Some(terms) = smallwood_no_grinding_exact_terms_from_cfg(cfg, public_value_count) else {
         return false;
@@ -415,8 +781,15 @@ fn smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(
         .fold(BigUint::from(0u8), |sum, (numerator, denominator)| {
             sum + numerator * (&common_denominator / denominator)
         });
-    let scale = BigUint::from(1u8) << 128usize;
+    let scale = BigUint::from(1u8) << security_bits;
     scale * aggregate_numerator <= common_denominator
+}
+
+fn smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(
+    cfg: &SmallwoodConfig,
+    public_value_count: usize,
+) -> bool {
+    smallwood_no_grinding_exact_aggregate_check_from_cfg(cfg, public_value_count, 128)
 }
 
 fn project_lvcs_planner_geometry_cfg(
@@ -456,9 +829,12 @@ pub struct SmallwoodNoGrindingSoundnessReportV1 {
     pub epsilon4_floor_bits: f64,
     pub security_floor_bits: f64,
     pub meets_128_bit_floor: bool,
+    pub meets_256_bit_floor: bool,
+    pub meets_260_bit_floor: bool,
 }
 
 const SMALLWOOD_PROOF_WIRE_MAGIC_V1: [u8; 4] = *b"SMW1";
+const SMALLWOOD_PROOF_WIRE_MAGIC_LEVEL5: [u8; 4] = *b"SMW2";
 const SMALLWOOD_OPENED_WITNESS_MODE_NONE_V1: u8 = 0;
 const SMALLWOOD_OPENED_WITNESS_MODE_ROW_SCALARS_V1: u8 = 1;
 
@@ -631,7 +1007,13 @@ fn decode_matrix_u64_v1(
 
 fn encoded_auth_paths_bytes_v1(
     paths: &[Vec<[u8; DIGEST_BYTES]>],
+    digest_bytes: usize,
 ) -> Result<usize, TransactionCircuitError> {
+    if !matches!(digest_bytes, LEGACY_DIGEST_BYTES | DIGEST_BYTES) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof digest width is unsupported",
+        ));
+    }
     if paths.len() > MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1 {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof auth-path count exceeds supported profile maximum",
@@ -655,14 +1037,15 @@ fn encoded_auth_paths_bytes_v1(
         })?;
     }
     let total_nodes = paths.iter().map(|path| path.len()).sum::<usize>();
-    Ok(2 + rows as usize + total_nodes * DIGEST_BYTES)
+    Ok(2 + rows as usize + total_nodes * digest_bytes)
 }
 
 fn encode_auth_paths_v1(
     out: &mut Vec<u8>,
     paths: &[Vec<[u8; DIGEST_BYTES]>],
+    digest_bytes: usize,
 ) -> Result<(), TransactionCircuitError> {
-    encoded_auth_paths_bytes_v1(paths)?;
+    encoded_auth_paths_bytes_v1(paths, digest_bytes)?;
     let rows = u16::try_from(paths.len()).map_err(|_| {
         TransactionCircuitError::ConstraintViolation(
             "smallwood proof auth-path count exceeds compact wire limit",
@@ -681,7 +1064,7 @@ fn encode_auth_paths_v1(
     }
     for path in paths {
         for node in path {
-            out.extend_from_slice(node);
+            out.extend_from_slice(&node[..digest_bytes]);
         }
     }
     Ok(())
@@ -690,7 +1073,13 @@ fn encode_auth_paths_v1(
 fn decode_auth_paths_v1(
     bytes: &[u8],
     cursor: &mut usize,
+    digest_bytes: usize,
 ) -> Result<Vec<Vec<[u8; DIGEST_BYTES]>>, TransactionCircuitError> {
+    if !matches!(digest_bytes, LEGACY_DIGEST_BYTES | DIGEST_BYTES) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof digest width is unsupported",
+        ));
+    }
     let rows = read_u16_v1(bytes, cursor)? as usize;
     if rows > MAX_SMALLWOOD_COMPACT_COLLECTION_ROWS_V1 {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -710,7 +1099,7 @@ fn decode_auth_paths_v1(
     let encoded_bytes = lengths
         .iter()
         .try_fold(0usize, |total, length| total.checked_add(*length))
-        .and_then(|nodes| nodes.checked_mul(DIGEST_BYTES))
+        .and_then(|nodes| nodes.checked_mul(digest_bytes))
         .ok_or(TransactionCircuitError::ConstraintViolation(
             "smallwood proof auth-path dimensions overflow encoded length",
         ))?;
@@ -724,7 +1113,7 @@ fn decode_auth_paths_v1(
         let mut path = Vec::with_capacity(len);
         for _ in 0..len {
             let mut node = [0u8; DIGEST_BYTES];
-            node.copy_from_slice(read_exact_v1(bytes, cursor, DIGEST_BYTES)?);
+            node[..digest_bytes].copy_from_slice(read_exact_v1(bytes, cursor, digest_bytes)?);
             path.push(node);
         }
         out.push(path);
@@ -835,22 +1224,57 @@ fn decode_opened_witness_v1(
     }
 }
 
+fn encode_pcs_proof_v1(
+    out: &mut Vec<u8>,
+    proof: &PcsProof,
+    digest_bytes: usize,
+) -> Result<(), TransactionCircuitError> {
+    encode_matrix_u64_v1(out, &proof.rcombi_tails)?;
+    encode_matrix_u64_v1(out, &proof.subset_evals)?;
+    encode_matrix_u64_v1(out, &proof.partial_evals)?;
+    encode_auth_paths_v1(out, &proof.decs.auth_paths, digest_bytes)?;
+    encode_matrix_u64_v1(out, &proof.decs.masking_evals)?;
+    encode_matrix_u64_v1(out, &proof.decs.high_coeffs)?;
+    Ok(())
+}
+
+fn decode_pcs_proof_v1(
+    bytes: &[u8],
+    cursor: &mut usize,
+    digest_bytes: usize,
+) -> Result<PcsProof, TransactionCircuitError> {
+    Ok(PcsProof {
+        rcombi_tails: decode_matrix_u64_v1(bytes, cursor)?,
+        subset_evals: decode_matrix_u64_v1(bytes, cursor)?,
+        partial_evals: decode_matrix_u64_v1(bytes, cursor)?,
+        decs: DecsProof {
+            auth_paths: decode_auth_paths_v1(bytes, cursor, digest_bytes)?,
+            masking_evals: decode_matrix_u64_v1(bytes, cursor)?,
+            high_coeffs: decode_matrix_u64_v1(bytes, cursor)?,
+        },
+    })
+}
+
 fn encode_smallwood_proof_bytes_v1(
     proof: &SmallwoodProof,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
+    if !matches!(proof.digest_bytes, LEGACY_DIGEST_BYTES | DIGEST_BYTES) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof digest width is unsupported",
+        ));
+    }
     let mut out = Vec::new();
-    out.extend_from_slice(&SMALLWOOD_PROOF_WIRE_MAGIC_V1);
+    out.extend_from_slice(if proof.digest_bytes == LEGACY_DIGEST_BYTES {
+        &SMALLWOOD_PROOF_WIRE_MAGIC_V1
+    } else {
+        &SMALLWOOD_PROOF_WIRE_MAGIC_LEVEL5
+    });
     out.extend_from_slice(&proof.salt);
     out.extend_from_slice(&proof.nonce);
-    out.extend_from_slice(&proof.h_piop);
+    out.extend_from_slice(&proof.h_piop[..proof.digest_bytes]);
     encode_matrix_u64_v1(&mut out, &proof.piop.ppol_highs)?;
     encode_matrix_u64_v1(&mut out, &proof.piop.plin_highs)?;
-    encode_matrix_u64_v1(&mut out, &proof.pcs.rcombi_tails)?;
-    encode_matrix_u64_v1(&mut out, &proof.pcs.subset_evals)?;
-    encode_matrix_u64_v1(&mut out, &proof.pcs.partial_evals)?;
-    encode_auth_paths_v1(&mut out, &proof.pcs.decs.auth_paths)?;
-    encode_matrix_u64_v1(&mut out, &proof.pcs.decs.masking_evals)?;
-    encode_matrix_u64_v1(&mut out, &proof.pcs.decs.high_coeffs)?;
+    encode_pcs_proof_v1(&mut out, &proof.pcs, proof.digest_bytes)?;
     encode_opened_witness_v1(&mut out, &proof.opened_witness)?;
     Ok(out)
 }
@@ -864,28 +1288,28 @@ fn decode_smallwood_proof_bytes_prefix_v1(
         &mut cursor,
         SMALLWOOD_PROOF_WIRE_MAGIC_V1.len(),
     )?;
-    if magic != SMALLWOOD_PROOF_WIRE_MAGIC_V1 {
+    let digest_bytes = if magic == SMALLWOOD_PROOF_WIRE_MAGIC_V1 {
+        LEGACY_DIGEST_BYTES
+    } else if magic == SMALLWOOD_PROOF_WIRE_MAGIC_LEVEL5 {
+        DIGEST_BYTES
+    } else {
         return Err(TransactionCircuitError::ConstraintViolation(
             "smallwood proof wire magic mismatch",
         ));
-    }
+    };
     let mut salt = [0u8; SALT_BYTES];
     salt.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, SALT_BYTES)?);
     let mut nonce = [0u8; NONCE_BYTES];
     nonce.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, NONCE_BYTES)?);
     let mut h_piop = [0u8; DIGEST_BYTES];
-    h_piop.copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, DIGEST_BYTES)?);
+    h_piop[..digest_bytes].copy_from_slice(read_exact_v1(proof_bytes, &mut cursor, digest_bytes)?);
     let ppol_highs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
     let plin_highs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
-    let rcombi_tails = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
-    let subset_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
-    let partial_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
-    let auth_paths = decode_auth_paths_v1(proof_bytes, &mut cursor)?;
-    let masking_evals = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
-    let high_coeffs = decode_matrix_u64_v1(proof_bytes, &mut cursor)?;
+    let pcs = decode_pcs_proof_v1(proof_bytes, &mut cursor, digest_bytes)?;
     let opened_witness = decode_opened_witness_v1(proof_bytes, &mut cursor)?;
     Ok((
         SmallwoodProof {
+            digest_bytes,
             salt,
             nonce,
             h_piop,
@@ -893,16 +1317,7 @@ fn decode_smallwood_proof_bytes_prefix_v1(
                 ppol_highs,
                 plin_highs,
             },
-            pcs: PcsProof {
-                rcombi_tails,
-                subset_evals,
-                partial_evals,
-                decs: DecsProof {
-                    auth_paths,
-                    masking_evals,
-                    high_coeffs,
-                },
-            },
+            pcs,
             opened_witness,
         },
         cursor,
@@ -975,7 +1390,7 @@ impl DecsProof {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SmallwoodPcsVerifierTraceV1 {
     pub coeffs: Vec<Vec<u64>>,
     pub combi_heads: Vec<Vec<u64>>,
@@ -985,10 +1400,11 @@ pub struct SmallwoodPcsVerifierTraceV1 {
     pub decs_eval_points: Vec<u64>,
     pub rows: Vec<Vec<u64>>,
     pub root_digest: [u8; DIGEST_BYTES],
+    pub decs_gamma_all: Vec<Vec<u64>>,
     pub decs_commitment_transcript: Vec<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SmallwoodPiopVerifierTraceV1 {
     pub pcs_transcript_words: Vec<u64>,
     pub piop_input_words: Vec<u64>,
@@ -997,7 +1413,7 @@ pub struct SmallwoodPiopVerifierTraceV1 {
     pub accept: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SmallwoodVerifierTraceV1 {
     pub profile: SmallwoodNoGrindingProfileV1,
     pub proof: SmallwoodProofTraceV1,
@@ -1254,6 +1670,10 @@ impl SmallwoodVerifierTraceV1 {
         &self.proof.pcs.decs.high_coeffs
     }
 
+    pub fn decs_gamma_all_v1(&self) -> &[Vec<u64>] {
+        &self.pcs_trace.decs_gamma_all
+    }
+
     pub fn flatten_decs_section_words_v1(&self) -> Vec<u64> {
         let mut out = Vec::new();
         out.extend_from_slice(&self.pcs_decs_transcript_hash_words_v1());
@@ -1262,6 +1682,7 @@ impl SmallwoodVerifierTraceV1 {
         out.extend_from_slice(&self.pcs_trace.decs_eval_points);
         out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.decs.masking_evals));
         out.extend_from_slice(&flatten_matrix_words_v1(&self.proof.pcs.decs.high_coeffs));
+        out.extend_from_slice(&flatten_matrix_words_v1(&self.pcs_trace.decs_gamma_all));
         out.extend_from_slice(&self.pcs_trace.decs_commitment_transcript);
         out
     }
@@ -1273,6 +1694,15 @@ impl SmallwoodVerifierTraceV1 {
                 "smallwood verifier trace DECS opened-leaf set is empty",
             ));
         }
+        let coefficient_width = self
+            .pcs_trace
+            .coeffs
+            .first()
+            .map(Vec::len)
+            .filter(|width| *width != 0)
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace DECS coefficient table is empty",
+            ))?;
         if self.pcs_trace.decs_eval_points.len() != opened_count
             || self.proof.pcs.decs.masking_evals.len() != opened_count
         {
@@ -1283,6 +1713,17 @@ impl SmallwoodVerifierTraceV1 {
         if self.proof.pcs.decs.high_coeffs.len() != self.profile.decs_eta {
             return Err(TransactionCircuitError::ConstraintViolation(
                 "smallwood verifier trace DECS high-coefficient count mismatch",
+            ));
+        }
+        if self.pcs_trace.decs_gamma_all.len() != self.profile.decs_eta
+            || self
+                .pcs_trace
+                .decs_gamma_all
+                .iter()
+                .any(|row| row.len() != coefficient_width)
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood verifier trace DECS challenge coefficient shape mismatch",
             ));
         }
         for row in &self.proof.pcs.decs.masking_evals {
@@ -1415,6 +1856,7 @@ impl SmallwoodOpenedWitnessBundle {
 #[derive(Clone, Debug)]
 pub struct SmallwoodConfig {
     profile: SmallwoodNoGrindingProfileV1,
+    decs_challenge_format: SmallwoodDecsChallengeFormat,
     row_count: usize,
     packing_factor: usize,
     constraint_degree: usize,
@@ -1450,9 +1892,9 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64CompactBindingsSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1
         | SmallwoodArithmetization::DirectPacked128CompactBindingsInlineMerkleSkipInitialMdsV1
-        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
-            Ok(())
-        }
+        | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        | SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5 => Ok(()),
     }
 }
 
@@ -1494,7 +1936,53 @@ fn read_blake3_xof_words(mut reader: blake3::OutputReader, out_words: usize) -> 
 
 #[inline]
 fn read_blake3_xof_digest(reader: blake3::OutputReader) -> [u8; DIGEST_BYTES] {
-    words_to_digest(&read_blake3_xof_words(reader, DIGEST_WORDS))
+    words_to_digest(&read_blake3_xof_words(reader, LEGACY_DIGEST_WORDS))
+}
+
+fn sha512_domain_digest(domain: &[u8], words: &[u64], counter: u64) -> [u8; DIGEST_BYTES] {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.sha512_digest_calls += 1;
+    });
+    let mut hasher = Sha512::new();
+    hasher.update((domain.len() as u64).to_le_bytes());
+    hasher.update(domain);
+    hasher.update((words.len() as u64).to_le_bytes());
+    for word in words {
+        hasher.update(word.to_le_bytes());
+    }
+    hasher.update(counter.to_le_bytes());
+    hasher.finalize().into()
+}
+
+fn read_sha512_xof_words_with_count(
+    domain: &[u8],
+    words: &[u64],
+    out_words: usize,
+) -> (Vec<u64>, u64) {
+    let mut output = Vec::with_capacity(out_words);
+    let mut counter = 0u64;
+    let mut digest_calls = 0u64;
+    while output.len() < out_words {
+        let block = sha512_domain_digest(domain, words, counter);
+        digest_calls += 1;
+        for chunk in block.chunks_exact(8) {
+            let mut candidate = [0u8; 8];
+            candidate.copy_from_slice(chunk);
+            let candidate = u64::from_le_bytes(candidate);
+            if candidate < FIELD_ORDER {
+                output.push(candidate);
+                if output.len() == out_words {
+                    break;
+                }
+            }
+        }
+        if output.len() < out_words {
+            counter = counter
+                .checked_add(1)
+                .expect("SmallWood SHA-512 XOF counter exhausted");
+        }
+    }
+    (output, digest_calls)
 }
 
 fn transcript_xof_words(
@@ -1505,18 +1993,27 @@ fn transcript_xof_words(
 ) -> Vec<u64> {
     match backend {
         SmallwoodTranscriptBackend::Blake3 => {
-            if out_words == 4 && words.len() <= 8 && domain == SMALLWOOD_COMPRESS2_DOMAIN {
-                let mut padded = [0u64; 8];
-                for (idx, word) in words.iter().enumerate() {
-                    padded[idx] = *word;
-                }
-                return blake3_compress2_words(&padded).to_vec();
-            }
-            let mut hasher = Hasher::new();
-            hasher.update(domain);
-            hasher.update(&(words.len() as u64).to_le_bytes());
-            update_hasher_with_word_slice(&mut hasher, words);
-            read_blake3_xof_words(hasher.finalize_xof(), out_words)
+            update_verifier_operation_profile_v1(|profile| {
+                profile.transcript_calls += 1;
+                profile.transcript_absorbed_words += words.len() as u64;
+                profile.transcript_squeezed_words += out_words as u64;
+            });
+            let output =
+                if out_words == 4 && words.len() <= 8 && domain == SMALLWOOD_COMPRESS2_DOMAIN {
+                    let mut padded = [0u64; 8];
+                    for (idx, word) in words.iter().enumerate() {
+                        padded[idx] = *word;
+                    }
+                    blake3_compress2_words(&padded).to_vec()
+                } else {
+                    let mut hasher = Hasher::new();
+                    hasher.update(domain);
+                    hasher.update(&(words.len() as u64).to_le_bytes());
+                    update_hasher_with_word_slice(&mut hasher, words);
+                    read_blake3_xof_words(hasher.finalize_xof(), out_words)
+                };
+            record_transcript_call_trace_v1(domain, words, &output, 0);
+            output
         }
         SmallwoodTranscriptBackend::Poseidon2 => {
             let mut state = [Felt::ZERO; transaction_core::constants::POSEIDON2_WIDTH];
@@ -1529,6 +2026,17 @@ fn transcript_xof_words(
             absorb.push(words.len() as u64);
             absorb.extend_from_slice(words);
             absorb.push(1);
+            let absorb_permutations = absorb.len().div_ceil(SMALLWOOD_POSEIDON2_RATE);
+            let squeeze_permutations = out_words
+                .div_ceil(SMALLWOOD_POSEIDON2_RATE)
+                .saturating_sub(1);
+            update_verifier_operation_profile_v1(|profile| {
+                profile.transcript_calls += 1;
+                profile.transcript_absorbed_words += absorb.len() as u64;
+                profile.transcript_squeezed_words += out_words as u64;
+                profile.poseidon2_permutations +=
+                    (absorb_permutations + squeeze_permutations) as u64;
+            });
             for chunk in absorb.chunks(SMALLWOOD_POSEIDON2_RATE) {
                 for (idx, word) in chunk.iter().enumerate() {
                     state[idx] += Felt::from_u64(canon(*word));
@@ -1547,7 +2055,19 @@ fn transcript_xof_words(
                     poseidon2_permutation(&mut state);
                 }
             }
+            record_transcript_call_trace_v1(domain, words, &out, 0);
             out
+        }
+        SmallwoodTranscriptBackend::Sha512Level5 => {
+            update_verifier_operation_profile_v1(|profile| {
+                profile.transcript_calls += 1;
+                profile.transcript_absorbed_words += words.len() as u64;
+                profile.transcript_squeezed_words += out_words as u64;
+            });
+            let (output, raw_digest_calls) =
+                read_sha512_xof_words_with_count(domain, words, out_words);
+            record_transcript_call_trace_v1(domain, words, &output, raw_digest_calls);
+            output
         }
     }
 }
@@ -1557,7 +2077,17 @@ fn transcript_xof_digest(
     domain: &[u8],
     words: &[u64],
 ) -> [u8; DIGEST_BYTES] {
-    words_to_digest(&transcript_xof_words(backend, domain, words, DIGEST_WORDS))
+    match backend {
+        SmallwoodTranscriptBackend::Sha512Level5 => sha512_domain_digest(domain, words, 0),
+        SmallwoodTranscriptBackend::Blake3 | SmallwoodTranscriptBackend::Poseidon2 => {
+            words_to_digest(&transcript_xof_words(
+                backend,
+                domain,
+                words,
+                LEGACY_DIGEST_WORDS,
+            ))
+        }
+    }
 }
 
 fn blake3_compress2_words(words: &[u64; 8]) -> [u64; 4] {
@@ -1640,6 +2170,24 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
     profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u8>, TransactionCircuitError> {
+    prove_statement_with_transcript_backend_profile_and_domain(
+        statement,
+        witness_values,
+        binded_data,
+        profile,
+        transcript_backend,
+        SmallwoodDecsEvaluationDomain::Consecutive,
+    )
+}
+
+pub(crate) fn prove_statement_with_transcript_backend_profile_and_domain(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    witness_values: &[u64],
+    binded_data: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<Vec<u8>, TransactionCircuitError> {
     ensure_row_polynomial_arithmetization(statement)?;
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let stage_started = Instant::now();
@@ -1657,6 +2205,12 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
     };
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     if trace_enabled {
+        let projected_proof_bytes = serialized_proof_size_hint_with_profile(
+            &cfg,
+            profile,
+            statement.auxiliary_witness_words().len(),
+            transcript_backend.digest_bytes(),
+        )?;
         eprintln!(
             "[smallwood] cfg rows={} packing={} constraints={} linear_constraints={} nb_polys={} nb_lvcs_rows={} nb_lvcs_cols={} projected_proof_bytes={}",
             cfg.row_count,
@@ -1666,11 +2220,7 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
             cfg.nb_polys,
             cfg.nb_lvcs_rows,
             cfg.nb_lvcs_cols,
-            serialized_proof_size_hint_with_profile(
-                &cfg,
-                profile,
-                statement.auxiliary_witness_words().len(),
-            )
+            projected_proof_bytes,
         );
     }
     log_stage("statement", &mut last_stage);
@@ -1701,6 +2251,8 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
         &mpol_plin,
         &salt,
         transcript_backend,
+        decs_evaluation_domain,
+        &binded_words,
     )?;
     log_stage("pcs_commit", &mut last_stage);
     let mut piop_input = pcs_transcript_words;
@@ -1718,7 +2270,8 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
     let h_piop = hash_piop_transcript(&piop.transcript_words, transcript_backend);
     let nonce = choose_opening_nonce(&cfg, &h_piop, transcript_backend)?;
     log_stage("opening_nonce", &mut last_stage);
-    let eval_points = xof_piop_opening_points(&nonce, &h_piop, transcript_backend);
+    let eval_points =
+        xof_piop_opening_points_for_profile(&nonce, &h_piop, profile, transcript_backend);
     let (pcs_proof, opened_witness) = pcs_open(
         &cfg,
         &pcs_key,
@@ -1735,6 +2288,7 @@ pub(crate) fn prove_statement_with_transcript_backend_and_profile(
         .auxiliary_witness_limb_count()
         .unwrap_or(auxiliary_witness_words.len());
     let proof = SmallwoodProof {
+        digest_bytes: transcript_backend.digest_bytes(),
         salt,
         nonce,
         h_piop,
@@ -1813,7 +2367,30 @@ pub(crate) fn verify_statement_with_transcript_backend_and_profile(
     profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<(), TransactionCircuitError> {
+    verify_statement_with_transcript_backend_profile_and_domain(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
+        transcript_backend,
+        SmallwoodDecsEvaluationDomain::Consecutive,
+    )
+}
+
+pub(crate) fn verify_statement_with_transcript_backend_profile_and_domain(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<(), TransactionCircuitError> {
     let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    if proof.digest_bytes != transcript_backend.digest_bytes() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof digest width does not match the transcript backend",
+        ));
+    }
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     ensure_row_polynomial_arithmetization(statement)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
@@ -1844,6 +2421,8 @@ pub(crate) fn verify_statement_with_transcript_backend_and_profile(
         &proof.pcs,
         &proof.h_piop,
         transcript_backend,
+        decs_evaluation_domain,
+        &binded_words,
     )?;
     let mut piop_input = pcs_transcript;
     piop_input.extend_from_slice(&binded_words);
@@ -1888,7 +2467,30 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
     profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
+    build_smallwood_verifier_trace_with_profile_and_domain_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
+        transcript_backend,
+        SmallwoodDecsEvaluationDomain::Consecutive,
+    )
+}
+
+pub(crate) fn build_smallwood_verifier_trace_with_profile_and_domain_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<SmallwoodVerifierTraceV1, TransactionCircuitError> {
     let proof = decode_smallwood_proof_bytes_v1(proof_bytes)?;
+    if proof.digest_bytes != transcript_backend.digest_bytes() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof digest width does not match the transcript backend",
+        ));
+    }
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     ensure_row_polynomial_arithmetization(statement)?;
     let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
@@ -1912,11 +2514,14 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         &proof.h_piop,
         transcript_backend,
     )?;
+    record_verifier_stage_profile_v1("opening_points");
 
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(&cfg, &eval_points, &mut coeffs);
+    record_verifier_stage_profile_v1("pcs_coefficients");
     let combi_heads =
         pcs_reconstruct_combi_heads(&cfg, &eval_points, row_scalars, &proof.pcs.partial_evals)?;
+    record_verifier_stage_profile_v1("pcs_combi_heads");
     let decs_trans_hash = hash_challenge_opening_decs(
         &cfg,
         &combi_heads,
@@ -1924,6 +2529,7 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         &proof.pcs.rcombi_tails,
         transcript_backend,
     );
+    record_verifier_stage_profile_v1("decs_challenge_hash");
     let (decs_leaf_indexes, decs_nonce) = xof_decs_opening(
         profile.decs_nb_evals,
         profile.decs_nb_opened_evals,
@@ -1931,10 +2537,16 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         &decs_trans_hash,
         transcript_backend,
     )?;
-    let decs_eval_points = decs_leaf_indexes
+    record_verifier_stage_profile_v1("decs_queries");
+    let decs_leaf_index_words = decs_leaf_indexes
         .iter()
         .map(|&idx| idx as u64)
         .collect::<Vec<_>>();
+    let decs_eval_points = decs_field_evaluation_points(
+        decs_evaluation_domain,
+        cfg.decs_nb_evals(),
+        &decs_leaf_indexes,
+    )?;
     let rows = lvcs_recompute_rows(
         &cfg,
         &coeffs,
@@ -1943,23 +2555,39 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         &proof.pcs.subset_evals,
         &decs_eval_points,
     )?;
+    record_verifier_stage_profile_v1("lvcs_rows");
     let root_digest = decs_recompute_root(
         &cfg,
         &proof.salt,
         &rows,
-        &decs_eval_points,
+        &decs_leaf_index_words,
         &proof.pcs.decs,
         transcript_backend,
     )?;
-    let decs_commitment_transcript = decs_commitment_transcript(
-        &cfg,
+    record_verifier_stage_profile_v1("merkle_root");
+    let hash_mt = hash_merkle_root_with_binding(
         &proof.salt,
-        &rows,
         &root_digest,
+        transcript_backend,
+        &binding_words,
+    );
+    let decs_gamma_all = derive_decs_challenge(
+        cfg.nb_lvcs_rows,
+        cfg.decs_eta(),
+        cfg.decs_challenge_format,
+        &hash_mt,
+        transcript_backend,
+    );
+    let decs_commitment_transcript = decs_commitment_transcript_with_challenge(
+        &cfg,
+        &rows,
         &decs_eval_points,
         &proof.pcs.decs,
+        &hash_mt,
+        &decs_gamma_all,
         transcript_backend,
     )?;
+    record_verifier_stage_profile_v1("pcs_commitment_transcript");
 
     let pcs_transcript_words = decs_commitment_transcript.clone();
     let mut piop_input_words = pcs_transcript_words.clone();
@@ -1974,9 +2602,11 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         &proof.piop,
         transcript_backend,
     )?;
+    record_verifier_stage_profile_v1("piop_constraints");
     let recomputed = hash_piop_transcript(&piop_transcript_words, transcript_backend);
     let hash_fpp = hash_piop(&piop_input_words, transcript_backend);
     let piop_gamma_prime = derive_gamma_prime(&cfg, &hash_fpp, transcript_backend);
+    record_verifier_stage_profile_v1("final_transcript");
 
     let proof_trace = SmallwoodProofTraceV1 {
         salt: proof.salt,
@@ -1997,6 +2627,7 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
         decs_eval_points,
         rows,
         root_digest,
+        decs_gamma_all,
         decs_commitment_transcript,
     };
     Ok(SmallwoodVerifierTraceV1 {
@@ -2013,6 +2644,53 @@ pub(crate) fn build_smallwood_verifier_trace_with_profile_v1(
     })
 }
 
+pub(crate) fn profile_smallwood_verifier_with_profile_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<
+    (
+        SmallwoodVerifierTraceV1,
+        SmallwoodVerifierOperationProfileV1,
+        Vec<SmallwoodVerifierStageOperationProfileV1>,
+        Vec<SmallwoodTranscriptCallTraceV1>,
+    ),
+    TransactionCircuitError,
+> {
+    begin_verifier_operation_profile_v1()?;
+    if let Err(error) = begin_verifier_stage_profile_v1() {
+        finish_verifier_operation_profile_v1();
+        return Err(error);
+    }
+    if let Err(error) = begin_transcript_call_trace_v1() {
+        finish_verifier_stage_profile_v1();
+        finish_verifier_operation_profile_v1();
+        return Err(error);
+    }
+    let trace = build_smallwood_verifier_trace_with_profile_and_domain_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
+        transcript_backend,
+        decs_evaluation_domain,
+    );
+    let operation_profile = finish_verifier_operation_profile_v1();
+    let stage_operation_profiles = finish_verifier_stage_profile_v1();
+    let transcript_calls = finish_transcript_call_trace_v1();
+    trace.map(|trace| {
+        (
+            trace,
+            operation_profile,
+            stage_operation_profiles,
+            transcript_calls,
+        )
+    })
+}
+
 pub fn build_smallwood_poseidon2_verifier_trace_v1(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     binded_data: &[u8],
@@ -2026,8 +2704,46 @@ pub fn build_smallwood_poseidon2_verifier_trace_v1(
     )
 }
 
+/// Replays the exact Poseidon2 verifier from a proposed outer-certificate
+/// witness and requires equality with every verifier-derived trace field.
+///
+/// This guards witness generation. The outer proof must still constrain the
+/// same recomputations algebraically.
+pub fn validate_smallwood_poseidon2_verifier_trace_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    trace: &SmallwoodVerifierTraceV1,
+) -> Result<Vec<u8>, TransactionCircuitError> {
+    trace.validate_sections_v1()?;
+    if !trace.accept {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood outer witness contains a rejecting verifier trace",
+        ));
+    }
+    let proof_bytes = encode_smallwood_proof_trace_v1(&trace.proof)?;
+    let rebuilt = build_smallwood_verifier_trace_with_profile_v1(
+        statement,
+        binded_data,
+        &proof_bytes,
+        trace.profile,
+        SmallwoodTranscriptBackend::Poseidon2,
+    )?;
+    if !rebuilt.accept {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood outer witness canonical proof does not verify",
+        ));
+    }
+    if rebuilt != *trace {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood outer witness trace does not match exact verifier replay",
+        ));
+    }
+    Ok(proof_bytes)
+}
+
 pub fn smallwood_proof_from_trace_v1(trace: &SmallwoodProofTraceV1) -> SmallwoodProof {
     SmallwoodProof {
+        digest_bytes: LEGACY_DIGEST_BYTES,
         salt: trace.salt,
         nonce: trace.nonce,
         h_piop: trace.h_piop,
@@ -2098,7 +2814,8 @@ pub fn report_smallwood_proof_size_v1(
     let pcs_rcombi_tails_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.rcombi_tails)?;
     let pcs_subset_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.subset_evals)?;
     let pcs_partial_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.partial_evals)?;
-    let decs_auth_paths_bytes = encoded_auth_paths_bytes_v1(&proof.pcs.decs.auth_paths)?;
+    let decs_auth_paths_bytes =
+        encoded_auth_paths_bytes_v1(&proof.pcs.decs.auth_paths, proof.digest_bytes)?;
     let decs_masking_evals_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.decs.masking_evals)?;
     let decs_high_coeffs_bytes = encoded_matrix_u64_bytes_v1(&proof.pcs.decs.high_coeffs)?;
     let opened_witness_bytes = encoded_opened_witness_bytes_v1(&proof.opened_witness)?;
@@ -2210,14 +2927,33 @@ pub fn report_smallwood_backend_opening_surface_with_profile_v1(
     profile: SmallwoodNoGrindingProfileV1,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<SmallwoodBackendOpeningSurfaceReportV1, TransactionCircuitError> {
-    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
-    ensure_row_polynomial_arithmetization(statement)?;
-    let trace = build_smallwood_verifier_trace_with_profile_v1(
+    report_smallwood_backend_opening_surface_with_profile_and_domain_v1(
         statement,
         binded_data,
         proof_bytes,
         profile,
         transcript_backend,
+        SmallwoodDecsEvaluationDomain::Consecutive,
+    )
+}
+
+pub(crate) fn report_smallwood_backend_opening_surface_with_profile_and_domain_v1(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    binded_data: &[u8],
+    proof_bytes: &[u8],
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+) -> Result<SmallwoodBackendOpeningSurfaceReportV1, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    let trace = build_smallwood_verifier_trace_with_profile_and_domain_v1(
+        statement,
+        binded_data,
+        proof_bytes,
+        profile,
+        transcript_backend,
+        decs_evaluation_domain,
     )?;
     let size = report_smallwood_proof_size_v1(proof_bytes)?;
     let opened_row_count = trace.proof.opened_witness_row_scalars.len();
@@ -2350,6 +3086,24 @@ fn log2_binom_ratio_large_over_small(large_n: u128, small_n: u128, k: usize) -> 
         .sum()
 }
 
+fn log2_binomial(n: u128, k: usize) -> f64 {
+    if n < k as u128 {
+        return f64::INFINITY;
+    }
+    let complement = n - k as u128;
+    let reduced_k = if complement < k as u128 {
+        complement as usize
+    } else {
+        k
+    };
+    (0..reduced_k)
+        .map(|index| {
+            let index = index as u128;
+            ((n - index) as f64 / (index + 1) as f64).log2()
+        })
+        .sum()
+}
+
 pub fn report_smallwood_no_grinding_soundness_v1(
     statement: &(dyn SmallwoodConstraintAdapter + Sync),
     public_value_count: usize,
@@ -2368,9 +3122,23 @@ pub fn smallwood_no_grinding_exact_128_bit_term_checks(
     profile: SmallwoodNoGrindingProfileV1,
 ) -> Result<[bool; 4], TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
-    Ok(smallwood_no_grinding_exact_128_bit_term_checks_from_cfg(
+    Ok(smallwood_no_grinding_exact_term_checks_from_cfg(
         &cfg,
         public_value_count,
+        128,
+    ))
+}
+
+pub fn smallwood_no_grinding_exact_256_bit_term_checks(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<[bool; 4], TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(smallwood_no_grinding_exact_term_checks_from_cfg(
+        &cfg,
+        public_value_count,
+        256,
     ))
 }
 
@@ -2381,6 +3149,32 @@ pub fn smallwood_no_grinding_exact_128_bit_aggregate_check(
 ) -> Result<bool, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     Ok(smallwood_no_grinding_exact_128_bit_aggregate_check_from_cfg(&cfg, public_value_count))
+}
+
+pub fn smallwood_no_grinding_exact_256_bit_aggregate_check(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<bool, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(smallwood_no_grinding_exact_aggregate_check_from_cfg(
+        &cfg,
+        public_value_count,
+        256,
+    ))
+}
+
+pub fn smallwood_no_grinding_exact_260_bit_aggregate_check(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    public_value_count: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+) -> Result<bool, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    Ok(smallwood_no_grinding_exact_aggregate_check_from_cfg(
+        &cfg,
+        public_value_count,
+        260,
+    ))
 }
 
 pub fn report_smallwood_lvcs_planner_projection_v1(
@@ -2407,13 +3201,15 @@ pub fn report_smallwood_lvcs_planner_projection_v1(
             &projected_cfg,
             profile,
             auxiliary_words_len,
-        ),
+            LEGACY_DIGEST_BYTES,
+        )?,
         soundness,
     })
 }
 
 #[derive(Clone, Debug)]
 struct StructuralIdentityWitnessStatement {
+    arithmetization: SmallwoodArithmetization,
     row_count: usize,
     packing_factor: usize,
     constraint_degree: usize,
@@ -2427,6 +3223,24 @@ struct StructuralIdentityWitnessStatement {
 
 impl StructuralIdentityWitnessStatement {
     fn new(
+        row_count: usize,
+        packing_factor: usize,
+        constraint_degree: usize,
+        constraint_count: usize,
+        auxiliary_words_len: usize,
+    ) -> Result<Self, TransactionCircuitError> {
+        Self::new_for_arithmetization(
+            SmallwoodArithmetization::Bridge64V1,
+            row_count,
+            packing_factor,
+            constraint_degree,
+            constraint_count,
+            auxiliary_words_len,
+        )
+    }
+
+    fn new_for_arithmetization(
+        arithmetization: SmallwoodArithmetization,
         row_count: usize,
         packing_factor: usize,
         constraint_degree: usize,
@@ -2455,6 +3269,7 @@ impl StructuralIdentityWitnessStatement {
             linear_offsets.push((idx + 1) as u32);
         }
         Ok(Self {
+            arithmetization,
             row_count,
             packing_factor,
             constraint_degree,
@@ -2501,7 +3316,7 @@ impl StructuralIdentityWitnessStatement {
 
 impl SmallwoodConstraintAdapter for StructuralIdentityWitnessStatement {
     fn arithmetization(&self) -> SmallwoodArithmetization {
-        SmallwoodArithmetization::Bridge64V1
+        self.arithmetization
     }
 
     fn row_count(&self) -> usize {
@@ -2591,6 +3406,29 @@ pub fn projected_smallwood_structural_proof_bytes_v1(
         auxiliary_words_len,
     )?;
     projected_candidate_proof_bytes_with_profile(&statement, profile)
+}
+
+pub fn projected_smallwood_structural_proof_bytes_with_backend_v1(
+    row_count: usize,
+    packing_factor: usize,
+    constraint_degree: usize,
+    constraint_count: usize,
+    auxiliary_words_len: usize,
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<usize, TransactionCircuitError> {
+    let statement = StructuralIdentityWitnessStatement::new(
+        row_count,
+        packing_factor,
+        constraint_degree,
+        constraint_count,
+        auxiliary_words_len,
+    )?;
+    projected_candidate_proof_bytes_with_profile_and_backend(
+        &statement,
+        profile,
+        transcript_backend,
+    )
 }
 
 pub fn report_smallwood_structural_no_grinding_soundness_v1(
@@ -2968,13 +3806,25 @@ pub fn smallwood_poseidon2_pcs_trace_v1(
         &proof.pcs.decs,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
-    let decs_commitment_transcript = decs_commitment_transcript(
-        &cfg,
+    let hash_mt = hash_merkle_root(
         &proof.salt,
-        &rows,
         &root_digest,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    let decs_gamma_all = derive_decs_challenge(
+        cfg.nb_lvcs_rows,
+        cfg.decs_eta(),
+        cfg.decs_challenge_format,
+        &hash_mt,
+        SmallwoodTranscriptBackend::Poseidon2,
+    );
+    let decs_commitment_transcript = decs_commitment_transcript_with_challenge(
+        &cfg,
+        &rows,
         &decs_eval_points,
         &proof.pcs.decs,
+        &hash_mt,
+        &decs_gamma_all,
         SmallwoodTranscriptBackend::Poseidon2,
     )?;
     Ok(SmallwoodPcsVerifierTraceV1 {
@@ -2986,6 +3836,7 @@ pub fn smallwood_poseidon2_pcs_trace_v1(
         decs_eval_points,
         rows,
         root_digest,
+        decs_gamma_all,
         decs_commitment_transcript,
     })
 }
@@ -3040,33 +3891,7 @@ pub fn validate_proof_shape(
     cfg: &SmallwoodConfig,
     proof: &SmallwoodProof,
 ) -> Result<(), TransactionCircuitError> {
-    let row_scalars = proof.opened_witness.row_scalars_ref().ok_or(
-        TransactionCircuitError::ConstraintViolation(
-            "smallwood bridge proof opened witness mode mismatch",
-        ),
-    )?;
-    if row_scalars.len() != cfg.nb_opened_evals()
-        || row_scalars.iter().any(|row| row.len() != cfg.nb_polys)
-    {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood proof opened evaluation shape mismatch",
-        ));
-    }
-    let auxiliary_words = proof.opened_witness.auxiliary_words_ref().unwrap_or(&[]);
-    let auxiliary_limb_count = proof.opened_witness.auxiliary_limb_count();
-    if auxiliary_limb_count > auxiliary_words.len() {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood auxiliary witness limb count exceeds opened witness words",
-        ));
-    }
-    if auxiliary_words[auxiliary_limb_count..]
-        .iter()
-        .any(|&word| word != 0)
-    {
-        return Err(TransactionCircuitError::ConstraintViolation(
-            "smallwood auxiliary witness padding must be zero",
-        ));
-    }
+    validate_pcs_opening_shape(cfg, &proof.pcs, &proof.opened_witness)?;
     if proof.piop.ppol_highs.len() != cfg.rho()
         || proof
             .piop
@@ -3084,41 +3909,71 @@ pub fn validate_proof_shape(
             "smallwood piop proof shape mismatch",
         ));
     }
-    if proof.pcs.rcombi_tails.len() != cfg.nb_lvcs_opened_combi
-        || proof
-            .pcs
+    Ok(())
+}
+
+fn validate_pcs_opening_shape(
+    cfg: &SmallwoodConfig,
+    pcs: &PcsProof,
+    opened_witness: &SmallwoodOpenedWitnessBundle,
+) -> Result<(), TransactionCircuitError> {
+    let row_scalars =
+        opened_witness
+            .row_scalars_ref()
+            .ok_or(TransactionCircuitError::ConstraintViolation(
+                "smallwood bridge proof opened witness mode mismatch",
+            ))?;
+    if row_scalars.len() != cfg.nb_opened_evals()
+        || row_scalars.iter().any(|row| row.len() != cfg.nb_polys)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood proof opened evaluation shape mismatch",
+        ));
+    }
+    let auxiliary_words = opened_witness.auxiliary_words_ref().unwrap_or(&[]);
+    let auxiliary_limb_count = opened_witness.auxiliary_limb_count();
+    if auxiliary_limb_count > auxiliary_words.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness limb count exceeds opened witness words",
+        ));
+    }
+    if auxiliary_words[auxiliary_limb_count..]
+        .iter()
+        .any(|&word| word != 0)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood auxiliary witness padding must be zero",
+        ));
+    }
+    if pcs.rcombi_tails.len() != cfg.nb_lvcs_opened_combi
+        || pcs
             .rcombi_tails
             .iter()
             .any(|tail| tail.len() != cfg.decs_nb_opened_evals())
-        || proof.pcs.subset_evals.len() != cfg.decs_nb_opened_evals()
-        || proof
-            .pcs
+        || pcs.subset_evals.len() != cfg.decs_nb_opened_evals()
+        || pcs
             .subset_evals
             .iter()
             .any(|row| row.len() != cfg.nb_lvcs_rows - cfg.nb_lvcs_opened_combi)
-        || proof.pcs.partial_evals.len() != cfg.nb_opened_evals()
-        || proof
-            .pcs
+        || pcs.partial_evals.len() != cfg.nb_opened_evals()
+        || pcs
             .partial_evals
             .iter()
             .any(|row| row.len() != cfg.nb_unstacked_cols - cfg.nb_polys)
-        || proof.pcs.decs.auth_paths.len() != cfg.decs_nb_opened_evals()
-        || proof
-            .pcs
+        || pcs.decs.auth_paths.len() != cfg.decs_nb_opened_evals()
+        || pcs
             .decs
             .auth_paths
             .iter()
             .any(|path| path.is_empty() || path.len() > cfg.decs_nb_evals().ilog2() as usize)
-        || proof.pcs.decs.masking_evals.len() != cfg.decs_nb_opened_evals()
-        || proof
-            .pcs
+        || pcs.decs.masking_evals.len() != cfg.decs_nb_opened_evals()
+        || pcs
             .decs
             .masking_evals
             .iter()
             .any(|row| row.len() != cfg.decs_eta())
-        || proof.pcs.decs.high_coeffs.len() != cfg.decs_eta()
-        || proof
-            .pcs
+        || pcs.decs.high_coeffs.len() != cfg.decs_eta()
+        || pcs
             .decs
             .high_coeffs
             .iter()
@@ -3136,13 +3991,14 @@ pub(crate) fn projected_candidate_proof_bytes(
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new(statement)?;
     ensure_row_polynomial_arithmetization(statement)?;
-    Ok(serialized_proof_size_hint_with_profile(
+    serialized_proof_size_hint_with_profile(
         &cfg,
         cfg.profile,
         statement
             .auxiliary_witness_limb_count()
             .unwrap_or(statement.auxiliary_witness_words().len()),
-    ))
+        LEGACY_DIGEST_BYTES,
+    )
 }
 
 pub(crate) fn projected_candidate_proof_bytes_with_profile(
@@ -3151,13 +4007,31 @@ pub(crate) fn projected_candidate_proof_bytes_with_profile(
 ) -> Result<usize, TransactionCircuitError> {
     let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
     ensure_row_polynomial_arithmetization(statement)?;
-    Ok(serialized_proof_size_hint_with_profile(
+    serialized_proof_size_hint_with_profile(
         &cfg,
         profile,
         statement
             .auxiliary_witness_limb_count()
             .unwrap_or(statement.auxiliary_witness_words().len()),
-    ))
+        LEGACY_DIGEST_BYTES,
+    )
+}
+
+pub(crate) fn projected_candidate_proof_bytes_with_profile_and_backend(
+    statement: &(dyn SmallwoodConstraintAdapter + Sync),
+    profile: SmallwoodNoGrindingProfileV1,
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<usize, TransactionCircuitError> {
+    let cfg = SmallwoodConfig::new_with_profile(statement, profile)?;
+    ensure_row_polynomial_arithmetization(statement)?;
+    serialized_proof_size_hint_with_profile(
+        &cfg,
+        profile,
+        statement
+            .auxiliary_witness_limb_count()
+            .unwrap_or(statement.auxiliary_witness_words().len()),
+        transcript_backend.digest_bytes(),
+    )
 }
 
 pub(crate) fn ensure_canonical_smallwood_proof_bytes(
@@ -3295,6 +4169,9 @@ impl SmallwoodConfig {
         let packing_points = (0..packing_factor).map(|i| i as u64).collect();
         Ok(Self {
             profile,
+            decs_challenge_format: decs_challenge_format_for_arithmetization(
+                statement.arithmetization(),
+            ),
             row_count,
             packing_factor,
             constraint_degree,
@@ -3404,7 +4281,7 @@ fn piop_run(
     )?;
     log_stage("constraint_linear_polynomials", &mut last);
     let mut transcript_words = Vec::new();
-    transcript_words.extend(digest_to_words(&hash_fpp));
+    transcript_words.extend(digest_to_words(&hash_fpp, transcript_backend));
     let mut ppol_highs = Vec::with_capacity(cfg.rho());
     let mut plin_highs = Vec::with_capacity(cfg.rho());
     for rep in 0..cfg.rho() {
@@ -3471,7 +4348,7 @@ pub fn piop_recompute_transcript(
     )?;
     let linear_targets = effective_linear_targets(cfg, statement, auxiliary_words);
     let mut transcript_words = Vec::new();
-    transcript_words.extend(digest_to_words(&hash_fpp));
+    transcript_words.extend(digest_to_words(&hash_fpp, transcript_backend));
     let eval_points_with_zero = {
         let mut v = eval_points.to_vec();
         v.push(0);
@@ -3481,6 +4358,11 @@ pub fn piop_recompute_transcript(
     let mut correction_factor = 0u64;
     for num in 0..cfg.packing_factor {
         correction_factor = add_mod(correction_factor, poly_eval(&lag, cfg.packing_points[num]));
+    }
+    if correction_factor == 0 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood linear target correction factor is zero",
+        ));
     }
     for rep in 0..cfg.rho() {
         let mut out_epol = vec![0u64; cfg.nb_opened_evals()];
@@ -3544,6 +4426,8 @@ fn pcs_commit(
     mpol_plin: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    statement_binding: &[u64],
 ) -> Result<(PcsKey, Vec<u64>), TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
@@ -3617,11 +4501,22 @@ fn pcs_commit(
         }
     }
     log_stage("stack_rows", &mut last);
-    let lvcs_key = lvcs_commit(cfg, &stacked_rows, salt, transcript_backend)?;
+    let lvcs_key = lvcs_commit(
+        cfg,
+        &stacked_rows,
+        salt,
+        transcript_backend,
+        decs_evaluation_domain,
+        statement_binding,
+    )?;
     log_stage("lvcs_commit", &mut last);
     let pcs_key = PcsKey { lvcs_key };
-    let transcript_words =
-        pcs_commit_transcript_words(salt, &pcs_key.lvcs_key.decs_key, transcript_backend);
+    let transcript_words = pcs_commit_transcript_words(
+        salt,
+        &pcs_key.lvcs_key.decs_key,
+        transcript_backend,
+        statement_binding,
+    );
     log_stage("pcs_transcript", &mut last);
     Ok((pcs_key, transcript_words))
 }
@@ -3679,6 +4574,8 @@ fn pcs_recompute_transcript(
     proof: &PcsProof,
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    statement_binding: &[u64],
 ) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut coeffs = vec![vec![0u64; cfg.nb_lvcs_rows]; cfg.nb_lvcs_opened_combi];
     pcs_build_coefficients(cfg, eval_points, &mut coeffs);
@@ -3698,10 +4595,15 @@ fn pcs_recompute_transcript(
         &decs_trans_hash,
         transcript_backend,
     )?;
-    let decs_eval_points = decs_leaf_indexes
+    let decs_leaf_index_words = decs_leaf_indexes
         .iter()
         .map(|&idx| idx as u64)
         .collect::<Vec<_>>();
+    let decs_eval_points = decs_field_evaluation_points(
+        decs_evaluation_domain,
+        cfg.decs_nb_evals(),
+        &decs_leaf_indexes,
+    )?;
     let rows = lvcs_recompute_rows(
         cfg,
         &coeffs,
@@ -3714,11 +4616,11 @@ fn pcs_recompute_transcript(
         cfg,
         salt,
         &rows,
-        &decs_eval_points,
+        &decs_leaf_index_words,
         &proof.decs,
         transcript_backend,
     )?;
-    decs_commitment_transcript(
+    decs_commitment_transcript_with_binding(
         cfg,
         salt,
         &rows,
@@ -3726,6 +4628,7 @@ fn pcs_recompute_transcript(
         &decs_eval_points,
         &proof.decs,
         transcript_backend,
+        statement_binding,
     )
 }
 
@@ -3733,6 +4636,7 @@ fn pcs_commit_transcript_words(
     salt: &[u8; SALT_BYTES],
     decs_key: &DecsKey,
     transcript_backend: SmallwoodTranscriptBackend,
+    statement_binding: &[u64],
 ) -> Vec<u64> {
     let root = decs_key
         .tree_levels
@@ -3740,8 +4644,8 @@ fn pcs_commit_transcript_words(
         .and_then(|level| level.first())
         .copied()
         .unwrap_or([0u8; DIGEST_BYTES]);
-    let hash_mt = hash_merkle_root(salt, &root, transcript_backend);
-    let mut transcript = digest_to_words(&hash_mt);
+    let hash_mt = hash_merkle_root_with_binding(salt, &root, transcript_backend, statement_binding);
+    let mut transcript = digest_to_words(&hash_mt, transcript_backend);
     for poly in &decs_key.dec_polys {
         transcript.extend_from_slice(poly);
     }
@@ -4121,6 +5025,8 @@ fn lvcs_commit(
     rows: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    statement_binding: &[u64],
 ) -> Result<LvcsKey, TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
@@ -4152,10 +5058,13 @@ fn lvcs_commit(
         cfg.nb_lvcs_rows,
         cfg.nb_lvcs_cols + cfg.decs_nb_opened_evals() - 1,
         cfg.decs_eta(),
+        cfg.decs_challenge_format,
         cfg.decs_nb_evals(),
         &rotated_rows,
         salt,
         transcript_backend,
+        decs_evaluation_domain,
+        statement_binding,
     )?;
     log_stage("decs_commit", &mut last);
     Ok(LvcsKey {
@@ -4243,10 +5152,9 @@ pub fn lvcs_recompute_rows(
         extended_combis[k][..cfg.nb_lvcs_cols].copy_from_slice(&combi_heads[k]);
         extended_combis[k][cfg.nb_lvcs_cols..].copy_from_slice(&rcombi_tails[k]);
     }
-    let mut combi_polys = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
+    let mut rotated_combis = Vec::with_capacity(cfg.nb_lvcs_opened_combi);
     for combi in &extended_combis {
-        let rotated = rotate_left_words(combi, cfg.nb_lvcs_cols);
-        combi_polys.push(interpolate_consecutive(&rotated)?);
+        rotated_combis.push(rotate_left_words(combi, cfg.nb_lvcs_cols));
     }
     let mut coeffs_part1 = vec![vec![0u64; cfg.nb_lvcs_opened_combi]; cfg.nb_lvcs_opened_combi];
     let mut coeffs_part2 =
@@ -4265,10 +5173,10 @@ pub fn lvcs_recompute_rows(
     let coeffs_part1_inv = mat_inv(&coeffs_part1)?;
     let mut evals = vec![vec![0u64; cfg.nb_lvcs_rows]; subset_evals.len()];
     for j in 0..subset_evals.len() {
-        let q = combi_polys
+        let q = rotated_combis
             .iter()
-            .map(|poly| poly_eval(poly, eval_points[j]))
-            .collect::<Vec<_>>();
+            .map(|values| evaluate_consecutive_values(values, eval_points[j]))
+            .collect::<Result<Vec<_>, _>>()?;
         let tmp = mat_vec_mul_owned(&coeffs_part2, &subset_evals[j]);
         let rhs = q
             .iter()
@@ -4293,10 +5201,13 @@ fn decs_commit(
     nb_polys: usize,
     poly_degree: usize,
     decs_eta: usize,
+    decs_challenge_format: SmallwoodDecsChallengeFormat,
     decs_nb_evals: usize,
     initial_domain_evals: &[Vec<u64>],
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
+    decs_evaluation_domain: SmallwoodDecsEvaluationDomain,
+    statement_binding: &[u64],
 ) -> Result<DecsKey, TransactionCircuitError> {
     let trace_enabled = std::env::var_os("HEGEMON_SMALLWOOD_TRACE").is_some();
     let started = Instant::now();
@@ -4316,26 +5227,47 @@ fn decs_commit(
         .map(|_| random_poly(poly_degree))
         .collect::<Result<Vec<_>, _>>()?;
     log_stage("masking_polys", &mut last);
-    let mut committed_domain_evals = vec![vec![0u64; decs_nb_evals]; initial_domain_evals.len()];
-    committed_domain_evals
-        .par_iter_mut()
-        .zip(initial_domain_evals.par_iter())
-        .for_each_init(
-            || (Vec::new(), Vec::new()),
-            |(work, diffs), (out, evals)| {
-                extend_consecutive_evals_into(evals, out, work, diffs);
-            },
-        );
-    let mut masking_domain_evals = vec![vec![0u64; decs_nb_evals]; masking_polys.len()];
-    masking_domain_evals
-        .par_iter_mut()
-        .zip(masking_polys.par_iter())
-        .for_each_init(
-            || (Vec::new(), Vec::new(), Vec::new()),
-            |(initial, work, diffs), (out, poly)| {
-                evaluate_poly_on_consecutive_domain_into(poly, out, initial, work, diffs);
-            },
-        );
+    let committed_domain_evals = initial_domain_evals
+        .par_iter()
+        .map(|evals| {
+            let mut out = vec![0u64; decs_nb_evals];
+            match decs_evaluation_domain {
+                SmallwoodDecsEvaluationDomain::Consecutive => {
+                    extend_consecutive_evals_into(
+                        evals,
+                        &mut out,
+                        &mut Vec::new(),
+                        &mut Vec::new(),
+                    );
+                }
+                SmallwoodDecsEvaluationDomain::Radix2Subgroup => {
+                    evaluate_consecutive_values_on_radix2_subgroup_into(evals, &mut out)?;
+                }
+            }
+            Ok::<_, TransactionCircuitError>(out)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let masking_domain_evals = masking_polys
+        .par_iter()
+        .map(|poly| {
+            let mut out = vec![0u64; decs_nb_evals];
+            match decs_evaluation_domain {
+                SmallwoodDecsEvaluationDomain::Consecutive => {
+                    evaluate_poly_on_consecutive_domain_into(
+                        poly,
+                        &mut out,
+                        &mut Vec::new(),
+                        &mut Vec::new(),
+                        &mut Vec::new(),
+                    );
+                }
+                SmallwoodDecsEvaluationDomain::Radix2Subgroup => {
+                    evaluate_poly_on_radix2_subgroup_into(poly, &mut out)?;
+                }
+            }
+            Ok::<_, TransactionCircuitError>(out)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     log_stage("domain_evals", &mut last);
     let salt_words = bytes_to_words_unchecked(salt);
     let mut tree_levels = vec![vec![[0u8; DIGEST_BYTES]; decs_nb_evals]];
@@ -4354,8 +5286,14 @@ fn decs_commit(
     log_stage("leaf_hashes", &mut last);
     let root = merkle_build_levels(&mut tree_levels, transcript_backend);
     log_stage("merkle_tree", &mut last);
-    let hash_mt = hash_merkle_root(salt, &root, transcript_backend);
-    let gamma_all = derive_decs_challenge(nb_polys, decs_eta, &hash_mt, transcript_backend);
+    let hash_mt = hash_merkle_root_with_binding(salt, &root, transcript_backend, statement_binding);
+    let gamma_all = derive_decs_challenge(
+        nb_polys,
+        decs_eta,
+        decs_challenge_format,
+        &hash_mt,
+        transcript_backend,
+    );
     log_stage("challenge", &mut last);
     let initial_len = poly_degree + 1;
     let mut combined_domain_evals = vec![vec![0u64; initial_len]; decs_eta];
@@ -4445,6 +5383,13 @@ pub fn decs_recompute_root(
             "smallwood decs auth path count mismatch",
         ));
     }
+    update_verifier_operation_profile_v1(|profile| {
+        profile.merkle_authentication_words += proof
+            .auth_paths
+            .iter()
+            .map(|path| path.len() * DIGEST_WORDS)
+            .sum::<usize>() as u64;
+    });
     let mut current_hashes = Vec::with_capacity(eval_points.len());
     let mut current_indices = Vec::with_capacity(eval_points.len());
     let mut auth_path_cursors = vec![0usize; eval_points.len()];
@@ -4547,15 +5492,66 @@ pub fn decs_commitment_transcript(
     proof: &DecsProof,
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<Vec<u64>, TransactionCircuitError> {
-    let hash_mt = hash_merkle_root(salt, root_words, transcript_backend);
+    decs_commitment_transcript_with_binding(
+        cfg,
+        salt,
+        evals,
+        root_words,
+        eval_points,
+        proof,
+        transcript_backend,
+        &[],
+    )
+}
+
+fn decs_commitment_transcript_with_binding(
+    cfg: &SmallwoodConfig,
+    salt: &[u8; SALT_BYTES],
+    evals: &[Vec<u64>],
+    root_words: &[u8; DIGEST_BYTES],
+    eval_points: &[u64],
+    proof: &DecsProof,
+    transcript_backend: SmallwoodTranscriptBackend,
+    statement_binding: &[u64],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    let hash_mt =
+        hash_merkle_root_with_binding(salt, root_words, transcript_backend, statement_binding);
     let gamma_all = derive_decs_challenge(
         cfg.nb_lvcs_rows,
         cfg.decs_eta(),
+        cfg.decs_challenge_format,
         &hash_mt,
         transcript_backend,
     );
+    decs_commitment_transcript_with_challenge(
+        cfg,
+        evals,
+        eval_points,
+        proof,
+        &hash_mt,
+        &gamma_all,
+        transcript_backend,
+    )
+}
+
+fn decs_commitment_transcript_with_challenge(
+    cfg: &SmallwoodConfig,
+    evals: &[Vec<u64>],
+    eval_points: &[u64],
+    proof: &DecsProof,
+    hash_mt: &[u8; DIGEST_BYTES],
+    gamma_all: &[Vec<u64>],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    if gamma_all.len() != cfg.decs_eta()
+        || gamma_all.iter().any(|row| row.len() != cfg.nb_lvcs_rows)
+    {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood decs challenge coefficient shape mismatch",
+        ));
+    }
     let mut transcript = Vec::new();
-    transcript.extend(digest_to_words(&hash_mt));
+    transcript.extend(digest_to_words(hash_mt, transcript_backend));
     for (k, gamma_row) in gamma_all.iter().enumerate().take(cfg.decs_eta()) {
         let mut dec_evals = vec![0u64; cfg.decs_nb_opened_evals()];
         for i in 0..cfg.decs_nb_opened_evals() {
@@ -4578,14 +5574,22 @@ pub fn decs_commitment_transcript(
 }
 
 fn hash_piop(words: &[u64], transcript_backend: SmallwoodTranscriptBackend) -> [u8; DIGEST_BYTES] {
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, words)
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN),
+        words,
+    )
 }
 
 pub fn hash_piop_transcript(
     words: &[u64],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, words)
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_PIOP_TRANSCRIPT_DOMAIN),
+        words,
+    )
 }
 
 pub fn hash_challenge_opening_decs(
@@ -4596,12 +5600,16 @@ pub fn hash_challenge_opening_decs(
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
     let mut input = Vec::new();
-    input.extend_from_slice(&digest_to_words(h_piop));
+    input.extend_from_slice(&digest_to_words(h_piop, transcript_backend));
     for k in 0..cfg.nb_lvcs_opened_combi {
         input.extend_from_slice(&combi_heads[k]);
         input.extend_from_slice(&rcombi_tails[k]);
     }
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_DECS_OPENING_DOMAIN),
+        &input,
+    )
 }
 
 fn hash_merkle_leave(
@@ -4610,10 +5618,17 @@ fn hash_merkle_leave(
     salt: &[u8; SALT_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.merkle_leaf_hashes += 1;
+    });
     let mut input = Vec::with_capacity(SALT_WORDS + evals.len());
     input.extend(bytes_to_words_unchecked(salt));
     input.extend_from_slice(evals);
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_MERKLE_LEAF_DOMAIN),
+        &input,
+    )
 }
 
 fn hash_merkle_leave_from_tables(
@@ -4640,6 +5655,26 @@ fn hash_merkle_leave_from_tables(
         }
         return read_blake3_xof_digest(hasher.finalize_xof());
     }
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5 {
+        let domain = SMALLWOOD_LEVEL5_MERKLE_LEAF_DOMAIN;
+        let word_count =
+            salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len();
+        let mut hasher = Sha512::new();
+        hasher.update((domain.len() as u64).to_le_bytes());
+        hasher.update(domain);
+        hasher.update((word_count as u64).to_le_bytes());
+        for word in salt_words {
+            hasher.update(word.to_le_bytes());
+        }
+        for poly in committed_domain_evals {
+            hasher.update(poly[leaf_idx].to_le_bytes());
+        }
+        for poly in masking_domain_evals {
+            hasher.update(poly[leaf_idx].to_le_bytes());
+        }
+        hasher.update(0u64.to_le_bytes());
+        return hasher.finalize().into();
+    }
     let mut input = Vec::with_capacity(
         salt_words.len() + committed_domain_evals.len() + masking_domain_evals.len(),
     );
@@ -4650,7 +5685,11 @@ fn hash_merkle_leave_from_tables(
     for poly in masking_domain_evals {
         input.push(poly[leaf_idx]);
     }
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_MERKLE_LEAF_DOMAIN),
+        &input,
+    )
 }
 
 fn hash_merkle_root(
@@ -4658,40 +5697,78 @@ fn hash_merkle_root(
     root: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    hash_merkle_root_with_binding(salt, root, transcript_backend, &[])
+}
+
+fn hash_merkle_root_with_binding(
+    salt: &[u8; SALT_BYTES],
+    root: &[u8; DIGEST_BYTES],
+    transcript_backend: SmallwoodTranscriptBackend,
+    statement_binding: &[u64],
+) -> [u8; DIGEST_BYTES] {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.merkle_root_hashes += 1;
+    });
     if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
         let mut hasher = Hasher::new();
         hasher.update(SMALLWOOD_XOF_DOMAIN);
-        hasher.update(&((SALT_WORDS + DIGEST_WORDS) as u64).to_le_bytes());
+        hasher.update(&((SALT_WORDS + LEGACY_DIGEST_WORDS) as u64).to_le_bytes());
         hasher.update(salt);
-        hasher.update(root);
+        hasher.update(&root[..LEGACY_DIGEST_BYTES]);
         return read_blake3_xof_digest(hasher.finalize_xof());
     }
-    let mut input = Vec::with_capacity(SALT_WORDS + DIGEST_WORDS);
+    let mut input = Vec::with_capacity(
+        SALT_WORDS + transcript_backend.digest_words() + statement_binding.len(),
+    );
     input.extend(bytes_to_words_unchecked(salt));
-    input.extend(digest_to_words(root));
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    input.extend(digest_to_words(root, transcript_backend));
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5 {
+        input.extend_from_slice(statement_binding);
+    }
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_MERKLE_ROOT_DOMAIN),
+        &input,
+    )
 }
 
 fn derive_decs_challenge(
     nb_polys: usize,
     decs_eta: usize,
+    challenge_format: SmallwoodDecsChallengeFormat,
     hash_mt: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Vec<Vec<u64>> {
-    let gamma_words = transcript_xof_words(
-        transcript_backend,
-        SMALLWOOD_XOF_DOMAIN,
-        &digest_to_words(hash_mt),
-        decs_eta,
-    );
-    let mut out = vec![vec![0u64; nb_polys]; decs_eta];
-    for k in 0..decs_eta {
-        out[k][0] = gamma_words[k];
-        for j in 1..nb_polys {
-            out[k][j] = mul_mod(out[k][j - 1], gamma_words[k]);
+    match challenge_format {
+        SmallwoodDecsChallengeFormat::ScalarPowers => {
+            let gamma_words = transcript_xof_words(
+                transcript_backend,
+                transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_DECS_COEFFICIENT_DOMAIN),
+                &digest_to_words(hash_mt, transcript_backend),
+                decs_eta,
+            );
+            let mut out = vec![vec![0u64; nb_polys]; decs_eta];
+            for k in 0..decs_eta {
+                out[k][0] = gamma_words[k];
+                for j in 1..nb_polys {
+                    out[k][j] = mul_mod(out[k][j - 1], gamma_words[k]);
+                }
+            }
+            out
+        }
+        SmallwoodDecsChallengeFormat::Uniform => {
+            let gamma_words = transcript_xof_words(
+                transcript_backend,
+                transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_DECS_COEFFICIENT_DOMAIN),
+                &digest_to_words(hash_mt, transcript_backend),
+                decs_eta * nb_polys,
+            );
+            gamma_words
+                .chunks_exact(nb_polys)
+                .map(<[u64]>::to_vec)
+                .collect()
         }
     }
-    out
 }
 
 pub fn derive_gamma_prime(
@@ -4703,34 +5780,14 @@ pub fn derive_gamma_prime(
     let rho = cfg.rho();
     let gamma_words = transcript_xof_words(
         transcript_backend,
-        SMALLWOOD_XOF_DOMAIN,
-        &digest_to_words(hash_fpp),
-        (rho + 1) + (rho + 1) * rho,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_PIOP_COEFFICIENT_DOMAIN),
+        &digest_to_words(hash_fpp, transcript_backend),
+        rho * nb_max_constraints,
     );
-    let mut mat_rnd = vec![vec![0u64; rho + 1]; rho];
-    let mut mat_powers = vec![vec![0u64; nb_max_constraints]; rho + 1];
-    for k in 0..rho {
-        for j in 0..(rho + 1) {
-            mat_rnd[k][j] = gamma_words[k * (rho + 1) + j];
-        }
-    }
-    for k in 0..(rho + 1) {
-        let base = gamma_words[rho * (rho + 1) + k];
-        mat_powers[k][0] = 1;
-        for j in 1..nb_max_constraints {
-            mat_powers[k][j] = mul_mod(mat_powers[k][j - 1], base);
-        }
-    }
-    let mut out = vec![vec![0u64; nb_max_constraints]; rho];
-    mat_mul(
-        &mut out,
-        &mat_rnd,
-        &mat_powers,
-        rho,
-        rho + 1,
-        nb_max_constraints,
-    );
-    out
+    gamma_words
+        .chunks_exact(nb_max_constraints)
+        .map(<[u64]>::to_vec)
+        .collect()
 }
 
 fn choose_opening_nonce(
@@ -4749,6 +5806,16 @@ fn choose_opening_nonce_for_profile(
 ) -> Result<[u8; NONCE_BYTES], TransactionCircuitError> {
     let mut counter = 0u32;
     loop {
+        if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5
+            && counter >= SMALLWOOD_LEVEL5_MAX_PIOP_NONCE_TRIALS
+        {
+            return Err(TransactionCircuitError::ConstraintViolation(
+                "smallwood Level-5 opening nonce trial limit exhausted",
+            ));
+        }
+        update_verifier_operation_profile_v1(|operation_profile| {
+            operation_profile.piop_nonce_trials += 1;
+        });
         let nonce = counter.to_le_bytes();
         let eval_points =
             xof_piop_opening_points_for_profile(&nonce, h_piop, profile, transcript_backend);
@@ -4787,8 +5854,15 @@ fn serialized_proof_size_hint_with_profile(
     cfg: &SmallwoodConfig,
     profile: SmallwoodNoGrindingProfileV1,
     auxiliary_words_len: usize,
-) -> usize {
+    digest_bytes: usize,
+) -> Result<usize, TransactionCircuitError> {
+    if !matches!(digest_bytes, LEGACY_DIGEST_BYTES | DIGEST_BYTES) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood projection digest width is unsupported",
+        ));
+    }
     let proof = SmallwoodProof {
+        digest_bytes,
         salt: [0u8; SALT_BYTES],
         nonce: [0u8; NONCE_BYTES],
         h_piop: [0u8; DIGEST_BYTES],
@@ -4827,9 +5901,7 @@ fn serialized_proof_size_hint_with_profile(
             auxiliary_words_len,
         ),
     };
-    encode_smallwood_proof_bytes_v1(&proof)
-        .map(|bytes| bytes.len())
-        .unwrap_or(0)
+    encode_smallwood_proof_bytes_v1(&proof).map(|bytes| bytes.len())
 }
 
 pub fn ensure_no_packing_collisions(
@@ -4877,10 +5949,10 @@ fn xof_piop_opening_points_for_profile(
 ) -> Vec<u64> {
     let mut input = Vec::with_capacity(1 + DIGEST_WORDS);
     input.push(u32::from_le_bytes(*nonce) as u64);
-    input.extend(digest_to_words(h_piop));
+    input.extend(digest_to_words(h_piop, transcript_backend));
     transcript_xof_words(
         transcript_backend,
-        SMALLWOOD_XOF_DOMAIN,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_PIOP_OPENING_DOMAIN),
         &input,
         profile.nb_opened_evals,
     )
@@ -4893,6 +5965,15 @@ pub fn xof_decs_opening(
     trans_hash: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Result<(Vec<u32>, [u8; NONCE_BYTES]), TransactionCircuitError> {
+    if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5 {
+        return xof_decs_opening_fixed_no_grinding(
+            nb_evals,
+            nb_opened_evals,
+            pow_bits,
+            trans_hash,
+            transcript_backend,
+        );
+    }
     let log2_order = 63.999999f64;
     let log2_nb_evals = (nb_evals as f64).log2();
     let maxi = ((log2_order / log2_nb_evals) - 0.001).floor() as usize;
@@ -4960,13 +6041,23 @@ pub fn xof_decs_opening(
         }
         let mut nonce_counter = 0u32;
         loop {
+            if transcript_backend == SmallwoodTranscriptBackend::Sha512Level5
+                && nonce_counter >= SMALLWOOD_LEVEL5_MAX_DECS_NONCE_TRIALS
+            {
+                return Err(TransactionCircuitError::ConstraintViolation(
+                    "smallwood Level-5 DECS nonce trial limit exhausted",
+                ));
+            }
+            update_verifier_operation_profile_v1(|operation_profile| {
+                operation_profile.decs_nonce_trials += 1;
+            });
             let nonce = nonce_counter.to_le_bytes();
             let mut input = Vec::with_capacity(1 + DIGEST_WORDS);
             input.push(u32::from_le_bytes(nonce) as u64);
-            input.extend(digest_to_words(trans_hash));
+            input.extend(digest_to_words(trans_hash, transcript_backend));
             let lhash_output = transcript_xof_words(
                 transcript_backend,
-                SMALLWOOD_XOF_DOMAIN,
+                transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_DECS_QUERY_DOMAIN),
                 &input,
                 opening_challenge_size,
             );
@@ -4999,6 +6090,73 @@ pub fn xof_decs_opening(
     }
 }
 
+/// Fixed-work, no-grinding DECS sampling selected by the Level-5 transcript.
+///
+/// Goldilocks has residue one modulo every power of two through 2^32. Rejecting
+/// the single top residue therefore makes reduction into the 2^k DECS domain
+/// exact. Taking the first distinct values from an IID uniform stream yields an
+/// ordered uniform sample without replacement. Forty candidates leave 20 spare
+/// draws for the active 20-query profile and make sampler exhaustion less than
+/// 2^-128 without allowing the prover to select a nonce.
+pub fn xof_decs_opening_fixed_no_grinding(
+    nb_evals: usize,
+    nb_opened_evals: usize,
+    pow_bits: u32,
+    trans_hash: &[u8; DIGEST_BYTES],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Result<(Vec<u32>, [u8; NONCE_BYTES]), TransactionCircuitError> {
+    if !nb_evals.is_power_of_two() || nb_evals > u32::MAX as usize {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "fixed DECS domain must be a power of two fitting u32",
+        ));
+    }
+    if nb_opened_evals == 0 || nb_opened_evals > SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "DECS opening count exceeds the fixed sampler",
+        ));
+    }
+    if pow_bits != 0 {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "fixed DECS sampling forbids grinding bits",
+        ));
+    }
+
+    update_verifier_operation_profile_v1(|operation_profile| {
+        operation_profile.decs_nonce_trials += 1;
+    });
+    let mut input = Vec::with_capacity(DIGEST_WORDS);
+    input.extend(digest_to_words(trans_hash, transcript_backend));
+    let candidates = transcript_xof_words(
+        transcript_backend,
+        SMALLWOOD_LEVEL5_FIXED_DECS_DOMAIN,
+        &input,
+        SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT,
+    );
+
+    let modulus_multiple = (FIELD_ORDER / nb_evals as u64) * nb_evals as u64;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut leaves_indexes = Vec::with_capacity(nb_opened_evals);
+    for candidate in candidates {
+        if candidate >= modulus_multiple {
+            continue;
+        }
+        let index = (candidate % nb_evals as u64) as u32;
+        if seen.insert(index) {
+            leaves_indexes.push(index);
+            if leaves_indexes.len() == nb_opened_evals {
+                break;
+            }
+        }
+    }
+    if leaves_indexes.len() != nb_opened_evals {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "fixed DECS sampler exhausted its candidate pool",
+        ));
+    }
+    leaves_indexes.sort_unstable();
+    Ok((leaves_indexes, [0u8; NONCE_BYTES]))
+}
+
 fn bytes_to_words(bytes: &[u8]) -> Result<Vec<u64>, TransactionCircuitError> {
     if !bytes.len().is_multiple_of(8) {
         return Err(TransactionCircuitError::ConstraintViolation(
@@ -5019,8 +6177,11 @@ fn bytes_to_words_unchecked(bytes: &[u8]) -> Vec<u64> {
         .collect()
 }
 
-fn digest_to_words(bytes: &[u8; DIGEST_BYTES]) -> Vec<u64> {
-    bytes_to_words_unchecked(bytes)
+fn digest_to_words(
+    bytes: &[u8; DIGEST_BYTES],
+    transcript_backend: SmallwoodTranscriptBackend,
+) -> Vec<u64> {
+    bytes_to_words_unchecked(&bytes[..transcript_backend.digest_bytes()])
 }
 
 fn words_to_digest(words: &[u64]) -> [u8; DIGEST_BYTES] {
@@ -5060,12 +6221,16 @@ fn hash_merkle_chunk(
     if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
         let mut hasher = Hasher::new();
         hasher.update(SMALLWOOD_XOF_DOMAIN);
-        hasher.update(&(DIGEST_WORDS as u64).to_le_bytes());
-        hasher.update(&children[0]);
+        hasher.update(&(LEGACY_DIGEST_WORDS as u64).to_le_bytes());
+        hasher.update(&children[0][..LEGACY_DIGEST_BYTES]);
         return read_blake3_xof_digest(hasher.finalize_xof());
     }
-    let input = digest_to_words(&children[0]);
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    let input = digest_to_words(&children[0], transcript_backend);
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_MERKLE_NODE_DOMAIN),
+        &input,
+    )
 }
 
 fn hash_merkle_children(
@@ -5073,18 +6238,25 @@ fn hash_merkle_children(
     right: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.merkle_internal_hashes += 1;
+    });
     if transcript_backend == SmallwoodTranscriptBackend::Blake3 {
         let mut hasher = Hasher::new();
         hasher.update(SMALLWOOD_XOF_DOMAIN);
-        hasher.update(&((2 * DIGEST_WORDS) as u64).to_le_bytes());
-        hasher.update(left);
-        hasher.update(right);
+        hasher.update(&((2 * LEGACY_DIGEST_WORDS) as u64).to_le_bytes());
+        hasher.update(&left[..LEGACY_DIGEST_BYTES]);
+        hasher.update(&right[..LEGACY_DIGEST_BYTES]);
         return read_blake3_xof_digest(hasher.finalize_xof());
     }
-    let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
-    input.extend(digest_to_words(left));
-    input.extend(digest_to_words(right));
-    transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
+    let mut input = Vec::with_capacity(2 * transcript_backend.digest_words());
+    input.extend(digest_to_words(left, transcript_backend));
+    input.extend(digest_to_words(right, transcript_backend));
+    transcript_xof_digest(
+        transcript_backend,
+        transcript_domain(transcript_backend, SMALLWOOD_LEVEL5_MERKLE_NODE_DOMAIN),
+        &input,
+    )
 }
 
 #[cfg(test)]
@@ -5328,8 +6500,7 @@ mod tests {
         ) else {
             return false;
         };
-        candidate.arithmetization
-            == SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+        candidate.arithmetization == SmallwoodArithmetization::DirectPacked64CompressedLevel5
             && decode_smallwood_proof_bytes_v1(&candidate.ark_proof).is_ok()
     }
 
@@ -5343,7 +6514,7 @@ mod tests {
         )
         .is_err());
         assert!(encode_matrix_u64_v1(&mut out, &[vec![FIELD_ORDER]]).is_err());
-        assert!(encode_auth_paths_v1(&mut out, &[Vec::new()]).is_err());
+        assert!(encode_auth_paths_v1(&mut out, &[Vec::new()], LEGACY_DIGEST_BYTES).is_err());
         assert!(encode_opened_witness_v1(
             &mut out,
             &SmallwoodOpenedWitnessBundle::row_scalars(Vec::new(), Vec::new(), 1),
@@ -5364,6 +6535,36 @@ mod tests {
         let sampled = random_vec(1024).expect("sample canonical Goldilocks words");
         assert_eq!(sampled.len(), 1024);
         assert!(sampled.iter().all(|value| *value < FIELD_ORDER));
+    }
+
+    #[test]
+    fn level5_sha512_raw_digest_and_field_xof_match_independent_known_answer() {
+        let words = [0, 1, FIELD_ORDER - 1, FIELD_ORDER, u64::MAX];
+        let raw = sha512_domain_digest(SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN, &words, 0);
+        assert_eq!(
+            hex::encode(raw),
+            concat!(
+                "f22b64e7f4ebf5d8475469e6937a16ee0cf4d7e9cbd577cb65cd3401ac18313a",
+                "07658c063f197d35c200845d4a9795da313f54238ffc602fe98e24da1becab16"
+            )
+        );
+        assert_eq!(
+            read_sha512_xof_words_with_count(SMALLWOOD_LEVEL5_PIOP_INPUT_DOMAIN, &words, 12,).0,
+            vec![
+                0xd8f5_ebf4_e764_2bf2,
+                0xee16_7a93_e669_5447,
+                0xcb77_d5cb_e9d7_f40c,
+                0x3a31_18ac_0134_cd65,
+                0x357d_193f_068c_6507,
+                0xda95_974a_5d84_00c2,
+                0x2f60_fc8f_2354_3f31,
+                0x16ab_ec1b_da24_8ee9,
+                0xb242_d98c_70fb_cf33,
+                0x9329_6cb3_d637_aaf3,
+                0x442e_12ba_57dd_91d4,
+                0x9c38_543c_3187_d01b,
+            ]
+        );
     }
 
     proptest! {
@@ -5435,6 +6636,143 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn fixed_decs_sampler_is_unique_unbiased_and_bounded() {
+        const DOMAIN_SIZE: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_evals;
+        const OPENING_COUNT: usize = ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1.decs_nb_opened_evals;
+        let transcript_hash = [0x5au8; DIGEST_BYTES];
+        let (indexes, nonce) = xof_decs_opening_fixed_no_grinding(
+            DOMAIN_SIZE,
+            OPENING_COUNT,
+            0,
+            &transcript_hash,
+            SmallwoodTranscriptBackend::Sha512Level5,
+        )
+        .expect("sample fixed DECS queries");
+        assert_eq!(nonce, [0; NONCE_BYTES]);
+        assert_eq!(indexes.len(), OPENING_COUNT);
+        assert!(indexes.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(indexes.iter().all(|&index| index < DOMAIN_SIZE as u32));
+
+        // If 50 draws contain fewer than 26 distinct values, all accepted draws
+        // fit in some 25-element subset. The union bound below is conservative
+        // integer evidence that fixed-pool exhaustion is below 2^-260.
+        fn binomial(n: usize, k: usize) -> BigUint {
+            let k = k.min(n - k);
+            (0..k).fold(BigUint::from(1u8), |value, index| {
+                value * BigUint::from(n - index) / BigUint::from(index + 1)
+            })
+        }
+        let domain = BigUint::from(DOMAIN_SIZE);
+        let subset_size = OPENING_COUNT - 1;
+        let draws = SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT;
+        let failure_numerator =
+            binomial(DOMAIN_SIZE, subset_size) * BigUint::from(subset_size).pow(draws as u32);
+        let failure_denominator = domain.pow(draws as u32);
+        assert!(
+            (failure_numerator << 260usize) < failure_denominator,
+            "fixed DECS sampler exhaustion bound must be below 2^-260"
+        );
+        assert!(xof_decs_opening_fixed_no_grinding(
+            DOMAIN_SIZE,
+            OPENING_COUNT,
+            1,
+            &transcript_hash,
+            SmallwoodTranscriptBackend::Sha512Level5,
+        )
+        .is_err());
+
+        let (active_indexes, active_nonce) = xof_decs_opening(
+            DOMAIN_SIZE,
+            OPENING_COUNT,
+            0,
+            &transcript_hash,
+            SmallwoodTranscriptBackend::Sha512Level5,
+        )
+        .expect("active Level-5 path selects fixed DECS sampling");
+        assert_eq!(active_indexes, indexes);
+        assert_eq!(active_nonce, [0; NONCE_BYTES]);
+    }
+
+    #[test]
+    fn decs_challenge_is_exactly_scalar_power_batching() {
+        const WIDTH: usize = 138;
+        const REPETITIONS: usize = 5;
+        let challenge = derive_decs_challenge(
+            WIDTH,
+            REPETITIONS,
+            SmallwoodDecsChallengeFormat::ScalarPowers,
+            &[0x5au8; DIGEST_BYTES],
+            SmallwoodTranscriptBackend::Sha512Level5,
+        );
+
+        assert_eq!(challenge.len(), REPETITIONS);
+        for coefficients in challenge {
+            assert_eq!(coefficients.len(), WIDTH);
+            let gamma = coefficients[0];
+            let mut expected = gamma;
+            for coefficient in coefficients {
+                assert_eq!(coefficient, expected);
+                expected = mul_mod(expected, gamma);
+            }
+        }
+    }
+
+    #[test]
+    fn level5_decs_challenge_is_full_uniform_matrix() {
+        const WIDTH: usize = 138;
+        const REPETITIONS: usize = 5;
+        let digest = [0x5au8; DIGEST_BYTES];
+        let challenge = derive_decs_challenge(
+            WIDTH,
+            REPETITIONS,
+            SmallwoodDecsChallengeFormat::Uniform,
+            &digest,
+            SmallwoodTranscriptBackend::Sha512Level5,
+        );
+        let expected = transcript_xof_words(
+            SmallwoodTranscriptBackend::Sha512Level5,
+            transcript_domain(
+                SmallwoodTranscriptBackend::Sha512Level5,
+                SMALLWOOD_LEVEL5_DECS_COEFFICIENT_DOMAIN,
+            ),
+            &digest_to_words(&digest, SmallwoodTranscriptBackend::Sha512Level5),
+            WIDTH * REPETITIONS,
+        );
+
+        assert_eq!(challenge.len(), REPETITIONS);
+        assert!(challenge.iter().all(|row| row.len() == WIDTH));
+        assert_eq!(
+            challenge.into_iter().flatten().collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn level5_piop_challenge_is_full_uniform_matrix() {
+        let statement = StructuralIdentityWitnessStatement::new(8, 8, 2, 17, 0).unwrap();
+        let cfg = SmallwoodConfig::new(&statement).unwrap();
+        let digest = [0xa5u8; DIGEST_BYTES];
+        let challenge = derive_gamma_prime(&cfg, &digest, SmallwoodTranscriptBackend::Sha512Level5);
+        let width = cfg.constraint_count.max(cfg.linear_constraint_count);
+        let expected = transcript_xof_words(
+            SmallwoodTranscriptBackend::Sha512Level5,
+            transcript_domain(
+                SmallwoodTranscriptBackend::Sha512Level5,
+                SMALLWOOD_LEVEL5_PIOP_COEFFICIENT_DOMAIN,
+            ),
+            &digest_to_words(&digest, SmallwoodTranscriptBackend::Sha512Level5),
+            cfg.rho() * width,
+        );
+
+        assert_eq!(challenge.len(), cfg.rho());
+        assert!(challenge.iter().all(|row| row.len() == width));
+        assert_eq!(
+            challenge.into_iter().flatten().collect::<Vec<_>>(),
+            expected
+        );
+    }
+
     fn default_bridge_smallwood_arithmetization_for_test() -> SmallwoodArithmetization {
         SmallwoodArithmetization::Bridge64V1
     }
@@ -5458,14 +6796,14 @@ mod tests {
         while current.len() > 1 {
             let mut parents = Vec::with_capacity(current.len().div_ceil(2));
             for pair in current.chunks(2) {
-                let mut input = Vec::with_capacity(pair.len() * DIGEST_WORDS);
+                let mut input = Vec::with_capacity(pair.len() * LEGACY_DIGEST_WORDS);
                 for child in pair {
-                    input.extend(digest_to_words(child));
+                    input.extend(digest_to_words(child, SmallwoodTranscriptBackend::Blake3));
                 }
                 parents.push(words_to_digest(&transcript_xof_words_blake3_reference(
                     SMALLWOOD_XOF_DOMAIN,
                     &input,
-                    DIGEST_WORDS,
+                    LEGACY_DIGEST_WORDS,
                 )));
             }
             levels.push(parents.clone());
@@ -5557,7 +6895,7 @@ mod tests {
 
     fn production_statement(material: &PackedSmallwoodAuxFrontendMaterial) -> PackedStatement<'_> {
         PackedStatement::new_with_auxiliary(
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
             &material.public_statement.public_values,
             material.public_statement.lppc_row_count as usize,
             material.public_statement.lppc_packing_factor as usize,
@@ -5710,7 +7048,7 @@ mod tests {
     #[test]
     fn compact_auth_path_decoder_rejects_impossible_dimensions_before_allocation() {
         let bytes = [1, 0, 255];
-        let err = decode_auth_paths_v1(&bytes, &mut 0usize)
+        let err = decode_auth_paths_v1(&bytes, &mut 0usize, LEGACY_DIGEST_BYTES)
             .expect_err("truncated maximal auth path must reject");
         assert!(
             err.to_string()
@@ -5722,7 +7060,7 @@ mod tests {
     #[test]
     fn compact_auth_path_decoder_rejects_excessive_count_and_empty_paths_before_allocation() {
         let excessive_count = [0xff, 0xff];
-        let err = decode_auth_paths_v1(&excessive_count, &mut 0usize)
+        let err = decode_auth_paths_v1(&excessive_count, &mut 0usize, LEGACY_DIGEST_BYTES)
             .expect_err("maximal auth-path count must reject");
         assert!(
             err.to_string()
@@ -5731,7 +7069,7 @@ mod tests {
         );
 
         let empty_path = [1, 0, 0];
-        let err = decode_auth_paths_v1(&empty_path, &mut 0usize)
+        let err = decode_auth_paths_v1(&empty_path, &mut 0usize, LEGACY_DIGEST_BYTES)
             .expect_err("zero-length auth path must reject");
         assert!(
             err.to_string().contains("must not be empty"),
@@ -5755,6 +7093,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full production prove/decode/verify coverage runs in the release benchmark"]
     fn direct_packed_arithmetization_proves_and_verifies_succinctly() {
         let (material, proof) = sample_production_candidate();
         let statement = production_statement(material);
@@ -5834,6 +7173,132 @@ mod tests {
     }
 
     #[test]
+    fn compressed_level5_geometry_frontier_is_materially_smaller() {
+        const COMPRESSED_ROW_COUNT: usize = 699;
+        const COMPRESSED_CONSTRAINT_COUNT: usize = 890;
+        const PRODUCTION_PUBLIC_VALUE_COUNT: usize = 78;
+
+        let statement = StructuralIdentityWitnessStatement::new_for_arithmetization(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            COMPRESSED_ROW_COUNT,
+            64,
+            SMALLWOOD_EFFECTIVE_CONSTRAINT_DEGREE as usize,
+            COMPRESSED_CONSTRAINT_COUNT,
+            0,
+        )
+        .unwrap();
+        let mut candidates = Vec::new();
+        for rho in 5..=5 {
+            for opened in 5..=5 {
+                for beta in 1..=16 {
+                    for domain in [
+                        65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152, 4_194_304,
+                        8_388_608,
+                    ] {
+                        for queries in 15..=48 {
+                            let probe_profile = SmallwoodNoGrindingProfileV1 {
+                                rho,
+                                nb_opened_evals: opened,
+                                beta,
+                                opening_pow_bits: 0,
+                                decs_nb_evals: domain,
+                                decs_nb_opened_evals: queries,
+                                decs_eta: 1,
+                                decs_pow_bits: 0,
+                            };
+                            let Ok(probe_cfg) =
+                                SmallwoodConfig::new_with_profile(&statement, probe_profile)
+                            else {
+                                continue;
+                            };
+                            let decs_degree = probe_cfg
+                                .nb_lvcs_cols
+                                .checked_add(queries)
+                                .and_then(|value| value.checked_sub(1))
+                                .expect("validated DECS geometry");
+                            let required_eta = ((260.0
+                                + log2_binomial(domain as u128, decs_degree + 2))
+                                / (FIELD_ORDER as f64).log2())
+                            .ceil() as usize;
+                            for eta in required_eta..=required_eta.saturating_add(1) {
+                                let profile = SmallwoodNoGrindingProfileV1 {
+                                    decs_eta: eta,
+                                    ..probe_profile
+                                };
+                                let Ok(soundness) = report_smallwood_no_grinding_soundness_v1(
+                                    &statement,
+                                    PRODUCTION_PUBLIC_VALUE_COUNT,
+                                    profile,
+                                ) else {
+                                    continue;
+                                };
+                                if !soundness.meets_260_bit_floor {
+                                    continue;
+                                }
+                                let Ok(bytes) =
+                                    projected_candidate_proof_bytes_with_profile_and_backend(
+                                        &statement,
+                                        profile,
+                                        SmallwoodTranscriptBackend::Sha512Level5,
+                                    )
+                                else {
+                                    continue;
+                                };
+                                candidates.push((bytes, soundness.security_floor_bits, profile));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        candidates.sort_by_key(|candidate| candidate.0);
+        let best = candidates
+            .first()
+            .expect("compressed Level-5-width frontier must contain a 260-bit candidate");
+        eprintln!(
+            "compressed Level-5-width frontier best: projected_bytes={} floor_bits={:.6} profile={:?}",
+            best.0, best.1, best.2
+        );
+        for (rank, candidate) in candidates.iter().take(10).enumerate() {
+            eprintln!(
+                "compressed Level-5-width frontier rank={} projected_bytes={} floor_bits={:.6} profile={:?}",
+                rank + 1,
+                candidate.0,
+                candidate.1,
+                candidate.2
+            );
+        }
+        for domain in [
+            65_536usize,
+            131_072,
+            262_144usize,
+            524_288,
+            1_048_576,
+            2_097_152,
+            4_194_304,
+            8_388_608,
+        ] {
+            let best_for_domain = candidates
+                .iter()
+                .filter(|candidate| candidate.2.decs_nb_evals == domain)
+                .min_by_key(|candidate| candidate.0)
+                .expect("each searched domain must contain a 260-bit candidate");
+            eprintln!(
+                "compressed Level-5-width domain={} projected_bytes={} floor_bits={:.6} profile={:?}",
+                domain,
+                best_for_domain.0,
+                best_for_domain.1,
+                best_for_domain.2
+            );
+        }
+        assert!(
+            best.0 < 200_000,
+            "theorem-valid compressed relation must remain below 200,000 projected inner bytes"
+        );
+    }
+
+    #[test]
+    #[ignore = "mutates a freshly generated production proof; covered by native artifact vectors"]
     fn direct_packed_arithmetization_rejects_opened_witness_mode_mismatch() {
         let (material, proof_bytes) = sample_production_candidate();
         let statement = production_statement(material);
@@ -5849,9 +7314,9 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "mutates a freshly generated production proof; covered by native artifact vectors"]
     fn direct_packed_arithmetization_rejects_auxiliary_witness_limb_count_overflow() {
         let (material, proof_bytes) = sample_production_candidate();
-        let statement = production_statement(material);
         let mut proof = decode_smallwood_proof_bytes_v1(proof_bytes).unwrap();
         match &mut proof.opened_witness.mode {
             SmallwoodOpenedWitnessMode::RowScalars {
@@ -5867,16 +7332,13 @@ mod tests {
             }
             mode => panic!("unexpected opened witness mode for direct packed proof: {mode:?}"),
         }
-        let err = verify_candidate(
-            &statement,
-            &material.transcript_binding,
-            &encode_smallwood_proof_bytes_v1(&proof).unwrap(),
-        )
-        .expect_err("direct proof with overflowing auxiliary limb count unexpectedly verified");
+        let err = encode_smallwood_proof_bytes_v1(&proof)
+            .expect_err("canonical encoder accepted an overflowing auxiliary limb count");
         assert!(err.to_string().contains("auxiliary"));
     }
 
     #[test]
+    #[ignore = "mutates a freshly generated production proof; covered by native artifact vectors"]
     fn direct_packed_arithmetization_rejects_nonzero_auxiliary_padding() {
         let (material, proof_bytes) = sample_production_candidate();
         let statement = production_statement(material);
@@ -5902,6 +7364,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "full production PCS forgery campaign runs explicitly in release mode"]
     fn verifier_rejects_forged_self_consistent_pcs_layer() {
         let witness = sample_witness();
         let material = build_production_smallwood_frontend_material_from_witness(&witness).unwrap();
@@ -5909,7 +7372,7 @@ mod tests {
         let cfg = SmallwoodConfig::new(&statement).unwrap();
         let mut proof = prove_smallwood_candidate_with_arithmetization(
             &witness,
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
         )
         .unwrap();
         let mut outer = decode_smallwood_candidate_proof_for_test(&proof.stark_proof);
@@ -6021,6 +7484,8 @@ mod tests {
             &mpol_plin,
             &salt,
             SmallwoodTranscriptBackend::Blake3,
+            SmallwoodDecsEvaluationDomain::Consecutive,
+            &binded_words,
         )
         .unwrap();
         let mut piop_input = pcs_transcript_words;
@@ -6243,6 +7708,35 @@ mod tests {
     }
 
     #[test]
+    fn barycentric_consecutive_evaluation_matches_coefficient_form() {
+        for size in [1usize, 2, 3, 8, 67, 141] {
+            let values = (0..size)
+                .map(|index| {
+                    reduce128(
+                        (index as u128 + 1) * (index as u128 + 17) * 0x9e37_79b9_7f4a_7c15u128,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let polynomial = interpolate_consecutive(&values).unwrap();
+            let points = [
+                0u64,
+                (size - 1) as u64,
+                size as u64,
+                size as u64 + 13,
+                16_383,
+                32_767,
+            ];
+            for point in points {
+                assert_eq!(
+                    evaluate_consecutive_values(&values, point).unwrap(),
+                    poly_eval(&polynomial, point),
+                    "size={size} point={point}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn extend_consecutive_matches_interpolated_polynomial() {
         let initial = vec![9u64, 2, 4];
         let poly = interpolate_consecutive(&initial).unwrap();
@@ -6251,6 +7745,92 @@ mod tests {
             .map(|point| poly_eval(&poly, point as u64))
             .collect::<Vec<_>>();
         assert_eq!(extended, expected);
+    }
+
+    #[test]
+    fn radix2_subgroup_evaluation_matches_direct_polynomial_evaluation() {
+        for size in [2usize, 4, 8, 32, 256] {
+            let poly = (0..(size / 2))
+                .map(|index| reduce128((index as u128 + 3) * 0x9e37_79b9_7f4a_7c15u128))
+                .collect::<Vec<_>>();
+            let root = radix2_subgroup_generator(size).unwrap();
+            let mut actual = vec![0u64; size];
+            evaluate_poly_on_radix2_subgroup_into(&poly, &mut actual).unwrap();
+            let mut point = 1u64;
+            let expected = (0..size)
+                .map(|_| {
+                    let value = poly_eval(&poly, point);
+                    point = mul_mod(point, root);
+                    value
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "size={size}");
+        }
+    }
+
+    #[test]
+    fn consecutive_samples_evaluate_on_radix2_subgroup() {
+        let initial = vec![9u64, 2, 4, 17, 23];
+        let poly = interpolate_consecutive(&initial).unwrap();
+        let size = 32usize;
+        let root = radix2_subgroup_generator(size).unwrap();
+        let mut actual = vec![0u64; size];
+        evaluate_consecutive_values_on_radix2_subgroup_into(&initial, &mut actual).unwrap();
+        let mut point = 1u64;
+        let expected = (0..size)
+            .map(|_| {
+                let value = poly_eval(&poly, point);
+                point = mul_mod(point, root);
+                value
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    #[ignore = "release-only DECS subgroup evaluator benchmark"]
+    fn production_shape_radix2_subgroup_evaluator_benchmark() {
+        let row_count = 134usize;
+        let initial_len = 806usize;
+        let initial_rows = (0..row_count)
+            .map(|row| {
+                (0..initial_len)
+                    .map(|column| {
+                        reduce128(
+                            (row as u128 + 1) * (column as u128 + 3) * 0x9e37_79b9_7f4a_7c15u128,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        for domain_size in [32_768usize, 131_072, 262_144] {
+            let started = Instant::now();
+            let evaluations = initial_rows
+                .par_iter()
+                .map(|initial| {
+                    let mut output = vec![0u64; domain_size];
+                    evaluate_consecutive_values_on_radix2_subgroup_into(initial, &mut output)?;
+                    Ok::<_, TransactionCircuitError>(output)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            let checksum = evaluations.iter().fold(0u64, |accumulator, row| {
+                add_mod(
+                    accumulator,
+                    add_mod(row[domain_size / 3], row[domain_size - 1]),
+                )
+            });
+            eprintln!(
+                "smallwood DECS subgroup evaluator domain={} rows={} initial_len={} elapsed={:?} checksum={}",
+                domain_size,
+                row_count,
+                initial_len,
+                started.elapsed(),
+                checksum
+            );
+            drop(evaluations);
+        }
     }
 
     #[test]
@@ -6312,7 +7892,7 @@ mod tests {
             let expected = words_to_digest(&transcript_xof_words_blake3_reference(
                 SMALLWOOD_XOF_DOMAIN,
                 &input,
-                DIGEST_WORDS,
+                LEGACY_DIGEST_WORDS,
             ));
             assert_eq!(actual, expected, "leaf_idx={leaf_idx}");
         }
@@ -6333,11 +7913,14 @@ mod tests {
         let actual_root_hash =
             hash_merkle_root(&salt, &actual_root, SmallwoodTranscriptBackend::Blake3);
         let mut root_words = bytes_to_words_unchecked(&salt);
-        root_words.extend(digest_to_words(&actual_root));
+        root_words.extend(digest_to_words(
+            &actual_root,
+            SmallwoodTranscriptBackend::Blake3,
+        ));
         let expected_root_hash = words_to_digest(&transcript_xof_words_blake3_reference(
             SMALLWOOD_XOF_DOMAIN,
             &root_words,
-            DIGEST_WORDS,
+            LEGACY_DIGEST_WORDS,
         ));
         assert_eq!(actual_root_hash, expected_root_hash);
     }
@@ -6385,6 +7968,125 @@ fn poly_eval(poly: &[u64], point: u64) -> u64 {
         acc = add_mod(mul_mod(acc, point), *coeff);
     }
     acc
+}
+
+fn pow_mod(mut base: u64, mut exponent: u64) -> u64 {
+    let mut result = 1u64;
+    while exponent != 0 {
+        if exponent & 1 == 1 {
+            result = mul_mod(result, base);
+        }
+        base = mul_mod(base, base);
+        exponent >>= 1;
+    }
+    canon(result)
+}
+
+fn radix2_subgroup_generator(size: usize) -> Result<u64, TransactionCircuitError> {
+    if !size.is_power_of_two() || (size as u64) > (1u64 << GOLDILOCKS_TWO_ADICITY) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood DECS subgroup size must be a power of two no larger than 2^32",
+        ));
+    }
+    let size_u64 = u64::try_from(size).map_err(|_| {
+        TransactionCircuitError::ConstraintViolation(
+            "smallwood DECS subgroup size does not fit u64",
+        )
+    })?;
+    let log_size = size_u64.ilog2();
+    let root = pow_mod(
+        GOLDILOCKS_TWO_ADIC_ROOT,
+        1u64 << (GOLDILOCKS_TWO_ADICITY - log_size),
+    );
+    if pow_mod(root, size_u64) != 1 || (size > 1 && pow_mod(root, size_u64 / 2) == 1) {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood DECS subgroup generator has the wrong order",
+        ));
+    }
+    Ok(root)
+}
+
+fn decs_field_evaluation_points(
+    domain: SmallwoodDecsEvaluationDomain,
+    domain_size: usize,
+    leaf_indexes: &[u32],
+) -> Result<Vec<u64>, TransactionCircuitError> {
+    match domain {
+        SmallwoodDecsEvaluationDomain::Consecutive => {
+            Ok(leaf_indexes.iter().map(|&index| u64::from(index)).collect())
+        }
+        SmallwoodDecsEvaluationDomain::Radix2Subgroup => {
+            let root = radix2_subgroup_generator(domain_size)?;
+            leaf_indexes
+                .iter()
+                .map(|&index| {
+                    if index as usize >= domain_size {
+                        return Err(TransactionCircuitError::ConstraintViolation(
+                            "smallwood DECS leaf index exceeds the evaluation domain",
+                        ));
+                    }
+                    Ok(pow_mod(root, u64::from(index)))
+                })
+                .collect()
+        }
+    }
+}
+
+fn radix2_fft_in_place(values: &mut [u64], root: u64) {
+    let size = values.len();
+    let mut reversed = 0usize;
+    for index in 1..size {
+        let mut bit = size >> 1;
+        while reversed & bit != 0 {
+            reversed ^= bit;
+            bit >>= 1;
+        }
+        reversed ^= bit;
+        if index < reversed {
+            values.swap(index, reversed);
+        }
+    }
+
+    let mut width = 2usize;
+    while width <= size {
+        let twiddle_step = pow_mod(root, (size / width) as u64);
+        for block in values.chunks_exact_mut(width) {
+            let mut twiddle = 1u64;
+            let half = width / 2;
+            for offset in 0..half {
+                let even = block[offset];
+                let odd = mul_mod(block[offset + half], twiddle);
+                block[offset] = add_mod(even, odd);
+                block[offset + half] = sub_mod(even, odd);
+                twiddle = mul_mod(twiddle, twiddle_step);
+            }
+        }
+        width <<= 1;
+    }
+}
+
+fn evaluate_poly_on_radix2_subgroup_into(
+    poly: &[u64],
+    out: &mut [u64],
+) -> Result<(), TransactionCircuitError> {
+    if poly.len() > out.len() {
+        return Err(TransactionCircuitError::ConstraintViolation(
+            "smallwood DECS polynomial degree exceeds subgroup domain",
+        ));
+    }
+    let root = radix2_subgroup_generator(out.len())?;
+    out.fill(0);
+    out[..poly.len()].copy_from_slice(poly);
+    radix2_fft_in_place(out, root);
+    Ok(())
+}
+
+fn evaluate_consecutive_values_on_radix2_subgroup_into(
+    initial: &[u64],
+    out: &mut [u64],
+) -> Result<(), TransactionCircuitError> {
+    let coefficients = interpolate_consecutive(initial)?;
+    evaluate_poly_on_radix2_subgroup_into(&coefficients, out)
 }
 
 fn evaluate_poly_on_consecutive_domain_into(
@@ -6491,6 +8193,82 @@ fn interpolate_consecutive(evals: &[u64]) -> Result<Vec<u64>, TransactionCircuit
         }
     }
     Ok(poly)
+}
+
+fn build_consecutive_barycentric_weights(size: usize) -> Result<Vec<u64>, TransactionCircuitError> {
+    if size == 0 {
+        return Ok(Vec::new());
+    }
+    let mut factorials = vec![1u64; size];
+    for index in 1..size {
+        factorials[index] = mul_mod(factorials[index - 1], index as u64);
+    }
+    let mut inverse_factorials = vec![1u64; size];
+    inverse_factorials[size - 1] = inv_mod(factorials[size - 1])?;
+    for index in (1..size).rev() {
+        inverse_factorials[index - 1] = mul_mod(inverse_factorials[index], index as u64);
+    }
+    Ok((0..size)
+        .map(|index| {
+            let magnitude = mul_mod(
+                inverse_factorials[index],
+                inverse_factorials[size - 1 - index],
+            );
+            if (size - 1 - index).is_multiple_of(2) {
+                magnitude
+            } else {
+                neg_mod(magnitude)
+            }
+        })
+        .collect())
+}
+
+fn cached_consecutive_barycentric_weights(
+    size: usize,
+) -> Result<Arc<Vec<u64>>, TransactionCircuitError> {
+    let cache = CONSECUTIVE_BARYCENTRIC_WEIGHT_CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(cached) = cache
+        .lock()
+        .expect("barycentric weight cache mutex")
+        .get(&size)
+    {
+        return Ok(cached.clone());
+    }
+    let built = Arc::new(build_consecutive_barycentric_weights(size)?);
+    let mut guard = cache.lock().expect("barycentric weight cache mutex");
+    Ok(guard.entry(size).or_insert_with(|| built.clone()).clone())
+}
+
+/// Evaluates the unique polynomial represented by values at `0..values.len()`.
+///
+/// The direct Lagrange form uses prefix and suffix products. It is linear in
+/// the number of values and is exactly equivalent to interpolating coefficient
+/// form and applying Horner evaluation.
+fn evaluate_consecutive_values(values: &[u64], point: u64) -> Result<u64, TransactionCircuitError> {
+    if values.is_empty() {
+        return Ok(0);
+    }
+    if point < values.len() as u64 {
+        return Ok(values[point as usize]);
+    }
+
+    let weights = cached_consecutive_barycentric_weights(values.len())?;
+    let mut prefix = vec![1u64; values.len() + 1];
+    for index in 0..values.len() {
+        prefix[index + 1] = mul_mod(prefix[index], sub_mod(point, index as u64));
+    }
+    let mut suffix = vec![1u64; values.len() + 1];
+    for index in (0..values.len()).rev() {
+        suffix[index] = mul_mod(suffix[index + 1], sub_mod(point, index as u64));
+    }
+
+    let mut result = 0u64;
+    for index in 0..values.len() {
+        let omitted_product = mul_mod(prefix[index], suffix[index + 1]);
+        let basis = mul_mod(weights[index], omitted_product);
+        result = add_mod(result, mul_mod(values[index], basis));
+    }
+    Ok(result)
 }
 
 pub fn interpolate_smallwood_consecutive_row_v1(
@@ -6730,7 +8508,7 @@ fn random_vec(size: usize) -> Result<Vec<u64>, TransactionCircuitError> {
     let mut values = Vec::with_capacity(size);
     while values.len() < size {
         let remaining = size - values.len();
-        let byte_len = remaining.checked_mul(8).ok_or_else(|| {
+        let byte_len = remaining.checked_mul(8).ok_or({
             TransactionCircuitError::ConstraintViolation(
                 "smallwood random field request exceeds addressable memory",
             )
@@ -6773,6 +8551,9 @@ fn canon(x: u64) -> u64 {
 
 #[inline(always)]
 fn add_mod(a: u64, b: u64) -> u64 {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.field_additions += 1;
+    });
     let (sum, over) = a.overflowing_add(b);
     let (mut sum, over) = sum.overflowing_add(u64::from(over) * NEG_ORDER);
     if over {
@@ -6783,6 +8564,9 @@ fn add_mod(a: u64, b: u64) -> u64 {
 
 #[inline(always)]
 fn sub_mod(a: u64, b: u64) -> u64 {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.field_subtractions += 1;
+    });
     let (diff, under) = a.overflowing_sub(b);
     let (mut diff, under) = diff.overflowing_sub(u64::from(under) * NEG_ORDER);
     if under {
@@ -6793,11 +8577,17 @@ fn sub_mod(a: u64, b: u64) -> u64 {
 
 #[inline(always)]
 fn mul_mod(a: u64, b: u64) -> u64 {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.field_multiplications += 1;
+    });
     reduce128((a as u128) * (b as u128))
 }
 
 #[inline]
 fn neg_mod(a: u64) -> u64 {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.field_negations += 1;
+    });
     let canonical = canon(a);
     if canonical == 0 {
         0
@@ -6807,6 +8597,9 @@ fn neg_mod(a: u64) -> u64 {
 }
 
 fn inv_mod(a: u64) -> Result<u64, TransactionCircuitError> {
+    update_verifier_operation_profile_v1(|profile| {
+        profile.field_inversions += 1;
+    });
     Goldilocks::new(a)
         .try_inverse()
         .map(|value| value.as_canonical_u64())

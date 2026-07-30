@@ -112,8 +112,6 @@ impl NativeNode {
             sync_tx: Mutex::new(None),
             miner_identity,
             prepared_mining_actions: Mutex::new(BTreeMap::new()),
-            prepared_candidate_actions: Mutex::new(BTreeMap::new()),
-            prepared_candidate_build_lock: Mutex::new(()),
         });
         Self::ensure_ciphertext_archive_index(&node)?;
         Ok(node)
@@ -716,69 +714,20 @@ impl NativeNode {
         Ok(Some(action))
     }
 
-    pub(crate) fn auto_candidate_cache_key(
-        parent_hash: [u8; 32],
-        transfer_actions: &[PendingAction],
-    ) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"hegemon-native-auto-recursive-candidate-v1");
-        hasher.update(&parent_hash);
-        let count = u32::try_from(transfer_actions.len()).unwrap_or(u32::MAX);
-        hasher.update(&count.to_le_bytes());
-        for action in transfer_actions {
-            hasher.update(&action.tx_hash);
-        }
-        *hasher.finalize().as_bytes()
-    }
-
-    pub(crate) fn prepared_candidate_action(&self, key: [u8; 32]) -> Option<PendingAction> {
-        self.prepared_candidate_actions.lock().get(&key).cloned()
-    }
-
-    pub(crate) fn cache_prepared_candidate_action(&self, key: [u8; 32], action: PendingAction) {
-        let mut cache = self.prepared_candidate_actions.lock();
-        cache.insert(key, action);
-        while cache.len() > MAX_PREPARED_CANDIDATE_ACTIONS {
-            let Some(oldest_key) = cache.keys().next().copied() else {
-                break;
-            };
-            cache.remove(&oldest_key);
-        }
-    }
-
-    pub(crate) fn build_auto_recursive_candidate_action(
+    pub(crate) fn verify_independent_smallwood_actions_for_template(
         &self,
         state: &NativeState,
         height: u64,
         received_ms: u64,
         actions: &[PendingAction],
-    ) -> Result<Option<PendingAction>> {
+    ) -> Result<()> {
         let transfer_actions = actions
             .iter()
             .filter(|action| is_shielded_transfer_action(action))
             .cloned()
             .collect::<Vec<_>>();
         if transfer_actions.is_empty() {
-            return Ok(None);
-        }
-        if actions.iter().any(|action| {
-            is_candidate_artifact_action(action)
-                && action
-                    .candidate_artifact
-                    .as_ref()
-                    .is_some_and(|artifact| artifact.tx_count as usize == transfer_actions.len())
-        }) {
-            return Ok(None);
-        }
-
-        let cache_key = Self::auto_candidate_cache_key(state.best.hash, &transfer_actions);
-        if let Some(action) = self.prepared_candidate_action(cache_key) {
-            return Ok(Some(action));
-        }
-
-        let _build_guard = self.prepared_candidate_build_lock.lock();
-        if let Some(action) = self.prepared_candidate_action(cache_key) {
-            return Ok(Some(action));
+            return Ok(());
         }
 
         let materialized = materialize_native_action_payloads_from_state(
@@ -808,9 +757,9 @@ impl NativeNode {
             consensus::types::kernel_root_from_shielded_root(&expected_tree.root());
         let da_params = native_da_params();
         let da_encoding = consensus::encode_da_blob(&transactions, da_params)
-            .map_err(|err| anyhow!("native recursive candidate DA encoding failed: {err}"))?;
+            .map_err(|err| anyhow!("native independent proof DA encoding failed: {err}"))?;
         let tx_count = u32::try_from(transactions.len())
-            .map_err(|_| anyhow!("native recursive candidate tx_count exceeds u32"))?;
+            .map_err(|_| anyhow!("native independent proof tx_count exceeds u32"))?;
         let header = consensus::BlockHeader {
             version: 1,
             height,
@@ -840,55 +789,25 @@ impl NativeNode {
             block_artifact: None,
             tx_validity_claims: None,
             tx_statements_commitment: None,
-            proof_verification_mode:
-                consensus::types::ProofVerificationMode::SelfContainedAggregation,
+            proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
         };
-        let built = consensus::proof::build_recursive_block_v2_artifact_for_native_txs(
-            &block,
-            &artifacts,
-            &state.commitment_tree,
-        )
-        .map_err(|err| anyhow!("build native recursive candidate artifact failed: {err}"))?;
-        let artifact = CandidateArtifact {
-            version: BLOCK_PROOF_BUNDLE_SCHEMA,
-            tx_count: built.tx_count,
-            tx_statements_commitment: built.tx_statements_commitment,
-            da_root: built.da_root,
-            da_chunk_count: built.da_chunk_count,
-            commitment_proof: StarkProof::default(),
-            proof_mode: BlockProofMode::RecursiveBlock,
-            proof_kind: PoolProofArtifactKind::RecursiveBlockV2,
-            verifier_profile: built.verifier_profile,
-            receipt_root: None,
-            recursive_block: Some(RecursiveBlockProofPayload {
-                proof: StarkProof {
-                    data: built.artifact_bytes,
-                },
-            }),
-        };
-        validate_candidate_artifact(&artifact)?;
-        let mut action = PendingAction {
-            tx_hash: [0u8; 32],
-            binding: protocol_versioning::DEFAULT_VERSION_BINDING.into(),
-            family_id: FAMILY_SHIELDED_POOL,
-            action_id: ACTION_SUBMIT_CANDIDATE_ARTIFACT,
-            anchor: [0u8; 48],
-            nullifiers: Vec::new(),
-            commitments: Vec::new(),
-            ciphertext_hashes: Vec::new(),
-            ciphertext_sizes: Vec::new(),
-            public_args: SubmitCandidateArtifactArgs {
-                payload: artifact.clone(),
-            }
-            .encode(),
-            fee: 0,
-            candidate_artifact: Some(artifact),
-            received_ms,
-        };
-        action.tx_hash = pending_action_hash(&action);
-        validate_candidate_action_payload(&action)?;
-        self.cache_prepared_candidate_action(cache_key, action.clone());
-        Ok(Some(action))
+        let backend_inputs =
+            consensus::proof_interface::BlockBackendInputs::from_tx_validity_artifacts(artifacts);
+        let verifier = consensus::proof::ParallelProofVerifier::new();
+        let verified_tree =
+            <consensus::proof::ParallelProofVerifier as consensus::proof_interface::ProofVerifier>::verify_block_with_backend(
+                &verifier,
+                &block,
+                Some(&backend_inputs),
+                &state.commitment_tree,
+            )
+            .map_err(|err| anyhow!("native independent SmallWood proof preflight failed: {err}"))?;
+        if verified_tree.root() != expected_tree.root() {
+            return Err(anyhow!(
+                "native independent SmallWood proof preflight state root mismatch"
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) fn cache_prepared_mining_actions(
@@ -963,21 +882,17 @@ impl NativeNode {
         .map_err(native_work_template_admission_error)?;
         let cumulative_work = cumulative_work.map_err(native_work_template_admission_error)?;
         let received_ms = current_time_ms();
-        match self.build_auto_recursive_candidate_action(
+        if let Err(err) = self.verify_independent_smallwood_actions_for_template(
             &state,
             height,
             received_ms,
             &pending_actions,
         ) {
-            Ok(Some(action)) => pending_actions.push(action),
-            Ok(None) => {}
-            Err(err) => {
-                warn!(
-                    error = %err,
-                    "dropping native pending actions before recursive candidate artifact"
-                );
-                pending_actions.clear();
-            }
+            warn!(
+                error = %err,
+                "dropping native pending actions with invalid independent SmallWood proofs"
+            );
+            pending_actions.clear();
         }
         let mut prepared_coinbase =
             match self.append_auto_coinbase_action(height, &mut pending_actions, received_ms) {
@@ -3238,24 +3153,9 @@ impl NativeNode {
                 }
             }
             (FAMILY_SHIELDED_POOL, ACTION_SUBMIT_CANDIDATE_ARTIFACT) => {
-                let args: SubmitCandidateArtifactArgs =
-                    decode_scale_exact(&public_args, "candidate artifact action args")?;
-                validate_candidate_artifact(&args.payload)?;
-                PendingAction {
-                    tx_hash: [0u8; 32],
-                    binding,
-                    family_id: request.family_id,
-                    action_id: request.action_id,
-                    anchor: [0u8; 48],
-                    nullifiers: Vec::new(),
-                    commitments: Vec::new(),
-                    ciphertext_hashes: Vec::new(),
-                    ciphertext_sizes: Vec::new(),
-                    public_args,
-                    fee: 0,
-                    candidate_artifact: Some(args.payload),
-                    received_ms,
-                }
+                return Err(anyhow!(
+                    "candidate artifact submissions are retired; blocks carry independent SmallWood transaction proofs"
+                ));
             }
             (FAMILY_SHIELDED_POOL, ACTION_MINT_COINBASE) => {
                 let args: MintCoinbaseArgs =
@@ -3305,16 +3205,6 @@ impl NativeNode {
                 return Err(anyhow!("duplicate semantic pending action"));
             }
             validate_pending_action_against_mempool_state(&state, &pending)?;
-            if is_candidate_artifact_action(&pending)
-                && state
-                    .pending_actions
-                    .values()
-                    .any(is_shielded_transfer_action)
-            {
-                return Err(anyhow!(
-                    "candidate artifact submissions are disabled while shielded transfers are pending; native block templates build same-block candidates locally"
-                ));
-            }
             if let Some((binding_hash, proof)) = &consumed_staged_proof {
                 let proof_key = hex64(binding_hash);
                 match state.staged_proofs.get(&proof_key) {

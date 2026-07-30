@@ -60,10 +60,9 @@ use protocol_shielded_pool::family::{
 };
 use protocol_shielded_pool::types::{
     BlockProofMode, BlockRewardBundle, CandidateArtifact, CoinbaseNoteData, EncryptedNote,
-    ProofArtifactKind as PoolProofArtifactKind, RecursiveBlockProofPayload,
-    StablecoinPolicyBinding, StarkProof, BLOCK_PROOF_BUNDLE_SCHEMA, DIVERSIFIED_ADDRESS_SIZE,
-    ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES, NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE,
-    RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
+    ProofArtifactKind as PoolProofArtifactKind, StablecoinPolicyBinding, BLOCK_PROOF_BUNDLE_SCHEMA,
+    DIVERSIFIED_ADDRESS_SIZE, ENCRYPTED_NOTE_SIZE, MAX_BATCH_SIZE, MAX_CIPHERTEXT_BYTES,
+    NATIVE_TX_LEAF_ARTIFACT_MAX_SIZE, RECURSIVE_BLOCK_V2_ARTIFACT_MAX_SIZE,
 };
 use protocol_shielded_pool::verifier::{ShieldedTransferInputs, StarkVerifier};
 use protocol_shielded_pool::{NullifierReject, NullifierState};
@@ -112,7 +111,6 @@ pub(crate) const MAX_NATIVE_BRIDGE_ACTION_DYNAMIC_BYTES: usize =
 pub(crate) const MAX_NATIVE_BRIDGE_MINT_AMOUNT: u64 = i64::MAX as u64;
 pub(crate) const MAX_NATIVE_MEMPOOL_ACTIONS: usize = 10_000;
 pub(crate) const MAX_PREPARED_MINING_WORKS: usize = 128;
-pub(crate) const MAX_PREPARED_CANDIDATE_ACTIONS: usize = 128;
 pub(crate) const NATIVE_SYNC_PROTOCOL_ID: ProtocolId = 0x4847_4e53;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS: u64 = 256;
 pub(crate) const MAX_NATIVE_SYNC_RESPONSE_BLOCKS_USIZE: usize =
@@ -2036,6 +2034,7 @@ impl NativeCandidateArtifactAdmissionRejection {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) struct NativeCandidateArtifactCouplingAdmissionInput {
     transfer_count: usize,
     candidate_artifact_count: usize,
@@ -2043,12 +2042,14 @@ pub(crate) struct NativeCandidateArtifactCouplingAdmissionInput {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(test)]
 pub(crate) enum NativeCandidateArtifactCouplingAdmissionRejection {
     CandidateWithoutTransfers,
     MissingOrMultipleCandidateArtifact,
     CandidateTxCountMismatch,
 }
 
+#[cfg(test)]
 impl NativeCandidateArtifactCouplingAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
@@ -2072,7 +2073,7 @@ pub(crate) struct NativeMineableActionAdmissionInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativeMineableActionAdmissionRejection {
-    UnselectedCandidateArtifact,
+    RetiredCandidateArtifact,
     SidecarCiphertextMissing,
     SidecarCiphertextSizeMissing,
     SidecarCiphertextSizeMismatch,
@@ -2082,7 +2083,7 @@ impl NativeMineableActionAdmissionRejection {
     #[cfg(test)]
     fn label(self) -> &'static str {
         match self {
-            Self::UnselectedCandidateArtifact => "unselected_candidate_artifact",
+            Self::RetiredCandidateArtifact => "retired_candidate_artifact",
             Self::SidecarCiphertextMissing => "sidecar_ciphertext_missing",
             Self::SidecarCiphertextSizeMissing => "sidecar_ciphertext_size_missing",
             Self::SidecarCiphertextSizeMismatch => "sidecar_ciphertext_size_mismatch",
@@ -3099,8 +3100,6 @@ pub struct NativeNode {
     sync_tx: Mutex<Option<ProtocolSender>>,
     miner_identity: NativeMinerIdentity,
     prepared_mining_actions: Mutex<BTreeMap<[u8; 32], Vec<PendingAction>>>,
-    prepared_candidate_actions: Mutex<BTreeMap<[u8; 32], PendingAction>>,
-    prepared_candidate_build_lock: Mutex<()>,
 }
 
 mod admission;

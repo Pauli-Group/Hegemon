@@ -6,7 +6,7 @@
 use protocol_versioning::{
     tx_proof_backend_for_version, TxProofBackend, VersionBinding, DEFAULT_TX_PROOF_BACKEND,
     DEFAULT_VERSION_BINDING, LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING,
-    SMALLWOOD_CANDIDATE_VERSION_BINDING,
+    SMALLWOOD_CANDIDATE_VERSION_BINDING, SMALLWOOD_V3_VERSION_BINDING,
 };
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
@@ -281,7 +281,7 @@ pub const TX_STATEMENT_HASH_DOMAIN: &[u8] = b"tx-statement-v1";
 pub const TX_PROOF_DIGEST_DOMAIN: &[u8] = b"tx-proof-digest-v1";
 pub const TX_PUBLIC_INPUTS_DIGEST_DOMAIN: &[u8] = b"tx-public-inputs-digest-v1";
 pub const TX_VERIFIER_PROFILE_DOMAIN: &[u8] = b"hegemon.inline-tx-p3-profile.v1";
-pub const PRODUCTION_CRYPTO_PROFILE_MARKER: &str = "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=3:CRYPTO=2:BACKEND=smallwood_candidate:ARITH=direct-packed64-committed-bindings-inline-merkle-skip-initial-mds-v2:RHO=3:OPENINGS=3:DECS_EVALS=32768:DECS_OPENINGS=24:FLOOR=128";
+pub const PRODUCTION_CRYPTO_PROFILE_MARKER: &str = "HEGEMON_PRODUCTION_CRYPTO_PROFILE:CIRCUIT=4:CRYPTO=3:BACKEND=smallwood_candidate:ARITH=direct-packed64-compressed-level5:RHO=5:OPENINGS=5:BETA=7:DECS_EVALS=1048576:DECS_OPENINGS=20:DECS_ETA=33:FLOOR=260";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct ProductionCryptoProfileAttestation {
@@ -650,6 +650,8 @@ fn smallwood_arithmetization_for_version(
     version: VersionBinding,
 ) -> Option<SmallwoodArithmetization> {
     if version == SMALLWOOD_CANDIDATE_VERSION_BINDING {
+        Some(SmallwoodArithmetization::DirectPacked64CompressedLevel5)
+    } else if version == SMALLWOOD_V3_VERSION_BINDING {
         Some(SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2)
     } else if version == LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING {
         Some(SmallwoodArithmetization::DirectPacked64CompactBindingsInlineMerkleSkipInitialMdsV1)
@@ -674,7 +676,7 @@ pub fn production_crypto_profile_attestation(
     let version = DEFAULT_VERSION_BINDING;
     if version != SMALLWOOD_CANDIDATE_VERSION_BINDING {
         return Err(TransactionCircuitError::ConstraintViolation(
-            "default transaction version is not active SmallWood V3",
+            "default transaction version is not active SmallWood V4",
         ));
     }
     let mapped_backend = tx_proof_backend_for_version(version).ok_or(
@@ -715,7 +717,7 @@ pub fn production_crypto_profile_attestation(
         ),
         no_grinding_profile: production.no_grinding_profile,
         soundness: production.soundness,
-        required_soundness_floor_bits: 128,
+        required_soundness_floor_bits: 260,
         compiled_profile_marker: PRODUCTION_CRYPTO_PROFILE_MARKER,
     })
 }
@@ -2588,9 +2590,7 @@ mod tests {
 
     #[test]
     fn verifier_profile_digest_matches_version_helper() {
-        let proof = dummy_smallwood_proof(
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
-        );
+        let proof = dummy_smallwood_proof(SmallwoodArithmetization::DirectPacked64CompressedLevel5);
         assert_eq!(
             transaction_verifier_profile_digest(&proof).expect("profile digest"),
             transaction_verifier_profile_digest_for_version(proof.version_binding())
@@ -2598,7 +2598,7 @@ mod tests {
     }
 
     #[test]
-    fn production_crypto_profile_attestation_binds_active_v3_dispatch_and_floor() {
+    fn production_crypto_profile_attestation_binds_active_v4_dispatch_and_floor() {
         let profile = production_crypto_profile_attestation().expect("production profile");
         assert_eq!(profile.schema_version, 1);
         assert_eq!(profile.default_version, SMALLWOOD_CANDIDATE_VERSION_BINDING);
@@ -2606,13 +2606,19 @@ mod tests {
         assert_eq!(profile.version_mapped_backend, "smallwood_candidate");
         assert_eq!(
             profile.arithmetization,
-            SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5
         );
         assert_eq!(profile.public_value_count, 78);
-        assert_eq!(profile.no_grinding_profile.rho, 3);
-        assert_eq!(profile.no_grinding_profile.decs_nb_opened_evals, 24);
-        assert!(profile.soundness.meets_128_bit_floor);
-        assert!(profile.soundness.security_floor_bits >= 128.0);
+        assert_eq!(profile.no_grinding_profile.rho, 5);
+        assert_eq!(profile.no_grinding_profile.nb_opened_evals, 5);
+        assert_eq!(profile.no_grinding_profile.beta, 7);
+        assert_eq!(profile.no_grinding_profile.decs_nb_evals, 1_048_576);
+        assert_eq!(profile.no_grinding_profile.decs_nb_opened_evals, 20);
+        assert_eq!(profile.no_grinding_profile.decs_eta, 33);
+        assert!(profile.soundness.meets_256_bit_floor);
+        assert!(profile.soundness.meets_260_bit_floor);
+        assert!(profile.soundness.security_floor_bits >= 260.0);
+        assert_eq!(profile.required_soundness_floor_bits, 260);
         assert_eq!(
             profile.compiled_profile_marker,
             PRODUCTION_CRYPTO_PROFILE_MARKER
@@ -2645,9 +2651,11 @@ mod tests {
             .expect_err("V2 must reject the current wrapper");
         assert!(err.to_string().contains("requires the legacy wrapper"));
 
-        let legacy_wrapped_v3 = dummy_legacy_smallwood_proof(
+        let mut legacy_wrapped_v3 = dummy_legacy_smallwood_proof(
             SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2,
         );
+        legacy_wrapped_v3.public_inputs.circuit_version = SMALLWOOD_V3_VERSION_BINDING.circuit;
+        legacy_wrapped_v3.public_inputs.crypto_suite = SMALLWOOD_V3_VERSION_BINDING.crypto;
         let err = transaction_verifier_profile_digest(&legacy_wrapped_v3)
             .expect_err("V3 must reject the legacy wrapper");
         assert!(err.to_string().contains("requires the current wrapper"));

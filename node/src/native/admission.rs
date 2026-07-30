@@ -1176,6 +1176,7 @@ pub(crate) fn validate_transfer_action_payload(action: &PendingAction) -> Result
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn validate_candidate_artifact(artifact: &CandidateArtifact) -> Result<()> {
     let input = native_candidate_artifact_admission_input(true, true, true, Some(artifact));
     evaluate_native_candidate_artifact_admission(input)
@@ -1452,10 +1453,10 @@ pub(crate) fn native_candidate_artifact_admission_error(
             anyhow!("candidate artifact must declare DA chunks")
         }
         NativeCandidateArtifactAdmissionRejection::WrongProofMode => {
-            anyhow!("native cutover requires recursive block artifacts")
+            anyhow!("historical candidate artifact requires recursive block mode")
         }
         NativeCandidateArtifactAdmissionRejection::WrongProofKind => {
-            anyhow!("native candidate artifact must use the shipped recursive_block_v2 route")
+            anyhow!("historical candidate artifact must use recursive_block_v2")
         }
         NativeCandidateArtifactAdmissionRejection::VerifierProfileMismatch => {
             anyhow!("native candidate artifact recursive_block_v2 verifier profile mismatch")
@@ -2181,34 +2182,10 @@ pub(crate) fn ordered_pending_actions(state: &NativeState) -> Vec<PendingAction>
 }
 
 pub(crate) fn select_mineable_actions(state: &NativeState) -> Vec<PendingAction> {
-    let actions = ordered_pending_actions(state);
-    let transfer_count = actions
-        .iter()
-        .filter(|action| is_shielded_transfer_action(action))
-        .filter(|action| {
-            let input = native_mineable_action_admission_input(state, action, None);
-            evaluate_native_mineable_action_admission(input).is_ok()
-        })
-        .count();
-    let selected_candidate_hash = if transfer_count == 0 {
-        None
-    } else {
-        actions
-            .iter()
-            .find(|action| {
-                is_candidate_artifact_action(action)
-                    && action
-                        .candidate_artifact
-                        .as_ref()
-                        .is_some_and(|artifact| artifact.tx_count as usize == transfer_count)
-            })
-            .map(|action| action.tx_hash)
-    };
-    actions
+    ordered_pending_actions(state)
         .into_iter()
         .filter(|action| {
-            let input =
-                native_mineable_action_admission_input(state, action, selected_candidate_hash);
+            let input = native_mineable_action_admission_input(state, action);
             evaluate_native_mineable_action_admission(input).is_ok()
         })
         .collect()
@@ -2232,11 +2209,8 @@ pub(crate) fn prepared_mining_actions_match_state(
 pub(crate) fn native_mineable_action_admission_input(
     state: &NativeState,
     action: &PendingAction,
-    selected_candidate_hash: Option<[u8; 32]>,
 ) -> NativeMineableActionAdmissionInput {
     let candidate_artifact_route = is_candidate_artifact_action(action);
-    let candidate_artifact_selected =
-        selected_candidate_hash.is_some_and(|hash| hash == action.tx_hash);
     let sidecar_transfer_route = action.family_id == FAMILY_SHIELDED_POOL
         && action.action_id == ACTION_SHIELDED_TRANSFER_SIDECAR;
     let (
@@ -2250,7 +2224,7 @@ pub(crate) fn native_mineable_action_admission_input(
     };
     NativeMineableActionAdmissionInput {
         candidate_artifact_route,
-        candidate_artifact_selected,
+        candidate_artifact_selected: false,
         sidecar_transfer_route,
         sidecar_ciphertexts_available,
         sidecar_ciphertext_sizes_present,
@@ -2262,11 +2236,7 @@ pub(crate) fn evaluate_native_mineable_action_admission(
     input: NativeMineableActionAdmissionInput,
 ) -> Result<(), NativeMineableActionAdmissionRejection> {
     if input.candidate_artifact_route {
-        if input.candidate_artifact_selected {
-            Ok(())
-        } else {
-            Err(NativeMineableActionAdmissionRejection::UnselectedCandidateArtifact)
-        }
+        Err(NativeMineableActionAdmissionRejection::RetiredCandidateArtifact)
     } else if input.sidecar_transfer_route {
         if !input.sidecar_ciphertexts_available {
             Err(NativeMineableActionAdmissionRejection::SidecarCiphertextMissing)

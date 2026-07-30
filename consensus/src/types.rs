@@ -276,7 +276,7 @@ impl ArtifactRoute {
         Self::new(mode, proof_artifact_kind_from_mode(mode))
     }
 
-    pub const fn shipped_recursive_block_v2() -> Self {
+    pub const fn historical_recursive_block_v2() -> Self {
         Self::new(
             ProvenBatchMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV2,
@@ -298,7 +298,7 @@ impl ArtifactRoute {
         }
     }
 
-    pub fn is_shipped(self) -> bool {
+    pub fn is_historical_recursive(self) -> bool {
         self.mode == ProvenBatchMode::RecursiveBlock
             && self.kind == ProofArtifactKind::RecursiveBlockV2
     }
@@ -324,8 +324,8 @@ pub fn legacy_block_artifact_verifier_profile(kind: ProofArtifactKind) -> Verifi
     blake3_384(&material)
 }
 
-pub fn canonical_shipped_artifact_route() -> ArtifactRoute {
-    ArtifactRoute::shipped_recursive_block_v2()
+pub fn historical_recursive_artifact_route() -> ArtifactRoute {
+    ArtifactRoute::historical_recursive_block_v2()
 }
 
 pub fn canonical_experimental_artifact_route() -> ArtifactRoute {
@@ -428,15 +428,13 @@ impl ProvenBatch {
     }
 }
 
-/// Parent-agnostic proof object over an exact ordered transaction set.
+/// Historical parent-agnostic aggregate over an exact ordered transaction set.
 ///
-/// The current fresh-testnet implementation reuses the existing self-contained
-/// aggregation payload shape while the node and operator surfaces migrate to
-/// the new artifact-market naming.
+/// New blocks do not construct or carry this object. The alias remains so old
+/// recursive blocks can be decoded and verified without resetting the chain.
 pub type CandidateArtifact = ProvenBatch;
 
-/// Public metadata that lets builders discover and compare reusable candidate
-/// artifacts without downloading the full payload immediately.
+/// Historical candidate-announcement metadata retained for wire compatibility.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ArtifactAnnouncement {
     pub artifact_hash: [u8; 32],
@@ -912,9 +910,9 @@ mod tests {
     }
 
     #[test]
-    fn canonical_artifact_routes_are_explicit() {
+    fn historical_and_experimental_artifact_routes_are_explicit() {
         assert_eq!(
-            canonical_shipped_artifact_route(),
+            historical_recursive_artifact_route(),
             ArtifactRoute::new(
                 ProvenBatchMode::RecursiveBlock,
                 ProofArtifactKind::RecursiveBlockV2
@@ -924,18 +922,18 @@ mod tests {
             canonical_experimental_artifact_route(),
             ArtifactRoute::new(ProvenBatchMode::ReceiptRoot, ProofArtifactKind::ReceiptRoot)
         );
-        assert!(canonical_shipped_artifact_route().is_shipped());
+        assert!(historical_recursive_artifact_route().is_historical_recursive());
         assert!(canonical_experimental_artifact_route().is_experimental());
     }
 
     #[test]
-    fn artifact_route_classification_distinguishes_legacy_and_shipped_paths() {
+    fn artifact_route_classification_distinguishes_historical_encodings() {
         let legacy_recursive = ArtifactRoute::new(
             ProvenBatchMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV1,
         );
         assert!(legacy_recursive.is_compatible_with_mode());
-        assert!(!legacy_recursive.is_shipped());
+        assert!(!legacy_recursive.is_historical_recursive());
         assert!(!legacy_recursive.is_experimental());
 
         let invalid_route = ArtifactRoute::new(

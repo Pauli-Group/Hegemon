@@ -3,11 +3,10 @@ use crate::backend_interface::max_native_receipt_root_artifact_bytes;
 use crate::backend_interface::{
     BlockLeafRecordV1, BlockSemanticInputsV1, CommitmentBlockProof, CommitmentBlockProver,
     NativeTxLeafRecord, RECURSIVE_BLOCK_ARTIFACT_VERSION_V1, RECURSIVE_BLOCK_ARTIFACT_VERSION_V2,
-    SerializedStarkInputs, TransactionProof, TxLeafPublicTx, build_tx_leaf_artifact_bytes,
-    decode_native_tx_leaf_artifact_bytes, decode_transaction_proof_bytes_exact,
-    deserialize_recursive_block_artifact_v1, deserialize_recursive_block_artifact_v2,
-    max_native_tx_leaf_artifact_bytes, native_tx_leaf_record_from_artifact, public_replay_v1,
-    public_replay_v2,
+    SerializedStarkInputs, TransactionProof, TxLeafPublicTx, decode_native_tx_leaf_artifact_bytes,
+    decode_transaction_proof_bytes_exact, deserialize_recursive_block_artifact_v1,
+    deserialize_recursive_block_artifact_v2, max_native_tx_leaf_artifact_bytes,
+    native_tx_leaf_record_from_artifact, public_replay_v1, public_replay_v2,
     recursive_block_artifact_verifier_profile_digest_v1 as backend_recursive_block_profile_v1,
     recursive_block_artifact_verifier_profile_digest_v2 as backend_recursive_block_profile_v2,
     transaction_proof_digest, transaction_public_inputs_digest,
@@ -81,7 +80,8 @@ enum BlockProofPolicyRejection {
     EmptyBlockCarriesProof,
     MissingTransactionProofs,
     TransactionProofCountMismatch,
-    UnsupportedInlineRequired,
+    IndependentProvenBatch,
+    IndependentBlockArtifact,
     MissingProvenBatch,
     MissingTransactionValidityClaims,
     LegacyInlineBatch,
@@ -98,7 +98,8 @@ impl BlockProofPolicyRejection {
             Self::EmptyBlockCarriesProof => "empty_block_carries_proof",
             Self::MissingTransactionProofs => "missing_transaction_proofs",
             Self::TransactionProofCountMismatch => "transaction_proof_count_mismatch",
-            Self::UnsupportedInlineRequired => "unsupported_inline_required",
+            Self::IndependentProvenBatch => "independent_proven_batch",
+            Self::IndependentBlockArtifact => "independent_block_artifact",
             Self::MissingProvenBatch => "missing_proven_batch",
             Self::MissingTransactionValidityClaims => "missing_transaction_validity_claims",
             Self::LegacyInlineBatch => "legacy_inline_batch",
@@ -130,7 +131,13 @@ fn evaluate_block_proof_policy(
         return Err(BlockProofPolicyRejection::TransactionProofCountMismatch);
     }
     if input.verification_mode == ProofVerificationMode::InlineRequired {
-        return Err(BlockProofPolicyRejection::UnsupportedInlineRequired);
+        if input.has_proven_batch {
+            return Err(BlockProofPolicyRejection::IndependentProvenBatch);
+        }
+        if input.has_block_artifact {
+            return Err(BlockProofPolicyRejection::IndependentBlockArtifact);
+        }
+        return Ok(());
     }
     if !input.has_proven_batch {
         return Err(BlockProofPolicyRejection::MissingProvenBatch);
@@ -168,10 +175,14 @@ fn proof_policy_rejection_to_error(
                 observed: input.tx_validity_artifact_count,
             }
         }
-        BlockProofPolicyRejection::UnsupportedInlineRequired => ProofError::UnsupportedProofArtifact(
-            "legacy InlineRequired block verification is no longer supported on the product path"
-                .to_string(),
+        BlockProofPolicyRejection::IndependentProvenBatch => ProofError::UnsupportedProofArtifact(
+            "independent transaction-proof blocks must not carry a proven batch".to_string(),
         ),
+        BlockProofPolicyRejection::IndependentBlockArtifact => {
+            ProofError::UnsupportedProofArtifact(
+                "independent transaction-proof blocks must not carry a block artifact".to_string(),
+            )
+        }
         BlockProofPolicyRejection::MissingProvenBatch => {
             ProofError::MissingProvenBatchForSelfContained
         }
@@ -179,7 +190,8 @@ fn proof_policy_rejection_to_error(
             ProofError::MissingTransactionValidityClaims
         }
         BlockProofPolicyRejection::LegacyInlineBatch => ProofError::UnsupportedProofArtifact(
-            "legacy InlineTx proven batches are no longer supported on the product path".to_string(),
+            "legacy InlineTx proven batches are no longer supported on the product path"
+                .to_string(),
         ),
         BlockProofPolicyRejection::RetiredReceiptRoot => ProofError::UnsupportedProofArtifact(
             "ReceiptRoot blocks are decode-only and are not admitted by the SmallWood product path"
@@ -956,78 +968,6 @@ fn verify_recursive_block_artifact_against_verified_records(
     }
 }
 
-pub fn build_recursive_block_v2_artifact_for_native_txs<BH>(
-    block: &Block<BH>,
-    artifacts: &[TxValidityArtifact],
-    parent_commitment_tree: &CommitmentTreeState,
-) -> Result<RecursiveBlockV2ArtifactBuild, ProofError>
-where
-    BH: HeaderProofExt,
-{
-    verify_commitments(block)?;
-    if block.transactions.is_empty() {
-        return Err(ProofError::ProvenBatchBindingMismatch(
-            "recursive block artifact requires at least one transaction".to_string(),
-        ));
-    }
-    if artifacts.len() != block.transactions.len() {
-        return Err(ProofError::TransactionProofCountMismatch {
-            expected: block.transactions.len(),
-            observed: artifacts.len(),
-        });
-    }
-
-    let claims = tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts)?;
-    let statement_bindings = tx_statement_bindings_from_claims(&claims)?;
-    validate_statement_anchor_history(
-        parent_commitment_tree,
-        block.transactions.len(),
-        &statement_bindings,
-    )?;
-    let tx_statements_commitment = commitment_from_statement_bindings(&statement_bindings)?;
-    if let Some(expected) = block.tx_statements_commitment
-        && expected != tx_statements_commitment
-    {
-        return Err(ProofError::CommitmentProofInputsMismatch(
-            "tx_statements_commitment does not match native tx artifacts".to_string(),
-        ));
-    }
-
-    let verified_records = verify_native_tx_leaf_artifact_records(&block.transactions, artifacts)?;
-    let records = verified_records
-        .iter()
-        .enumerate()
-        .map(|(tx_index, record)| {
-            recursive_block_leaf_record_from_verified(tx_index as u32, record)
-        })
-        .collect::<Vec<_>>();
-    let semantic = recursive_block_semantic_inputs_from_block(
-        block,
-        parent_commitment_tree,
-        tx_statements_commitment,
-    )?;
-    let recursive = crate::backend_interface::prove_block_recursive_v2(
-        &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
-    )
-    .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    let artifact_bytes =
-        crate::backend_interface::serialize_recursive_block_artifact_v2(&recursive)
-            .map_err(|err| ProofError::AggregationProofVerification(err.to_string()))?;
-    let da_encoding = crate::types::encode_da_blob(&block.transactions, block.header.da_params())
-        .map_err(|err| ProofError::DaEncoding(err.to_string()))?;
-    let da_chunk_count = u32::try_from(da_encoding.chunks().len())
-        .map_err(|_| ProofError::DaEncoding("DA chunk count exceeds u32".to_string()))?;
-
-    Ok(RecursiveBlockV2ArtifactBuild {
-        artifact_bytes,
-        tx_count: block.transactions.len() as u32,
-        tx_statements_commitment,
-        da_root: da_encoding.root(),
-        da_chunk_count,
-        verifier_profile: backend_recursive_block_profile_v2(),
-    })
-}
-
 fn recursive_block_semantic_inputs_from_block(
     block: &Block<impl HeaderProofExt>,
     parent_commitment_tree: &CommitmentTreeState,
@@ -1131,16 +1071,6 @@ pub struct BlockArtifactVerifyReport {
     pub cache_hit: Option<bool>,
     pub cache_build_ms: Option<u128>,
     pub root_verify_mode: Option<&'static str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RecursiveBlockV2ArtifactBuild {
-    pub artifact_bytes: Vec<u8>,
-    pub tx_count: u32,
-    pub tx_statements_commitment: [u8; 48],
-    pub da_root: [u8; 48],
-    pub da_chunk_count: u32,
-    pub verifier_profile: VerifierProfileDigest,
 }
 
 #[cfg(test)]
@@ -1268,12 +1198,6 @@ impl Default for VerifierRegistry {
         }));
         registry.register(Arc::new(TxLeafVerifier));
         registry.register(Arc::new(NativeTxLeafVerifier));
-        registry.register(Arc::new(RecursiveBlockVerifier {
-            kind: ProofArtifactKind::RecursiveBlockV1,
-        }));
-        registry.register(Arc::new(RecursiveBlockVerifier {
-            kind: ProofArtifactKind::RecursiveBlockV2,
-        }));
         registry
     }
 }
@@ -1703,10 +1627,12 @@ pub fn recursive_block_artifact_verifier_profile() -> VerifierProfileDigest {
     backend_recursive_block_profile_v2()
 }
 
+#[cfg(test)]
 struct RecursiveBlockVerifier {
     kind: ProofArtifactKind,
 }
 
+#[cfg(test)]
 impl ArtifactVerifier for RecursiveBlockVerifier {
     fn kind(&self) -> ProofArtifactKind {
         self.kind
@@ -1854,27 +1780,6 @@ pub fn tx_validity_artifact_from_proof(
             kind: ProofArtifactKind::InlineTx,
             verifier_profile: receipt.verifier_profile,
             artifact_bytes,
-        }),
-    })
-}
-
-pub fn tx_validity_artifact_from_tx_leaf_proof(
-    proof: &TransactionProof,
-) -> Result<TxValidityArtifact, ProofError> {
-    let receipt = tx_validity_receipt_from_proof(proof)
-        .map_err(|message| ProofError::TransactionProofInputsMismatch { index: 0, message })?;
-    let built = build_tx_leaf_artifact_bytes(proof).map_err(|err| {
-        ProofError::TransactionProofVerification {
-            index: 0,
-            message: format!("failed to build tx-leaf artifact: {err}"),
-        }
-    })?;
-    Ok(TxValidityArtifact {
-        receipt: receipt.clone(),
-        proof: Some(ProofEnvelope {
-            kind: ProofArtifactKind::TxLeaf,
-            verifier_profile: experimental_tx_leaf_verifier_profile(),
-            artifact_bytes: built.artifact_bytes,
         }),
     })
 }
@@ -2650,9 +2555,15 @@ impl ProofVerifier for ParallelProofVerifier {
         if tx_validity_artifacts.is_none() {
             return Err(ProofError::MissingTransactionProofs);
         }
-        let derived_claims_from_artifacts = tx_validity_artifacts
-            .map(|artifacts| tx_validity_claims_from_tx_artifacts(&block.transactions, artifacts))
-            .transpose()?;
+        let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
+        let tx_verify_start = Instant::now();
+        let verified_records =
+            verify_native_tx_leaf_artifact_records(&block.transactions, artifacts)?;
+        let tx_verify_ms = tx_verify_start.elapsed().as_millis();
+        let derived_claims_from_artifacts = verified_records
+            .iter()
+            .map(|record| TxValidityClaim::new(record.receipt.clone(), record.binding.clone()))
+            .collect::<Vec<_>>();
 
         let resolved_claims = if let Some(claims) = block.tx_validity_claims.clone() {
             if claims.len() != block.transactions.len() {
@@ -2662,55 +2573,14 @@ impl ProofVerifier for ParallelProofVerifier {
                     claims.len()
                 )));
             }
-            if let Some(derived_claims) = derived_claims_from_artifacts.as_ref() {
-                ensure_claims_match_verified_artifacts(&claims, derived_claims)?;
-            }
-            Some(derived_claims_from_artifacts.clone().unwrap_or(claims))
+            ensure_claims_match_verified_artifacts(&claims, &derived_claims_from_artifacts)?;
+            derived_claims_from_artifacts
         } else {
-            None
+            derived_claims_from_artifacts
         };
-        if !matches!(
-            verification_mode,
-            ProofVerificationMode::SelfContainedAggregation
-        ) {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "legacy InlineRequired block verification is no longer supported on the product path"
-                    .to_string(),
-            ));
-        }
-
-        let proven_batch = block
-            .proven_batch
-            .as_ref()
-            .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
-        let commitment_proof = &proven_batch.commitment_proof;
-
-        if !matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "only RecursiveBlock is admitted by the SmallWood product path".to_string(),
-            ));
-        }
-        if !commitment_proof.proof_bytes.is_empty() {
-            return Err(ProofError::UnsupportedProofArtifact(
-                "recursive block product lane forbids commitment proof bytes".to_string(),
-            ));
-        }
-        let commitment_verify_ms = 0;
-
-        if matches!(
-            verification_mode,
-            ProofVerificationMode::SelfContainedAggregation
-        ) && resolved_claims.is_none()
-        {
-            return Err(ProofError::MissingTransactionValidityClaims);
-        }
-
-        let resolved_claims = resolved_claims
-            .as_deref()
-            .ok_or(ProofError::MissingTransactionValidityClaims)?;
         let identity_projection = canonical_block_identity_projection(
             &block.transactions,
-            resolved_claims,
+            &resolved_claims,
             block.header.da_params(),
         )?;
         let statement_bindings = identity_projection.statement_bindings.as_slice();
@@ -2727,6 +2597,55 @@ impl ProofVerifier for ParallelProofVerifier {
                 "tx_statements_commitment does not match provided transaction claims".to_string(),
             ));
         }
+        if block.header.da_root() != identity_projection.da_root {
+            return Err(ProofError::DaRootMismatch);
+        }
+
+        if matches!(verification_mode, ProofVerificationMode::InlineRequired) {
+            let result = apply_commitments(parent_commitment_tree, &block.transactions)?;
+            tracing::info!(
+                target: "consensus::metrics",
+                tx_count,
+                tx_proof_bytes_total,
+                commitment_proof_bytes = 0,
+                aggregation_proof_bytes = 0,
+                aggregation_proof_uncompressed_bytes = 0,
+                ciphertext_bytes_total,
+                commitment_verify_ms = 0,
+                aggregation_verify_ms = 0,
+                aggregation_verify_batch_ms = 0,
+                aggregation_verify_mode = "independent_tx_leaf",
+                aggregation_cache_hit = false,
+                aggregation_cache_build_ms = 0,
+                aggregation_cache_prewarm_hit = false,
+                aggregation_cache_prewarm_build_ms = 0,
+                aggregation_cache_prewarm_total_ms = 0,
+                tx_verify_ms,
+                total_verify_ms = start_total.elapsed().as_millis(),
+                aggregation_verified = false,
+                "block_proof_verification_metrics"
+            );
+            return Ok(result);
+        }
+
+        let proven_batch = block
+            .proven_batch
+            .as_ref()
+            .ok_or(ProofError::MissingProvenBatchForSelfContained)?;
+        let commitment_proof = &proven_batch.commitment_proof;
+
+        if !matches!(proven_batch.mode, ProvenBatchMode::RecursiveBlock) {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "historical self-contained blocks require RecursiveBlock".to_string(),
+            ));
+        }
+        if !commitment_proof.proof_bytes.is_empty() {
+            return Err(ProofError::UnsupportedProofArtifact(
+                "historical recursive blocks forbid commitment proof bytes".to_string(),
+            ));
+        }
+        let commitment_verify_ms = 0;
+
         let block_artifact = block.block_artifact.clone();
         validate_proven_batch_binding_against_expected(
             proven_batch,
@@ -2741,7 +2660,6 @@ impl ProofVerifier for ParallelProofVerifier {
             total_batch_proof_payload_bytes(proven_batch, block_artifact.as_ref());
         let aggregation_proof_uncompressed_bytes =
             total_batch_proof_uncompressed_bytes(proven_batch, block_artifact.as_ref());
-        let tx_verify_ms = 0u128;
         let aggregation_cache_hit = false;
         let aggregation_cache_build_ms = 0u128;
         let aggregation_cache_prewarm_hit = false;
@@ -2753,7 +2671,6 @@ impl ProofVerifier for ParallelProofVerifier {
             parent_commitment_tree,
             expected_commitment,
         )?;
-        let artifacts = tx_validity_artifacts.ok_or(ProofError::MissingTransactionProofs)?;
         let recursive_artifact = block_artifact
             .as_ref()
             .ok_or(ProofError::MissingAggregationProofForSelfContainedMode)?;
@@ -3883,7 +3800,7 @@ mod tests {
         let vectors: LeanAcceptedSmallwoodBlockCompositionVectorFile = serde_json::from_str(&raw)
             .expect("parse generated Lean accepted-SmallWood block composition vectors");
         assert_eq!(vectors.schema_version, 1);
-        assert_eq!(vectors.production_fields.len(), 70);
+        assert_eq!(vectors.production_fields.len(), 66);
         assert_eq!(vectors.claim_scope_cases.len(), 3);
         assert_eq!(vectors.canonical_transactions.len(), 2);
         assert_eq!(vectors.proof_artifact_cases.len(), 4);
@@ -3903,8 +3820,8 @@ mod tests {
         assert_eq!(
             claim_scope_names,
             BTreeSet::from([
-                "active_v3_beta".to_string(),
-                "legacy_v2_beta".to_string(),
+                "active_v4_gamma".to_string(),
+                "legacy_v3_beta".to_string(),
                 "wrong_crypto_suite".to_string(),
             ])
         );
@@ -4213,10 +4130,6 @@ mod tests {
             "identity_tx_statements_commitment",
             "identity_da_root",
             "identity_da_chunk_count",
-            "proven_batch_tx_count",
-            "proven_batch_tx_statements_commitment",
-            "proven_batch_da_root",
-            "proven_batch_da_chunk_count",
             "accepted_parent_hash",
             "accepted_parent_height",
             "accepted_parent_supply",
@@ -5206,21 +5119,9 @@ mod tests {
         case: &LeanRecursiveBlockDirectVerifierCase,
     ) {
         let kind = parse_lean_proof_artifact_kind(&case.kind);
-        let (verifier_profile, artifact_bytes) = match kind {
-            ProofArtifactKind::RecursiveBlockV1 => (
-                backend_recursive_block_profile_v1(),
-                crate::backend_interface::serialize_recursive_block_artifact_v1(
-                    &sample_recursive_block_artifact_v1(1),
-                )
-                .expect("serialize recursive_block_v1 artifact"),
-            ),
-            ProofArtifactKind::RecursiveBlockV2 => (
-                backend_recursive_block_profile_v2(),
-                crate::backend_interface::serialize_recursive_block_artifact_v2(
-                    &sample_recursive_block_artifact_v2(1),
-                )
-                .expect("serialize recursive_block_v2 artifact"),
-            ),
+        let verifier_profile = match kind {
+            ProofArtifactKind::RecursiveBlockV1 => backend_recursive_block_profile_v1(),
+            ProofArtifactKind::RecursiveBlockV2 => backend_recursive_block_profile_v2(),
             other => panic!(
                 "unexpected Lean recursive direct verifier kind {}",
                 other.label()
@@ -5230,7 +5131,7 @@ mod tests {
         let envelope = ProofEnvelope {
             kind,
             verifier_profile,
-            artifact_bytes,
+            artifact_bytes: Vec::new(),
         };
         let result = verifier.verify_block_artifact(
             &[tx_with_commitments(vec![])],
@@ -6177,62 +6078,6 @@ mod tests {
         );
     }
 
-    fn sample_recursive_records(tx_count: u32) -> Vec<crate::backend_interface::BlockLeafRecordV1> {
-        (0..tx_count)
-            .map(|tx_index| crate::backend_interface::BlockLeafRecordV1 {
-                tx_index,
-                receipt_statement_hash: [0x10u8.wrapping_add(tx_index as u8); 48],
-                receipt_proof_digest: [0x20u8.wrapping_add(tx_index as u8); 48],
-                receipt_public_inputs_digest: [0x30u8.wrapping_add(tx_index as u8); 48],
-                receipt_verifier_profile: [0x40u8.wrapping_add(tx_index as u8); 48],
-                leaf_params_fingerprint: [0x50u8.wrapping_add(tx_index as u8); 48],
-                leaf_spec_digest: [0x60u8.wrapping_add(tx_index as u8); 32],
-                leaf_relation_id: [0x70u8.wrapping_add(tx_index as u8); 32],
-                leaf_shape_digest: [0x80u8.wrapping_add(tx_index as u8); 32],
-                leaf_statement_digest: [0x90u8.wrapping_add(tx_index as u8); 48],
-                leaf_commitment_digest: [0xa0u8.wrapping_add(tx_index as u8); 48],
-                leaf_proof_digest: [0xb0u8.wrapping_add(tx_index as u8); 48],
-            })
-            .collect::<Vec<_>>()
-    }
-
-    fn sample_recursive_semantic() -> crate::backend_interface::BlockSemanticInputsV1 {
-        crate::backend_interface::BlockSemanticInputsV1 {
-            tx_statements_commitment: [0u8; 48],
-            start_shielded_root: [3u8; 48],
-            end_shielded_root: [4u8; 48],
-            start_kernel_root: [5u8; 48],
-            end_kernel_root: [6u8; 48],
-            nullifier_root: [7u8; 48],
-            da_root: [8u8; 48],
-            message_root: [11u8; 48],
-            start_tree_commitment: [9u8; 48],
-            end_tree_commitment: [10u8; 48],
-        }
-    }
-
-    fn sample_recursive_block_artifact_v1(
-        tx_count: u32,
-    ) -> crate::backend_interface::RecursiveBlockArtifactV1 {
-        let records = sample_recursive_records(tx_count);
-        let semantic = sample_recursive_semantic();
-        crate::backend_interface::prove_block_recursive_v1(
-            &crate::backend_interface::BlockRecursiveProverInputV1 { records, semantic },
-        )
-        .expect("prove recursive_block_v1 artifact")
-    }
-
-    fn sample_recursive_block_artifact_v2(
-        tx_count: u32,
-    ) -> crate::backend_interface::RecursiveBlockArtifactV2 {
-        let records = sample_recursive_records(tx_count);
-        let semantic = sample_recursive_semantic();
-        crate::backend_interface::prove_block_recursive_v2(
-            &crate::backend_interface::BlockRecursiveProverInputV2 { records, semantic },
-        )
-        .expect("prove recursive_block_v2 artifact")
-    }
-
     fn oversized_recursive_block_envelope(kind: ProofArtifactKind) -> ProofEnvelope {
         let (verifier_profile, max_len) = match kind {
             ProofArtifactKind::RecursiveBlockV1 => (
@@ -6633,50 +6478,23 @@ mod tests {
     }
 
     #[test]
-    fn recursive_block_v2_registry_direct_verifier_requires_semantic_replay() {
+    fn recursive_block_artifacts_are_not_registered_for_active_dispatch() {
         let registry = VerifierRegistry::default();
-        let verifier_profile = backend_recursive_block_profile_v2();
-        let verifier = registry
-            .resolve(ProofArtifactKind::RecursiveBlockV2, verifier_profile)
-            .expect("recursive_block_v2 verifier registered");
-        let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
-            .expect("serialize recursive_block_v2 artifact");
-        let envelope = ProofEnvelope {
-            kind: ProofArtifactKind::RecursiveBlockV2,
-            verifier_profile,
-            artifact_bytes: bytes,
-        };
-        let err = verifier
-            .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect_err("registry recursive_block_v2 verifier must require semantic replay");
-        assert_eq!(
-            recursive_block_direct_verifier_error_label(&err),
-            "requires_semantic_replay"
+        assert!(
+            registry
+                .resolve(
+                    ProofArtifactKind::RecursiveBlockV1,
+                    backend_recursive_block_profile_v1(),
+                )
+                .is_err()
         );
-    }
-
-    #[test]
-    fn recursive_block_v1_registry_direct_verifier_requires_semantic_replay() {
-        let registry = VerifierRegistry::default();
-        let verifier_profile = backend_recursive_block_profile_v1();
-        let verifier = registry
-            .resolve(ProofArtifactKind::RecursiveBlockV1, verifier_profile)
-            .expect("recursive_block_v1 verifier registered");
-        let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
-            .expect("serialize recursive_block_v1 artifact");
-        let envelope = ProofEnvelope {
-            kind: ProofArtifactKind::RecursiveBlockV1,
-            verifier_profile,
-            artifact_bytes: bytes,
-        };
-        let err = verifier
-            .verify_block_artifact(&[tx_with_commitments(vec![])], None, &[0u8; 48], &envelope)
-            .expect_err("registry recursive_block_v1 verifier must require semantic replay");
-        assert_eq!(
-            recursive_block_direct_verifier_error_label(&err),
-            "requires_semantic_replay"
+        assert!(
+            registry
+                .resolve(
+                    ProofArtifactKind::RecursiveBlockV2,
+                    backend_recursive_block_profile_v2(),
+                )
+                .is_err()
         );
     }
 
@@ -6685,13 +6503,10 @@ mod tests {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV1,
         };
-        let artifact = sample_recursive_block_artifact_v1(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v1(&artifact)
-            .expect("serialize recursive artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV1,
             verifier_profile: backend_recursive_block_profile_v1(),
-            artifact_bytes: bytes,
+            artifact_bytes: Vec::new(),
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
@@ -6707,13 +6522,10 @@ mod tests {
         let verifier = RecursiveBlockVerifier {
             kind: ProofArtifactKind::RecursiveBlockV2,
         };
-        let artifact = sample_recursive_block_artifact_v2(1);
-        let bytes = crate::backend_interface::serialize_recursive_block_artifact_v2(&artifact)
-            .expect("serialize recursive_block_v2 artifact");
         let envelope = ProofEnvelope {
             kind: ProofArtifactKind::RecursiveBlockV2,
             verifier_profile: backend_recursive_block_profile_v2(),
-            artifact_bytes: bytes,
+            artifact_bytes: Vec::new(),
         };
         let err = verifier
             .verify_block_artifact(&[], None, &[0u8; 48], &envelope)
@@ -6736,8 +6548,18 @@ mod tests {
                 recursive_block_leaf_record_from_verified(tx_index as u32, record)
             })
             .collect::<Vec<_>>();
-        let mut semantic = sample_recursive_semantic();
-        semantic.tx_statements_commitment = fixture.statement_commitment;
+        let semantic = crate::backend_interface::BlockSemanticInputsV1 {
+            tx_statements_commitment: fixture.statement_commitment,
+            start_shielded_root: [3u8; 48],
+            end_shielded_root: [4u8; 48],
+            start_kernel_root: [5u8; 48],
+            end_kernel_root: [6u8; 48],
+            nullifier_root: [7u8; 48],
+            da_root: [8u8; 48],
+            message_root: [11u8; 48],
+            start_tree_commitment: [9u8; 48],
+            end_tree_commitment: [10u8; 48],
+        };
         let artifact = crate::backend_interface::prove_block_recursive_v2(
             &crate::backend_interface::BlockRecursiveProverInputV2 {
                 records,

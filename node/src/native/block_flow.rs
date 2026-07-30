@@ -1938,21 +1938,7 @@ pub(crate) fn coinbase_action_amount(action: &PendingAction) -> Result<u64> {
     Ok(args.reward_bundle.miner_note.amount)
 }
 
-pub(crate) fn native_candidate_artifact_coupling_admission_input(
-    transfer_count: usize,
-    candidate_artifacts: &[&CandidateArtifact],
-) -> NativeCandidateArtifactCouplingAdmissionInput {
-    NativeCandidateArtifactCouplingAdmissionInput {
-        transfer_count,
-        candidate_artifact_count: candidate_artifacts.len(),
-        candidate_tx_count_matches: candidate_artifacts
-            .first()
-            .filter(|_| candidate_artifacts.len() == 1)
-            .and_then(|artifact| usize::try_from(artifact.tx_count).ok())
-            == Some(transfer_count),
-    }
-}
-
+#[cfg(test)]
 pub(crate) fn evaluate_native_candidate_artifact_coupling_admission(
     input: NativeCandidateArtifactCouplingAdmissionInput,
 ) -> Result<(), NativeCandidateArtifactCouplingAdmissionRejection> {
@@ -1968,24 +1954,6 @@ pub(crate) fn evaluate_native_candidate_artifact_coupling_admission(
         Err(NativeCandidateArtifactCouplingAdmissionRejection::CandidateTxCountMismatch)
     } else {
         Ok(())
-    }
-}
-
-pub(crate) fn native_candidate_artifact_coupling_admission_error(
-    rejection: NativeCandidateArtifactCouplingAdmissionRejection,
-) -> anyhow::Error {
-    match rejection {
-        NativeCandidateArtifactCouplingAdmissionRejection::CandidateWithoutTransfers => {
-            anyhow!("candidate artifact action requires shielded transfer actions")
-        }
-        NativeCandidateArtifactCouplingAdmissionRejection::MissingOrMultipleCandidateArtifact => {
-            anyhow!(
-                "non-empty shielded block requires exactly one matching recursive candidate artifact"
-            )
-        }
-        NativeCandidateArtifactCouplingAdmissionRejection::CandidateTxCountMismatch => {
-            anyhow!("candidate artifact tx_count mismatch")
-        }
     }
 }
 
@@ -2249,29 +2217,38 @@ pub(crate) fn verify_native_block_artifacts_locked(
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
         .count();
+    let candidate_action_count = actions
+        .iter()
+        .filter(|action| is_candidate_artifact_action(action))
+        .count();
     let candidate_artifacts = actions
         .iter()
         .filter(|action| is_candidate_artifact_action(action))
         .filter_map(|action| action.candidate_artifact.as_ref())
         .collect::<Vec<_>>();
-    let coupling_input =
-        native_candidate_artifact_coupling_admission_input(transfer_count, &candidate_artifacts);
-    if let Err(rejection) = evaluate_native_candidate_artifact_coupling_admission(coupling_input) {
-        return Err(native_candidate_artifact_coupling_admission_error(
-            rejection,
+    if candidate_action_count != candidate_artifacts.len() {
+        return Err(anyhow!("candidate artifact action is missing its payload"));
+    }
+    if candidate_artifacts.len() > 1 {
+        return Err(anyhow!(
+            "block contains more than one historical recursive candidate artifact"
         ));
     }
     if transfer_count == 0 {
-        return Ok(());
+        return if candidate_artifacts.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "empty block must not carry a historical recursive candidate artifact"
+            ))
+        };
     }
 
-    let [artifact] = candidate_artifacts.as_slice() else {
-        return Err(anyhow!(
-            "non-empty shielded block requires exactly one matching recursive candidate artifact"
-        ));
-    };
-    if artifact.tx_count as usize != transfer_count {
-        return Err(anyhow!("candidate artifact tx_count mismatch"));
+    let historical_artifact = candidate_artifacts.first().copied();
+    if let Some(artifact) = historical_artifact {
+        if artifact.tx_count as usize != transfer_count {
+            return Err(anyhow!("candidate artifact tx_count mismatch"));
+        }
     }
 
     let materialized = materialize_native_action_payloads_from_state(
@@ -2303,32 +2280,6 @@ pub(crate) fn verify_native_block_artifacts_locked(
     let computed_da_root = da_encoding.root();
     let computed_da_chunk_count = u32::try_from(da_encoding.chunks().len())
         .map_err(|_| anyhow!("native block DA chunk count exceeds u32"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: computed_da_root == artifact.da_root,
-            da_chunk_count_matches: computed_da_chunk_count == artifact.da_chunk_count,
-            tx_statements_commitment_matches: true,
-            recursive_state_root_matches: true,
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
-    }
-
-    let claims = consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
-        .map_err(|err| anyhow!("native tx artifact verification failed: {err}"))?;
-    let tx_statements_commitment = consensus::proof::claim_statement_commitment(&claims)
-        .map_err(|err| anyhow!("native tx statement commitment failed: {err}"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: true,
-            da_chunk_count_matches: true,
-            tx_statements_commitment_matches: tx_statements_commitment
-                == artifact.tx_statements_commitment,
-            recursive_state_root_matches: true,
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
-    }
 
     let expected_tree = preview_commitment_tree(&state.commitment_tree, &transfer_actions)?;
     let mut expected_nullifiers = state.nullifiers.clone();
@@ -2347,7 +2298,7 @@ pub(crate) fn verify_native_block_artifacts_locked(
     )
     .map_err(native_recursive_artifact_context_admission_error)?;
     if height != meta.height {
-        return Err(anyhow!("native recursive block height mismatch"));
+        return Err(anyhow!("native block height mismatch"));
     }
     let header = consensus::BlockHeader {
         version: 1,
@@ -2370,17 +2321,65 @@ pub(crate) fn verify_native_block_artifacts_locked(
         signature_bitmap: None,
         pow: None,
     };
-    let block_artifact = consensus_block_artifact_from_candidate(artifact)?;
-    let proven_batch = consensus_proven_batch_from_candidate(artifact)?;
-    let block = consensus::types::Block {
-        header,
-        transactions,
-        coinbase: None,
-        proven_batch: Some(proven_batch),
-        block_artifact: Some(block_artifact),
-        tx_validity_claims: Some(claims),
-        tx_statements_commitment: Some(tx_statements_commitment),
-        proof_verification_mode: consensus::types::ProofVerificationMode::SelfContainedAggregation,
+    let (block, verification_label) = if let Some(artifact) = historical_artifact {
+        if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+            NativeCandidateArtifactBindingAdmissionInput {
+                da_root_matches: computed_da_root == artifact.da_root,
+                da_chunk_count_matches: computed_da_chunk_count == artifact.da_chunk_count,
+                tx_statements_commitment_matches: true,
+                recursive_state_root_matches: true,
+            },
+        ) {
+            return Err(native_candidate_artifact_binding_admission_error(rejection));
+        }
+
+        let claims =
+            consensus::proof::tx_validity_claims_from_tx_artifacts(&transactions, &artifacts)
+                .map_err(|err| anyhow!("historical native tx verification failed: {err}"))?;
+        let tx_statements_commitment = consensus::proof::claim_statement_commitment(&claims)
+            .map_err(|err| anyhow!("historical tx statement commitment failed: {err}"))?;
+        if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
+            NativeCandidateArtifactBindingAdmissionInput {
+                da_root_matches: true,
+                da_chunk_count_matches: true,
+                tx_statements_commitment_matches: tx_statements_commitment
+                    == artifact.tx_statements_commitment,
+                recursive_state_root_matches: true,
+            },
+        ) {
+            return Err(native_candidate_artifact_binding_admission_error(rejection));
+        }
+
+        let block_artifact = consensus_block_artifact_from_candidate(artifact)?;
+        let proven_batch = consensus_proven_batch_from_candidate(artifact)?;
+        (
+            consensus::types::Block {
+                header,
+                transactions,
+                coinbase: None,
+                proven_batch: Some(proven_batch),
+                block_artifact: Some(block_artifact),
+                tx_validity_claims: Some(claims),
+                tx_statements_commitment: Some(tx_statements_commitment),
+                proof_verification_mode:
+                    consensus::types::ProofVerificationMode::SelfContainedAggregation,
+            },
+            "historical recursive block",
+        )
+    } else {
+        (
+            consensus::types::Block {
+                header,
+                transactions,
+                coinbase: None,
+                proven_batch: None,
+                block_artifact: None,
+                tx_validity_claims: None,
+                tx_statements_commitment: None,
+                proof_verification_mode: consensus::types::ProofVerificationMode::InlineRequired,
+            },
+            "independent SmallWood transaction proof block",
+        )
     };
     let backend_inputs =
         consensus::proof_interface::BlockBackendInputs::from_tx_validity_artifacts(artifacts);
@@ -2392,16 +2391,9 @@ pub(crate) fn verify_native_block_artifacts_locked(
             Some(&backend_inputs),
             &state.commitment_tree,
         )
-        .map_err(|err| anyhow!("native recursive block verification failed: {err}"))?;
-    if let Err(rejection) = evaluate_native_candidate_artifact_binding_admission(
-        NativeCandidateArtifactBindingAdmissionInput {
-            da_root_matches: true,
-            da_chunk_count_matches: true,
-            tx_statements_commitment_matches: true,
-            recursive_state_root_matches: verified_tree.root() == expected_tree.root(),
-        },
-    ) {
-        return Err(native_candidate_artifact_binding_admission_error(rejection));
+        .map_err(|err| anyhow!("native {verification_label} verification failed: {err}"))?;
+    if verified_tree.root() != expected_tree.root() {
+        return Err(anyhow!("native {verification_label} state root mismatch"));
     }
     Ok(())
 }
@@ -2646,25 +2638,6 @@ pub(crate) fn preview_pending_roots_with_archive(
     state: &NativeState,
     actions: &[PendingAction],
 ) -> Result<([u8; 48], [u8; 48], [u8; 32], u32)> {
-    let transfer_count = actions
-        .iter()
-        .filter(|action| is_shielded_transfer_action(action))
-        .count();
-    if transfer_count > 0 {
-        let has_matching_recursive_artifact = actions.iter().any(|action| {
-            is_candidate_artifact_action(action)
-                && action
-                    .candidate_artifact
-                    .as_ref()
-                    .is_some_and(|artifact| artifact.tx_count as usize == transfer_count)
-        });
-        if !has_matching_recursive_artifact {
-            return Err(anyhow!(
-                "non-empty shielded block requires same-block recursive candidate artifact"
-            ));
-        }
-    }
-
     let planned = plan_materialized_action_effects_with_archive(
         da_ciphertext_tree,
         ciphertext_archive_tree,

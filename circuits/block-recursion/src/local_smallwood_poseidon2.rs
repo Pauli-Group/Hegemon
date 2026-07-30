@@ -14,7 +14,8 @@ const FIELD_ORDER: u64 = 0xffff_ffff_0000_0001;
 const SMALLWOOD_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.f64-xof.v1";
 const SMALLWOOD_POSEIDON2_XOF_DOMAIN: &[u8] = b"hegemon.smallwood.poseidon2-xof.v1";
 const SMALLWOOD_POSEIDON2_RATE: usize = 6;
-const DIGEST_WORDS: usize = DIGEST_BYTES / 8;
+const LEGACY_DIGEST_BYTES: usize = 32;
+const LEGACY_DIGEST_WORDS: usize = LEGACY_DIGEST_BYTES / 8;
 const SALT_BYTES: usize = 32;
 const SALT_WORDS: usize = SALT_BYTES / 8;
 
@@ -241,6 +242,12 @@ pub fn ensure_row_polynomial_arithmetization(
         | SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2 => {
             Ok(())
         }
+        SmallwoodArithmetization::DirectPacked64CompressedLevel5
+        | SmallwoodArithmetization::DirectPacked128CompressedLevel5 => {
+            Err(TransactionCircuitError::ConstraintViolation(
+                "historical block recursion does not accept Level-5 transaction proofs",
+            ))
+        }
     }
 }
 
@@ -372,7 +379,7 @@ fn transcript_xof_words(
             }
             out
         }
-        SmallwoodTranscriptBackend::Blake3 => {
+        SmallwoodTranscriptBackend::Blake3 | SmallwoodTranscriptBackend::Sha512Level5 => {
             panic!("block-recursion local verifier only supports Poseidon2")
         }
     }
@@ -383,7 +390,12 @@ fn transcript_xof_digest(
     domain: &[u8],
     words: &[u64],
 ) -> [u8; DIGEST_BYTES] {
-    words_to_digest(&transcript_xof_words(backend, domain, words, DIGEST_WORDS))
+    words_to_digest(&transcript_xof_words(
+        backend,
+        domain,
+        words,
+        LEGACY_DIGEST_WORDS,
+    ))
 }
 
 pub fn hash_piop_transcript(
@@ -465,7 +477,7 @@ pub fn xof_piop_opening_points(
     h_piop: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> Vec<u64> {
-    let mut input = Vec::with_capacity(1 + DIGEST_WORDS);
+    let mut input = Vec::with_capacity(1 + LEGACY_DIGEST_WORDS);
     input.push(u32::from_le_bytes(*nonce) as u64);
     input.extend(digest_to_words(h_piop));
     transcript_xof_words(
@@ -551,7 +563,7 @@ pub fn xof_decs_opening(
         let mut nonce_counter = 0u32;
         loop {
             let nonce = nonce_counter.to_le_bytes();
-            let mut input = Vec::with_capacity(1 + DIGEST_WORDS);
+            let mut input = Vec::with_capacity(1 + LEGACY_DIGEST_WORDS);
             input.push(u32::from_le_bytes(nonce) as u64);
             input.extend(digest_to_words(trans_hash));
             let lhash_output = transcript_xof_words(
@@ -1068,12 +1080,12 @@ fn bytes_to_words_unchecked(bytes: &[u8]) -> Vec<u64> {
 }
 
 fn digest_to_words(bytes: &[u8; DIGEST_BYTES]) -> Vec<u64> {
-    bytes_to_words_unchecked(bytes)
+    bytes_to_words_unchecked(&bytes[..LEGACY_DIGEST_BYTES])
 }
 
 fn words_to_digest(words: &[u64]) -> [u8; DIGEST_BYTES] {
     let mut out = [0u8; DIGEST_BYTES];
-    for (idx, word) in words.iter().enumerate().take(DIGEST_WORDS) {
+    for (idx, word) in words.iter().enumerate().take(LEGACY_DIGEST_WORDS) {
         out[idx * 8..(idx + 1) * 8].copy_from_slice(&word.to_le_bytes());
     }
     out
@@ -1096,7 +1108,7 @@ fn hash_merkle_root(
     root: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
-    let mut input = Vec::with_capacity(SALT_WORDS + DIGEST_WORDS);
+    let mut input = Vec::with_capacity(SALT_WORDS + LEGACY_DIGEST_WORDS);
     input.extend(bytes_to_words_unchecked(salt));
     input.extend(digest_to_words(root));
     transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)
@@ -1129,7 +1141,7 @@ fn hash_merkle_children(
     right: &[u8; DIGEST_BYTES],
     transcript_backend: SmallwoodTranscriptBackend,
 ) -> [u8; DIGEST_BYTES] {
-    let mut input = Vec::with_capacity(2 * DIGEST_WORDS);
+    let mut input = Vec::with_capacity(2 * LEGACY_DIGEST_WORDS);
     input.extend(digest_to_words(left));
     input.extend(digest_to_words(right));
     transcript_xof_digest(transcript_backend, SMALLWOOD_XOF_DOMAIN, &input)

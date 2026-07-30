@@ -822,7 +822,16 @@ impl WalletStore {
                 .iter()
                 .enumerate()
                 .filter(|(_, note)| {
-                    note.note.note.asset_id == asset_id && !note.spent && !note.pending_spend
+                    let commitment = transaction_circuit::hashing_pq::felts_to_bytes48(
+                        &note.note.note_data.commitment(),
+                    );
+                    let uses_private_auth = state.local_note_openings.iter().any(|opening| {
+                        opening.commitment == commitment && opening.uses_private_auth()
+                    });
+                    note.note.note.asset_id == asset_id
+                        && !note.spent
+                        && !note.pending_spend
+                        && !uses_private_auth
                 })
                 .map(|(idx, note)| SpendableNote {
                     index: idx,

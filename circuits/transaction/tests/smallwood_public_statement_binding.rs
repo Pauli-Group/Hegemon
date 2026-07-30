@@ -5,8 +5,9 @@ use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, spend_auth_
 use transaction_circuit::note::{MerklePath, NoteData};
 use transaction_circuit::{
     build_smallwood_candidate_profile_surface_for_arithmetization,
-    smallwood_public_statement_values, InputNoteWitness, OutputNoteWitness,
-    SmallwoodArithmetization, StablecoinPolicyBinding, TransactionWitness,
+    smallwood_production_public_statement_bytes_from_values, smallwood_public_statement_values,
+    InputNoteWitness, OutputNoteWitness, SmallwoodArithmetization, StablecoinPolicyBinding,
+    TransactionWitness,
 };
 use transaction_core::TransactionVerifierInputs;
 
@@ -27,6 +28,7 @@ struct SmallwoodPublicStatementBindingCase {
     circuit_version: u16,
     crypto_suite: u16,
     expected_statement_values: Vec<u64>,
+    expected_statement_bytes_hex: String,
     expected_valid: bool,
 }
 
@@ -286,6 +288,17 @@ fn lean_generated_smallwood_public_statement_binding_vectors_match_production() 
             assert_eq!(
                 actual_statement_values, case.expected_statement_values,
                 "{}: Lean expected statement values drift from production helper",
+                case.name
+            );
+            let actual_statement_bytes =
+                smallwood_production_public_statement_bytes_from_values(&actual_statement_values)
+                    .unwrap_or_else(|err| {
+                        panic!("{}: serialize production statement: {err}", case.name)
+                    });
+            assert_eq!(
+                format!("0x{}", hex::encode(actual_statement_bytes)),
+                case.expected_statement_bytes_hex,
+                "{}: Lean exact statement bytes drift from production bincode",
                 case.name
             );
             assert_eq!(

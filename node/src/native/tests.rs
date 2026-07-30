@@ -10,7 +10,7 @@ fn receipt_root_candidate_mode_is_rejected_before_consensus_conversion() {
     assert!(err.to_string().contains("decode-only"));
     assert_eq!(
         consensus_batch_mode(BlockProofMode::RecursiveBlock)
-            .expect("recursive mode remains the shipped route"),
+            .expect("recursive mode remains decodable for historical blocks"),
         consensus::ProvenBatchMode::RecursiveBlock
     );
 }
@@ -2677,7 +2677,7 @@ fn submit_action_returns_exact_rejection_response() {
 }
 
 #[test]
-fn submit_action_stages_and_imports_shielded_transfer() {
+fn submit_action_stages_but_does_not_mine_invalid_shielded_transfer() {
     use base64::Engine;
 
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -2793,14 +2793,14 @@ fn submit_action_stages_and_imports_shielded_transfer() {
         .expect_err("candidate artifacts must not be user-staged while transfers are pending");
     assert!(
         err.to_string()
-            .contains("candidate artifact submissions are disabled"),
+            .contains("candidate artifact submissions are retired"),
         "unexpected candidate staging error: {err}"
     );
 
     let work = node.prepare_work().expect("prepare native work");
     assert_eq!(
         work.tx_count, 0,
-        "synthetic transfer fixture must not be mined without a valid recursive candidate"
+        "invalid SmallWood transaction proof must not enter a mining template"
     );
     let seal = mine_native_round(work.clone(), 0).expect("test seal");
     let imported = node
@@ -2861,7 +2861,7 @@ fn submit_transfer_evicts_stale_candidate_artifact_from_mempool() {
         .expect_err("candidate artifact submissions must stay disabled while transfer pending");
     assert!(
         err.to_string()
-            .contains("candidate artifact submissions are disabled"),
+            .contains("candidate artifact submissions are retired"),
         "unexpected candidate staging error: {err}"
     );
 }
@@ -13929,7 +13929,7 @@ fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
             stage_ciphertext_metadata_for_action(&mut state, &action);
         }
 
-        let preselection_input = native_mineable_action_admission_input(&state, &action, None);
+        let preselection_input = native_mineable_action_admission_input(&state, &action);
         if action_case.transfer_route {
             assert_eq!(
                 evaluate_native_mineable_action_admission(preselection_input).is_ok(),
@@ -13984,7 +13984,7 @@ fn verify_lean_mineable_selection_case(case: &LeanMineableSelectionCase) {
         .iter()
         .filter(|action| is_shielded_transfer_action(action))
         .filter(|action| {
-            let input = native_mineable_action_admission_input(&state, action, None);
+            let input = native_mineable_action_admission_input(&state, action);
             evaluate_native_mineable_action_admission(input).is_ok()
         })
         .count();
@@ -20856,7 +20856,7 @@ fn materialized_sidecar_observer_projection_ignores_received_time() {
 fn pending_action_raw_bytes_project_to_validated_materialized_replay_rows() {
     let pow_bits = 0x207f_ffff;
     let (state, inline_transfer) =
-        test_valid_inline_transfer_action_and_state(genesis_meta(pow_bits).expect("genesis"), 29);
+        test_valid_inline_transfer_action_and_state(genesis_meta(pow_bits).expect("genesis"));
     let outbound = test_outbound_bridge_action(b"projection outbound");
     let coinbase = test_coinbase_action(
         consensus::reward::block_subsidy(1)
@@ -22626,7 +22626,7 @@ fn candidate_artifact_rejects_legacy_recursive_v1_route() {
     artifact.proof_kind = PoolProofArtifactKind::RecursiveBlockV1;
 
     let err = validate_candidate_artifact(&artifact)
-        .expect_err("native candidate artifacts must use the shipped v2 route");
+        .expect_err("historical candidate artifacts must use the v2 route");
     assert!(err.to_string().contains("recursive_block_v2"));
 }
 
@@ -22655,7 +22655,7 @@ fn candidate_artifact_rejects_wrong_verifier_profile() {
     artifact.verifier_profile = [0x77u8; 48];
 
     let err = validate_candidate_artifact(&artifact)
-        .expect_err("native candidate artifacts must bind shipped verifier profile");
+        .expect_err("historical candidate artifacts must bind the retained verifier profile");
     assert!(err.to_string().contains("verifier profile mismatch"));
 }
 
@@ -22731,26 +22731,31 @@ fn candidate_artifact_requires_shielded_transfers() {
     let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
     let err = verify_native_block_artifacts_locked(&node, &state, &[action], &meta)
         .expect_err("candidate artifact without transfers must be rejected");
-    assert!(err.to_string().contains("requires shielded transfer"));
+    assert!(err
+        .to_string()
+        .contains("empty block must not carry a historical recursive candidate artifact"));
 }
 
 #[test]
-fn shielded_transfer_requires_candidate_artifact() {
+fn shielded_transfer_accepts_independent_smallwood_proof() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pow_bits = 0x207f_ffff;
     let node = NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
-    let state = test_state(genesis_meta(pow_bits).expect("genesis"));
-    let transfer =
-        test_inline_transfer_action(state.commitment_tree.root(), [7u8; 48], [8u8; 48], 0);
+    let (state, transfer) =
+        test_valid_inline_transfer_action_and_state(genesis_meta(pow_bits).expect("genesis"));
     validate_block_actions_locked(&state, std::slice::from_ref(&transfer))
         .expect("transfer action is structurally valid");
 
+    node.verify_independent_smallwood_actions_for_template(
+        &state,
+        1,
+        state.best.timestamp_ms.saturating_add(1),
+        std::slice::from_ref(&transfer),
+    )
+    .expect("mining preflight must accept the independent SmallWood proof");
     let meta = mined_empty_child(&state.best, 1, pow_bits, 0);
-    let err = verify_native_block_artifacts_locked(&node, &state, &[transfer], &meta)
-        .expect_err("non-empty shielded block without candidate artifact must be rejected");
-    assert!(err
-        .to_string()
-        .contains("requires exactly one matching recursive candidate artifact"));
+    verify_native_block_artifacts_locked(&node, &state, &[transfer], &meta)
+        .expect("independent SmallWood transaction proof must verify without a block aggregate");
 }
 
 #[test]
@@ -22772,7 +22777,7 @@ fn shielded_transfer_rejects_multiple_candidate_artifacts() {
         .expect_err("non-empty shielded block with multiple candidates must be rejected");
     assert!(err
         .to_string()
-        .contains("requires exactly one matching recursive candidate artifact"));
+        .contains("more than one historical recursive candidate artifact"));
 }
 
 #[test]
@@ -22929,22 +22934,22 @@ fn prepare_work_keeps_sidecar_transfer_with_matching_staged_ciphertext() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pow_bits = 0x207f_ffff;
     let node = NativeNode::open(test_config(tmp.path(), pow_bits, "safe", false)).expect("node");
-    let anchor = node.state.read().commitment_tree.root();
-    let transfer = test_sidecar_transfer_action(anchor, [30u8; 48], [31u8; 48], 0);
-    let hash = transfer.ciphertext_hashes[0];
-    let size = transfer.ciphertext_sizes[0];
-    let candidate = test_candidate_artifact_action(1, 32);
+    let (mut state, transfer) =
+        test_valid_sidecar_transfer_action_and_state(genesis_meta(pow_bits).expect("genesis"));
     insert_test_sidecar_ciphertext(&node.da_ciphertext_tree, &transfer);
+    for (hash, size) in transfer
+        .ciphertext_hashes
+        .iter()
+        .zip(transfer.ciphertext_sizes.iter())
     {
-        let mut state = node.state.write();
-        state.staged_ciphertexts.insert(hex48(&hash), size);
-        state.pending_actions.insert(transfer.tx_hash, transfer);
-        state.pending_actions.insert(candidate.tx_hash, candidate);
+        state.staged_ciphertexts.insert(hex48(hash), *size);
     }
+    state.pending_actions.insert(transfer.tx_hash, transfer);
+    *node.state.write() = state;
 
     let work = node.prepare_work().expect("prepare native work");
 
-    assert_eq!(work.tx_count, 2);
+    assert_eq!(work.tx_count, 1);
 }
 
 #[test]
@@ -24665,72 +24670,55 @@ fn test_transfer_ciphertext_bytes() -> Vec<u8> {
 
 fn test_valid_inline_transfer_action_and_state(
     best: NativeBlockMeta,
-    seed: u8,
 ) -> (NativeState, PendingAction) {
-    use transaction_circuit::{
-        hashing_pq::{bytes48_to_felts, spend_auth_key_bytes},
-        note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness},
-        TransactionWitness,
-    };
+    use transaction_circuit::{hashing_pq::spend_auth_key_bytes, note::NoteData};
 
+    // Reconstruct the public anchor of the canonical seed-1 review fixture.
+    // The private witness remains absent from the checked-in artifact.
+    let seed = 1u8;
     let sk_spend = [seed.wrapping_add(42); 32];
-    let input_note = NoteData {
+    let input_note_native = NoteData {
         value: 8,
         asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
-        pk_recipient: [seed.wrapping_add(1); 32],
+        pk_recipient: [seed.wrapping_add(2); 32],
         pk_auth: spend_auth_key_bytes(&sk_spend),
-        rho: [seed.wrapping_add(2); 32],
-        r: [seed.wrapping_add(3); 32],
+        rho: [seed.wrapping_add(3); 32],
+        r: [seed.wrapping_add(4); 32],
     };
-    let input_commitment = felts_to_bytes48(&input_note.commitment());
+    let input_note_asset = NoteData {
+        value: 5,
+        asset_id: u64::from(seed) + 100,
+        pk_recipient: [seed.wrapping_add(5); 32],
+        pk_auth: spend_auth_key_bytes(&sk_spend),
+        rho: [seed.wrapping_add(6); 32],
+        r: [seed.wrapping_add(7); 32],
+    };
     let mut state = test_state(best);
-    let append = state
+    state
         .commitment_tree
-        .append_with_certificate(input_commitment)
-        .expect("append the production input note commitment");
-    let merkle_path = MerklePath {
-        siblings: append
-            .trace
-            .iter()
-            .map(|step| {
-                bytes48_to_felts(&step.sibling)
-                    .expect("production commitment-tree siblings are canonical field elements")
-            })
-            .collect(),
-    };
-    let output_note = OutputNoteWitness {
-        note: NoteData {
-            value: 3,
-            asset_id: transaction_circuit::constants::NATIVE_ASSET_ID,
-            pk_recipient: [seed.wrapping_add(4); 32],
-            pk_auth: [seed.wrapping_add(5); 32],
-            rho: [seed.wrapping_add(6); 32],
-            r: [seed.wrapping_add(7); 32],
-        },
-    };
+        .append(felts_to_bytes48(&input_note_native.commitment()))
+        .expect("append canonical fixture native input commitment");
+    state
+        .commitment_tree
+        .append(felts_to_bytes48(&input_note_asset.commitment()))
+        .expect("append canonical fixture asset input commitment");
+
+    let (_, artifact_bytes) = staged_proof_fixture();
+    let decoded =
+        consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&artifact_bytes)
+            .expect("decode canonical active SmallWood proof artifact");
+    assert_eq!(
+        state.commitment_tree.root(),
+        decoded.stark_public_inputs.merkle_root,
+        "canonical review fixture anchor drifted from its public witness construction"
+    );
     let encrypted_note = test_transfer_encrypted_note();
     let ciphertext_hash = ciphertext_hash_bytes(&test_transfer_ciphertext_bytes());
-    let witness = TransactionWitness {
-        inputs: vec![InputNoteWitness {
-            note: input_note,
-            position: append.leaf_index,
-            rho_seed: [seed.wrapping_add(8); 32],
-            merkle_path,
-        }],
-        outputs: vec![output_note],
-        ciphertext_hashes: vec![ciphertext_hash],
-        sk_spend,
-        merkle_root: append.result_root,
-        fee: 5,
-        value_balance: 0,
-        stablecoin: transaction_circuit::StablecoinPolicyBinding::default(),
-        version: TransactionWitness::default_version_binding(),
-    };
-    let built = superneo_hegemon::build_native_tx_leaf_artifact_bytes(&witness)
-        .expect("build the active native SmallWood proof artifact");
-    let decoded =
-        consensus::backend_interface::decode_native_tx_leaf_artifact_bytes(&built.artifact_bytes)
-            .expect("decode the active native SmallWood proof artifact");
+    assert_eq!(
+        decoded.tx.ciphertext_hashes,
+        vec![ciphertext_hash; 2],
+        "canonical review fixture ciphertext binding drifted"
+    );
     let balance_slot_asset_ids = decoded
         .stark_public_inputs
         .balance_slot_asset_ids
@@ -24756,9 +24744,9 @@ fn test_valid_inline_transfer_action_and_state(
         u32::try_from(encrypted_note.ciphertext.len() + encrypted_note.kem_ciphertext.len())
             .expect("ciphertext size");
     let args = ShieldedTransferInlineArgs {
-        proof: built.artifact_bytes,
+        proof: artifact_bytes,
         commitments: decoded.tx.commitments.clone(),
-        ciphertexts: vec![encrypted_note],
+        ciphertexts: vec![encrypted_note.clone(), encrypted_note],
         anchor: decoded.stark_public_inputs.merkle_root,
         balance_slot_asset_ids,
         binding_hash,
@@ -24774,11 +24762,38 @@ fn test_valid_inline_transfer_action_and_state(
         nullifiers: decoded.tx.nullifiers,
         commitments: decoded.tx.commitments,
         ciphertext_hashes: decoded.tx.ciphertext_hashes,
-        ciphertext_sizes: vec![ciphertext_size],
+        ciphertext_sizes: vec![ciphertext_size; 2],
         public_args: args.encode(),
         fee: decoded.stark_public_inputs.fee,
         candidate_artifact: None,
         received_ms: 0,
+    };
+    action.tx_hash = pending_action_hash(&action);
+    (state, action)
+}
+
+fn test_valid_sidecar_transfer_action_and_state(
+    best: NativeBlockMeta,
+) -> (NativeState, PendingAction) {
+    let (state, inline) = test_valid_inline_transfer_action_and_state(best);
+    let inline_args: ShieldedTransferInlineArgs =
+        decode_scale_exact(&inline.public_args, "valid inline transfer args")
+            .expect("decode canonical valid inline transfer");
+    let args = ShieldedTransferSidecarArgs {
+        proof: inline_args.proof,
+        commitments: inline_args.commitments,
+        ciphertext_hashes: inline.ciphertext_hashes.clone(),
+        ciphertext_sizes: inline.ciphertext_sizes.clone(),
+        anchor: inline.anchor,
+        balance_slot_asset_ids: inline_args.balance_slot_asset_ids,
+        binding_hash: inline_args.binding_hash,
+        stablecoin: inline_args.stablecoin,
+        fee: inline.fee,
+    };
+    let mut action = PendingAction {
+        action_id: ACTION_SHIELDED_TRANSFER_SIDECAR,
+        public_args: args.encode(),
+        ..inline
     };
     action.tx_hash = pending_action_hash(&action);
     (state, action)
@@ -24792,10 +24807,13 @@ fn insert_test_sidecar_ciphertext(tree: &sled::Tree, action: &PendingAction) {
     }
     let bytes = test_transfer_ciphertext_bytes();
     let hash = ciphertext_hash_bytes(&bytes);
-    assert_eq!(
-        action.ciphertext_hashes.as_slice(),
-        [hash].as_slice(),
-        "test sidecar action must use the deterministic test ciphertext"
+    assert!(
+        !action.ciphertext_hashes.is_empty()
+            && action
+                .ciphertext_hashes
+                .iter()
+                .all(|ciphertext_hash| *ciphertext_hash == hash),
+        "test sidecar action must use only the deterministic test ciphertext"
     );
     tree.insert(hash.as_slice(), bytes)
         .expect("insert test sidecar ciphertext");
@@ -25513,7 +25531,7 @@ fn lean_generated_accepted_smallwood_block_supply_vectors_match_production() {
     let vectors: LeanAcceptedSmallwoodBlockCompositionVectorFile = serde_json::from_str(&raw)
         .expect("parse generated Lean accepted-SmallWood block composition vectors");
     assert_eq!(vectors.schema_version, 1);
-    assert_eq!(vectors.production_fields.len(), 70);
+    assert_eq!(vectors.production_fields.len(), 66);
     assert_eq!(vectors.claim_scope_cases.len(), 3);
     assert_eq!(vectors.canonical_transactions.len(), 2);
     assert_eq!(vectors.proof_artifact_cases.len(), 4);
@@ -25535,8 +25553,8 @@ fn lean_generated_accepted_smallwood_block_supply_vectors_match_production() {
     assert_eq!(
         claim_scope_names,
         BTreeSet::from([
-            "active_v3_beta".to_string(),
-            "legacy_v2_beta".to_string(),
+            "active_v4_gamma".to_string(),
+            "legacy_v3_beta".to_string(),
             "wrong_crypto_suite".to_string(),
         ])
     );

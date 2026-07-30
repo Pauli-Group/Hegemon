@@ -57,7 +57,9 @@ use superneo_hegemon::{
 };
 use superneo_ring::{GoldilocksPackingConfig, GoldilocksPayPerBitPacker, WitnessPacker};
 use transaction_circuit::constants::{CIRCUIT_MERKLE_DEPTH, NATIVE_ASSET_ID};
-use transaction_circuit::hashing_pq::{felts_to_bytes48, merkle_node, HashFelt};
+use transaction_circuit::hashing_pq::{
+    ciphertext_hash_bytes, felts_to_bytes48, merkle_node, HashFelt,
+};
 use transaction_circuit::keys::generate_keys;
 use transaction_circuit::note::{InputNoteWitness, MerklePath, NoteData, OutputNoteWitness};
 use transaction_circuit::proof::{
@@ -839,7 +841,7 @@ struct ReviewVectorCase {
 const REVIEW_VECTOR_SCHEMA_VERSION: u32 = 1;
 const REVIEW_VECTOR_GENERATOR_ID: &str = "hegemon.superneo-bench.native-review";
 const ACTIVE_REVIEW_ARITHMETIZATION: SmallwoodArithmetization =
-    SmallwoodArithmetization::DirectPacked64CommittedBindingsInlineMerkleSkipInitialMdsV2;
+    SmallwoodArithmetization::DirectPacked64CompressedLevel5;
 const ACTIVE_REVIEW_PUBLIC_VALUE_COUNT: usize = 78;
 
 const REQUIRED_REVIEW_CASES: [(&str, &str, bool, Option<&str>, &str); 11] = [
@@ -2472,7 +2474,7 @@ fn active_review_profile_from_leaf(
     let expected_version = protocol_versioning::SMALLWOOD_CANDIDATE_VERSION_BINDING;
     ensure!(
         artifact.tx.version == expected_version,
-        "review vectors must exercise active SmallWood V3"
+        "review vectors must exercise active SmallWood V4"
     );
     ensure!(
         artifact.proof_backend == protocol_versioning::TxProofBackend::SmallwoodCandidate,
@@ -2486,7 +2488,7 @@ fn active_review_profile_from_leaf(
     .ok_or_else(|| anyhow::anyhow!("review SmallWood artifact has no arithmetization"))?;
     ensure!(
         arithmetization == ACTIVE_REVIEW_ARITHMETIZATION,
-        "review vectors must exercise the active V3 arithmetization"
+        "review vectors must exercise the active V4 arithmetization"
     );
     Ok(ReviewActiveTxProfile {
         circuit_version: expected_version.circuit,
@@ -4964,6 +4966,7 @@ fn sample_witness(seed: u64) -> TransactionWitness {
             r: [seed as u8 + 24; 32],
         },
     };
+    let ciphertext_hash = ciphertext_hash_bytes(&sample_review_ciphertext_bytes());
 
     TransactionWitness {
         inputs: vec![
@@ -4981,7 +4984,7 @@ fn sample_witness(seed: u64) -> TransactionWitness {
             },
         ],
         outputs: vec![output_native, output_asset],
-        ciphertext_hashes: vec![[0u8; 48]; 2],
+        ciphertext_hashes: vec![ciphertext_hash; 2],
         sk_spend,
         merkle_root: felts_to_bytes48(&merkle_root),
         fee: 5,
@@ -4991,6 +4994,14 @@ fn sample_witness(seed: u64) -> TransactionWitness {
     }
 }
 
+fn sample_review_ciphertext_bytes() -> Vec<u8> {
+    // Matches the deterministic EncryptedNote payload used by the native-node
+    // production-fixture tests.
+    let mut bytes = vec![3u8; 579];
+    bytes.extend_from_slice(&[4u8; 32]);
+    bytes
+}
+
 fn build_two_leaf_merkle_tree(
     leaf0: HashFelt,
     leaf1: HashFelt,
@@ -4998,11 +5009,13 @@ fn build_two_leaf_merkle_tree(
     let mut siblings0 = vec![leaf1];
     let mut siblings1 = vec![leaf0];
     let mut current = merkle_node(leaf0, leaf1);
+    let zero = [Goldilocks::new(0); 6];
+    let mut empty_subtree = merkle_node(zero, zero);
     for _ in 1..CIRCUIT_MERKLE_DEPTH {
-        let zero = [Goldilocks::new(0); 6];
-        siblings0.push(zero);
-        siblings1.push(zero);
-        current = merkle_node(current, zero);
+        siblings0.push(empty_subtree);
+        siblings1.push(empty_subtree);
+        current = merkle_node(current, empty_subtree);
+        empty_subtree = merkle_node(empty_subtree, empty_subtree);
     }
     (
         MerklePath {

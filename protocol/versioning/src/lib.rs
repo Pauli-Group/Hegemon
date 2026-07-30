@@ -167,6 +167,7 @@ where
 pub const CIRCUIT_V1: CircuitVersion = 1;
 pub const CIRCUIT_V2: CircuitVersion = 2;
 pub const CIRCUIT_V3: CircuitVersion = 3;
+pub const CIRCUIT_V4: CircuitVersion = 4;
 
 pub const CRYPTO_SUITE_ALPHA: CryptoSuiteId = 1;
 pub const CRYPTO_SUITE_BETA: CryptoSuiteId = 2;
@@ -176,9 +177,13 @@ pub const LEGACY_SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBi
     circuit: CIRCUIT_V2,
     crypto: CRYPTO_SUITE_BETA,
 };
-pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+pub const SMALLWOOD_V3_VERSION_BINDING: VersionBinding = VersionBinding {
     circuit: CIRCUIT_V3,
     crypto: CRYPTO_SUITE_BETA,
+};
+pub const SMALLWOOD_CANDIDATE_VERSION_BINDING: VersionBinding = VersionBinding {
+    circuit: CIRCUIT_V4,
+    crypto: CRYPTO_SUITE_GAMMA,
 };
 pub const DEFAULT_VERSION_BINDING: VersionBinding = SMALLWOOD_CANDIDATE_VERSION_BINDING;
 
@@ -187,7 +192,9 @@ pub const DEFAULT_TX_FRI_PROFILE: TxFriProfile = TxFriProfile::new(4, 32, 0);
 
 pub const fn tx_proof_backend_for_version(version: VersionBinding) -> Option<TxProofBackend> {
     match (version.circuit, version.crypto) {
-        (CIRCUIT_V2 | CIRCUIT_V3, CRYPTO_SUITE_BETA) => Some(TxProofBackend::SmallwoodCandidate),
+        (CIRCUIT_V2 | CIRCUIT_V3, CRYPTO_SUITE_BETA) | (CIRCUIT_V4, CRYPTO_SUITE_GAMMA) => {
+            Some(TxProofBackend::SmallwoodCandidate)
+        }
         _ => None,
     }
 }

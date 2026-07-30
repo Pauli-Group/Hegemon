@@ -2471,10 +2471,12 @@ mod tests {
             asset_id: NATIVE_ASSET_ID,
             memo: MemoPlaintext::default(),
         };
+        assert!(sender.spendable_notes(NATIVE_ASSET_ID).unwrap().iter().all(
+            |note| felts_to_bytes48(&note.recovered.note_data.commitment())
+                != locked_value_note_commitment
+        ));
         let bypass_err = build_transaction(&sender, &[bypass_recipient], 0).unwrap_err();
-        assert!(bypass_err
-            .to_string()
-            .contains("native tx-leaf artifact generation failed"));
+        assert!(matches!(bypass_err, WalletError::InsufficientFunds { .. }));
 
         let reloaded_final_plan = prepare_multisig_final_plan(
             &sender,

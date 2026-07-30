@@ -179,7 +179,7 @@ impl BlockProofRoute {
         Self::new(mode, proof_artifact_kind_from_mode(mode))
     }
 
-    pub const fn shipped_recursive_block_v2() -> Self {
+    pub const fn historical_recursive_block_v2() -> Self {
         Self::new(
             BlockProofMode::RecursiveBlock,
             ProofArtifactKind::RecursiveBlockV2,
@@ -218,8 +218,8 @@ pub const fn canonical_recursive_block_artifact_kind() -> ProofArtifactKind {
     ProofArtifactKind::RecursiveBlockV2
 }
 
-pub fn canonical_shipped_block_proof_route() -> BlockProofRoute {
-    BlockProofRoute::shipped_recursive_block_v2()
+pub fn historical_recursive_block_proof_route() -> BlockProofRoute {
+    BlockProofRoute::historical_recursive_block_v2()
 }
 
 pub fn proof_artifact_kind_from_mode(mode: BlockProofMode) -> ProofArtifactKind {
@@ -251,6 +251,10 @@ pub struct RecursiveBlockProofPayload {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+/// Historical aggregate payload retained for decoding existing blocks.
+///
+/// Active blocks carry independent transaction proofs and never author this
+/// payload.
 pub struct CandidateArtifact {
     pub version: u8,
     pub tx_count: u32,
