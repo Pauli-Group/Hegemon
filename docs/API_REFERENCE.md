@@ -23,19 +23,19 @@ This reference summarizes the public APIs of the monorepo components and points 
 
 - `transaction-circuit` exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport` on the SmallWood-only production path. Production verification rejects retired backend identifiers, missing proof bytes, and malformed public inputs; commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
 - `circuits/disclosure` is retired source and is excluded from shipped executable dependency graphs and release tests.
-- `block-circuit` crate aggregates multiple transaction proofs via `BlockCircuit::prove(block_inputs)`.
+- `block-circuit` retains legacy block-proof wrappers and statement helpers; new native blocks do not construct a block proof.
 - `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
 
 ## `consensus/`
 
 - Rust crate `consensus` exposes `BlockBuilder`, ledger-state transition helpers, and PQ signature utilities that miners call w
 hen assembling payloads.
-- The proof-bearing block boundary is now backend-neutral:
+- The proof-bearing block boundary is backend-neutral:
   - `ProofEnvelope { kind, verifier_profile, artifact_bytes }`
   - `TxValidityReceipt { statement_hash, proof_digest, public_inputs_digest, verifier_profile }`
   - `TxValidityArtifact { receipt, proof }`
-  - `ConsensusBlock` carries `tx_validity_artifacts` plus an optional `block_artifact` instead of a raw `transaction_proofs` field.
-- Import admits only the shipped `RecursiveBlockV2` route. `VerifierRegistry` retains direct research/test adapters for historical recursive and receipt-root artifacts, but proof policy prevents those adapters from becoming block-import routes.
+  - `ConsensusBlock` carries canonical ordered `tx_validity_claims`; `proven_batch` and `block_artifact` are absent on new blocks and retained only for historical wire compatibility.
+- New imports use `InlineRequired` and verify every native transaction artifact independently. Historical blocks that already contain one recursive artifact enter a dedicated compatibility verifier; recursive kinds are not registered as active generic verifier routes.
 - The consensus crate also exposes the temporary receipt-root backend façade:
   - `experimental_receipt_root_verifier_profile()`
   - `build_experimental_receipt_root_artifact(receipts)`
@@ -123,7 +123,7 @@ Legacy / experimental pool-worker RPC notes:
 - `hegemon_poolWork` exposes the current authoring template to pooled hash workers.
 - `hegemon_submitPoolShare` remains as a compatibility path and now also accepts a 32-byte nonce (`0x`-prefixed hex); full-target solutions are forwarded into the mining coordinator.
 - `hegemon_poolStatus` reports aggregate and per-worker share accounting for the current process.
-- These pool-worker RPCs are not part of the current default desktop or shipped `RecursiveBlock` operator flow. They remain in-tree for compatibility and experiments.
+- These pool-worker RPCs are not part of the current default desktop flow. They remain in-tree for compatibility and experiments; work templates contain independent transaction proofs and no recursive block artifact.
 
 `CompactJobResponse` fields:
 - `available: bool`
@@ -205,7 +205,7 @@ Archive market RPC methods exposed on the native JSON-RPC server:
 Block validity and data-availability RPC methods exposed by the native node:
 
 - `block_getCommitmentProof(block_hash: H256) -> Option<CommitmentProofResult>`
-  - Returns the commitment proof bytes and public inputs for a block, or `null` if the block has no commitment proof (e.g., coinbase-only blocks).
+  - Compatibility endpoint. Active native blocks have no block commitment proof, so it returns `null`.
   - `CommitmentProofResult`: `{ proof_bytes: Bytes, public_inputs: CommitmentProofPublicInputs }`
 - `da_getChunk(da_root: H256, chunk_index: u32) -> Option<DaChunkResult>`
   - Returns an erasure-coded chunk and its Merkle proof for the given DA root.
@@ -218,32 +218,16 @@ Block validity and data-availability RPC methods exposed by the native node:
 - `da_submitProofs(request: { proofs: Vec<{ binding_hash: String, proof: String }> }) -> Vec<SubmitProofsEntry>`
   - Unsafe-only proposer/local proof staging RPC. Request-count, staged-capacity, proof binding-hash metadata, nonempty proof, and proof byte-cap admission are Lean-conformance-checked against the production native helpers.
   - Large proof batches must be chunked to stay below the native 8 MiB JSON-RPC request-body cap.
-  - This upload path canonicalizes the supplied binding hash and response hash, but it does not verify `tx_leaf` proof bytes at upload time. Consensus validity is enforced later when native block artifact verification decodes the artifact and checks the derived binding against the action/candidate context.
+  - This upload path canonicalizes the supplied binding hash and response hash, but it does not verify `tx_leaf` proof bytes at upload time. Consensus validity is enforced when the transaction enters the ready pool and again when the ordered block proofs are imported.
   - Staged proof bytes live only in proposer-local RAM; a node restart drops them and clients must restage.
 - `da_submitWitnesses(...)`
   - Deliberately disabled. Witness sidecars are rejected because they may contain secret material and must not be uploaded over RPC.
 
-Prepared-artifact discovery RPC methods exposed on the native node:
-
-- `prover_listArtifactAnnouncements() -> Vec<ArtifactAnnouncementResponse>`
-- `prover_getCandidateArtifact(artifact_hash: String) -> Option<CandidateArtifactResponse>`
-
-These prover RPCs now expose only reusable prepared artifacts on the live native-only branch. The external work-package / standalone-worker market surface was removed with the dead recursive proof lanes.
-
-Legacy RPC endpoints (`block_getRecursiveProof`, `epoch_*`) are removed. The shipped recursive-block-v2 path is SmallWood-native; recursive epoch proofs remain removed and have no runtime endpoint.
-
-Artifact market RPC notes:
-
-- `prover_listArtifactAnnouncements` returns lightweight metadata for locally prepared candidate artifacts. Each entry includes legacy `proof_mode` plus explicit `proof_kind` and `verifier_profile` fields so clients can distinguish backend family from compatibility transport labels. Remote artifact-protocol announcements are not trusted as authoring inputs.
-- `prover_getCandidateArtifact` returns the SCALE-encoded `CandidateArtifact` payload for a locally prepared artifact hash when one is available. The response also includes the artifact’s explicit `proof_kind` and `verifier_profile`. This is a local discovery surface, not a P2P import path.
-
-`ArtifactAnnouncementResponse` fields:
-- `artifact_hash: String` (`0x`-prefixed hex)
-- `tx_statements_commitment: String` (`0x`-prefixed hex)
-- `tx_count: u32`
-- `proof_mode: String` (compatibility label: `inline_tx` | `receipt_root` | `recursive_block`)
-- `proof_kind: String` (backend-neutral artifact family label)
-- `verifier_profile: String` (`0x`-prefixed 48-byte digest)
+Legacy block-proof and prepared-candidate RPC endpoints
+(`block_getRecursiveProof`, `epoch_*`, `prover_listArtifactAnnouncements`, and
+`prover_getCandidateArtifact`) are not active runtime endpoints. Candidate
+artifact submission is retired; new blocks carry independent native SmallWood
+transaction proofs.
 
 `CandidateArtifactResponse` fields:
 - `artifact_hash: String` (`0x`-prefixed hex)
