@@ -18,6 +18,7 @@ scripts/__pycache__/
 .venv/
 tmp/
 formal/lean/.lake/
+formal/crypto/.lake/
 
 # Testnet deployment artifacts (regenerate with scripts)
 .env.testnet

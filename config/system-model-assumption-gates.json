@@ -96,7 +96,8 @@
       "alert_route": "release-owner",
       "evidence_paths": [
         "docs/SYSTEM_MODEL_ASSUMPTION_GATES.md",
-        "scripts/compare-transaction-bench.sh",
+        "circuits/transaction/src/smallwood_frontend.rs",
+        "docs/crypto/tx_proof_smallwood_no_grinding_soundness.md",
         "docs/CONTRIBUTING.md"
       ]
     }

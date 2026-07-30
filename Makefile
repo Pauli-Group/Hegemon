@@ -17,7 +17,7 @@ check:
 	./scripts/check-core.sh all
 
 bench:
-	cargo run -p circuits-bench -- --smoke --prove --json
+	cargo test -p transaction-circuit compressed_level5_radix2_roundtrip_benchmark --release -- --ignored --nocapture
 	cargo run -p wallet-bench -- --smoke --json
 	( cd consensus/bench && go run ./cmd/netbench --smoke --json )
 

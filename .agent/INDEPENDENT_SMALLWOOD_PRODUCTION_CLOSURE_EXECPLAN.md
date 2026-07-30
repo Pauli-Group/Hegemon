@@ -34,7 +34,9 @@ ready.
   proofs. The corrected theorem and vector generator compile.
 - [x] (2026-07-30 03:18Z) Remove experimental recursive/aggregation fixtures that do not contribute to the independent
   transaction proof and preserve only reusable measurement, parser, sampling, transcript, and
-  verifier-refinement work.
+  verifier-refinement work. The excluded RISC Zero bridge prover/guest and stale fuzz lock were
+  also retired because their dead authoring graphs were the final Plonky3 dependency source;
+  fail-closed historical receipt decoding and rejection tests remain.
 - [x] (2026-07-29 03:34Z) Measured the current V3 release implementation: 104,527 exact wire bytes,
   approximately 3.57 seconds warm proving, 13.47 milliseconds warm verification, 74.24 sequential
   proofs/second verification throughput, and approximately 762 MiB peak RSS including the test
@@ -99,8 +101,11 @@ ready.
 - [x] (2026-07-30 03:18Z) Prove the SmallWood-specific interactive round-by-round extraction theorem, commitment
   multi-opening reduction, and concrete BCS/QROM loss in the finite model, or leave the release
   gate fail-closed if any of these remain an interface assumption.
-- [ ] Run focused Lean builds, formal-core and formal-crypto gates, Rust tests, parser and transcript
-  mutation campaigns, proving red-team tests, release tests, and a Codex Security diff review.
+- [x] (2026-07-30 07:21Z) Ran both Lean builds, the 2,655-theorem formal-core claims audit,
+  the 2,531-job formal-crypto build and axiom audit, canonical production vectors, parser and
+  transcript mutation campaigns, all CI-equivalent Rust shards, proving red-team campaigns,
+  dependency audit, native artifact fuzzing, release build, and the release binary security
+  audit. The selected profile, compatibility path, and clean source attestation all passed.
 - [x] (2026-07-30 05:22Z) Record exact measured artifacts and issue the final production or no-ship verdict without
   substituting an interface theorem, fixture, projection, or optimistic estimate for executed
   evidence.
@@ -336,8 +341,8 @@ the QROM theorem and explicit hash-instantiation assumptions are the relevant se
 ## Context and Orientation
 
 The repository root is `/Users/pldd/Projects/Reflexivity/Hegemon`. The working branch is
-`codex/smallwood-pq128-experiment`. The implementation is split into reviewable commits and the
-tracked worktree is clean.
+`codex/smallwood-pq128-experiment`. The implementation is split into reviewable commits; final
+cleanup and review-package regeneration are the only repository-closing steps after this record.
 
 The production prover and verifier live in `circuits/transaction/src/smallwood_engine.rs`,
 `circuits/transaction/src/smallwood_frontend.rs`, and `circuits/transaction/src/proof.rs`. A
@@ -500,3 +505,8 @@ attestation must derive from the same constants used by Lean.
 Plan revision note (2026-07-28): Created after the active-path audit exposed a stale batch theorem,
 an insufficient active digest width for the requested quantum collision work factor, and conditional
 BCS/QROM and native-refinement boundaries.
+
+Plan revision note (2026-07-30): Closed after the V4/Gamma production chain, exact hash/XOF and
+query accounting, 64-lane versus 128-lane Pareto benchmark, dead authoring removal, compatibility
+validation, and all CI-equivalent formal, Rust, adversarial, fuzz, release, and security gates
+passed. The engineering goal is complete while independent cryptographic review remains explicit.

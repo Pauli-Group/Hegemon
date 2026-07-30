@@ -8,11 +8,6 @@
 //! - [`proof::verify`] - Verify SmallWood transaction proofs
 //! - [`protocol_versioning::TxProofBackend`] - Backend identifier carried by the proof
 //!
-//! ## Batch Proofs
-//!
-//! For batching multiple transactions into a single proof, see the `batch-circuit` crate.
-//! The `dimensions` module provides shared trace layout calculations.
-//!
 //! ## Implementation
 //!
 //! SmallWood is the only accepted transaction proof backend. The proof object

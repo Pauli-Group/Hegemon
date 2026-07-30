@@ -13,7 +13,7 @@ use transaction_core::TransactionVerifierInputs;
 
 #[derive(Debug, Deserialize)]
 struct SmallwoodPublicStatementBindingVectors {
-    p3_public_input_base_length: usize,
+    verifier_public_input_base_length: usize,
     smallwood_public_statement_value_count: usize,
     active_circuit_version: u16,
     active_crypto_suite: u16,
@@ -23,7 +23,7 @@ struct SmallwoodPublicStatementBindingVectors {
 #[derive(Debug, Deserialize)]
 struct SmallwoodPublicStatementBindingCase {
     name: String,
-    p3_public_values: Vec<u64>,
+    verifier_public_values: Vec<u64>,
     statement_values: Vec<u64>,
     circuit_version: u16,
     crypto_suite: u16,
@@ -209,7 +209,7 @@ fn assert_witness_public_statement_binding(
     assert_eq!(
         verifier_values.len(),
         expected_base_len,
-        "{label}: P3 public vector length drift"
+        "{label}: verifier public vector length drift"
     );
     let expected_statement_values =
         smallwood_public_statement_values(&verifier_inputs, witness.version);
@@ -225,7 +225,7 @@ fn assert_witness_public_statement_binding(
             .map(|felt| felt.as_canonical_u64())
             .collect::<Vec<_>>()
             .as_slice(),
-        "{label}: SmallWood public statement no longer exposes the P3 prefix"
+        "{label}: SmallWood public statement no longer exposes the verifier prefix"
     );
     assert_eq!(
         &expected_statement_values[expected_base_len..],
@@ -243,7 +243,7 @@ fn assert_witness_public_statement_binding(
     .expect("smallwood candidate profile surface");
     assert_eq!(
         surface.public_statement.public_values, expected_statement_values,
-        "{label}: SmallWood candidate surface is not the P3 public vector plus version binding"
+        "{label}: SmallWood candidate surface is not the verifier public vector plus version binding"
     );
     assert_eq!(
         surface.public_statement.public_value_count as usize, expected_statement_len,
@@ -274,16 +274,17 @@ fn lean_generated_smallwood_public_statement_binding_vectors_match_production() 
 
     for case in vectors.smallwood_public_statement_binding_cases {
         let version = VersionBinding::new(case.circuit_version, case.crypto_suite);
-        let actual_valid_input = case.p3_public_values.len() == vectors.p3_public_input_base_length;
+        let actual_valid_input =
+            case.verifier_public_values.len() == vectors.verifier_public_input_base_length;
         if actual_valid_input {
             let felts: Vec<Felt> = case
-                .p3_public_values
+                .verifier_public_values
                 .iter()
                 .copied()
                 .map(Felt::from_u64)
                 .collect();
             let p3 = TransactionVerifierInputs::try_from_slice(&felts)
-                .unwrap_or_else(|err| panic!("{}: decode P3 vector: {err}", case.name));
+                .unwrap_or_else(|err| panic!("{}: decode verifier vector: {err}", case.name));
             let actual_statement_values = smallwood_public_statement_values(&p3, version);
             assert_eq!(
                 actual_statement_values, case.expected_statement_values,
@@ -310,7 +311,7 @@ fn lean_generated_smallwood_public_statement_binding_vectors_match_production() 
         } else {
             assert!(
                 !case.expected_valid,
-                "{}: Lean marked invalid-length P3 vector valid",
+                "{}: Lean marked invalid-length verifier vector valid",
                 case.name
             );
         }
@@ -319,13 +320,13 @@ fn lean_generated_smallwood_public_statement_binding_vectors_match_production() 
     assert_witness_public_statement_binding(
         "normal witness",
         &sample_witness(),
-        vectors.p3_public_input_base_length,
+        vectors.verifier_public_input_base_length,
         vectors.smallwood_public_statement_value_count,
     );
     assert_witness_public_statement_binding(
         "stablecoin witness",
         &stablecoin_witness(),
-        vectors.p3_public_input_base_length,
+        vectors.verifier_public_input_base_length,
         vectors.smallwood_public_statement_value_count,
     );
 }

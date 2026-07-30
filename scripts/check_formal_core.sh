@@ -874,9 +874,6 @@ HEGEMON_LEAN_STATEMENT_HASH_VECTORS="$LEAN_STATEMENT_HASH_VECTORS" \
 HEGEMON_LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS="$LEAN_TX_VALIDITY_CLAIM_MATCHING_VECTORS" \
   cargo test -p consensus lean_generated_tx_validity_claim_matching_vectors_match_production --lib -- --nocapture
 cargo test -p consensus tx_validity_ --lib -- --nocapture
-cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_by_default --lib -- --nocapture
-HEGEMON_AGG_LEGACY_V4=1 \
-  cargo test -p consensus verify_aggregation_proof_rejects_legacy_v4_even_when_env_set --lib -- --nocapture
 fi
 
 if run_stage policy; then

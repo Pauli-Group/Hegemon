@@ -877,7 +877,7 @@ theorem parsed_tx_leaf_artifact_projects_serialized_public_vectors
   have byteFacts :=
     accepted_native_tx_leaf_artifact_bytes_expose_shape_facts parsed
   have p3Facts :=
-    canonical_statement_surface_p3_public_input_binding_facts surface
+    canonical_statement_surface_verifier_public_input_binding_facts surface
   exact
     { artifactByteShapeFacts := byteFacts
       serializedInputFlagsProject :=

@@ -9,7 +9,6 @@ bincode = "1"
 blake3 = "1.5"
 block-circuit = { path = "../circuits/block", default-features = false }
 block-recursion = { path = "../circuits/block-recursion" }
-tx-proof-manifest = { path = "../circuits/tx-proof-manifest" }
 crossbeam-channel = "0.5"
 crypto = { package = "synthetic-crypto", path = "../crypto" }
 hex = "0.4"
@@ -26,7 +25,6 @@ protocol-versioning = { path = "../protocol/versioning" }
 serde = { version = "1", features = ["derive"] }
 transaction-circuit = { path = "../circuits/transaction" }
 transaction-core = { path = "../circuits/transaction-core" }
-zstd = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 network = { path = "../network" }

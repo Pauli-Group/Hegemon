@@ -10,30 +10,53 @@ We will acknowledge receipt within 48 hours and provide a detailed response with
 
 ## Block Validity Architecture
 
-Block validity is enforced via **commitment proofs + parallel transaction-proof verification**:
+Block validity is enforced via **independent transaction proofs plus deterministic
+consensus replay**:
 
-1. **Commitment proof**: A small STARK that binds the list of transaction proof hashes (via Poseidon sponge), state roots, nullifier uniqueness (via permutation + adjacency checks), and DA root. Verified at block import.
-2. **Transaction proofs**: Each shielded transfer carries a STARK proof verified in parallel at import time.
-3. **DA sampling**: Each node samples erasure-coded chunks using per-node randomness (not predictable by the block producer).
+1. **Transaction proofs**: Each shielded transfer carries one canonical
+   V4/Gamma SmallWood proof. Import verifies every proof independently in block
+   order.
+2. **Block commitments**: The header binds the ordered action body, state roots,
+   supply transition, and DA fields. Consensus recomputes those values while
+   replaying the block.
+3. **DA sampling**: Each node samples erasure-coded chunks using per-node
+   randomness that is not predictable by the block producer.
 
-State-transition Merkle updates are deterministic and computed by consensus at import time, not inside the SNARK.
+The old commitment-proof and recursive/aggregate authoring backends are not
+executable. Historical recursive artifacts retain bounded, canonical
+verification solely so existing chain data remains replayable.
 
 ## Known Security Limitations
 
-### Commitment Proofs
+### Deterministic State Replay
 
-- **Row budget constraints**: In-circuit Merkle updates exceed the ~2^14 row target (each depth-32 append costs ~10k rows), so state transitions are verified outside the proof. This is sound because state updates are deterministic given valid transactions.
-- **Nullifier-free blocks**: Blocks with no shielded transactions (coinbase-only) do not carry a commitment proof; they are validated via standard consensus rules.
+- **State transition scope**: Note-tree updates, nullifier uniqueness, supply,
+  and block-body commitments are deterministic consensus computations outside
+  each transaction proof. The formal supply chain binds accepted transaction
+  relations to the ordered block transition, while arbitrary compiled
+  native-node refinement remains an explicit assumption.
+- **Coinbase-only blocks**: Blocks with no shielded transactions are validated
+  directly by the ordinary consensus and supply rules.
 
-### Recursive Proofs
+### Historical Recursive Proofs
 
-The shipped non-empty shielded-block path uses the native SmallWood `recursive_block_v2` artifact. The old Plonky3 recursion path and recursive epoch proofs remain removed. Plonky3 workspace crates are retained only as non-executable research material and are forbidden from the normal/build dependency graphs of `hegemon-node`, `wallet`, and `walletd` by `scripts/check_native_runtime_dependencies.sh`.
+Fresh blocks contain ordered independent V4/Gamma transaction proofs and no
+recursive, accumulated, receipt-root, or aggregate authoring artifact. The
+historical `recursive_block_v2` decoder/verifier remains for replay only.
+Plonky3 authoring crates, source modules, workspace members, and locked
+dependencies have been removed. `scripts/check_native_runtime_dependencies.sh`
+also fails if a Plonky3 package is reintroduced into a shipped binary graph.
 
 ### PQ Security Margins
 
 - Note encryption and PQ transport handshake use ML-KEM-1024 (NIST Level 5) with 32-byte shared secrets.
 - Commitments, nullifiers, and Merkle roots use 48-byte (384-bit) digests, yielding ~128-bit post-quantum collision security under generic BHT attacks.
-- Local production proving and native action submission use the SmallWood V3 no-grinding profile with 24 distinct DECS openings. The production profile guard computes the exact statement geometry and rejects any profile below the 128-bit engineering floor. V2 verification remains executable so new nodes can replay existing chain data; excluding newly mined V2 blocks requires a separately coordinated consensus activation checkpoint or height.
+- Local production proving and native action submission use the SmallWood
+  V4/Gamma no-grinding profile. It fixes `rho = 5`, five PIOP openings,
+  `beta = 7`, a `2^20` DECS domain, 20 distinct DECS openings, and `eta = 33`.
+  The production profile guard derives the exact statement geometry and
+  rejects any profile below the strict 260-bit interactive floor. V2/Beta and
+  V3/Beta verification remain executable only for historical replay.
 
 ### Soundness Accounting (Engineering Estimate)
 
@@ -41,11 +64,23 @@ For this repository we track soundness as the minimum of (a) hash-based binding 
 
 Hash binding (PQ): for a sponge with capacity `c` bits, generic quantum collision search costs `O(2^{c/3})`, so the engineering security level is approximately `c/3` bits. With 6 Goldilocks field elements of capacity, `c ≈ 6 × 64 = 384` bits, giving ~128-bit post-quantum collision resistance.
 
-SmallWood soundness (engineering, current): the V3 profile fixes `rho = 3`, three PIOP openings, `beta = 2`, a 32,768-point DECS domain, 24 distinct DECS openings, `eta = 3`, and zero grinding bits. `ensure_production_smallwood_soundness_floor` derives the four SmallWood error terms from the exact production statement and fails closed below 128 bits.
+SmallWood soundness (current modeled chain): the exact V4/Gamma integer
+calculation yields an interactive aggregate floor of approximately `262.718`
+bits. The final finite-QROM theorem charges its explicit query-dependent loss
+instead of relabeling that interactive number as deployed PQ security.
+`ensure_production_smallwood_soundness_floor` derives the four SmallWood terms
+from the exact production statement and fails closed below the configured
+floor.
 
-Therefore, with the current production parameters, the limiting factor is the shared 128-bit target itself: hash binding is approximately 128-bit post-quantum and the exact SmallWood statement guard enforces at least a 128-bit engineering floor.
-
-Formal caveat: this is not a formal post-quantum proof in the quantum random-oracle model; it is an engineering-level accounting. A dedicated PQ analysis is required before making stronger external claims.
+The Lean cryptography package proves the exact finite-QROM extraction statement
+for the modeled oracle game and carries the accepted proof through the
+transaction and block-supply relations. The remaining security boundary is
+explicit: deployed domain-separated SHA-512 must instantiate that modeled QRO,
+SHA-512 and Poseidon2 must provide the required hardness in their exact
+domains, and the checked parser/verifier refinement must match the compiled
+Rust execution and machine environment. This is strong internal evidence, not
+an independent cryptographic review or permission to claim a NIST level from
+the interactive floor alone.
 
 ### References (Starting Point)
 

@@ -13,10 +13,10 @@ The unified `hegemon` binary is the canonical way to exercise the node and walle
 | Area | Language | Primary Commands |
 | --- | --- | --- |
 | PQ primitives (`crypto/`) | Rust 1.75+ | `cargo fmt --all`, `cargo test -p synthetic-crypto` |
-| Core circuits (`circuits/block`, `circuits/transaction`, `circuits/disclosure`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit`, `cargo test -p disclosure-circuit` |
+| Core circuits (`circuits/block`, `circuits/transaction`) | Rust 1.75+ | `cargo test -p block-circuit`, `cargo test -p transaction-circuit` |
 | Node/protocol/network (`node`, `protocol/*`, `network`, `consensus`) | Rust 1.75+ | `cargo test -p consensus`, `cargo test -p network`, `cargo test -p protocol-kernel`, `cargo test -p protocol-shielded-pool`, `cargo test -p hegemon-node --lib`, `cargo build -p hegemon-node --release` |
 | Wallet (`wallet`) | Rust 1.75+ | `cargo test -p wallet`, `cargo test --test security_pipeline -- --nocapture` |
-| Manual simulators/benchmarks (`circuits/bench`, `wallet/bench`, `consensus/bench`) | Rust + Go 1.21 | `cargo run -p circuits-bench -- --smoke`, `cargo run -p wallet-bench -- --smoke`, `go test ./...` inside `consensus/bench`, `go run ./cmd/netbench --smoke` |
+| Manual simulators/benchmarks (SmallWood candidates, `wallet/bench`, `consensus/bench`) | Rust + Go 1.21 | `cargo test -p transaction-circuit compressed_level5_radix2_roundtrip_benchmark --release -- --ignored --nocapture`, `cargo run -p wallet-bench -- --smoke`, `go test ./...` inside `consensus/bench`, `go run ./cmd/netbench --smoke` |
 
 The correctness/build commands below are what CI enforces by default. Performance and benchmark harnesses remain manual tools.
 
@@ -34,10 +34,8 @@ GitHub Actions runs `.github/workflows/ci.yml` on every push/PR. Jobs:
 - `release-build`: builds the release `hegemon-node` binary through `./scripts/check-core.sh build`.
 
 Default CI no longer does a blanket `cargo test --workspace`. The gate is intentionally curated around the shipping native node, wallet, protocol, and circuit path so it clears quickly and does not burn time on dead or auxiliary lanes.
-The expensive `circuits/batch` proving tests are intentionally `#[ignore]` because that auxiliary batch lane is not part of the live path; default CI keeps only cheap structural sanity coverage for that crate.
-
 Operator-scenario harnesses such as `./scripts/test-node.sh two-node-restart` remain available for manual debugging, but they are not part of the default blocking CI gate.
-Benchmark, simulator, and profiling harnesses such as `circuits-bench`, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
+Benchmark, simulator, and profiling harnesses such as the release-mode SmallWood candidate benchmark, `wallet-bench`, `go test ./...` in `consensus/bench`, and `netbench` are also manual, not part of default CI.
 The merge-blocking hostile minimum is `HEGEMON_REDTEAM_MODE=ci bash scripts/run_proving_redteam.sh`. Heavier adversarial/property harnesses such as `cargo test -p consensus --test fuzz -- --ignored`, `cargo test -p transaction-circuit --test security_fuzz`, `cargo test -p network --test adversarial`, `cargo test -p wallet --test address_fuzz`, and `HEGEMON_REDTEAM_MODE=full bash scripts/run_proving_redteam.sh` remain manual unless you are hardening those surfaces or preparing a release.
 
 When you add a new crate or language toolchain, extend CI accordingly **and** document the new step here and in `METHODS.md`.
@@ -50,13 +48,11 @@ Use `./scripts/dependency-audit-gate.sh` before opening security-sensitive PRs. 
 
 Three benchmarking harnesses exist to make performance work repeatable:
 
-1. `cargo run -p circuits-bench -- --smoke` – exercises circuit witness generation and proof verification loops with bounded rows, reporting hash rounds per second.
+1. `cargo test -p transaction-circuit compressed_level5_radix2_roundtrip_benchmark --release -- --ignored --nocapture` – constructs, proves, parses, and verifies the exact 64- and 128-lane SmallWood candidates and reports proof bytes plus proving and verification latency.
 2. `go run ./cmd/netbench --smoke` (inside `consensus/bench`) – simulates miner gossip and reports achieved messages/second given synthetic PQ signature sizes and payload targets.
 3. `cargo run -p wallet-bench -- --smoke` – constructs shielded notes, derives nullifiers, and signs view keys to report wallet ops/second.
-4. `cargo test --manifest-path spikes/recursion/Cargo.toml --test transaction_aggregate -- --ignored` – measures aggregation proof size/prove/verify time (not in CI; update ExecPlan notes when metrics change).
-5. `cargo test -p batch-circuit batch_proof_verifies_for_single_input_witness -- --ignored` and `cargo test -p batch-circuit batch_proof_verifies_for_four_single_input_witnesses -- --ignored` – exercise the expensive auxiliary batch proving lane when changing `circuits/batch` or its benchmark harness.
 
-Each harness supports `--iterations <N>` and `--prove/--no-prove` toggles for deeper profiling. Capture benchmark deltas in pull requests when you optimize anything in the hot path.
+Capture benchmark deltas in pull requests when you optimize anything in the hot path.
 
 ## PQ design guardrails
 

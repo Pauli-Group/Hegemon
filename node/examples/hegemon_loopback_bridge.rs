@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
         .transpose()?
         .ok_or_else(|| {
             anyhow!(
-                "missing --risc0-receipt-hex; prove canonical.long_range_proof with zk/risc0-bridge/prover first"
+                "missing --risc0-receipt-hex; RISC Zero receipt authoring is retired, so provide an explicit compatibility fixture"
             )
         })?;
     let mut envelope_bytes = proof_receipt.as_slice();

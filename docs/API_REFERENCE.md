@@ -22,9 +22,9 @@ This reference summarizes the public APIs of the monorepo components and points 
 ## `circuits/`
 
 - `transaction-circuit` exposes `proof::prove(witness, proving_key) -> TransactionProof` and `proof::verify(proof, verifying_key) -> VerificationReport` on the SmallWood-only production path. Production verification rejects retired backend identifiers, missing proof bytes, and malformed public inputs; commitment/nullifier encodings are 48-byte values with six canonical limbs (validated via `hashing_pq::is_canonical_bytes48`).
-- `circuits/disclosure` is retired source and is excluded from shipped executable dependency graphs and release tests.
+- No disclosure-proof backend ships; wallet payment-proof creation and verification remain fail-closed.
 - `block-circuit` retains legacy block-proof wrappers and statement helpers; new native blocks do not construct a block proof.
-- `circuits/bench` binary crate (`circuits-bench`) provides `cargo run -p circuits-bench -- --iterations N --prove` to compile circuits, generate witnesses, and optionally verify proofs. Output includes constraint rows, hash rounds, and per-proof latency.
+- `transaction-circuit` provides the ignored release test `compressed_level5_radix2_roundtrip_benchmark`, which constructs, proves, parses, and verifies the exact 64- and 128-lane SmallWood candidates and reports proof bytes plus proving and verification latency.
 
 ## `consensus/`
 

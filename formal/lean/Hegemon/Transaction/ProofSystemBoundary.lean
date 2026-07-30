@@ -1738,7 +1738,7 @@ theorem deployed_soundness_canonical_surface_exposes_spend_and_balance
       surface
       sound)
 
-theorem deployed_soundness_canonical_surface_public_input_p3_binding_facts
+theorem deployed_soundness_canonical_surface_public_input_verifier_binding_facts
     {wrapper : ProofWrapperInput}
     {shape : PublicInputShape}
     {publicFields : PublicInputBinding.PublicFields}
@@ -1779,11 +1779,11 @@ theorem deployed_soundness_canonical_surface_public_input_p3_binding_facts
         spendWitnesses
         balanceWitness
         slots) :
-    PublicInputBinding.PublicInputP3BindingFacts
+    PublicInputBinding.PublicInputVerifierBindingFacts
       publicFields
       serializedFields
       bound :=
-  canonical_statement_surface_p3_public_input_binding_facts surface
+  canonical_statement_surface_verifier_public_input_binding_facts surface
 
 theorem balance_public_soundness_canonical_surface_authorized_public_delta_value
     {wrapper : ProofWrapperInput}
