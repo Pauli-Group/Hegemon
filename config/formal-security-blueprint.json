@@ -95,7 +95,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: The claim is scoped to the audited release node binary and the current forbidden-primitive pattern set.",
-        "content_blake3": "af9c6eb9cb9364bd68f3c0ea036447867f7f70840ec1b81525060380b720a9ac"
+        "content_blake3": "3797c10a5214cec566748e7b379b6dd7294675f9554374835c23f57a2e6da87a"
       },
       "falsification_cases": [
         {

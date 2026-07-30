@@ -417,7 +417,7 @@ fi
 # Check the exact release artifacts report the production SmallWood path.
 echo -n "Checking shielded protocol uses SmallWood STARK/FRI proofs... "
 if [ "$BINARY_PROFILE_ATTESTED" = true ]; then
-    echo -e "${GREEN}✅ Compiled V3 SmallWood profile attested${NC}"
+    echo -e "${GREEN}✅ Compiled V4/Gamma SmallWood profile attested${NC}"
 elif [ "$REQUIRE_BINARY" = true ]; then
     echo -e "${RED}❌ ACTIVE PROFILE NOT ATTESTED${NC}"
     VIOLATIONS=$((VIOLATIONS + 1))
