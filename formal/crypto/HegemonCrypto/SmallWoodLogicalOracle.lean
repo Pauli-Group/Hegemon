@@ -63,7 +63,7 @@ def canonicalDecsOpeningChallenge : DecsOpeningChallenge := by
     { toFun := fun index => ⟨index.val, by
         have bound := index.isLt
         change index.val < 1048576
-        change index.val < 20 at bound
+        change index.val < 23 at bound
         omega⟩
       inj' := fun left right equal =>
         Fin.ext

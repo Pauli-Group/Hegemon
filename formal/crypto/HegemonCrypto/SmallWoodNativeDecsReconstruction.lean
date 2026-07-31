@@ -8,8 +8,8 @@ set_option maxRecDepth 100000
 /-!
 # Exact native DECS response reconstruction
 
-The production verifier receives 107 high coefficients for each of the 33 DECS response
-polynomials. It reconstructs the missing 20 low coefficients from the 20 authenticated row
+The production verifier receives 375 high coefficients for each of the five DECS response
+polynomials. It reconstructs the missing 23 low coefficients from the 23 authenticated row
 evaluations selected by the fixed sampler. This module models that exact `poly_restore` call and
 proves that the reconstructed message satisfies every DECS row equation consumed by extraction.
 -/
@@ -29,15 +29,15 @@ open scoped BigOperators
 
 noncomputable section
 
-/-- Number of coefficients transmitted at degrees 20 through 126. -/
+/-- Number of coefficients transmitted at degrees 23 through 397. -/
 abbrev NativeDecsHighCount :=
   decsPolynomialDegree + 1 - decsOpenedEvaluations
 
 abbrev NativeDecsHighCoefficients :=
   Matrix decsEta NativeDecsHighCount
 
-theorem native_decs_high_count_is_107 :
-    NativeDecsHighCount = 107 := by
+theorem native_decs_high_count_is_375 :
+    NativeDecsHighCount = 375 := by
   decide
 
 /-- Transmitted DECS coefficients placed at their actual polynomial degrees. -/
@@ -59,8 +59,8 @@ theorem native_decs_high_part_degree_le
   refine natDegree_mul_le.trans ?_
   simp only [natDegree_C, natDegree_X_pow, zero_add]
   have coefficientBound := coefficient.isLt
-  change coefficient.val < 107 at coefficientBound
-  change 20 + coefficient.val ≤ 126
+  change coefficient.val < 375 at coefficientBound
+  change 23 + coefficient.val ≤ 397
   omega
 
 /-- Exact response value computed from one reconstructed authenticated row. -/
@@ -112,7 +112,7 @@ theorem restored_native_decs_polynomial_degree_le
         decsPolynomialDegree := by
   apply restore_polynomial_natDegree_le
   · exact (native_decs_opening_point_injective coordinates decsOpening exact).injOn
-  · change 20 ≤ 126 + 1
+  · change 23 ≤ 397 + 1
     decide
   · exact native_decs_high_part_degree_le high repetition
 

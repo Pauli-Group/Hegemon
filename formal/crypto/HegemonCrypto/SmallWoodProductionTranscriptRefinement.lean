@@ -14,10 +14,10 @@ Goldilocks rejection sampling only for verifier challenges.  This module keeps t
 surfaces separate and constructs the four interactive challenges from the exact raw production
 transcript:
 
-1. the 33-by-483 DECS batching matrix;
+1. the 5-by-138 DECS batching matrix;
 2. the statement-sized 5-row PIOP batching matrix;
 3. the first valid five-point PIOP opening tuple among sixteen nonce attempts; and
-4. the fixed 50-candidate, first-20-distinct DECS opening set.
+4. the fixed 50-candidate, first-23-distinct DECS opening set.
 
 All functions below are deterministic consequences of one raw SHA-512 oracle.  No random-oracle
 or collision-resistance assumption is used here.
@@ -219,7 +219,7 @@ def productionDecsCandidates
       transcript.opening).words
     activeDecsFixedCandidateCount
 
-/-- Exact sorted first-20-distinct DECS indices selected by the native verifier. -/
+/-- Exact sorted first-23-distinct DECS indices selected by the native verifier. -/
 def productionDecsSelectedIndices
     (rawOracle : RawOracle)
     (transcript : Transcript) :

@@ -209,16 +209,16 @@ theorem proof_wire_represents_active_dimensions
       ∧ proof.piop.polynomialHighs.columnCount = 476
       ∧ proof.piop.linearHighs.rowCount = 5
       ∧ proof.piop.linearHighs.columnCount = 126
-      ∧ proof.pcs.randomCombinationTails.rowCount = 35
-      ∧ proof.pcs.randomCombinationTails.columnCount = 20
-      ∧ proof.pcs.subsetEvaluations.rowCount = 20
-      ∧ proof.pcs.subsetEvaluations.columnCount = 448
+      ∧ proof.pcs.randomCombinationTails.rowCount = 10
+      ∧ proof.pcs.randomCombinationTails.columnCount = 23
+      ∧ proof.pcs.subsetEvaluations.rowCount = 23
+      ∧ proof.pcs.subsetEvaluations.columnCount = 128
       ∧ proof.pcs.partialEvaluations.rowCount = 5
       ∧ proof.pcs.partialEvaluations.columnCount = 40
-      ∧ proof.pcs.decs.maskingEvaluations.rowCount = 20
-      ∧ proof.pcs.decs.maskingEvaluations.columnCount = 33
-      ∧ proof.pcs.decs.highCoefficients.rowCount = 33
-      ∧ proof.pcs.decs.highCoefficients.columnCount = 107 := by
+      ∧ proof.pcs.decs.maskingEvaluations.rowCount = 23
+      ∧ proof.pcs.decs.maskingEvaluations.columnCount = 5
+      ∧ proof.pcs.decs.highCoefficients.rowCount = 5
+      ∧ proof.pcs.decs.highCoefficients.columnCount = 375 := by
   rcases represents with
     ⟨nonlinear, linear, tails, subset, partialEvaluations, _paths,
       masking, decsHigh, _opened⟩

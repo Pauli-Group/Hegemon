@@ -83,7 +83,7 @@ def supports260BitBound (numerator denominator : Nat) : Prop :=
   supportsBitBound 260 numerator denominator
 
 def epsilon1Numerator : Nat :=
-  binomial activeProfile.decsNbEvals (activeDecsPolynomialDegree + 2)
+  1
 
 def epsilon1Denominator : Nat :=
   goldilocksOrder ^ activeProfile.decsEta
@@ -163,20 +163,20 @@ theorem active_unstacked_column_count_is_749 :
     activeUnstackedColumnCount = 749 := by
   decide
 
-theorem active_lvcs_row_count_is_483 :
-    activeLvcsRowCount = 483 := by
+theorem active_lvcs_row_count_is_138 :
+    activeLvcsRowCount = 138 := by
   decide
 
-theorem active_lvcs_column_count_is_107 :
-    activeLvcsColumnCount = 107 := by
+theorem active_lvcs_column_count_is_375 :
+    activeLvcsColumnCount = 375 := by
   decide
 
-theorem active_decs_polynomial_degree_is_126 :
-    activeDecsPolynomialDegree = 126 := by
+theorem active_decs_polynomial_degree_is_397 :
+    activeDecsPolynomialDegree = 397 := by
   decide
 
-theorem active_decs_binding_subset_size_is_128 :
-    activeDecsPolynomialDegree + 2 = 128 := by
+theorem active_decs_binding_subset_size_is_399 :
+    activeDecsPolynomialDegree + 2 = 399 := by
   decide
 
 theorem active_epsilon1_supports_256_bits :

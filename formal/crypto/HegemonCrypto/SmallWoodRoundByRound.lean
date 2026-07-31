@@ -30,7 +30,7 @@ open Hegemon.Transaction.SmallWoodProductionConstraintRefinement
 
 def rho : Nat := activeParameters.repetitions
 def openedEvaluations : Nat := activeParameters.openedEvaluations
-def beta : Nat := 7
+def beta : Nat := 2
 def packingFactor : Nat := 64
 def rowCount : Nat := 699
 def nonlinearConstraintCount : Nat := 890
@@ -65,10 +65,10 @@ theorem active_geometry :
     linearMaskPolynomialDegree = 131 ∧
     polynomialCount = 709 ∧
     unstackedRowCount = 69 ∧
-    lvcsRowCount = 483 ∧
-    lvcsColumnCount = 107 ∧
-    openedCombinationCount = 35 ∧
-    decsPolynomialDegree = 126 := by
+    lvcsRowCount = 138 ∧
+    lvcsColumnCount = 375 ∧
+    openedCombinationCount = 10 ∧
+    decsPolynomialDegree = 397 := by
   decide
 
 /-- Exact active statement geometry required before this transcript can authorize production. -/
@@ -148,7 +148,7 @@ noncomputable instance piopOpeningChallengeDecidableEq :
 
 /--
 Full LVCS combination values sent before DECS indexes are sampled. Each row is serialized as
-107 data values followed by 20 hiding values; it is not a polynomial coefficient vector.
+375 data values followed by 23 hiding values; it is not a polynomial coefficient vector.
 -/
 abbrev PcsCombinationMessage :=
   Matrix openedCombinationCount (lvcsColumnCount + decsOpenedEvaluations)
@@ -164,7 +164,7 @@ abbrev OpenedOracleRows (challenge : DecsOpeningChallenge) :=
     Fin (lvcsRowCount + decsEta) -> FieldWord
 
 theorem active_oracle_row_width :
-    lvcsRowCount + decsEta = 516 := by
+    lvcsRowCount + decsEta = 143 := by
   decide
 
 /-! ## The underlying public-coin interactive oracle proof -/
@@ -459,13 +459,13 @@ structure FinalOpeningMessage where
   openedPolynomialEvaluations : Matrix openedEvaluations polynomialCount
 
 theorem active_final_opening_dimensions :
-    lvcsRowCount - openedCombinationCount = 448 ∧
+    lvcsRowCount - openedCombinationCount = 128 ∧
     unstackedColumnCount - polynomialCount = 40 := by
   decide
 
 /--
-One complete logical compiled transcript. `pcsMessage` contains the 107 data values followed by
-20 hiding values for every combination; the native wire transmits the hiding tails and reconstructs
+One complete logical compiled transcript. `pcsMessage` contains the 375 data values followed by
+23 hiding values for every combination; the native wire transmits the hiding tails and reconstructs
 the data heads from the final response.
 -/
 structure Transcript (statement : Statement) where

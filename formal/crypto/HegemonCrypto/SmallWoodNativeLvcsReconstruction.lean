@@ -6,13 +6,13 @@ set_option maxRecDepth 100000
 /-!
 # Exact native LVCS row reconstruction
 
-`lvcs_recompute_rows` receives 448 transmitted row values and solves for the 35 omitted values.
-The omitted coordinates are the first five rows of each of seven stacking blocks.  Their production
-coefficient matrix is seven independent five-by-five Vandermonde systems.
+`lvcs_recompute_rows` receives 128 transmitted row values and solves for the 10 omitted values.
+The omitted coordinates are the first five rows of each of two stacking blocks. Their production
+coefficient matrix is two independent five-by-five Vandermonde systems.
 
 This file defines that solve without assuming the resulting LVCS equations.  Injectivity follows
 from the existing Vandermonde theorem; equal finite dimensions then give surjectivity.  The
-reconstructed row therefore satisfies all 35 equations by construction.
+reconstructed row therefore satisfies all 10 equations by construction.
 -/
 
 namespace HegemonCrypto.SmallWood.NativeLvcsReconstruction
@@ -32,7 +32,7 @@ noncomputable section
 abbrev SelectedLvcsValues :=
   Fin beta -> Fin openedEvaluations -> Goldilocks
 
-/-- The seven independent production Vandermonde systems. -/
+/-- The two independent production Vandermonde systems. -/
 def selectedLvcsTransform
     (opening : PiopOpeningChallenge)
     (values : SelectedLvcsValues) : SelectedLvcsValues :=
@@ -71,7 +71,7 @@ theorem selected_lvcs_transform_preimage
     selectedLvcsTransform opening (selectedLvcsPreimage opening target) = target :=
   Classical.choose_spec (selected_lvcs_transform_surjective opening target)
 
-/-- Embed 35 selected values into the complete 483-row space. -/
+/-- Embed 10 selected values into the complete 138-row space. -/
 def liftSelectedLvcsValues
     (values : SelectedLvcsValues)
     (row : Fin lvcsRowCount) : Goldilocks :=
@@ -92,8 +92,8 @@ private theorem selected_lvcs_row_injective :
   have rightBlockBound := right.1.isLt
   have leftExponentBound := left.2.isLt
   have rightExponentBound := right.2.isLt
-  change left.1.val < 7 at leftBlockBound
-  change right.1.val < 7 at rightBlockBound
+  change left.1.val < 2 at leftBlockBound
+  change right.1.val < 2 at rightBlockBound
   change left.2.val < 5 at leftExponentBound
   change right.2.val < 5 at rightExponentBound
   change
@@ -232,7 +232,7 @@ def nativeLvcsResidual
       nativeLvcsBaseContribution opening baseRow block openingIndex
 
 /--
-Exact mathematical row returned by the native linear solve.  `baseRow` carries the 448 transmitted
+Exact mathematical row returned by the native linear solve. `baseRow` carries the 128 transmitted
 values (and arbitrary placeholders in selected slots); the selected correction is uniquely solved.
 -/
 def reconstructNativeLvcsRow
@@ -299,22 +299,22 @@ theorem production_combination_index_roundtrip
       combination := by
   apply Fin.ext
   have combinationBound := combination.isLt
-  change combination.val < 35 at combinationBound
+  change combination.val < 10 at combinationBound
   simp [productionCombinationIndex, combinationOpeningIndex,
     combinationBlockIndex, beta]
   omega
 
-/-- The 448 transmitted LVCS values, with arbitrary placeholders in the 35 solved positions. -/
+/-- The 128 transmitted LVCS values, with arbitrary placeholders in the 10 solved positions. -/
 abbrev NativeLvcsBaseRows :=
   OpeningIndex -> Fin lvcsRowCount -> Goldilocks
 
-/-- The 33 proof-supplied masking values appended to every authenticated leaf. -/
+/-- The five proof-supplied masking values appended to every authenticated leaf. -/
 abbrev NativeMaskingRows :=
   OpeningIndex -> Fin decsEta -> FieldWord
 
 /--
-Exact 516-word row authenticated by `decs_recompute_root`: the 483 reconstructed LVCS values
-followed by the 33 proof-supplied masking values.
+Exact 143-word row authenticated by `decs_recompute_root`: the 138 reconstructed LVCS values
+followed by the five proof-supplied masking values.
 -/
 def reconstructNativeProductionRow
     (opening : PiopOpeningChallenge)

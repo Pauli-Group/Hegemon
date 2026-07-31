@@ -101,14 +101,14 @@ LVCS row.
 def activeDecsCoefficientWordCount : Nat :=
   HegemonCrypto.SmallWoodTranscript.activeDecsCoefficientWordCount
 
-theorem active_decs_coefficient_word_count_is_15939 :
-    activeDecsCoefficientWordCount = 15939 := by
+theorem active_decs_coefficient_word_count_is_690 :
+    activeDecsCoefficientWordCount = 690 := by
   decide
 
 /--
 Active accepted-challenge output-prefix lengths: the uniform DECS matrix, the full uniform PIOP
 matrix, one selected PIOP-opening candidate, and the fixed DECS candidate pool. The last 50 words
-are deterministically filtered to the first 20 distinct indices.
+are deterministically filtered to the first 23 distinct indices.
 
 Canonical PIOP nonce selection may evaluate up to 16 distinct five-word candidates.  That retry
 trace is accounted separately below instead of being hidden in this accepted-edge shape.
@@ -134,11 +134,11 @@ def activeChallengeMinimumSha512DigestCalls : List Nat :=
   activeChallengeOutputWordCounts.map minimumSha512DigestCalls
 
 theorem active_challenge_minimum_sha512_digest_calls :
-    activeChallengeMinimumSha512DigestCalls = [1993, 11464, 1, 7] := by
+    activeChallengeMinimumSha512DigestCalls = [87, 11464, 1, 7] := by
   decide
 
 theorem active_challenge_minimum_sha512_digest_call_total :
-    activeChallengeMinimumSha512DigestCalls.sum = 13465 := by
+    activeChallengeMinimumSha512DigestCalls.sum = 11559 := by
   decide
 
 /--
@@ -166,7 +166,7 @@ def activeChallengeWorstCaseMinimumSha512DigestCallTotal : Nat :=
       HegemonCrypto.SmallWoodTranscript.activeDecsFixedCandidateCount
 
 theorem active_challenge_worst_case_minimum_sha512_digest_call_total :
-    activeChallengeWorstCaseMinimumSha512DigestCallTotal = 13480 := by
+    activeChallengeWorstCaseMinimumSha512DigestCallTotal = 11574 := by
   decide
 
 /--

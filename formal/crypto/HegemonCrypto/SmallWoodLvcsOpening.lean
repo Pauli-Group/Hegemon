@@ -8,13 +8,13 @@ set_option maxRecDepth 100000
 # Exact SmallWood LVCS opening transition
 
 The fourth SmallWood error term is not a claim that random sampling detects an arbitrary bad
-word. It applies after DECS extraction has fixed degree-126 row polynomials. A false LVCS
-opening then creates a nonzero degree-126 discrepancy polynomial, so all 20 sampled DECS
+word. It applies after DECS extraction has fixed degree-397 row polynomials. A false LVCS
+opening then creates a nonzero degree-397 discrepancy polynomial, so all 23 sampled DECS
 positions can pass only when they are roots of that polynomial.
 
-This module proves that exact implication and the resulting hypergeometric bound.  It also models
-the production Rust layout: a combination message is transmitted as 107 data values followed by
-20 hiding values, then rotated to `[hiding | data]` before interpolation at `0 .. 126`.
+This module proves that exact implication and the resulting hypergeometric bound. It also models
+the production Rust layout: a combination message is transmitted as 375 data values followed by
+23 hiding values, then rotated to `[hiding | data]` before interpolation at `0 .. 397`.
 -/
 
 namespace HegemonCrypto.SmallWood.LvcsOpening
@@ -46,19 +46,19 @@ theorem lvcs_interpolation_point_injective :
   rw [fromGoldilocks_toGoldilocks, fromGoldilocks_toGoldilocks] at naturalEquality
   have leftBound : left.val < goldilocksModulus := by
     have := left.isLt
-    change left.val < 127 at this
+    change left.val < 398 at this
     exact this.trans (by decide)
   have rightBound : right.val < goldilocksModulus := by
     have := right.isLt
-    change right.val < 127 at this
+    change right.val < 398 at this
     exact this.trans (by decide)
   simp [fieldValue, Nat.mod_eq_of_lt leftBound,
     Nat.mod_eq_of_lt rightBound] at naturalEquality
   exact Fin.ext naturalEquality
 
 /--
-Value at one post-rotation interpolation point. The wire message is `[107 data | 20 hiding]`;
-Rust rotates it to `[20 hiding | 107 data]`.
+Value at one post-rotation interpolation point. The wire message is `[375 data | 23 hiding]`;
+Rust rotates it to `[23 hiding | 375 data]`.
 -/
 def rotatedCombinationValue
     (message : PcsCombinationMessage)
@@ -69,17 +69,17 @@ def rotatedCombinationValue
       (message combination
         ⟨lvcsColumnCount + index.val, by
           have indexBound := index.isLt
-          change index.val < 127 at indexBound
-          change 107 + index.val < 127
-          change index.val < 20 at isHiding
+          change index.val < 398 at indexBound
+          change 375 + index.val < 398
+          change index.val < 23 at isHiding
           omega⟩)
   else
     wordToGoldilocks
       (message combination
         ⟨index.val - decsOpenedEvaluations, by
           have indexBound := index.isLt
-          change index.val < 127 at indexBound
-          change index.val - 20 < 127
+          change index.val < 398 at indexBound
+          change index.val - 23 < 398
           omega⟩)
 
 /-- Exact polynomial reconstructed from one production LVCS combination message. -/
@@ -107,11 +107,11 @@ theorem claimed_combination_polynomial_degree_le
       lvcs_interpolation_point_injective.injOn
   have interpolationCard :
       (Finset.univ :
-        Finset (Fin (lvcsColumnCount + decsOpenedEvaluations))).card = 127 := by
+        Finset (Fin (lvcsColumnCount + decsOpenedEvaluations))).card = 398 := by
     decide
   rw [interpolationCard] at interpolationDegree
-  have indexAtLeast : 127 ≤ degree := by
-    change 126 < degree at aboveBound
+  have indexAtLeast : 398 ≤ degree := by
+    change 397 < degree at aboveBound
     omega
   exact coeff_eq_zero_of_degree_lt
     (interpolationDegree.trans_le (by exact_mod_cast indexAtLeast))
@@ -141,8 +141,8 @@ def combinationOpeningIndex
     (combination : Fin openedCombinationCount) : Fin openedEvaluations :=
   ⟨combination.val / beta, by
     have combinationBound := combination.isLt
-    change combination.val < 35 at combinationBound
-    change combination.val / 7 < 5
+    change combination.val < 10 at combinationBound
+    change combination.val / 2 < 5
     omega⟩
 
 /-- Stacking block `k` in Rust's combination ordering `j * beta + k`. -/
@@ -154,8 +154,8 @@ def combinationBlockIndex
 def lvcsRowBlockIndex (row : Fin lvcsRowCount) : Fin beta :=
   ⟨row.val / unstackedRowCount, by
     have rowBound := row.isLt
-    change row.val < 483 at rowBound
-    change row.val / 69 < 7
+    change row.val < 138 at rowBound
+    change row.val / 69 < 2
     omega⟩
 
 /-- Exponent inside the selected 69-row stacking block. -/
@@ -163,7 +163,7 @@ def lvcsRowExponent (row : Fin lvcsRowCount) : Fin unstackedRowCount :=
   ⟨row.val % unstackedRowCount, Nat.mod_lt _ (by decide)⟩
 
 /--
-Exact coefficient written by `pcs_build_coefficients`: combination `j * 7 + k` contains
+Exact coefficient written by `pcs_build_coefficients`: combination `j * 2 + k` contains
 `1, r_j, ..., r_j^68` on block `k` and zero on every other block.
 -/
 def productionCombinationCoefficient
@@ -196,7 +196,7 @@ theorem production_combination_coefficient_other_block
     productionCombinationCoefficient opening combination row = 0 := by
   simp [productionCombinationCoefficient, other]
 
-/-- Exact production combination index `j * 7 + k`. -/
+/-- Exact production combination index `j * 2 + k`. -/
 def productionCombinationIndex
     (openingIndex : Fin openedEvaluations)
     (block : Fin beta) : Fin openedCombinationCount :=
@@ -204,8 +204,8 @@ def productionCombinationIndex
     have openingBound := openingIndex.isLt
     have blockBound := block.isLt
     change openingIndex.val < 5 at openingBound
-    change block.val < 7 at blockBound
-    change openingIndex.val * 7 + block.val < 35
+    change block.val < 2 at blockBound
+    change openingIndex.val * 2 + block.val < 10
     omega⟩
 
 theorem combination_opening_index_production_combination_index
@@ -224,12 +224,13 @@ theorem combination_block_index_production_combination_index
       block := by
   apply Fin.ext
   have blockBound := block.isLt
-  change block.val < 7 at blockBound
+  change block.val < 2 at blockBound
   simp [combinationBlockIndex, productionCombinationIndex, beta]
+  omega
 
 /--
-The 35 rows omitted from the final wire opening are the first five rows in each
-of the seven stacking blocks, in the exact order used by Rust's `fullrank_cols`.
+The 10 rows omitted from the final wire opening are the first five rows in each
+of the two stacking blocks, in the exact order used by Rust's `fullrank_cols`.
 -/
 def selectedLvcsRow
     (block : Fin beta)
@@ -237,9 +238,9 @@ def selectedLvcsRow
   ⟨block.val * unstackedRowCount + exponent.val, by
     have blockBound := block.isLt
     have exponentBound := exponent.isLt
-    change block.val < 7 at blockBound
+    change block.val < 2 at blockBound
     change exponent.val < 5 at exponentBound
-    change block.val * 69 + exponent.val < 483
+    change block.val * 69 + exponent.val < 138
     omega⟩
 
 theorem lvcs_row_block_index_selected_lvcs_row
@@ -249,7 +250,7 @@ theorem lvcs_row_block_index_selected_lvcs_row
   apply Fin.ext
   have blockBound := block.isLt
   have exponentBound := exponent.isLt
-  change block.val < 7 at blockBound
+  change block.val < 2 at blockBound
   change exponent.val < 5 at exponentBound
   change (block.val * 69 + exponent.val) / 69 = block.val
   omega
@@ -295,9 +296,9 @@ theorem production_combination_coefficient_selected_row
       combination_block_index_production_combination_index]
 
 /--
-The 35 omitted LVCS evaluations are uniquely determined by the 35 production
-combination equations once the other 448 evaluations are known. Algebraically
-this is seven independent 5-by-5 Vandermonde systems. This is the exact
+The 10 omitted LVCS evaluations are uniquely determined by the 10 production
+combination equations once the other 128 evaluations are known. Algebraically
+this is two independent 5-by-5 Vandermonde systems. This is the exact
 full-rank fact relied on by `pcs_reconstruct_combi_heads`.
 -/
 theorem selected_lvcs_reconstruction_unique
@@ -350,7 +351,7 @@ theorem selected_lvcs_reconstruction_unique
   have entryZero := congrFun differenceZero exponent
   exact sub_eq_zero.mp (by simpa [difference] using entryZero)
 
-/-- Every one of the 35 transmitted combination rows matches its committed LVCS linear form. -/
+/-- Every one of the 10 transmitted combination rows matches its committed LVCS linear form. -/
 def ProductionCombinationsMatch
     (opening : PiopOpeningChallenge)
     (message : PcsCombinationMessage)
@@ -399,14 +400,14 @@ theorem active_root_index_set_card_le_natDegree
     _ ≤ polynomial.natDegree :=
       root_set_card_le_nat_degree nonzero
 
-/-- Ideal probability that all 20 uniformly sampled DECS positions hide one discrepancy. -/
+/-- Ideal probability that all 23 uniformly sampled DECS positions hide one discrepancy. -/
 noncomputable def discrepancyOpeningFailureProbability
     (polynomial : Goldilocks[X]) : Rat :=
   (Nat.choose (activeRootIndexSet polynomial).card decsOpenedEvaluations : Rat) /
     Nat.choose decsEvaluationCount decsOpenedEvaluations
 
 /--
-A nonzero degree-126 discrepancy survives the active 20-position DECS opening with probability at
+A nonzero degree-397 discrepancy survives the active 23-position DECS opening with probability at
 most the exact fourth SmallWood error term.
 -/
 theorem discrepancy_opening_failure_probability_le_epsilon4
@@ -500,7 +501,7 @@ theorem production_combination_passes_at_iff_discrepancy_root
   rw [mem_active_root_index_set_iff]
   simp only [ProductionCombinationPassesAt, eval_sub, sub_eq_zero]
 
-/-- All checks for one claimed combination at one fixed 20-position challenge. -/
+/-- All checks for one claimed combination at one fixed 23-position challenge. -/
 def ProductionCombinationPassesOn
     (opening : PiopOpeningChallenge)
     (message : PcsCombinationMessage)

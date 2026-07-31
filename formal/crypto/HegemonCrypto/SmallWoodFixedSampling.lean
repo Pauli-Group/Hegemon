@@ -14,7 +14,7 @@ import Mathlib.Logic.Equiv.Fintype
 # Fixed-work SmallWood DECS sampling
 
 The active Level-5 transcript draws 50 canonical Goldilocks words, rejects the unique top residue
-that would bias reduction modulo `2^20`, keeps the first 20 distinct indices, and sorts them.
+that would bias reduction modulo `2^20`, keeps the first 23 distinct indices, and sorts them.
 There is no prover-selected DECS nonce.
 
 This file proves the deterministic sampler properties and the exact equal-fiber arithmetic behind
@@ -32,7 +32,7 @@ def quotient : Nat := goldilocksModulus / domainSize
 def acceptedCandidateCount : Nat := quotient * domainSize
 
 theorem active_sampling_geometry :
-    domainSize = 1048576 ∧ openingCount = 20 ∧ candidateCount = 50 := by
+    domainSize = 1048576 ∧ openingCount = 23 ∧ candidateCount = 50 := by
   decide
 
 theorem goldilocks_mod_domain_is_one :
@@ -705,7 +705,7 @@ theorem active_sampler_success_yields_exact_distinct_openings
     (oracle : SmallWoodTranscript.Oracle)
     (transcript : SmallWoodTranscript.Transcript)
     (success : ActiveSamplerSucceeds oracle transcript) :
-    (activeSelectedIndices oracle transcript).length = 20 ∧
+    (activeSelectedIndices oracle transcript).length = 23 ∧
       (activeSelectedIndices oracle transcript).Nodup := by
   constructor
   · unfold ActiveSamplerSucceeds at success
@@ -720,8 +720,8 @@ theorem fixed_decs_nonce_is_zero :
   rfl
 
 /--
-Conservative fixed-pool exhaustion envelope. If 50 candidates yield at most 19 accepted distinct
-indices, at least 31 draw positions are rejections or repeats. There are at most `2^50` choices of
+Conservative fixed-pool exhaustion envelope. If 50 candidates yield at most 22 accepted distinct
+indices, at least 28 draw positions are rejections or repeats. There are at most `2^50` choices of
 positions and each such event has conditional probability at most `50 / 2^20`.
 -/
 def exhaustionBadDrawCount : Nat := candidateCount - (openingCount - 1)
@@ -730,8 +730,8 @@ def exhaustionEnvelopeNumerator : Nat :=
 def exhaustionEnvelopeDenominator : Nat :=
   domainSize ^ exhaustionBadDrawCount
 
-theorem exhaustion_bad_draw_count_is_31 :
-    exhaustionBadDrawCount = 31 := by
+theorem exhaustion_bad_draw_count_is_28 :
+    exhaustionBadDrawCount = 28 := by
   decide
 
 theorem fixed_sampler_exhaustion_envelope_below_2pow128 :

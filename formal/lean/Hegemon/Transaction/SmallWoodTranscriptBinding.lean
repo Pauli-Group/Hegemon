@@ -61,11 +61,11 @@ deriving DecidableEq, Repr
 def activeProfile : NoGrindingProfile :=
   { rho := 5,
     nbOpenedEvals := 5,
-    beta := 7,
+    beta := 2,
     openingPowBits := 0,
     decsNbEvals := 1048576,
-    decsNbOpenedEvals := 20,
-    decsEta := 33,
+    decsNbOpenedEvals := 23,
+    decsEta := 5,
     decsPowBits := 0 }
 
 def historicalV3Profile : NoGrindingProfile :=
@@ -533,9 +533,9 @@ theorem smallwood_profile_material_binds_arithmetization :
     activeProfileMaterial != legacyDirectProfileMaterial := by
   decide
 
-theorem active_level5_profile_uses_twenty_decs_openings :
+theorem active_level5_profile_uses_twenty_three_decs_openings :
     (profileForArithmetization
-      arithDirectPacked64CompressedLevel5).decsNbOpenedEvals = 20 := by
+      arithDirectPacked64CompressedLevel5).decsNbOpenedEvals = 23 := by
   rfl
 
 theorem active_level5_profile_uses_strict_rho_five_floor :
@@ -543,14 +543,14 @@ theorem active_level5_profile_uses_strict_rho_five_floor :
       arithDirectPacked64CompressedLevel5).rho = 5 := by
   rfl
 
-theorem active_level5_profile_uses_beta_seven :
+theorem active_level5_profile_uses_beta_two :
     (profileForArithmetization
-      arithDirectPacked64CompressedLevel5).beta = 7 := by
+      arithDirectPacked64CompressedLevel5).beta = 2 := by
   rfl
 
-theorem active_level5_profile_uses_thirty_three_uniform_decs_rows :
+theorem active_level5_profile_uses_five_uniform_decs_rows :
     (profileForArithmetization
-      arithDirectPacked64CompressedLevel5).decsEta = 33 := by
+      arithDirectPacked64CompressedLevel5).decsEta = 5 := by
   rfl
 
 theorem historical_v3_inline_merkle_profile_preserves_rho_three :

@@ -64,7 +64,7 @@ def productionPiopChallengeOutputCount (statement : Statement) : Nat :=
       statement.nonlinearConstraintCount statement.linearConstraintCount
 
 theorem production_decs_challenge_output_count :
-    productionDecsChallengeOutputCount = 15939 := by
+    productionDecsChallengeOutputCount = 690 := by
   decide
 
 def productionOpeningAttemptCount (selectedNonce : Fin piopNonceTrialBound) : Nat :=

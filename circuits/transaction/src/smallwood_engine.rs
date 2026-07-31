@@ -93,11 +93,11 @@ pub const ACTIVE_SMALLWOOD_NO_GRINDING_PROFILE_V1: SmallwoodNoGrindingProfileV1 
     SmallwoodNoGrindingProfileV1 {
         rho: 5,
         nb_opened_evals: 5,
-        beta: 7,
+        beta: 2,
         opening_pow_bits: 0,
         decs_nb_evals: 1_048_576,
-        decs_nb_opened_evals: 20,
-        decs_eta: 33,
+        decs_nb_opened_evals: 23,
+        decs_eta: 5,
         decs_pow_bits: 0,
     };
 
@@ -611,13 +611,16 @@ fn report_smallwood_no_grinding_soundness_from_cfg(
         }
         SmallwoodDecsChallengeFormat::Uniform => profile.decs_eta as f64 * field_order.log2(),
     };
-    // The interactive DECS game fixes the complete oracle before sampling the
-    // matrix, but the compiled Merkle commitment only fixes a partial tree.
-    // Its straight-line extractor may discover the first bad support after the
-    // challenge query.  SmallWood Theorem 1 therefore requires the union over
-    // all (d + 2)-subsets for both challenge formats.
-    let epsilon1_floor_bits =
-        decs_batching_floor_bits - log2_binomial(profile.decs_nb_evals as u128, decs_degree + 2);
+    // A full uniform coefficient matrix lets the extractor select one bad
+    // support from the committed rows before the matrix is sampled. The
+    // failure event is therefore one affine fiber. Scalar-power challenges do
+    // not have this property and retain the support-union penalty.
+    let epsilon1_floor_bits = match cfg.decs_challenge_format {
+        SmallwoodDecsChallengeFormat::ScalarPowers => {
+            decs_batching_floor_bits - log2_binomial(profile.decs_nb_evals as u128, decs_degree + 2)
+        }
+        SmallwoodDecsChallengeFormat::Uniform => decs_batching_floor_bits,
+    };
     // The active PIOP challenge is a full uniform rho-by-constraint matrix.
     let epsilon2 = field_order.powi(-(profile.rho as i32));
     let epsilon2_floor_bits = -epsilon2.log2();
@@ -714,10 +717,9 @@ fn smallwood_no_grinding_exact_terms_from_cfg(
                 * BigUint::from(cfg.nb_lvcs_rows).pow(profile.decs_eta as u32),
             q.pow(profile.decs_eta as u32),
         ),
-        SmallwoodDecsChallengeFormat::Uniform => (
-            binomial(profile.decs_nb_evals as u128, decs_degree + 2)?,
-            q.pow(profile.decs_eta as u32),
-        ),
+        SmallwoodDecsChallengeFormat::Uniform => {
+            (BigUint::from(1u8), q.pow(profile.decs_eta as u32))
+        }
     };
     let epsilon1_numerator = decs_batching_numerator;
     let epsilon1_denominator = decs_batching_denominator;
@@ -3230,7 +3232,7 @@ impl StructuralIdentityWitnessStatement {
         auxiliary_words_len: usize,
     ) -> Result<Self, TransactionCircuitError> {
         Self::new_for_arithmetization(
-            SmallwoodArithmetization::Bridge64V1,
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
             row_count,
             packing_factor,
             constraint_degree,
@@ -7173,7 +7175,7 @@ mod tests {
     }
 
     #[test]
-    fn compressed_level5_geometry_frontier_is_materially_smaller() {
+    fn compressed_level5_tight_uniform_matrix_frontier_is_materially_smaller() {
         const COMPRESSED_ROW_COUNT: usize = 699;
         const COMPRESSED_CONSTRAINT_COUNT: usize = 890;
         const PRODUCTION_PUBLIC_VALUE_COUNT: usize = 78;
@@ -7190,12 +7192,12 @@ mod tests {
         let mut candidates = Vec::new();
         for rho in 5..=5 {
             for opened in 5..=5 {
-                for beta in 1..=16 {
+                for beta in 1..=64 {
                     for domain in [
-                        65_536, 131_072, 262_144, 524_288, 1_048_576, 2_097_152, 4_194_304,
-                        8_388_608,
+                        4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576,
+                        2_097_152, 4_194_304, 8_388_608,
                     ] {
-                        for queries in 15..=48 {
+                        for queries in 1..=SMALLWOOD_LEVEL5_FIXED_DECS_CANDIDATE_COUNT {
                             let probe_profile = SmallwoodNoGrindingProfileV1 {
                                 rho,
                                 nb_opened_evals: opened,
@@ -7206,20 +7208,13 @@ mod tests {
                                 decs_eta: 1,
                                 decs_pow_bits: 0,
                             };
-                            let Ok(probe_cfg) =
+                            let Ok(_probe_cfg) =
                                 SmallwoodConfig::new_with_profile(&statement, probe_profile)
                             else {
                                 continue;
                             };
-                            let decs_degree = probe_cfg
-                                .nb_lvcs_cols
-                                .checked_add(queries)
-                                .and_then(|value| value.checked_sub(1))
-                                .expect("validated DECS geometry");
-                            let required_eta = ((260.0
-                                + log2_binomial(domain as u128, decs_degree + 2))
-                                / (FIELD_ORDER as f64).log2())
-                            .ceil() as usize;
+                            let required_eta =
+                                (260.0 / (FIELD_ORDER as f64).log2()).ceil() as usize;
                             for eta in required_eta..=required_eta.saturating_add(1) {
                                 let profile = SmallwoodNoGrindingProfileV1 {
                                     decs_eta: eta,
@@ -7269,7 +7264,11 @@ mod tests {
             );
         }
         for domain in [
-            65_536usize,
+            4_096usize,
+            8_192,
+            16_384,
+            32_768,
+            65_536,
             131_072,
             262_144usize,
             524_288,

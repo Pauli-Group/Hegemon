@@ -53,11 +53,11 @@ def validate_profile(profile: object, label: str) -> dict:
     expected_no_grinding = {
         "rho": 5,
         "nb_opened_evals": 5,
-        "beta": 7,
+        "beta": 2,
         "opening_pow_bits": 0,
         "decs_nb_evals": 1048576,
-        "decs_nb_opened_evals": 20,
-        "decs_eta": 33,
+        "decs_nb_opened_evals": 23,
+        "decs_eta": 5,
         "decs_pow_bits": 0,
     }
     if no_grinding != expected_no_grinding:

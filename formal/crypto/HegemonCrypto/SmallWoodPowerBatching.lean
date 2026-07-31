@@ -15,9 +15,9 @@ length-`n` residual vector as
 `sum_j residual[j] * gamma^(j + 1)`.
 
 The active Level-5 format instead samples the full uniform matrix required by SmallWood Theorem 1.
-Its exact DECS term is the fixed-support union bound
-`choose(N, d + 2) * |F|^-eta`. The scalar-power reduction below remains for historical proof
-formats; the final theorem pins the active exact arithmetic to that published term.
+Its exact DECS term is one affine-fiber bound `|F|^-eta`, because a bad support is fixed from the
+committed rows before the matrix is sampled. The scalar-power reduction below remains for
+historical proof formats.
 -/
 
 namespace HegemonCrypto.SmallWoodPowerBatching
@@ -680,19 +680,16 @@ theorem ledger_binomial_eq_nat_choose
         (Nat.choose_succ_right_eq value count).symm
 
 /--
-The active ledger's first term is the exact fixed-support union bound from SmallWood Theorem 1:
-there are `choose(N, d + 2)` candidate bad supports, and every fixed nonzero support survives
-the independent uniform affine matrix with probability at most `|F|^-eta`.
+The active ledger's first term is the exact single-support affine-fiber bound. The full uniform
+matrix lets the extractor choose one nonzero support from the committed rows before the matrix
+is sampled, so no union over supports is charged.
 -/
-theorem active_epsilon1_is_decs_support_union_bound :
+theorem active_epsilon1_is_uniform_matrix_bound :
     (epsilon1Numerator : Rat) / epsilon1Denominator =
-      (Nat.choose activeProfile.decsNbEvals
-          (activeDecsPolynomialDegree + 2) : Rat) *
-        ((1 : Rat) / goldilocksOrder) ^ activeProfile.decsEta := by
-  rw [epsilon1Numerator, ledger_binomial_eq_nat_choose, epsilon1Denominator]
+      ((1 : Rat) / goldilocksOrder) ^ activeProfile.decsEta := by
+  rw [epsilon1Numerator, epsilon1Denominator]
   push_cast
-  rw [div_pow, one_pow]
-  simp only [div_eq_mul_inv, one_mul]
+  simp
 
 /--
 The active PIOP challenge is now the full uniform matrix required by SmallWood Theorem 7, so its

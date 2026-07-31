@@ -13,7 +13,7 @@ The interactive SmallWood prover exposes the complete DECS evaluation oracle.  T
 implements the inverse of the active production encoding:
 
 1. interpolate each committed DECS column over the `2^20` Goldilocks subgroup;
-2. undo the LVCS left rotation by evaluating at the 107 data points `20 .. 126`;
+2. undo the LVCS left rotation by evaluating at the 375 data points `23 .. 397`;
 3. undo the fixed two-way stacking into the `69 x 749` matrix;
 4. recover the first 699 degree-68 witness polynomials; and
 5. evaluate those polynomials at the 64 packing points.
@@ -321,7 +321,7 @@ theorem uniform_event_probability_mono
       uniformEventSet left ⊆ uniformEventSet right)
   · positivity
 
-/-- One of the first 483, non-masking columns of the committed oracle. -/
+/-- One of the first 138, non-masking columns of the committed oracle. -/
 def committedColumnValue
     (oracle : CommittedOracle)
     (row : Fin lvcsRowCount)
@@ -331,7 +331,7 @@ def committedColumnValue
       have := row.isLt
       omega⟩)
 
-/-- One of the final 33 independently sampled DECS masking columns. -/
+/-- One of the final five independently sampled DECS masking columns. -/
 def maskingColumnValue
     (oracle : CommittedOracle)
     (repetition : Fin decsEta)
@@ -339,8 +339,8 @@ def maskingColumnValue
   wordToGoldilocks
     (oracle index ⟨lvcsRowCount + repetition.val, by
       have repetitionBound := repetition.isLt
-      change repetition.val < 33 at repetitionBound
-      change 483 + repetition.val < 483 + 33
+      change repetition.val < 5 at repetitionBound
+      change 138 + repetition.val < 138 + 5
       omega⟩)
 
 /-- Semantic first-round acceptance event over the ideal uniform DECS challenge. -/
@@ -398,7 +398,7 @@ theorem interpolated_committed_row_degree_le
         (Finset.univ : Finset (Fin decsEvaluationCount)).card := by
     refine lt_of_le_of_lt (degree_le_of_natDegree_le polynomialDegree) ?_
     rw [degreeValue, domainCard]
-    exact_mod_cast (by decide : 126 < 1048576)
+    exact_mod_cast (by decide : 397 < 1048576)
   have interpolationEquation :
       polynomial = interpolatedCommittedRow oracle row := by
     apply Lagrange.eq_interpolate_of_eval_eq
@@ -409,7 +409,7 @@ theorem interpolated_committed_row_degree_le
   exact polynomialDegree
 
 /--
-If any committed LVCS row is outside the active degree-126 code, all 33 independently masked
+If any committed LVCS row is outside the active degree-397 code, all five independently masked
 combinations are degree bounded only within the exact first SmallWood failure term.
 -/
 theorem invalid_committed_rows_degree_failure_probability_le
@@ -475,10 +475,10 @@ theorem invalid_committed_rows_decs_challenge_probability_le
     oracle notDegreeBounded
 
 /--
-The active LVCS encoder appends 20 hiding values to one 107-cell stacked row, rotates the
-127-value vector left by 107, and interpolates those rotated values at the consecutive points
-`0 .. 126`. The original stacked row is therefore recovered by evaluating the committed
-polynomial at points `20 .. 126`; these are values, not polynomial coefficients.
+The active LVCS encoder appends 23 hiding values to one 375-cell stacked row, rotates the
+398-value vector left by 375, and interpolates those rotated values at the consecutive points
+`0 .. 397`. The original stacked row is therefore recovered by evaluating the committed
+polynomial at points `23 .. 397`; these are values, not polynomial coefficients.
 -/
 def lvcsDataPoint (column : Fin lvcsColumnCount) : Goldilocks :=
   toGoldilocks (decsOpenedEvaluations + column.val)
@@ -498,11 +498,11 @@ def stackedRowIndex
     have columnBound := column.isLt
     change row.val < 69 at rowBound
     change column.val < 749 at columnBound
-    change (column.val / 107) * 69 + row.val < 483
-    have blockBound : column.val / 107 < 7 := by omega
+    change (column.val / 375) * 69 + row.val < 138
+    have blockBound : column.val / 375 < 2 := by omega
     omega⟩
 
-/-- Column inside the 107-cell stacked row containing one unstacked matrix cell. -/
+/-- Column inside the 375-cell stacked row containing one unstacked matrix cell. -/
 def stackedColumnIndex
     (column : Fin unstackedColumnCount) : Fin lvcsColumnCount :=
   ⟨column.val % lvcsColumnCount, by

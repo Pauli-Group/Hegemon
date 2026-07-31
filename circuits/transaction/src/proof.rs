@@ -2611,10 +2611,10 @@ mod tests {
         assert_eq!(profile.public_value_count, 78);
         assert_eq!(profile.no_grinding_profile.rho, 5);
         assert_eq!(profile.no_grinding_profile.nb_opened_evals, 5);
-        assert_eq!(profile.no_grinding_profile.beta, 7);
+        assert_eq!(profile.no_grinding_profile.beta, 2);
         assert_eq!(profile.no_grinding_profile.decs_nb_evals, 1_048_576);
-        assert_eq!(profile.no_grinding_profile.decs_nb_opened_evals, 20);
-        assert_eq!(profile.no_grinding_profile.decs_eta, 33);
+        assert_eq!(profile.no_grinding_profile.decs_nb_opened_evals, 23);
+        assert_eq!(profile.no_grinding_profile.decs_eta, 5);
         assert!(profile.soundness.meets_256_bit_floor);
         assert!(profile.soundness.meets_260_bit_floor);
         assert!(profile.soundness.security_floor_bits >= 260.0);

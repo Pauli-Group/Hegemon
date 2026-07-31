@@ -12250,34 +12250,19 @@ mod tests {
         let mut witness = sample_witness();
         witness.version = SMALLWOOD_CANDIDATE_VERSION_BINDING;
         let context = build_smallwood_witness_context(&witness).unwrap();
-        let candidates = [
-            (
-                SmallwoodArithmetization::DirectPacked64CompressedLevel5,
-                SmallwoodNoGrindingProfileV1 {
-                    rho: 5,
-                    nb_opened_evals: 5,
-                    beta: 7,
-                    opening_pow_bits: 0,
-                    decs_nb_evals: 1_048_576,
-                    decs_nb_opened_evals: 20,
-                    decs_eta: 33,
-                    decs_pow_bits: 0,
-                },
-            ),
-            (
-                SmallwoodArithmetization::DirectPacked128CompressedLevel5,
-                SmallwoodNoGrindingProfileV1 {
-                    rho: 5,
-                    nb_opened_evals: 5,
-                    beta: 5,
-                    opening_pow_bits: 0,
-                    decs_nb_evals: 2_097_152,
-                    decs_nb_opened_evals: 19,
-                    decs_eta: 38,
-                    decs_pow_bits: 0,
-                },
-            ),
-        ];
+        let candidates = [(
+            SmallwoodArithmetization::DirectPacked64CompressedLevel5,
+            SmallwoodNoGrindingProfileV1 {
+                rho: 5,
+                nb_opened_evals: 5,
+                beta: 2,
+                opening_pow_bits: 0,
+                decs_nb_evals: 1_048_576,
+                decs_nb_opened_evals: 23,
+                decs_eta: 5,
+                decs_pow_bits: 0,
+            },
+        )];
 
         for (arithmetization, profile) in candidates {
             let material =
@@ -12394,7 +12379,7 @@ mod tests {
                 SmallwoodArithmetization::DirectPacked64CompressedLevel5,
             )
             .decs_nb_opened_evals,
-            20
+            23
         );
         assert!(ensure_verifiable_smallwood_arithmetization(
             SMALLWOOD_CANDIDATE_VERSION_BINDING,

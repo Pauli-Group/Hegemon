@@ -53,7 +53,7 @@ const SMALLWOOD_SEMANTIC_LPPC_AUXILIARY_POSEIDON_WORDS: usize =
         * transaction_core::constants::POSEIDON2_WIDTH;
 // The active proof has transcript-dependent compact path deduplication; use the
 // deterministic structural ceiling rather than one benchmark sample.
-const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 190_635;
+const CURRENT_SMALLWOOD_SHIPPED_PROOF_BYTES: usize = 124_982;
 const SMALLWOOD_SEMANTIC_HELPER_FLOOR_PROFILE_DOMAIN: &[u8] =
     b"hegemon.tx.smallwood-semantic-helper-floor.v1";
 const SMALLWOOD_SEMANTIC_HELPER_AUX_FLOOR_PROFILE_DOMAIN: &[u8] =

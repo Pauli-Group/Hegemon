@@ -8,7 +8,7 @@ set_option maxRecDepth 100000
 # Exact native PCS opening reconstruction
 
 This module mirrors the deterministic data path between `pcs_reconstruct_combi_heads` and
-`piop_recompute_transcript`.  It starts from the 35 combination heads reconstructed from the
+`piop_recompute_transcript`. It starts from the 10 combination heads reconstructed from the
 proof's 709 row scalars and 40 auxiliary evaluations, identifies those heads with the committed
 unstacked PCS matrix under `ProductionCombinationsMatch`, and then recovers the exact polynomial
 evaluations consumed by the native PIOP verifier.
@@ -26,16 +26,16 @@ open scoped BigOperators
 
 noncomputable section
 
-/-- Interpolation index containing one unrotated 107-word combination head value. -/
+/-- Interpolation index containing one unrotated 375-word combination head value. -/
 def lvcsDataIndex (column : Fin lvcsColumnCount) :
     Fin (lvcsColumnCount + decsOpenedEvaluations) :=
   ⟨decsOpenedEvaluations + column.val, by
     have columnBound := column.isLt
-    change column.val < 107 at columnBound
-    change 20 + column.val < 107 + 20
+    change column.val < 375 at columnBound
+    change 23 + column.val < 375 + 23
     omega⟩
 
-/-- Wire index of one of the first 107, unrotated combination-head words. -/
+/-- Wire index of one of the first 375, unrotated combination-head words. -/
 def lvcsHeadIndex (column : Fin lvcsColumnCount) :
     Fin (lvcsColumnCount + decsOpenedEvaluations) :=
   Fin.castAdd decsOpenedEvaluations column
@@ -81,7 +81,7 @@ theorem matching_combination_head
   rw [eval_finsetSum] at evaluationEquality
   simpa only [eval_mul, eval_C, stackedHeadCell] using evaluationEquality
 
-/-- Canonical block-major enumeration of the 483 stacked LVCS rows. -/
+/-- Canonical block-major enumeration of the 138 stacked LVCS rows. -/
 def lvcsBlockRowEquiv :
     Fin beta × Fin unstackedRowCount ≃ Fin lvcsRowCount :=
   finProdFinEquiv.trans (finCongr (by decide))
@@ -104,7 +104,7 @@ def combinationHeadValue
     ⟨column.val / lvcsColumnCount, by
       have columnBound := column.isLt
       change column.val < 749 at columnBound
-      change column.val / 107 < 7
+      change column.val / 375 < 2
       omega⟩
   let localColumn : Fin lvcsColumnCount :=
     ⟨column.val % lvcsColumnCount, Nat.mod_lt _ (by decide)⟩
@@ -174,7 +174,7 @@ theorem matching_combination_head_value
     ⟨column.val / lvcsColumnCount, by
       have columnBound := column.isLt
       change column.val < 749 at columnBound
-      change column.val / 107 < 7
+      change column.val / 375 < 2
       omega⟩
   let localColumn : Fin lvcsColumnCount :=
     ⟨column.val % lvcsColumnCount, Nat.mod_lt _ (by decide)⟩

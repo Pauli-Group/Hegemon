@@ -4,7 +4,7 @@
   "goal_thread_id": "019f29c7-3468-78f2-ba8a-6e6ed94c7b02",
   "goal_status_when_measured": "complete",
   "measurement_timestamp": "2026-07-30T07:21:25Z",
-  "formal_source_tree_blake3": "2c2ee576a23dca30657d7e4f3b1b104c69cb8b135978d7e78dbeb936aad90c61",
+  "formal_source_tree_blake3": "e5dcda8df57725aeb679aeed806644fac9ecd061a3b88fc9e74ac132af903a12",
   "objective": "On branch codex/smallwood-pq128-experiment, complete the production SmallWood V4/Gamma proof-bytes to verifier to extractor to transaction-relation to block-supply chain; rebuild every formal target under Lean 4.32.2; finish exact SHA-512 counter-mode, rejection-sampling, transcript, and finite-QROM query accounting; benchmark the 64-lane and 128-lane Pareto candidates; remove dead Plonky3 and aggregation authoring code; preserve historical replay compatibility; and run all formal, Rust, adversarial, compatibility, release, and security gates before splitting the work into reviewable commits.",
   "objective_must_contain": [
     "codex/smallwood-pq128-experiment",

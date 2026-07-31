@@ -182,7 +182,7 @@ theorem restore_polynomial_unique
 
 /-! ## Active production instantiation -/
 
-/-- The production 20-position DECS opening determines one degree-126 polynomial uniquely. -/
+/-- The production 23-position DECS opening determines one degree-397 polynomial uniquely. -/
 theorem active_decs_restore_unique
     (challenge : DecsOpeningChallenge)
     {highPart candidate : Goldilocks[X]}

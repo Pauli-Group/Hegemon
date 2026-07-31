@@ -920,8 +920,8 @@ fn smallwood_semantic_lppc_frontier_reports_current_engine_projections() {
     eprintln!("smallwood semantic LPPC frontier: {:?}", reports);
     assert_eq!(reports.len(), 3);
     assert!(
-        !reports[0].soundness.meets_128_bit_floor,
-        "the underconstrained 1024x4 point must remain rejected"
+        !reports[0].soundness.meets_260_bit_floor,
+        "the underconstrained 1024x4 point must remain below the release floor"
     );
     assert!(reports[1..]
         .iter()

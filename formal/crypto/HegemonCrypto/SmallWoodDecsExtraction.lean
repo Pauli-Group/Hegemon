@@ -634,10 +634,9 @@ theorem uniform_matrix_degree_enforcement_failure_probability_le
           point mask fixedSupport)
 
 /--
-Active Level-5 instantiation of the V4 DECS degree-enforcement theorem. The interactive
-fixed-oracle argument gives the tighter `|Goldilocks|^-eta` term. The production ledger charges
-the larger published fixed-support union bound, which also covers support selection at the
-compiled extraction boundary.
+Active Level-5 instantiation of the V4 DECS degree-enforcement theorem. The committed rows fix
+one bad support before the full uniform challenge matrix is sampled, so the production ledger
+uses the exact `|Goldilocks|^-eta` affine-fiber term.
 -/
 theorem active_degree_enforcement_failure_probability_le
     (point : Fin activeProfile.decsNbEvals -> Goldilocks)
@@ -670,31 +669,8 @@ theorem active_degree_enforcement_failure_probability_le
             rows
             mask
             hasBadRow
-    _ ≤
-        (Nat.choose activeProfile.decsNbEvals
-            (activeDecsPolynomialDegree + 2) : Rat) *
-          (((1 : Rat) / goldilocksOrder) ^ activeProfile.decsEta) := by
-      have supportFits :
-          activeDecsPolynomialDegree + 2 ≤ activeProfile.decsNbEvals := by
-        decide
-      have choosePositive :
-          0 < Nat.choose activeProfile.decsNbEvals
-            (activeDecsPolynomialDegree + 2) :=
-        Nat.choose_pos supportFits
-      have chooseAtLeastOne :
-          (1 : Rat) ≤
-            Nat.choose activeProfile.decsNbEvals
-              (activeDecsPolynomialDegree + 2) := by
-        exact_mod_cast choosePositive
-      have probabilityNonnegative :
-          0 ≤ ((1 : Rat) / goldilocksOrder) ^ activeProfile.decsEta := by
-        apply pow_nonneg
-        exact div_nonneg zero_le_one (by
-          exact_mod_cast (by decide : 0 ≤ goldilocksOrder))
-      simpa only [one_mul] using
-        mul_le_mul_of_nonneg_right chooseAtLeastOne probabilityNonnegative
     _ = (epsilon1Numerator : Rat) / epsilon1Denominator :=
-      active_epsilon1_is_decs_support_union_bound.symm
+      active_epsilon1_is_uniform_matrix_bound.symm
 
 end
 

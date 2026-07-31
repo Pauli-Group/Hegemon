@@ -356,7 +356,7 @@ theorem active_committed_oracle_length_is_binary_depth :
     activeCommittedOracleLength = 2 ^ activeMerkleDepth := by
   decide
 
-theorem active_bcs_query_count_is_20 : activeBcsQueryCount = 20 := by
+theorem active_bcs_query_count_is_23 : activeBcsQueryCount = 23 := by
   rfl
 
 theorem active_merkle_depth_is_20 : activeMerkleDepth = 20 := by
@@ -365,7 +365,7 @@ theorem active_merkle_depth_is_20 : activeMerkleDepth = 20 := by
 /-- Raw `q * log_2(ell)` unit used by the published asymptotic extractor-query overhead. -/
 def activeQueryDepthProduct : Nat := activeBcsQueryCount * activeMerkleDepth
 
-theorem active_query_depth_product_is_400 : activeQueryDepthProduct = 400 := by
+theorem active_query_depth_product_is_460 : activeQueryDepthProduct = 460 := by
   decide
 
 /-- The first DECS verifier challenge hashes the statement-bound Merkle-root digest. -/

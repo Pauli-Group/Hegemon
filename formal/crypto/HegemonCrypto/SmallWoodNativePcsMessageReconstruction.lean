@@ -11,7 +11,8 @@ This module mirrors `pcs_reconstruct_combi_heads` for the active packing profile
 row scalars are one-column witness polynomials. The five nonlinear masks occupy eight columns
 each, and the five linear masks occupy two columns each. Their 40 non-leading values are carried
 by `partial_evals`; the leading value is recovered from the row scalar at the selected opening
-point. The 749 recovered values are then split into seven 107-word combination heads.
+point. The 749 recovered values are then split into two 375-word combination heads, with one
+canonical zero padding cell.
 -/
 
 namespace HegemonCrypto.SmallWood.NativePcsMessageReconstruction
@@ -45,7 +46,7 @@ theorem active_native_partial_count :
   decide
 
 theorem active_native_subset_count :
-    lvcsRowCount - openedCombinationCount = 448 := by
+    lvcsRowCount - openedCombinationCount = 128 := by
   decide
 
 def nonlinearPartialIndex
@@ -161,7 +162,7 @@ def reconstructedUnstackedValue
       exact wordToGoldilocks
         (partialEvaluations openingIndex (linearPartialIndex repetition))
 
-/-- Exact 35-by-127 PCS message reconstructed from proof fields. -/
+/-- Exact 10-by-398 PCS message reconstructed from proof fields. -/
 def reconstructNativePcsMessage
     (opening : PiopOpeningChallenge)
     (rowScalars : NativeOpenedRowScalars)
@@ -172,24 +173,22 @@ def reconstructNativePcsMessage
     if head : column.val < lvcsColumnCount then
       let openingIndex := combinationOpeningIndex combination
       let block := combinationBlockIndex combination
-      let unstackedColumn : Fin unstackedColumnCount :=
-        ⟨block.val * lvcsColumnCount + column.val, by
-          have blockBound := block.isLt
-          have columnBound := head
-          change block.val < 7 at blockBound
-          change column.val < 107 at columnBound
-          change block.val * 107 + column.val < 749
-          omega⟩
-      fieldWordGoldilocksEquiv.symm
-        (reconstructedUnstackedValue
-          opening rowScalars partialEvaluations openingIndex unstackedColumn)
+      if inRange :
+          block.val * lvcsColumnCount + column.val < unstackedColumnCount then
+        let unstackedColumn : Fin unstackedColumnCount :=
+          ⟨block.val * lvcsColumnCount + column.val, inRange⟩
+        fieldWordGoldilocksEquiv.symm
+          (reconstructedUnstackedValue
+            opening rowScalars partialEvaluations openingIndex unstackedColumn)
+      else
+        fieldWordGoldilocksEquiv.symm 0
     else
       tails combination
         ⟨column.val - lvcsColumnCount, by
           have columnBound := column.isLt
-          change column.val < 107 + 20 at columnBound
-          change column.val < 127 at columnBound
-          change column.val - 107 < 20
+          change column.val < 375 + 23 at columnBound
+          change column.val < 398 at columnBound
+          change column.val - 375 < 23
           omega⟩
 
 theorem reconstructed_native_pcs_message_head
@@ -198,21 +197,39 @@ theorem reconstructed_native_pcs_message_head
     (partialEvaluations : NativePartialEvaluations)
     (tails : NativePcsCombinationTails)
     (combination : Fin openedCombinationCount)
-    (column : Fin lvcsColumnCount) :
+    (column : Fin lvcsColumnCount)
+    (inRange :
+      (combinationBlockIndex combination).val * lvcsColumnCount + column.val <
+        unstackedColumnCount) :
     wordToGoldilocks
         (reconstructNativePcsMessage opening rowScalars partialEvaluations tails
           combination (Fin.castAdd decsOpenedEvaluations column)) =
       reconstructedUnstackedValue opening rowScalars partialEvaluations
         (combinationOpeningIndex combination)
-        ⟨(combinationBlockIndex combination).val * lvcsColumnCount + column.val, by
-          have blockBound := (combinationBlockIndex combination).isLt
-          have columnBound := column.isLt
-          change (combinationBlockIndex combination).val < 7 at blockBound
-          change column.val < 107 at columnBound
-          change (combinationBlockIndex combination).val * 107 + column.val < 749
-          omega⟩ := by
+        ⟨(combinationBlockIndex combination).val * lvcsColumnCount + column.val,
+          inRange⟩ := by
   simp only [reconstructNativePcsMessage, Fin.val_castAdd, column.isLt, ↓reduceDIte]
+  rw [dif_pos inRange]
   exact fieldWordGoldilocksEquiv.apply_symm_apply _
+
+/-- The only head cell beyond the 749-column unstacked matrix is canonical zero padding. -/
+theorem reconstructed_native_pcs_message_padding
+    (opening : PiopOpeningChallenge)
+    (rowScalars : NativeOpenedRowScalars)
+    (partialEvaluations : NativePartialEvaluations)
+    (tails : NativePcsCombinationTails)
+    (combination : Fin openedCombinationCount)
+    (column : Fin lvcsColumnCount)
+    (outOfRange :
+      ¬(combinationBlockIndex combination).val * lvcsColumnCount + column.val <
+        unstackedColumnCount) :
+    wordToGoldilocks
+        (reconstructNativePcsMessage opening rowScalars partialEvaluations tails
+          combination (Fin.castAdd decsOpenedEvaluations column)) =
+      0 := by
+  simp only [reconstructNativePcsMessage, Fin.val_castAdd, column.isLt, ↓reduceDIte]
+  rw [dif_neg outOfRange]
+  exact fieldWordGoldilocksEquiv.apply_symm_apply 0
 
 theorem reconstructed_native_pcs_message_tail
     (opening : PiopOpeningChallenge)
@@ -242,16 +259,16 @@ def nativeSubsetIndex
       (unstackedRowCount - openedEvaluations) +
       (row.val % unstackedRowCount - openedEvaluations), by
     have rowBound := row.isLt
-    change row.val < 483 at rowBound
+    change row.val < 138 at rowBound
     change 5 ≤ row.val % 69 at notSelected
-    have blockBound : row.val / 69 < 7 := by omega
+    have blockBound : row.val / 69 < 2 := by omega
     have localBound : row.val % 69 < 69 := Nat.mod_lt _ (by decide)
     change
       (row.val / 69) * (69 - 5) + (row.val % 69 - 5) <
-        483 - 35
+        138 - 10
     omega⟩
 
-/-- The 448 wire values embedded in the 483-row LVCS space with zero pivot placeholders. -/
+/-- The 128 wire values embedded in the 138-row LVCS space with zero pivot placeholders. -/
 def nativeLvcsBaseRowsFromSubset
     (subset : NativeSubsetEvaluations) :
     NativeLvcsBaseRows :=

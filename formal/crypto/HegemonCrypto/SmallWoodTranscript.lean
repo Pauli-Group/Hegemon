@@ -177,11 +177,11 @@ deriving DecidableEq, Repr
 def activeParameters : Parameters :=
   { repetitions := 5,
     openedEvaluations := 5,
-    decsOpenedEvaluations := 20 }
+    decsOpenedEvaluations := 23 }
 
 /-- Exact dimensions of the active uniform DECS batching challenge. -/
-def activeDecsRepetitions : Nat := 33
-def activeDecsRowWidth : Nat := 483
+def activeDecsRepetitions : Nat := 5
+def activeDecsRowWidth : Nat := 138
 
 /-- Fixed number of candidate field words consumed by the active no-grinding DECS sampler. -/
 def activeDecsFixedCandidateCount : Nat := 50
@@ -264,8 +264,8 @@ theorem active_piop_coefficient_word_count_is_91710 :
     activePiopCoefficientWordCount = 91710 := by
   decide
 
-theorem active_decs_coefficient_word_count_is_15939 :
-    activeDecsCoefficientWordCount = 15939 := by
+theorem active_decs_coefficient_word_count_is_690 :
+    activeDecsCoefficientWordCount = 690 := by
   decide
 
 /-- Nonlinear batching projects the first 890 entries of each full PIOP row. -/
@@ -503,7 +503,7 @@ def fourthChallengePreimage
 
 theorem active_parameters_are_level5 :
     activeParameters =
-      { repetitions := 5, openedEvaluations := 5, decsOpenedEvaluations := 20 } := by
+      { repetitions := 5, openedEvaluations := 5, decsOpenedEvaluations := 23 } := by
   rfl
 
 theorem first_round_commitment_binds_statement_in_preimage
