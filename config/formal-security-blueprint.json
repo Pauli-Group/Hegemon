@@ -38,7 +38,7 @@
         "reviewer": "formal-core-operator",
         "reviewed_at": "2026-06-06",
         "notes": "Pending independent review. Previous internal assessment: The claim is deliberately operational: it proves review coverage for known dependency findings, not absence of future advisories.",
-        "content_blake3": "9d8488cc0e81870bb3b095b8eaf794de31f8e963ad922e8fb2448914f0c102d4"
+        "content_blake3": "3a533ca2e32d70af705a6c65b7b116181420772ca9183e2a83068bbdfe241ff0"
       },
       "falsification_cases": [
         {
